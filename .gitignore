@@ -1,0 +1,5 @@
+/build/
+/checkouts/
+/.local-credentials/
+/local/
+*.swp
