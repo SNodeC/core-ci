@@ -710,3 +710,10 @@
   when graph generations changed; a fresh read with no competing graph traversal succeeded.
 - UI invariant: direct prerequisites are siblings, not a dependency chain. Replace the
   repository summary's arrow separators with commas; one line changed, no state added.
+- Explicit API retry of the cancelled side IPK work created rebuild revision 41 and real
+  GitHub run 40235443413, retaining the cancelled revision 34 in history. Join work remains
+  waiting. Restarted the development controller during assigned build/publication work;
+  all execution IDs and rebuild revisions compare equal before/after restoration.
+- Regenerated embedded UI assets through the existing CMake build. Node syntax check,
+  HTTP-served JavaScript and Chrome UI verify the comma-separated direct prerequisites.
+  Runtime remains a temporary development build, with no application installation/push.
