@@ -6,7 +6,7 @@ import resource
 import subprocess
 import tarfile
 
-from contract import file_hash, output, require
+from contract import file_hash, output, require, run
 
 
 def prepare(target, environment, destination):
@@ -44,7 +44,7 @@ def prepare(target, environment, destination):
     roots = list(extracted.iterdir())
     require(len(roots) == 1 and roots[0].is_dir() and not roots[0].is_symlink(), "SDK archive requires one directory")
     root = roots[0]
-    subprocess.run(["make", "--no-print-directory", "-C", str(root), "defconfig"], check=True, timeout=120)
+    run(["make", "--no-print-directory", "-C", str(root), "defconfig"], preexec_fn=lambda: os.umask(0o022))
     query = destination / "query.mk"
     query.write_text("TOPDIR:=$(CURDIR)\nSDK:=1\ninclude $(TOPDIR)/rules.mk\ninclude $(TOPDIR)/include/version.mk\n")
     values = {}

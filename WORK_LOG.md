@@ -600,3 +600,10 @@
 - Owner explicitly approved the narrowly scoped preparation fix. No controller architecture
   changed. Local archive, worker environment and provenance suites pass; GitHub verification
   of defconfig/build remains pending. No local package compilation or publication performed.
+- Deployed worker 47ecaa83870723a7f79eb0a8a0d260b5e6cec2ef and dispatched five fresh
+  graph selections for the unchanged v2.0.0 source. Native runs 40229812225 (RPM),
+  40229819909 (DEB AMD64) and 40229822170 (DEB ARM64) passed, including validated artifacts.
+- OpenWrt APK run 40229815999 passed extraction and reached SDK prerequisite checks,
+  which rejected the workflow umask 077. Set umask 022 only in the SDK configuration child
+  through the existing bounded command helper; retain restrictive parent/secret handling.
+- Added an entry-count regression proving omitted links cannot bypass the archive limit.

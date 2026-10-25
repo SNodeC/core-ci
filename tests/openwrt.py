@@ -86,6 +86,12 @@ def main():
             assert (root / "valid/sdk/staging_dir/host/bin/retained").read_text() == "ok"
             for name in ("file", "gcc", "python3"):
                 assert not os.path.lexists(root / "valid/sdk/staging_dir/host/bin" / name)
+            # Omitting host bindings must not let an oversized archive bypass the entry bound.
+            with patch.object(sdk.tarfile, "open") as archive_open:
+                bounded = archive_open.return_value.__enter__.return_value
+                bounded.__iter__.return_value = (binding for _ in range(200001))
+                rejects(lambda: sdk.extract(root / "oversized-sdk.tar.gz", root / "oversized"))
+                bounded.extractall.assert_not_called()
             for name, target in (
                 ("sdk/../../escape", ""),
                 ("sdk/escape", "/etc/passwd"),
