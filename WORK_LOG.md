@@ -505,3 +505,14 @@
   test-build wiring +11/-1. Growth supplies original-scope source recipes and explicit
   sandbox definitions within the approved estimate, without a second implementation in
   the controller. Final hook tests pass after the package-license metadata adjustment.
+
+
+## 2026-10-25 — reserve direct-test network ports
+
+- Checked actual listeners and the active LAN route. Allocated public HTTPS TCP 443 to
+  machine TCP 8443 for webhooks; the existing UI stays on loopback HTTP 8080 without router
+  forwarding. Recorded the current LAN address and DHCP reservation requirement.
+- No application listener, router, firewall or TLS configuration changed. Current application
+  code still exposes only its local HTTP listener; dedicated SNode.C TLS webhook setup needs
+  the owner's DNS hostname and certificate/key paths. No reverse proxy was installed.
+- Documentation-only change; production/test lines unchanged. No runtime acceptance claimed.

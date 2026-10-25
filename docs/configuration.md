@@ -29,6 +29,30 @@ Development listens on loopback. HTTPS proxy deployment must retain the configur
 public access protection must be agreed before exposing this configuration-writing UI.
 There is no user identity provider or login system.
 
+## Fixed ports for direct sandbox testing
+
+The agreed port allocation is:
+
+| Endpoint | Address/port | Router forwarding |
+| --- | --- | --- |
+| Local configuration UI | 127.0.0.1:8080 HTTP | None |
+| Planned SNode.C HTTPS webhook listener | Machine LAN address:8443 TCP | External TCP 443 to this machine TCP 8443 |
+| Public GitHub webhook | https://OWNER_HOSTNAME/github/webhook | Standard HTTPS port 443 |
+
+On 2026-10-25 the machine's active IPv4 route used LAN address 192.168.1.239; ports 443,
+8080 and 8443 had no listeners. Reserve the machine's LAN address in the router's DHCP
+settings, or use its actual stable LAN address as the forwarding destination. Do not
+forward 8080 or MariaDB. No UDP forwarding is needed for GitHub HTTPS webhooks.
+
+This allocates ports; it does not claim HTTPS is already running. The current application
+has one loopback HTTP listener on 8080. Before activation, move the existing webhook route
+to a dedicated SNode.C TLS listener on 8443, preserving its raw-body HMAC validation and
+initial-database-success lifecycle. Do not expose UI/API administration on that listener.
+No reverse proxy was found installed during this check; one is not assumed or installed.
+The owner must supply the public DNS hostname and valid certificate/private-key file paths.
+Keep TLS key material in protected local configuration, never source JSON or tracked files.
+Do not disable GitHub's certificate verification to bypass missing TLS setup.
+
 ## Signing keys belong to the trusted worker
 
 Package signing private keys are GitHub Actions secrets of the trusted worker's protected
