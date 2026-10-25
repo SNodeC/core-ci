@@ -4,6 +4,7 @@
 namespace coreci::ui {
     constexpr const char* html = R"CORECI(@CORE_CI_UI_HTML@)CORECI";
     constexpr const char* css = R"CORECI(@CORE_CI_UI_CSS@)CORECI";
+    constexpr const char* sourceWorkflow = R"CORECI(@CORE_CI_SOURCE_WORKFLOW@)CORECI";
     constexpr const char* javascript = R"CORECI(@CORE_CI_UI_JAVASCRIPT@)CORECI";
 }
 

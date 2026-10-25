@@ -25,6 +25,7 @@ namespace coreci {
         void restore(const Callback& callback);
         void list(const Callback& callback);
         void save(const nlohmann::json& request, const Callback& callback);
+        void workflow(const nlohmann::json& request, const Callback& callback);
         void refresh(const nlohmann::json& request, const Callback& callback);
 
     private:

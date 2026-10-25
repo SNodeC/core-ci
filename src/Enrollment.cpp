@@ -1,5 +1,7 @@
 #include "Enrollment.h"
 
+#include "UiAssets.h"
+
 #include <openssl/evp.h>
 #include <regex>
 #include <stdexcept>
@@ -149,6 +151,126 @@ namespace coreci {
                 callback({422, {{"error", error.what()}, {"github_committed", false}}});
             }
         }
+    }
+
+    void Enrollment::workflow(const nlohmann::json& request, const Callback& callback) {
+        list([this, request, callback](const EnrollmentResult& listed) {
+            try {
+                require(listed.status == 200, "cannot read enrollment before workflow editing");
+                const auto repository = request.at("repository").get<std::string>();
+                nlohmann::json enrolled;
+                for (const auto& row : listed.body.at("repositories")) {
+                    if (row.at("repository") == repository) {
+                        enrolled = row;
+                    }
+                }
+                require(!enrolled.is_null(), "workflow installation requires an enrolled source repository");
+                require(GitHub::validRepository(deployment.workerRepository) &&
+                            std::regex_match(deployment.sourceWorkflow, std::regex(R"(^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$)")) &&
+                            std::regex_match(deployment.toolingSha, std::regex("^[a-f0-9]{40}$")),
+                        "configure the reviewed worker repository and tooling SHA first");
+                std::string content = ui::sourceWorkflow;
+                for (const auto& [key, value] : std::map<std::string, std::string>{{"@WORKER@", deployment.workerRepository},
+                                                                                   {"@TOOLING_SHA@", deployment.toolingSha}}) {
+                    const auto position = content.find(key);
+                    require(position != std::string::npos, "workflow template substitution is missing");
+                    content.replace(position, key.size(), value);
+                }
+                require(SourceReader::blobSha(content) == deployment.sourceWorkflowBlob,
+                        "rendered source workflow differs from the configured approved blob SHA");
+                const auto branch = enrolled.at("branch").get<std::string>();
+                github.request(
+                    repository,
+                    "GET",
+                    "/git/ref/heads/" + httputils::url_encode(branch),
+                    nullptr,
+                    {{"contents", "read"}},
+                    [this, request, callback, repository, branch, content](const GitHubResult& resolved) {
+                        try {
+                            require(resolved.status == 200 && resolved.error.empty(), "cannot resolve enrolled workflow branch");
+                            const auto head = resolved.body.at("object").at("sha").get<std::string>();
+                            sources.file(
+                                repository,
+                                head,
+                                deployment.sourceWorkflow,
+                                [this, request, callback, repository, branch, content, head](const SourceResult& file) {
+                                    try {
+                                        require(file.status == 200 || (file.status == 404 && file.source.value("commit", "") == head),
+                                                "cannot read existing workflow as a regular committed file");
+                                        const nlohmann::json preview{{"repository", repository},
+                                                                     {"branch", branch},
+                                                                     {"head", head},
+                                                                     {"blob_sha", file.blobSha},
+                                                                     {"current", file.content},
+                                                                     {"proposed", content},
+                                                                     {"proposed_blob_sha", SourceReader::blobSha(content)},
+                                                                     {"github_committed", false}};
+                                        if (!request.value("write", false)) {
+                                            callback({200, preview});
+                                        } else if (request.at("head") != head || request.at("blob_sha") != file.blobSha) {
+                                            callback({409,
+                                                      {{"error", "workflow changed since preview; preview it again"},
+                                                       {"github_committed", false}}});
+                                        } else if (file.content == content) {
+                                            auto response = preview;
+                                            response["unchanged"] = true;
+                                            response["github_revision"] = head;
+                                            callback({200, response});
+                                        } else {
+                                            nlohmann::json body{{"message", "Configure core-ci source workflow"},
+                                                                {"branch", branch},
+                                                                {"content", base64(content)}};
+                                            if (!file.blobSha.empty()) {
+                                                body["sha"] = file.blobSha;
+                                            }
+                                            github.request(
+                                                repository,
+                                                "PUT",
+                                                "/contents/" + deployment.sourceWorkflow,
+                                                body,
+                                                {{"contents", "write"}, {"workflows", "write"}},
+                                                [callback, repository, content](const GitHubResult& result) {
+                                                    nlohmann::json response{{"repository", repository}, {"github_status", result.status}};
+                                                    int status = 502;
+                                                    if ((result.status == 200 || result.status == 201) && result.error.empty()) {
+                                                        response["github_committed"] = true;
+                                                        try {
+                                                            require(result.body.at("content").at("sha") == SourceReader::blobSha(content),
+                                                                    "GitHub committed an unexpected workflow blob");
+                                                            response["github_revision"] = result.body.at("commit").at("sha");
+                                                            response["blob_sha"] = result.body.at("content").at("sha");
+                                                            status = 200;
+                                                        } catch (const std::exception& error) {
+                                                            response["error"] = error.what();
+                                                        }
+                                                    } else {
+                                                        const bool uncertain =
+                                                            result.submitted &&
+                                                            (result.status == 0 || result.status == 408 || result.status >= 500);
+                                                        response["uncertain"] = uncertain;
+                                                        response["github_committed"] =
+                                                            uncertain ? nlohmann::json(nullptr) : nlohmann::json(false);
+                                                        response["error"] = "GitHub workflow write did not return a verified commit; "
+                                                                            "refresh before retrying";
+                                                        if (result.status >= 400 && result.status < 500) {
+                                                            status = result.status;
+                                                        }
+                                                    }
+                                                    callback({status, response});
+                                                });
+                                        }
+                                    } catch (const std::exception& error) {
+                                        callback({422, {{"error", error.what()}, {"github_committed", false}}});
+                                    }
+                                });
+                        } catch (const std::exception& error) {
+                            callback({502, {{"error", error.what()}, {"github_committed", false}}});
+                        }
+                    });
+            } catch (const std::exception& error) {
+                callback({422, {{"error", error.what()}, {"github_committed", false}}});
+            }
+        });
     }
 
     void Enrollment::refresh(const nlohmann::json& request, const Callback& callback) {

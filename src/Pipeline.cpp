@@ -520,12 +520,54 @@ namespace coreci {
                     callback({409, {{"error", error.what()}}});
                 }
             } else {
-                callback({202,
-                          {{"execution", node.id},
-                           {"state", "publishing"},
-                           {"assignment_preserved", true},
-                           {"github_conclusion", run.at("conclusion")},
-                           {"error", result.error}}});
+                github.request(
+                    node.source.at("deployment").at("worker").at("repository").get<std::string>(),
+                    "GET",
+                    "/actions/runs/" + std::to_string(node.attempts.back().publicationRun.at("id").get<std::uint64_t>()) +
+                        "/jobs?per_page=100",
+                    nullptr,
+                    {{"actions", "read"}},
+                    [this, node, run, result, callback](const GitHubResult& jobs) {
+                        bool beforePush = false;
+                        try {
+                            if (jobs.status == 200 && jobs.error.empty() && jobs.body.is_object() &&
+                                jobs.body.value("total_count", 101) <= 100 && jobs.body.at("jobs").is_array() &&
+                                jobs.body.at("jobs").size() == jobs.body.at("total_count") &&
+                                run.value("conclusion", std::string{}) != "success") {
+                                const auto name = "core-ci publish " + node.attempts.back().id;
+                                std::size_t matches = 0;
+                                for (const auto& job : jobs.body.at("jobs")) {
+                                    if (job.value("name", "") == name && job.value("run_id", std::uint64_t{}) == run.at("id") &&
+                                        job.value("run_attempt", 0) == 1 && job.value("status", "") == "completed") {
+                                        ++matches;
+                                        beforePush = job.value("conclusion", "") == "skipped";
+                                        for (const auto& step : job.value("steps", nlohmann::json::array())) {
+                                            if (step.value("name", "") == "Publish checked feed update") {
+                                                beforePush = step.value("conclusion", "") == "skipped";
+                                            }
+                                        }
+                                    }
+                                }
+                                beforePush = beforePush && matches == 1;
+                            }
+                        } catch (const std::exception&) {
+                            beforePush = false;
+                        }
+                        if (beforePush) {
+                            change(store.graph().failed(
+                                       node.id,
+                                       node.attempts.back().id,
+                                       "Verified GitHub publication failure before the feed-update step; explicit retry is available"),
+                                   callback);
+                        } else {
+                            callback({202,
+                                      {{"execution", node.id},
+                                       {"state", "publishing"},
+                                       {"assignment_preserved", true},
+                                       {"github_conclusion", run.at("conclusion")},
+                                       {"error", result.error}}});
+                        }
+                    });
             }
         });
     }

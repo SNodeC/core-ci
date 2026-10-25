@@ -49,6 +49,7 @@ def exercise(args, directory):
     older_sha = "c" * 40
     head = "a" * 40
     definitions = {}
+    workflow_files = {}
     trees = {}
     blobs = {}
     writes = 0
@@ -60,7 +61,9 @@ def exercise(args, directory):
     runs = {}
     errors = []
     lose_next = False
-    workflow = b"fixture reviewed source workflow; no job is executed\n"
+    reject_workflow = False
+    malformed_publication_jobs = False
+    workflow = (Path(__file__).resolve().parents[1] / "deployment/source/core-ci-build.yml.in").read_text().replace("@WORKER@", "Owner/worker").replace("@TOOLING_SHA@", "f" * 40).encode()
     workflow_blob = hashlib.sha1(b"blob " + str(len(workflow)).encode() + b"\0" + workflow).hexdigest()
     blobs[workflow_blob] = workflow
 
@@ -105,7 +108,7 @@ def exercise(args, directory):
             nonlocal lose_next
             value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/app/installations/7/access_tokens":
-                if value["repository_ids"] not in ([99], [1000]) or value["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}):
+                if value["repository_ids"] not in ([99], [1000]) or value["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}, {"contents": "write", "workflows": "write"}):
                     errors.append("unexpected installation token scope")
                 self.reply(201, {"token": "synthetic-pipeline-token"})
             elif self.path == "/repos/Owner/example/actions/workflows/core-ci-build.yml/dispatches":
@@ -161,6 +164,23 @@ def exercise(args, directory):
         def do_PUT(self):
             nonlocal head, writes
             value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            try:
+                if self.path == "/repos/Owner/example/contents/.github/workflows/core-ci-build.yml":
+                    if reject_workflow:
+                        self.reply(403, {"message": "fixture workflow permission denied"})
+                    else:
+                        raw = base64.b64decode(value["content"])
+                        assert raw == workflow and value.get("sha", "") == workflow_files.get(head, "")
+                        workflow_files[head] = workflow_blob
+                        self.reply(201, {"commit": {"sha": head}, "content": {"sha": workflow_blob}})
+                else:
+                    self.write_definition(value)
+            except Exception as error:
+                errors.append(str(error))
+                self.reply(422, {})
+
+        def write_definition(self, value):
+            nonlocal head, writes
             try:
                 assert self.path == "/repos/Owner/example/contents/ci/packages.json"
                 raw = base64.b64decode(value["content"])
@@ -232,8 +252,13 @@ def exercise(args, directory):
                     if len(parts) == 4:
                         self.reply(200, run)
                     elif parts[4] == "jobs":
-                        self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
-                                         "name": "build / core-ci package " + assignment["attempt"], "status": run["status"], "conclusion": run["conclusion"]}]})
+                        if run_id >= 500 and malformed_publication_jobs:
+                            self.reply(200, {"total_count": 1, "jobs": "not a job array"})
+                        else:
+                            self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
+                                "name": ("core-ci publish " if run_id >= 500 else "build / core-ci package ") + assignment["attempt"],
+                                "status": run["status"], "conclusion": run["conclusion"],
+                                "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}]})
                     elif parts[4] == "artifacts":
                         self.reply(200, {"total_count": 2, "artifacts": [{"id": run_id + 3000, "name": assignment["artifact_name"] + "-environment"}, {"id": run_id + 2000, "name": assignment["artifact_name"],
                                          "digest": "sha256:" + "e" * 64, "size_in_bytes": 1024, "expired": False, "workflow_run": {"id": run_id}}]})
@@ -302,6 +327,31 @@ def exercise(args, directory):
             assert status == 200 and saved["enrolled"] and saved["work"]["status"] == 202, saved
             assert writes == 1 and len(dispatches) == 1 and dispatches[0]["source"]["commit"] == source_sha
             assert runs[100]["head_sha"] != source_sha, "workflow and selected source were conflated"
+            status, preview = request("/api/repositories/workflow", {"repository": "Owner/example"})
+            assert status == 200 and preview["proposed"].encode() == workflow and preview["blob_sha"] == workflow_blob, preview
+            status, unchanged = request("/api/repositories/workflow", {"repository": "Owner/example", "head": head, "blob_sha": workflow_blob, "write": True})
+            assert status == 200 and unchanged["unchanged"] and unchanged["github_revision"] == head, unchanged
+            assert request("/api/repositories/workflow", {"repository": "Owner/example", "head": "0" * 40, "blob_sha": workflow_blob, "write": True})[0] == 409
+            workflow_tree = trees[hashlib.sha1(("workflows" + head).encode()).hexdigest()]
+            workflow_tree[0]["sha"] = hashlib.sha1(b"blob 7\0changed").hexdigest()
+            blobs[workflow_tree[0]["sha"]] = b"changed"
+            workflow_files[head] = workflow_tree[0]["sha"]
+            reject_workflow = True
+            status, failed_write = request("/api/repositories/workflow", {"repository": "Owner/example", "head": head, "blob_sha": workflow_files[head], "write": True})
+            assert status == 403 and failed_write["github_committed"] is False, failed_write
+            reject_workflow = False
+            # Update existing content, then create an absent workflow with the same approved bytes.
+            status, written = request("/api/repositories/workflow", {"repository": "Owner/example", "head": head, "blob_sha": workflow_files[head], "write": True})
+            assert status == 200 and written["github_committed"] and written["blob_sha"] == workflow_blob, written
+            workflow_tree[0]["sha"] = workflow_blob
+            entry = workflow_tree.pop(0)
+            workflow_files[head] = ""
+            status, absent = request("/api/repositories/workflow", {"repository": "Owner/example"})
+            assert status == 200 and absent["blob_sha"] == "", absent
+            status, created = request("/api/repositories/workflow", {"repository": "Owner/example", "head": head, "blob_sha": "", "write": True})
+            assert status == 200 and created["github_committed"], created
+            workflow_tree.insert(0, entry)
+
             assert report(100, "sha256=" + "0" * 64)[0] == 401
             assert report(100, repository_id=999)[0] == 422
             assert report(100)[0] == 200 and len(dispatches) == 1
@@ -368,8 +418,18 @@ def exercise(args, directory):
             assert current["state"] == "published" and len(publications) == 1
             assert report(500)[0] == 200 and report(102)[0] == 200, "late report regressed published state"
             assert request("/api/repositories/save", {"repository": "Owner/worker", "branch": "main", "definition": definition})[0] == 422
+            runs[100].update(status="completed", conclusion="success")
+            assert report(100)[0] == 202 and len(publications) == 2
+            runs[501].update(status="completed", conclusion="failure")
+            malformed_publication_jobs = True
+            assert report(501)[0] == 202, "malformed job evidence authorized replacement"
+            malformed_publication_jobs = False
+            assert report(501)[0] == 200, "proven pre-push failure was left uncertain"
+            initial = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])
+            assert initial["state"] == "failed" and "before the feed-update step" in initial["failure"]
+            assert request("/api/work/retry", {"execution": initial["id"]})[0] == 202 and len(dispatches) == 4
             assert not errors, errors
-            assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts").strip() == "3"
+            assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts").strip() == "4"
             print("PASS local pipeline: enrollment/highest tag, committed dispatch, raw HMAC, exact older source, lost response, restart, failure/retry, late reports and assigned artifact identities")
     finally:
         lifecycle.stop(application)

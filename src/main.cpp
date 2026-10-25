@@ -172,6 +172,17 @@ int main(int argc, char* argv[]) {
                                 }
                             });
 
+                            app.post("/api/repositories/workflow", [&] APPLICATION(req, res) {
+                                try {
+                                    enrollment->workflow(nlohmann::json::parse(req->body.begin(), req->body.end()),
+                                                         [res](const coreci::EnrollmentResult& result) {
+                                                             res->status(result.status).type("application/json").send(result.body.dump());
+                                                         });
+                                } catch (const std::exception&) {
+                                    res->status(422).type("application/json").send(R"({"error":"invalid workflow request JSON"})");
+                                }
+                            });
+
                             app.post("/api/work/request", [&] APPLICATION(req, res) {
                                 try {
                                     const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());

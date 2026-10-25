@@ -419,3 +419,18 @@
   tests +297/-325 (net -28), documentation +135/-69. Approved retry completion accounts
   for 149 net production lines within the 130-170 estimate, while the whole correction
   reduces production code. No push, installation, secret update or external activation.
+
+
+## 2026-10-25 — finish workflow administration and publication failure classification
+
+- Added an explicit workflow preview/commit UI and REST endpoint. Render the committed thin
+  workflow with configured worker/tooling pins, require its configured approved blob SHA,
+  read the enrolled branch through the existing immutable file reader, reject stale previews,
+  and report committed revisions or GitHub failures without inventing local matrix authority.
+- Split trusted publication into preparation and the sole checked feed-write step. The
+  controller first checks the feed receipt; if unavailable, canonical assigned job/step
+  evidence can prove failure before a feed mutation. Possible writes remain assigned and
+  uncertain. No new report protocol, graph state or scheduler was introduced.
+- Local HTTP/MariaDB tests prove workflow preview/create/update/no-op, conflicts/denied writes,
+  pre-push explicit retry, malformed evidence rejection, and uncertainty after possible push.
+  Native package/signature tests pass. These remain local fixtures, not live acceptance.

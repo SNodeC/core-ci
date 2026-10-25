@@ -14,5 +14,10 @@
 <label>Package definition — dependencies, hooks and explicit target rows
 <textarea id="definition" rows="22" spellcheck="false" required></textarea></label>
 <button type="submit">Commit definition to GitHub</button></form>
+<h3>Source build workflow</h3>
+<button id="workflow-preview" type="button">Preview configured workflow</button>
+<label>Current committed workflow<textarea id="workflow-current" rows="8" readonly></textarea></label>
+<label>Proposed pinned workflow<textarea id="workflow-proposed" rows="12" readonly></textarea></label>
+<button id="workflow-write" type="button">Commit previewed workflow to GitHub</button>
 <pre id="feedback" role="status" aria-live="polite"></pre></section>
 </main></body></html>

@@ -98,20 +98,32 @@ jobs:
           merge-multiple: true
       - name: Install standard signing and repository tools
         run: sudo apt-get update && sudo apt-get install -y rpm gnupg apt-utils createrepo-c
-      - name: Sign, verify and publish through a checked update
+      - name: Prepare signed feed update
         env:
           GITHUB_TOKEN: ${{ github.token }}
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
           PACKAGES_GPG_PASSPHRASE: ${{ secrets.PACKAGES_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/assignment.json"
+          printf '%s' "$BUILD_RESULT" > "$RUNNER_TEMP/build-result.json"
+          python3 tooling/core_ci/publish.py --phase prepare \
+            --assignment "$RUNNER_TEMP/assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --build-result "$RUNNER_TEMP/build-result.json" \
+            --artifacts "$RUNNER_TEMP/validated" \
+            --feed "$GITHUB_WORKSPACE/feed"
+      - name: Publish checked feed update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
           PACKAGES_APP_PRIVATE_KEY: ${{ secrets.PACKAGES_APP_PRIVATE_KEY }}
           FEED_WRITER_APP_ID: ${{ vars.FEED_WRITER_APP_ID }}
           FEED_WRITER_INSTALLATION_ID: ${{ vars.FEED_WRITER_INSTALLATION_ID }}
         run: |
           set -euo pipefail
           umask 077
-          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/assignment.json"
-          printf '%s' "$BUILD_RESULT" > "$RUNNER_TEMP/build-result.json"
-          python3 tooling/core_ci/publish.py \
+          python3 tooling/core_ci/publish.py --phase push \
             --assignment "$RUNNER_TEMP/assignment.json" \
             --assignment-sha256 "$ASSIGNMENT_SHA256" \
             --build-result "$RUNNER_TEMP/build-result.json" \

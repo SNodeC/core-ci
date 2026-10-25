@@ -1,6 +1,7 @@
 "use strict";
 const element = (id) => document.getElementById(id);
 let selected = null;
+let workflowPreview = null;
 let repositories = [];
 
 function feedback(value, failed = false) {
@@ -24,6 +25,7 @@ async function api(path, body) {
 
 function select(repository) {
     selected = repository;
+    workflowPreview = null;
     element("repository").value = repository.repository;
     element("branch").value = repository.branch;
     element("revision").textContent = "Committed revision: " + repository.revision;
@@ -176,3 +178,22 @@ element("editor").addEventListener("submit", (event) => {
     });
 });
 operation(reload);
+
+element("branch").addEventListener("input", () => { workflowPreview = null; });
+element("repository").addEventListener("input", () => { workflowPreview = null; });
+element("workflow-preview").addEventListener("click", () => operation(async () => {
+    workflowPreview = await api("/api/repositories/workflow", {repository: element("repository").value});
+    element("workflow-current").value = workflowPreview.current;
+    element("workflow-proposed").value = workflowPreview.proposed;
+    feedback("Workflow preview at " + workflowPreview.head + " · proposed blob " + workflowPreview.proposed_blob_sha);
+}));
+element("workflow-write").addEventListener("click", () => operation(async () => {
+    if (!workflowPreview) {
+        throw new Error("Preview the enrolled repository workflow before committing.");
+    }
+    const result = await api("/api/repositories/workflow", {
+        repository: workflowPreview.repository, head: workflowPreview.head, blob_sha: workflowPreview.blob_sha, write: true
+    });
+    workflowPreview = null;
+    feedback(result);
+}));

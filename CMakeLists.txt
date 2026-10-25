@@ -57,10 +57,12 @@ target_link_libraries(
 file(READ ui/index.html CORE_CI_UI_HTML)
 file(READ ui/style.css CORE_CI_UI_CSS)
 file(READ ui/app.js CORE_CI_UI_JAVASCRIPT)
+file(READ deployment/source/core-ci-build.yml.in CORE_CI_SOURCE_WORKFLOW)
 set_property(
     DIRECTORY
     APPEND
     PROPERTY CMAKE_CONFIGURE_DEPENDS ui/index.html ui/style.css ui/app.js
+             deployment/source/core-ci-build.yml.in
 )
 configure_file(src/UiAssets.h.in generated/UiAssets.h @ONLY)
 target_include_directories(core-ci PRIVATE "${PROJECT_BINARY_DIR}/generated")

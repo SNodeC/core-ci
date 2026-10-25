@@ -11,7 +11,7 @@ import urllib.request
 
 from contract import assignment, canonical, output, read_json, require, run
 from github import api
-from sign_native import receipt_path, update
+from sign_native import receipt_path, retained_receipt, update
 from validate import trusted_deployment
 
 
@@ -145,6 +145,7 @@ def wait_for_https(selected, feed):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--phase", choices=("prepare", "push"), required=True)
     parser.add_argument("--assignment", required=True)
     parser.add_argument("--assignment-sha256", required=True)
     parser.add_argument("--build-result", required=True)
@@ -174,7 +175,7 @@ def main():
         root = Path(temporary)
         root.chmod(0o700)
         keys = {}
-        for name in ("APT_SIGNING_KEY", "PACKAGES_APP_PRIVATE_KEY"):
+        for name in ("APT_SIGNING_KEY",) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
             value = os.environ.pop(name, "")
             require(bool(value), "missing protected publication secret: " + name)
             path = root / name
@@ -187,18 +188,21 @@ def main():
             passphrase = root / "passphrase"
             passphrase.write_text(value)
             passphrase.chmod(0o600)
-        token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
-        receipt = update(
-            selected,
-            read_json(arguments.build_result),
-            identity,
-            arguments.artifacts,
-            feed,
-            keys["APT_SIGNING_KEY"],
-            passphrase,
-            Path(__file__).resolve().parents[1] / "keys/apt.asc",
-            root,
-        )
+        if arguments.phase == "prepare":
+            receipt = update(
+                selected,
+                read_json(arguments.build_result),
+                identity,
+                arguments.artifacts,
+                feed,
+                keys["APT_SIGNING_KEY"],
+                passphrase,
+                Path(__file__).resolve().parents[1] / "keys/apt.asc",
+                root,
+            )
+        else:
+            receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
+            require(receipt is not None, "publication requires the prepared verified receipt")
         require(
             sum(
                 path.stat().st_size
@@ -208,14 +212,19 @@ def main():
             < 900 * 1024 * 1024,
             "new packages would exceed reviewed Pages capacity",
         )
-        paths = [receipt_path(selected), "keys/apt.asc"] + [
-            item["path"] for item in receipt["packages"] + receipt["indexes"]
-        ]
-        if receipt.get("development_export"):
-            paths.append(receipt["development_export"]["path"])
-        revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, paths)
-    wait_for_https(selected, feed)
-    print("Verified feed revision:", revision)
+        if arguments.phase == "push":
+            paths = [receipt_path(selected), "keys/apt.asc"] + [
+                item["path"] for item in receipt["packages"] + receipt["indexes"]
+            ]
+            if receipt.get("development_export"):
+                paths.append(receipt["development_export"]["path"])
+            token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
+            revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, paths)
+    if arguments.phase == "push":
+        wait_for_https(selected, feed)
+        print("Verified feed revision:", revision)
+    else:
+        print("Prepared and locally verified publication; no feed mutation requested")
 
 
 if __name__ == "__main__":
