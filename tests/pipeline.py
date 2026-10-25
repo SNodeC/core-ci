@@ -53,6 +53,10 @@ def exercise(args, directory):
     blobs = {}
     writes = 0
     dispatches = []
+    publications = []
+    feed_files = {}
+    deployed_files = {}
+    feed_commits = {}
     runs = {}
     errors = []
     lose_next = False
@@ -79,7 +83,7 @@ def exercise(args, directory):
                          {"path": ".github", "type": "tree", "mode": "040000", "sha": ids[2]}]
         trees[ids[1]] = [{"path": "packages.json", "type": "blob", "mode": "100644", "sha": blob}]
         trees[ids[2]] = [{"path": "workflows", "type": "tree", "mode": "040000", "sha": ids[3]}]
-        trees[ids[3]] = [{"path": "core-ci-build.yml", "type": "blob", "mode": "100644", "sha": workflow_blob}]
+        trees[ids[3]] = [{"path": path, "type": "blob", "mode": "100644", "sha": workflow_blob} for path in ("core-ci-build.yml", "core-ci-publish.yml")]
         return blob
 
     register(head, definition)
@@ -106,7 +110,7 @@ def exercise(args, directory):
             nonlocal lose_next
             value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/app/installations/7/access_tokens":
-                if value["repository_ids"] != [99] or value["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}):
+                if value["repository_ids"] not in ([99], [1000]) or value["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}):
                     errors.append("unexpected installation token scope")
                 self.reply(201, {"token": "synthetic-pipeline-token"})
             elif self.path == "/repos/Owner/example/actions/workflows/core-ci-build.yml/dispatches":
@@ -139,6 +143,22 @@ def exercise(args, directory):
                 except Exception as error:
                     errors.append(str(error))
                     self.reply(422, {})
+            elif self.path == "/repos/Owner/worker/actions/workflows/core-ci-publish.yml/dispatches":
+                try:
+                    selected = json.loads(value["inputs"]["assignment"])
+                    durable = lifecycle.query(db_socket, "SELECT state FROM core_ci.attempts WHERE id='" + selected["attempt"] + "'").strip()
+                    assert durable == "publishing", "publication dispatched before committed authority"
+                    assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts WHERE state='publishing'").strip() == "1"
+                    run_id = 500 + len(publications)
+                    runs[run_id] = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 1000}, "head_repository": {"id": 1000},
+                                    "actor": {"id": 42}, "display_title": "core-ci publish " + selected["attempt"] + " " + value["inputs"]["assignment_sha256"],
+                                    "path": ".github/workflows/core-ci-publish.yml", "head_sha": head, "html_url": "https://github.com/Owner/worker/actions/runs/" + str(run_id),
+                                    "status": "in_progress", "conclusion": None}
+                    publications.append({"assignment": selected, "build_result": json.loads(value["inputs"]["build_result"])})
+                    self.reply(200, {"workflow_run_id": run_id})
+                except Exception as error:
+                    errors.append(str(error))
+                    self.reply(422, {})
             else:
                 errors.append("unexpected mutation " + self.path)
                 self.reply(404, {})
@@ -167,7 +187,15 @@ def exercise(args, directory):
         def do_GET(self):
             parsed = urllib.parse.urlsplit(self.path)
             path = parsed.path
-            if path == "/v2/library/sample/manifests/series":
+            if path.startswith("/receipts/"):
+                content = deployed_files.get(path)
+                self.send_response(200 if content else 404)
+                self.send_header("Content-Length", str(len(content or b"")))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(content or b"")
+                self.close_connection = True
+            elif path == "/v2/library/sample/manifests/series":
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(manifest)))
                 self.send_header("Connection", "close")
@@ -177,12 +205,13 @@ def exercise(args, directory):
             elif path == "/v2/library/sample/blobs/" + config_digest:
                 self.reply(200, json.loads(image_config))
             else:
-                if self.headers.get("Authorization") != "Bearer synthetic-pipeline-token":
+                public = path.startswith("/repos/Owner/feed")
+                if (public and self.headers.get("Authorization")) or (not public and self.headers.get("Authorization") != "Bearer synthetic-pipeline-token"):
                     errors.append("missing scoped GitHub authorization")
-                prefix = "/repos/Owner/example"
+                prefix = "/repos/Owner/" + ("feed" if public else "worker" if path.startswith("/repos/Owner/worker") else "example")
                 suffix = path.removeprefix(prefix)
                 if path == prefix:
-                    self.reply(200, {"id": 99, "full_name": "Owner/example"})
+                    self.reply(200, {"id": 1001 if public else 1000 if prefix.endswith("worker") else 99, "full_name": prefix.removeprefix("/repos/")})
                 elif suffix == "/git/ref/heads/main":
                     self.reply(200, {"object": {"sha": head}})
                 elif suffix == "/commits/main":
@@ -193,6 +222,11 @@ def exercise(args, directory):
                     older = "%2B" in suffix
                     self.reply(200, {"ref": "refs/tags/" + ("v0.9.0+build" if older else "v2.0.0-rc.1"),
                                      "object": {"type": "commit", "sha": older_sha if older else source_sha}})
+                elif public and suffix == "/commits":
+                    selected_path = urllib.parse.parse_qs(parsed.query)["path"][0]
+                    self.reply(200, [{"sha": "e" * 40}] if selected_path in feed_files else [])
+                elif public and suffix.startswith("/git/commits/") and suffix[13:] in feed_commits:
+                    self.reply(200, {"sha": suffix[13:], "tree": {"sha": feed_commits[suffix[13:]]}})
                 elif suffix.startswith("/git/commits/") and suffix[13:] in definitions:
                     commit = suffix[13:]
                     self.reply(200, {"sha": commit, "tree": {"sha": hashlib.sha1(("root" + commit).encode()).hexdigest()}})
@@ -208,7 +242,7 @@ def exercise(args, directory):
                     parts = suffix.split("/")
                     run_id = int(parts[3])
                     run = runs[run_id]
-                    assignment = dispatches[run_id - 100]
+                    assignment = publications[run_id - 500]["assignment"] if run_id >= 500 else dispatches[run_id - 100]
                     if len(parts) == 4:
                         self.reply(200, run)
                     elif parts[4] == "jobs":
@@ -239,14 +273,14 @@ def exercise(args, directory):
         'github.webhook-secret-file="' + str(secret_file) + '"\nui.origin="' + origin + '"\n'
         'registry.default-registry="127.0.0.1:' + str(github.server_port) + '"\nregistry.default-namespace="library"\n'
         'registry.allowed-origin=["' + registry + '"]\npipeline.worker-repository="Owner/worker"\npipeline.tooling-sha="' + "f" * 40 + '"\n'
-        'pipeline.source-workflow-blob="' + workflow_blob + '"\npipeline.publication-ref="main"\npipeline.publication-workflow-blob="' + "a" * 40 + '"\n'
-        'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="https://feed.invalid/"\n'
+        'pipeline.source-workflow-blob="' + workflow_blob + '"\npipeline.publication-ref="main"\npipeline.publication-workflow-blob="' + workflow_blob + '"\n'
+        'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="' + registry + '/"\n'
         'pipeline.gpg-fingerprint="' + "A" * 40 + '"\npipeline.usign-key-sha256="' + "a" * 64 + '"\npipeline.apk-key-sha256="' + "b" * 64 + '"\n')
     settings.chmod(0o600)
     command = [args.executable, "--config-file", str(settings), "--log-file", str(root / "framework.log"), "database", "--mode", "unmanaged",
                "--socket", str(db_socket), "--user", "core_ci_test", "--name", "core_ci", "--password-file", str(password),
                "web", "local", "--port", str(port), "github-http", "remote", "--host", "127.0.0.1", "--port", str(github.server_port),
-               "tls", "--ca-cert", str(certificate), "environment-http", "tls", "--ca-cert", str(certificate)]
+               "tls", "--ca-cert", str(certificate), "environment-http", "tls", "--ca-cert", str(certificate), "feed-http", "tls", "--ca-cert", str(certificate)]
 
     def request(path, body=None, headers=None):
         payload = None if body is None else json.dumps(body).encode()
@@ -260,7 +294,7 @@ def exercise(args, directory):
         return result
 
     def report(run_id, signature=None, repository_id=99):
-        body = {"installation": {"id": 7}, "repository": {"id": repository_id, "full_name": "Owner/example"}, "workflow_run": runs[run_id]}
+        body = {"installation": {"id": 7}, "repository": {"id": 1000 if run_id >= 500 else repository_id, "full_name": "Owner/worker" if run_id >= 500 else "Owner/example"}, "workflow_run": runs[run_id]}
         raw = json.dumps(body).encode()
         signature = signature or "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
         return request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature})
@@ -305,13 +339,44 @@ def exercise(args, directory):
             assert dispatches[2]["source"]["commit"] == older_sha and dispatches[2]["revision"] > dispatches[0]["revision"]
             assert report(101)[0] == 200, "late report was not idempotent"
             runs[102].update(status="completed", conclusion="success")
-            assert report(102)[0] == 200
+            assert report(102)[0] == 202 and len(publications) == 1
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
-            assert current["state"] == "building" and current["activity"] == "build complete; waiting for publication"
+            assert current["state"] == "publishing"
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
             generation = request("/api/graph")[1]["generation"]
             assert report(102)[0] == 200 and len(dispatches) == 3
             assert request("/api/graph")[1]["generation"] == generation, "duplicate report caused a redundant mutation"
+            runs[500].update(status="completed", conclusion="failure")
+            assert report(500)[0] == 202, "a failed publication job without a receipt must preserve uncertainty"
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["state"] == "publishing"
+            lifecycle.stop(application)
+            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
+            request("/api/work/reconcile", {})
+            assert len(publications) == 1, "restart replaced uncertain publication"
+            selected = publications[0]["assignment"]
+            public_run = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["publication_run"]
+            receipt = {"schema": 1, "execution": selected["execution"], "attempt": selected["attempt"],
+                       "assignment_sha256": hashlib.sha256(json.dumps(selected, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                       "source_commit": selected["source"]["commit"], "run": public_run, "build_result": publications[0]["build_result"],
+                       "feed": selected["source"]["deployment"]["feed"], "packages": [{"name": "example", "sha256": "e" * 64}]}
+            path = "receipts/" + selected["execution"] + "/" + str(selected["revision"]) + ".json"
+            raw = json.dumps(receipt).encode()
+            sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+            blobs[sha] = raw
+            feed_files[path] = raw
+            ids = [hashlib.sha1(("feed-" + str(index)).encode()).hexdigest() for index in range(3)]
+            feed_commits["e" * 40] = ids[0]
+            trees[ids[0]] = [{"path": "receipts", "type": "tree", "mode": "040000", "sha": ids[1]}]
+            trees[ids[1]] = [{"path": selected["execution"], "type": "tree", "mode": "040000", "sha": ids[2]}]
+            trees[ids[2]] = [{"path": str(selected["revision"]) + ".json", "type": "blob", "mode": "100644", "sha": sha}]
+            deployed_files["/" + path] = b"modified HTTPS receipt"
+            assert report(500)[0] == 202, "modified HTTPS receipt authorized publication"
+            deployed_files["/" + path] = raw
+            assert report(500)[0] == 200, "verified commit and HTTPS bytes did not resolve a lost publication outcome"
+            current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
+            assert current["state"] == "published" and len(publications) == 1
+            assert report(500)[0] == 200 and report(102)[0] == 200, "late report regressed published state"
             assert request("/api/repositories/save", {"repository": "Owner/worker", "branch": "main", "definition": definition})[0] == 422
             assert not errors, errors
             assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts").strip() == "3"

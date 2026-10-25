@@ -67,6 +67,7 @@ namespace coreci {
         Node beginBuild(const std::string& id) const;
         Node bindRun(const std::string& id, const std::string& attemptId, bool publication, const nlohmann::json& run) const;
         Node built(const std::string& id, const std::string& attemptId, const nlohmann::json& result) const;
+        bool publicationReady(const std::string& id) const;
         Node beginPublication(const std::string& id) const;
         Node published(const std::string& id, const std::string& attemptId, const nlohmann::json& receipt) const;
         Node failed(const std::string& id, const std::string& attemptId, const std::string& reason) const;

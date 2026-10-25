@@ -185,7 +185,11 @@ namespace coreci {
         file(repository, commit, "ci/packages.json", callback);
     }
 
-    void SourceReader::file(const std::string& repository, const std::string& commit, const std::string& path, const Callback& callback) {
+    void SourceReader::file(const std::string& repository,
+                            const std::string& commit,
+                            const std::string& path,
+                            const Callback& callback,
+                            bool publicRepository) {
         try {
             static const std::regex pathSyntax(R"(^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$)");
             if (!validSha(commit) || path.size() > 512 || !std::regex_match(path, pathSyntax)) {
@@ -193,6 +197,7 @@ namespace coreci {
             } else {
                 const auto reading = std::make_shared<Reading>();
                 reading->repository = repository;
+                reading->publicRepository = publicRepository;
                 reading->source = {{"commit", commit}};
                 reading->callback = callback;
                 std::size_t offset = 0;
@@ -208,28 +213,29 @@ namespace coreci {
                 if (!safe) {
                     throw std::invalid_argument("selected file must remain inside its checkout");
                 }
-                github.request(
-                    repository,
-                    "GET",
-                    "/git/commits/" + commit,
-                    nullptr,
-                    {{"contents", "read"}},
-                    [this, reading, commit](const GitHubResult& result) {
-                        if (result.status != 200 || !result.error.empty()) {
-                            reading->callback(
-                                {result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
-                        } else {
-                            try {
-                                require(result.body.at("sha") == commit, "definition commit differs from selected source");
-                                tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
-                            } catch (const std::exception& error) {
-                                reading->callback({422, nullptr, "", "", error.what()});
-                            }
+                request(reading, "/git/commits/" + commit, [this, reading, commit](const GitHubResult& result) {
+                    if (result.status != 200 || !result.error.empty()) {
+                        reading->callback({result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
+                    } else {
+                        try {
+                            require(result.body.at("sha") == commit, "definition commit differs from selected source");
+                            tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
+                        } catch (const std::exception& error) {
+                            reading->callback({422, nullptr, "", "", error.what()});
                         }
-                    });
+                    }
+                });
             }
         } catch (const std::exception& error) {
             callback({422, nullptr, "", "", error.what()});
+        }
+    }
+
+    void SourceReader::request(const std::shared_ptr<Reading>& reading, const std::string& suffix, const GitHub::Callback& callback) {
+        if (reading->publicRepository) {
+            github.publicRead(reading->repository, suffix, callback);
+        } else {
+            github.request(reading->repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback);
         }
     }
 
@@ -237,43 +243,37 @@ namespace coreci {
         if (!validSha(sha)) {
             reading->callback({422, nullptr, "", "", "definition tree has an invalid immutable identity"});
         } else {
-            github.request(reading->repository,
-                           "GET",
-                           "/git/trees/" + sha,
-                           nullptr,
-                           {{"contents", "read"}},
-                           [this, reading, sha, position](const GitHubResult& result) {
-                               if (result.status != 200 || !result.error.empty()) {
-                                   reading->callback({502, nullptr, "", "", "could not read selected definition tree"});
-                               } else {
-                                   try {
-                                       require(result.body.at("sha") == sha && !result.body.value("truncated", true),
-                                               "definition tree is truncated or has changed identity");
-                                       const auto& name = reading->path.at(position);
-                                       nlohmann::json selected;
-                                       for (const auto& entry : result.body.at("tree")) {
-                                           if (entry.at("path") == name) {
-                                               require(selected.is_null(), "ambiguous definition tree entry");
-                                               selected = entry;
-                                           }
-                                       }
-                                       if (selected.is_null()) {
-                                           reading->callback({404, reading->source, "", "", "selected file is absent at the exact commit"});
-                                       } else if (position + 1 < reading->path.size()) {
-                                           require(selected.at("type") == "tree" && selected.at("mode") == "040000",
-                                                   "selected file parent must be a directory inside the checkout");
-                                           tree(reading, selected.at("sha").get<std::string>(), position + 1);
-                                       } else {
-                                           require(selected.at("type") == "blob" &&
-                                                       (selected.at("mode") == "100644" || selected.at("mode") == "100755"),
-                                                   "selected file must be regular, not a symlink or submodule");
-                                           blob(reading, selected.at("sha").get<std::string>());
-                                       }
-                                   } catch (const std::exception& error) {
-                                       reading->callback({422, nullptr, "", "", error.what()});
-                                   }
-                               }
-                           });
+            request(reading, "/git/trees/" + sha, [this, reading, sha, position](const GitHubResult& result) {
+                if (result.status != 200 || !result.error.empty()) {
+                    reading->callback({502, nullptr, "", "", "could not read selected definition tree"});
+                } else {
+                    try {
+                        require(result.body.at("sha") == sha && !result.body.value("truncated", true),
+                                "definition tree is truncated or has changed identity");
+                        const auto& name = reading->path.at(position);
+                        nlohmann::json selected;
+                        for (const auto& entry : result.body.at("tree")) {
+                            if (entry.at("path") == name) {
+                                require(selected.is_null(), "ambiguous definition tree entry");
+                                selected = entry;
+                            }
+                        }
+                        if (selected.is_null()) {
+                            reading->callback({404, reading->source, "", "", "selected file is absent at the exact commit"});
+                        } else if (position + 1 < reading->path.size()) {
+                            require(selected.at("type") == "tree" && selected.at("mode") == "040000",
+                                    "selected file parent must be a directory inside the checkout");
+                            tree(reading, selected.at("sha").get<std::string>(), position + 1);
+                        } else {
+                            require(selected.at("type") == "blob" && (selected.at("mode") == "100644" || selected.at("mode") == "100755"),
+                                    "selected file must be regular, not a symlink or submodule");
+                            blob(reading, selected.at("sha").get<std::string>());
+                        }
+                    } catch (const std::exception& error) {
+                        reading->callback({422, nullptr, "", "", error.what()});
+                    }
+                }
+            });
         }
     }
 
@@ -334,23 +334,18 @@ namespace coreci {
         if (!validSha(sha)) {
             reading->callback({422, nullptr, "", "", "definition blob has an invalid immutable identity"});
         } else {
-            github.request(reading->repository,
-                           "GET",
-                           "/git/blobs/" + sha,
-                           nullptr,
-                           {{"contents", "read"}},
-                           [reading, sha](const GitHubResult& result) {
-                               if (result.status != 200 || !result.error.empty()) {
-                                   reading->callback({502, nullptr, "", sha, "could not read selected definition blob"});
-                               } else {
-                                   try {
-                                       const auto content = decode(result.body, sha);
-                                       reading->callback({200, reading->source, content, sha, ""});
-                                   } catch (const std::exception& error) {
-                                       reading->callback({422, reading->source, "", sha, error.what()});
-                                   }
-                               }
-                           });
+            request(reading, "/git/blobs/" + sha, [reading, sha](const GitHubResult& result) {
+                if (result.status != 200 || !result.error.empty()) {
+                    reading->callback({502, nullptr, "", sha, "could not read selected definition blob"});
+                } else {
+                    try {
+                        const auto content = decode(result.body, sha);
+                        reading->callback({200, reading->source, content, sha, ""});
+                    } catch (const std::exception& error) {
+                        reading->callback({422, reading->source, "", sha, error.what()});
+                    }
+                }
+            });
         }
     }
 } // namespace coreci

@@ -120,12 +120,9 @@ int main() {
         auto& row = sdk["matrix"][0];
         row["family"] = "openwrt";
         row["distribution"] = "openwrt";
-        row["build"] = {{"release", "99.1.2"},
-                        {"target", "custom/target"},
-                        {"format", "apk"},
-                        {"sdk", {{"url", "https://owner.example/sdk.tar.xz"}, {"sha256", std::string(64, 'a')}}}};
+        row["build"] = {{"target", "custom/target"}, {"format", "apk"}};
         coreci::Definition::parse(sdk);
-        row["build"]["sdk"]["sha256"] = "placeholder";
+        row["build"]["sdk"]["sha256"] = "not source-owned";
         rejects([&]() {
             coreci::Definition::parse(sdk);
         });

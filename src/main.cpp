@@ -29,6 +29,8 @@ int main(int argc, char* argv[]) {
 
     auto* pipelineConfig = utils::Config::configRoot.newSubCommand<coreci::PipelineConfig>();
 
+    coreci::FeedProof feeds(*pipelineConfig, github, sources);
+
     auto* registryConfig = utils::Config::configRoot.newSubCommand<coreci::RegistryConfig>();
     coreci::EnvironmentResolver environments(*registryConfig);
 
@@ -56,6 +58,7 @@ int main(int argc, char* argv[]) {
     try {
         github.loadCredentials();
         environments.configure();
+        feeds.configure();
 
         database = std::make_unique<database::mariadb::MariaDBClient>(
             databaseConfig->connection(), [&](const database::mariadb::MariaDBState& state) {
@@ -241,8 +244,8 @@ int main(int argc, char* argv[]) {
         store = std::make_unique<coreci::Database>(*database);
         graphStore = std::make_unique<coreci::GraphStore>(*store);
         enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources, *pipelineConfig);
-        pipeline =
-            std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, environments, *enrollment, *graphStore);
+        pipeline = std::make_unique<coreci::Pipeline>(
+            *pipelineConfig, *githubConfig, github, sources, environments, *enrollment, *graphStore, feeds);
 
         if (databaseConfig->mode == "managed") {
             managed = std::make_unique<coreci::ManagedDatabase>();

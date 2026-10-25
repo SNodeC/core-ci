@@ -49,7 +49,7 @@ namespace {
                 {"workflow_blob_sha", std::string(40, publication ? 'd' : 'c')}};
     }
 
-    void publish(coreci::Graph& graph, const std::string& id) {
+    void completeBuild(coreci::Graph& graph, const std::string& id) {
         const auto attempt = graph.node(id).attempts.back().id;
         apply(graph, graph.beginBuild(id));
         check(graph.node(id).attempts.back().assignment.at("artifact_name") ==
@@ -63,6 +63,11 @@ namespace {
                           {{"run", building.buildRun},
                            {"assignment_sha256", coreci::Graph::digest(building.assignment)},
                            {"artifacts", {{{"id", 1}, {"sha256", std::string(64, 'e')}}}}}));
+    }
+
+    void publish(coreci::Graph& graph, const std::string& id) {
+        completeBuild(graph, id);
+        const auto attempt = graph.node(id).attempts.back().id;
         apply(graph, graph.beginPublication(id));
         apply(graph, graph.bindRun(id, attempt, true, run(graph.node(id), true)));
         const auto& publishing = graph.node(id).attempts.back();
@@ -116,6 +121,20 @@ int main() {
         const auto join = find(graph, "j", "target-first", sha);
         const auto otherJoin = find(graph, "j", "target-second", sha);
         check(graph.node(join).prerequisites.size() == 2 && !graph.blockers(join).empty(), "join did not bind both prerequisites");
+        auto serialized = graph;
+        const auto secondRoot = find(serialized, "r", "target-second", sha);
+        completeBuild(serialized, root);
+        completeBuild(serialized, secondRoot);
+        const coreci::GraphChange conflicting{{serialized.beginPublication(root), serialized.beginPublication(secondRoot)},
+                                              serialized.nextRebuildRevision()};
+        rejects([&]() {
+            serialized.apply(conflicting);
+        });
+        apply(serialized, serialized.beginPublication(root));
+        check(!serialized.publicationReady(secondRoot), "uncertain feed writer did not block another publication");
+        rejects([&]() {
+            serialized.beginPublication(secondRoot);
+        });
         publish(graph, root);
         check(graph.blockers(a).empty() && graph.blockers(b).empty(), "published root did not unblock both branches");
         publish(graph, a);
@@ -201,6 +220,47 @@ int main() {
         check(restored.nodes().size() == graph.nodes().size() && restored.node(join).attempts.back().assignment == frozen,
               "restart changed frozen selection/attempt inputs");
         check(restored.node(explicitOlder).supersededBy.empty(), "explicit older selection was superseded");
+        std::map<std::string, json> sdkSources{{"sdkroot", graph_fixture::source("sdkroot", 21, {})},
+                                               {"sdkapp", graph_fixture::source("sdkapp", 22, {"sdkroot"})}};
+        for (auto& [name, source] : sdkSources) {
+            auto row = source["definition"]["matrix"][0];
+            row["family"] = "openwrt";
+            row["distribution"] = "openwrt";
+            row["suite"] = "99.1";
+            row["build"] = {{"target", "custom/target"}, {"format", "apk"}};
+            source["definition"]["build"] = {{"openwrt", "ci/openwrt.sh"}};
+            source["definition"]["matrix"] = {row};
+            source["environments"] = {
+                {row["id"].get<std::string>(),
+                 {{"release", "99.1.10"}, {"sdk", {{"url", "https://sdk.example/archive.tar.zst"}, {"sha256", std::string(64, 'a')}}}}}};
+        }
+        coreci::Graph sdkGraph;
+        const auto firstSdk = sdkGraph.select("sdkroot", sdkSources, false);
+        check(firstSdk.nodes.size() == 2, "latest SDK selection lost dependent work");
+        sdkGraph.apply(firstSdk);
+        for (auto& [name, source] : sdkSources) {
+            source["environments"]["target-first"]["sdk"]["sha256"] = std::string(64, 'b');
+        }
+        const auto newerSdk = sdkGraph.select("sdkroot", sdkSources, false);
+        std::size_t newSelections = 0;
+        std::size_t supersededSelections = 0;
+        for (const auto& node : newerSdk.nodes) {
+            if (!sdkGraph.nodes().contains(node.id)) {
+                ++newSelections;
+                check(node.source.at("environment").at("sdk").at("sha256") == std::string(64, 'b'),
+                      "new work did not retain the newly resolved SDK identity");
+            } else {
+                ++supersededSelections;
+                check(!node.supersededBy.empty() && node.source.at("environment").at("sdk").at("sha256") == std::string(64, 'a'),
+                      "superseded waiting SDK inputs/history were rewritten");
+            }
+        }
+        check(newSelections == 2 && supersededSelections == 2,
+              "latest SDK selection must create distinct work and retain superseded waiting history");
+        sdkSources["sdkapp"]["environments"]["target-first"]["sdk"]["sha256"] = std::string(64, 'c');
+        rejects([&]() {
+            sdkGraph.select("sdkroot", sdkSources, false);
+        });
         std::cout << "PASS local graph/state boundaries: diamond, independent targets, pinned inputs, failures/retry, delayed reports and "
                      "supersession\n";
     } catch (const std::exception& error) {

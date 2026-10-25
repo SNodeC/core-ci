@@ -97,10 +97,14 @@ manifest digests, configuration digest and canonical digest-qualified image. It 
 optional embedded data/alternative descriptor URLs and fetches canonical registry paths.
 It never pulls filesystem layers or executes a container locally.
 
-`registry.sdk-origin` separately approves exact SDK download origins. Selection retains
-the source definition's exact SDK URL/checksum; GitHub workers must download, verify and
-validate release/toolchain compatibility before executing any hook. Pinning an SDK here
-is not approval to execute its tooling beside publication secrets.
+`registry.sdk-base-url` selects the deployment-owned OpenWrt HTTPS metadata origin.
+OpenWrt JSON rows contain target and format, with suite and arch at row level. There is no
+source-owned SDK SHA, URL or exact patch release. For each new selection, read .versions.json,
+choose the highest stable numeric release in that suite, verify target/architecture/format
+from profiles.json, and resolve the SDK through sha256sums. The resulting URL, release and
+checksum are recorded only in immutable execution inputs. Workers verify bytes before use;
+retries keep their recorded inputs. No compiled release/architecture/runner catalogue exists.
+The sandbox origin is https://downloads.openwrt.org, configured outside the checkout.
 
 The registry transport still reuses one named instance between approved endpoints.
 The owner deferred refactoring to fixed endpoint clients; that work remains recorded.
@@ -154,3 +158,25 @@ run, one assigned build artifact up to one GiB, and bounded workflow-run history
 A successful build records GitHub job/artifact identities; it remains building while waiting
 for trusted publication. Signing, feed receipts and the worker tooling remain ongoing work;
 these interfaces do not claim a working live deployment.
+
+## Verified feed receipts
+
+The named feed-http instance is registered before init and used only for the configured
+feed origin. Publication authorization is committed before dispatch and derived from graph
+state: an unresolved writer blocks the same repository/branch. The public feed is excluded
+from controller App grants. Public GitHub reads verify its immutable repository ID, receipt
+commit and exact regular Git blob through the existing file reader. HTTPS receipt bytes must
+match before published state releases dependents. Failed jobs without sufficient feed proof
+remain publishing/uncertain; no replacement is dispatched. Explicit inspection exposes the
+reason. An assigned origin differing from the configured feed endpoint remains unresolved
+until inspected with the proper deployment settings. Existing environment-client endpoint
+refactoring remains deferred as instructed.
+
+A latest-SDK row is, for example:
+
+```json
+{"id":"openwrt-25.12-x86_64","family":"openwrt","distribution":"openwrt","suite":"25.12","arch":"x86_64","runner":"ubuntu-24.04","build":{"target":"x86/64","format":"apk"}}
+```
+
+The suite is configured feed series, not a compiled support list. SDK discovery does not
+create a timer or an automatic rebuild policy: it runs when new work is selected.

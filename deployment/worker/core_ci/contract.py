@@ -242,9 +242,9 @@ def compatibility(selected):
     else:
         result.update(
             {
-                "release": target["build"]["release"],
+                "release": selected["environment"]["release"],
                 "target": target["build"]["target"],
-                "sdk_sha256": target["build"]["sdk"]["sha256"],
+                "sdk_sha256": selected["environment"]["sdk"]["sha256"],
             }
         )
     return result

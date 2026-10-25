@@ -49,8 +49,8 @@ keys; the eventual CLI/help must expose their registered framework equivalents.
 | limits.definition_bytes / limits.graph_nodes | Explicit supported controller resource bounds |
 | limits.assignment_bytes | Bound within verified GitHub dispatch payload limit |
 | registry.credentials_file | Optional protected credentials for explicitly configured private registry auth |
-| registry.allowed_origins / sdk.allowed_origins | Deployment-approved download/token origins; restrict redirects and credential forwarding |
-| worker.trusted_sdk_manifest | Reviewed worker trust file approving exact SDK/host-tooling digests for privileged execution |
+| registry.allowed-origin / registry.sdk-base-url | Deployment-approved registry/token origins and OpenWrt metadata service |
+| worker.sdk_metadata_origin | Trusted official SDK metadata service; resolved checksums are execution evidence, not manual source inputs |
 
 Secrets are read as files and not serialized back into UI responses, source definitions,
 logging or database snapshots. Repository installation grants and actual SDK URLs/checksums
@@ -64,10 +64,10 @@ PACKAGES_GPG_FINGERPRINT, PACKAGES_GPG_PUBLIC_KEY_FILE,
 OPENWRT_USIGN_PUBLIC_KEY_FILE, OPENWRT_APK_PUBLIC_KEY_FILE.
 Record the trusted tooling SHA and approved workflow identities with deployment settings.
 Public key files are reviewed worker keys/ files, also published under feed keys/.
-No key authority is read from source artifacts or an SDK. Keep a reviewed trusted-sdk manifest
-with approved exact SDK/host-tooling digests. Source JSON selects SDK bytes but cannot grant
-them permission to run beside signing keys. SDK approval changes are reviewed deployment
-inputs, not implicit support for arbitrary source-provided executables.
+No key authority is read from source artifacts or an SDK. The owner selected automatic latest SDK discovery, with no source-maintained SHA values.
+Trust the explicitly configured official metadata service and verify each resolved checksum.
+The publisher must verify SDK tooling provenance from this deployment-owned authority;
+source artifacts cannot choose executables to run beside signing keys.
 
 Protect package-publication so only approved trusted worker code can use it. Agree whether
 reviewers are required: manual approval on every publication changes automated operation.
@@ -159,7 +159,7 @@ sandbox database before calling the operation recoverable.
 
 ## Activation handover
 
-Provide actual App/installation grants, source hooks/recipes, exact SDK URLs/checksums,
+Provide actual App/installation grants, source hooks/recipes, the trusted SDK metadata origin,
 trusted tooling SHA, workflow refs, public keys/fingerprints, feed branch/HTTPS destination,
 TLS/webhook reachability and UI access protection. Review generated source/worker/feed changes
 before deploying them. For Pages include the reviewed deployment workflow and limit check.

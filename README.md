@@ -11,7 +11,8 @@ and covered locally. Trusted worker tooling, signing/publication and live packag
 remain in progress. Fresh native worker workflows, isolated build preparation and trusted
 DEB/RPM signing/indexing are now prepared under deployment/. Local tests build real packages,
 verify signatures, reject modified data and preserve bytes on replay. OpenWrt workers and
-controller publication integration are unfinished. Nothing has been installed, pushed or
+live package publication acceptance are unfinished. Controller publication dispatch and
+Git/HTTPS receipt proof are now wired and covered by local synthetic-service fixtures. Nothing has been installed, pushed or
 externally activated. See [worker setup and limitations](deployment/README.md).
 
 See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),

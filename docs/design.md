@@ -4,6 +4,12 @@ Status: complete proposal for review, not an implementation or deployment claim.
 This revision follows the current owner specification and incorporates the independent
 [Claude review](claude-design-review.md). No discarded core-ci source or design is reused.
 
+Owner SDK policy update on 2026-10-25 supersedes the original exact source-owned SDK fields:
+use the latest stable SDK for each configured OpenWrt suite/target on new selections. No
+SDK SHA, URL or exact patch release is maintained in repository JSON. Resolve these through
+the configured official metadata service and freeze the resulting identities per execution.
+Existing executions and retries retain their inputs.
+
 ## 1. Scope, roles and decisions
 
 Build a small persistent dependency graph with an integrated state machine. The
@@ -66,15 +72,16 @@ Finalize schema 1 with the owner's field layout:
 | build | native and/or openwrt repository-relative hook paths used by the corresponding rows |
 | Every row | id, family, distribution, suite, arch, runner, build |
 | Native row build | image, platform, format=deb or rpm |
-| OpenWrt row build | release, target, format=ipk or apk, sdk.url, sdk.sha256 |
+| OpenWrt row build | target, format=ipk or apk; latest SDK resolved per suite at selection |
 
 Runner may be a GitHub-supported selector string or label array; preserve it without
 rewriting. Runner-group objects require a separately specified worker capability, not a
 controller guess. Preserve supplied worker JSON; validate against the pinned worker's
 versioned contract and reject unknown/unsupported parameters explicitly. The controller
 contains no distribution list, architecture alias table, SDK catalogue or runner mapping.
-Arch appears only at row level; suite is feed series; release identifies the SDK patch.
-HTTPS SDK URLs and actual 64-hex SHA256 values are required before execution.
+Arch appears only at row level; suite is feed series. The latest stable SDK patch is
+resolved automatically from deployment-owned metadata. Its exact HTTPS URL/checksum belong
+to execution evidence, with no SDK hash maintained by repository owners.
 
 Enrollment stores stable GitHub repository ID, full name and a unique local dependency
 name. Namespace ownership is exclusive: package names must equal the enrolled namespace
@@ -104,9 +111,10 @@ Missing/invalid definitions at the highest tag are errors; do not fall back to a
 
 Row id is a local label, not a cross-repository foreign key. Match native prerequisites by
 family/distribution/suite/arch/format plus build.platform. Match OpenWrt prerequisites by
-family/distribution/suite/arch/format, release, build.target and SDK SHA256. Different row
-labels can match; zero or multiple matching rows is an explicit configuration error.
-Different SDK download URLs with the same verified content hash need not be incompatible.
+family/distribution/suite/arch/format and build.target, then require identical resolved
+SDK release/content identities. Different row labels can match; zero or multiple matching
+rows is an explicit configuration error. An old prerequisite selected with a different SDK
+is not silently substituted or rebuilt; request compatible prerequisite work explicitly.
 
 Matching coordinates alone is insufficient proof of native ABI compatibility. The worker
 checks the actual image OS/platform, package architecture, package dependencies and export
@@ -124,7 +132,7 @@ rewrite JSON to a digest or resolve a mutable image again on retry. Digest-form 
 are verified too. Unsupported registries/authentication/platform descriptors fail explicitly.
 Use existing HTTPS/cryptographic libraries, with no local image pull or package work.
 
-SDK bytes are pinned by their configured SHA256. Actual release/architecture/toolchain
+SDK bytes are pinned in execution evidence by the automatically resolved official checksum. Actual release/architecture/toolchain
 metadata is verified in the worker before any source hook runs; record that evidence.
 Do not pretend the controller knows extracted SDK metadata before downloading it. The
 publisher independently obtains the same verified SDK's host tooling when signing APK.

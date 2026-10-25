@@ -2,11 +2,14 @@
 
 #include "Definition.h"
 #include "HttpsUrl.h"
+#include "Version.h"
 
 #include <algorithm>
 #include <array>
 #include <openssl/evp.h>
+#include <optional>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <web/http/http_utils.h>
 
@@ -57,8 +60,8 @@ namespace coreci {
                             ->take_all(),
                         true);
         setConfigurable(
-            addOptionVariable("--sdk-origin", sdkOrigins, "Approved exact-SDK download origin", "origin", CLI::TypeValidator<std::string>())
-                ->take_all(),
+            addOptionVariable(
+                "--sdk-base-url", sdkBaseUrl, "OpenWrt HTTPS release metadata service origin", "url", CLI::TypeValidator<std::string>()),
             true);
     }
 
@@ -74,10 +77,8 @@ namespace coreci {
             require(url.path == "/", "registry origin configuration cannot contain a path or query");
             allowedOrigins.insert(url.origin);
         }
-        for (const auto& value : config.sdkOrigins) {
-            const HttpsUrl url(value);
-            require(url.path == "/", "SDK origin configuration cannot contain a path or query");
-            sdkOrigins.insert(url.origin);
+        if (!config.sdkBaseUrl.empty()) {
+            require(HttpsUrl(config.sdkBaseUrl).path == "/", "SDK metadata service must be an HTTPS origin");
         }
         if (!config.defaultRegistry.empty()) {
             const HttpsUrl url("https://" + config.defaultRegistry);
@@ -111,11 +112,7 @@ namespace coreci {
                 const auto& row = rows.at(reading->row);
                 const auto& build = row.at("build");
                 if (row.at("family") == "openwrt") {
-                    const HttpsUrl url(build.at("sdk").at("url").get<std::string>());
-                    require(sdkOrigins.contains(url.origin), "SDK download origin is not approved by deployment configuration");
-                    reading->source["environments"][row.at("id").get<std::string>()] = {{"sdk", build.at("sdk")}};
-                    ++reading->row;
-                    next(reading);
+                    sdk(reading);
                 } else {
                     std::string image = build.at("image").get<std::string>();
                     const auto slash = image.find('/');
@@ -190,6 +187,94 @@ namespace coreci {
         const auto header = result.headers.find("Docker-Content-Digest");
         require(header == result.headers.end() || header->second == digest, "registry digest header differs from document bytes");
         return digest;
+    }
+
+    void EnvironmentResolver::sdk(const std::shared_ptr<Reading>& reading) {
+        require(!config.sdkBaseUrl.empty(), "configure registry.sdk-base-url for latest OpenWrt SDK resolution");
+        const HttpsUrl base(config.sdkBaseUrl);
+        const auto row = reading->source.at("definition").at("matrix").at(reading->row);
+        http.request(base.host, base.port, "GET", "/.versions.json", {}, "", [this, reading, base, row](const HttpResult& versions) {
+            try {
+                require(versions.status == 200 && versions.error.empty(), "OpenWrt release metadata is unavailable");
+                const auto document = nlohmann::json::parse(versions.body);
+                std::optional<Version> highest;
+                const auto prefix = row.at("suite").get<std::string>() + ".";
+                require(document.at("versions_list").is_array() && document.at("versions_list").size() <= 4096,
+                        "invalid OpenWrt release list");
+                for (const auto& item : document.at("versions_list")) {
+                    const auto text = item.get<std::string>();
+                    if (text.starts_with(prefix)) {
+                        const Version candidate(text);
+                        if (candidate.prerelease.empty() && (!highest || candidate.compare(*highest) > 0)) {
+                            highest = candidate;
+                        }
+                    }
+                }
+                require(highest.has_value(), "no stable SDK release exists for the configured OpenWrt series");
+                const auto release = highest->tag;
+                const auto root = "/releases/" + release + "/targets/" + row.at("build").at("target").get<std::string>() + "/";
+                http.request(
+                    base.host,
+                    base.port,
+                    "GET",
+                    root + "profiles.json",
+                    {},
+                    "",
+                    [this, reading, base, row, root, release](const HttpResult& profiles) {
+                        try {
+                            require(profiles.status == 200 && profiles.error.empty(), "selected OpenWrt target metadata is unavailable");
+                            const auto profile = nlohmann::json::parse(profiles.body);
+                            require(profile.at("version_number") == release && profile.at("target") == row.at("build").at("target") &&
+                                        profile.at("arch_packages") == row.at("arch"),
+                                    "OpenWrt release/target/package architecture mismatch");
+                            const auto packages = profile.at("default_packages").get<std::vector<std::string>>();
+                            const bool ipk = std::find(packages.begin(), packages.end(), "opkg") != packages.end();
+                            const bool apk = std::any_of(packages.begin(), packages.end(), [](const auto& name) {
+                                return name == "apk" || name == "apk-mbedtls" || name == "apk-openssl";
+                            });
+                            require((row.at("build").at("format") == "ipk" && ipk && !apk) ||
+                                        (row.at("build").at("format") == "apk" && apk && !ipk),
+                                    "configured package format differs from the latest OpenWrt target");
+                            http.request(
+                                base.host,
+                                base.port,
+                                "GET",
+                                root + "sha256sums",
+                                {},
+                                "",
+                                [this, reading, base, row, root, release](const HttpResult& sums) {
+                                    try {
+                                        require(sums.status == 200 && sums.error.empty(), "latest SDK checksum metadata is unavailable");
+                                        static const std::regex entry(
+                                            R"(^([a-f0-9]{64}) \*?(openwrt-sdk-[A-Za-z0-9_.-]+\.tar\.(xz|zst|gz))$)");
+                                        std::istringstream lines(sums.body);
+                                        std::string line;
+                                        nlohmann::json selected;
+                                        while (std::getline(lines, line)) {
+                                            std::smatch match;
+                                            if (std::regex_match(line, match, entry)) {
+                                                require(selected.is_null(),
+                                                        "latest SDK archive is ambiguous; unsupported worker configuration");
+                                                selected = {{"url", base.origin + root + match[2].str()}, {"sha256", match[1].str()}};
+                                            }
+                                        }
+                                        require(!selected.is_null(), "latest SDK archive is absent from official checksum metadata");
+                                        reading->source["environments"][row.at("id").get<std::string>()] = {{"release", release},
+                                                                                                            {"sdk", selected}};
+                                        ++reading->row;
+                                        next(reading);
+                                    } catch (const std::exception& error) {
+                                        reading->callback({nullptr, error.what()});
+                                    }
+                                });
+                        } catch (const std::exception& error) {
+                            reading->callback({nullptr, error.what()});
+                        }
+                    });
+            } catch (const std::exception& error) {
+                reading->callback({nullptr, error.what()});
+            }
+        });
     }
 
     void EnvironmentResolver::manifest(const std::shared_ptr<Reading>& reading, const nlohmann::json& descriptor, unsigned int depth) {

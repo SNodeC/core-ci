@@ -22,14 +22,16 @@ namespace coreci {
                        SourceReader& sources,
                        EnvironmentResolver& environments,
                        Enrollment& enrollment,
-                       GraphStore& store)
+                       GraphStore& store,
+                       FeedProof& feeds)
         : config(config)
         , app(app)
         , github(github)
         , sources(sources)
         , environments(environments)
         , enrollment(enrollment)
-        , store(store) {
+        , store(store)
+        , feeds(feeds) {
     }
 
     void Pipeline::request(const std::string& repository,
@@ -239,7 +241,12 @@ namespace coreci {
         try {
             GraphChange change;
             change.nextRevision = store.graph().nextRebuildRevision();
+            bool publicationSelected = false;
             for (const auto& [id, node] : store.graph().nodes()) {
+                if (!publicationSelected && store.graph().publicationReady(id)) {
+                    change.nodes.push_back(store.graph().beginPublication(id));
+                    publicationSelected = true;
+                }
                 if (store.graph().blockers(id).empty()) {
                     const auto assigned = store.graph().beginBuild(id);
                     require(assigned.attempts.back().assignment.dump().size() <= 60000,
@@ -256,12 +263,14 @@ namespace coreci {
                     } else {
                         auto responses = std::make_shared<nlohmann::json>(nlohmann::json::array());
                         for (const auto& node : nodes) {
-                            dispatch(node, false, [responses, count = nodes.size(), callback](const PipelineResult& dispatched) {
-                                responses->push_back(dispatched.body);
-                                if (responses->size() == count) {
-                                    callback({202, {{"assigned", count}, {"dispatches", *responses}}});
-                                }
-                            });
+                            dispatch(node,
+                                     node.attempts.back().state == "publishing",
+                                     [responses, count = nodes.size(), callback](const PipelineResult& dispatched) {
+                                         responses->push_back(dispatched.body);
+                                         if (responses->size() == count) {
+                                             callback({202, {{"assigned", count}, {"dispatches", *responses}}});
+                                         }
+                                     });
                         }
                     }
                 });
@@ -394,7 +403,8 @@ namespace coreci {
                                             "GitHub executed a workflow outside the approved blob identity");
                                     const auto& current = store.graph().node(execution);
                                     if (current.attempts.back().id != attemptId || current.attempts.back().state == "published" ||
-                                        current.attempts.back().state == "failed") {
+                                        current.attempts.back().state == "failed" ||
+                                        (!publication && current.attempts.back().state == "publishing")) {
                                         callback({200, {{"execution", execution}, {"report", "late or terminal; history retained"}}});
                                     } else {
                                         const nlohmann::json identity{{"id", run.at("id")},
@@ -411,6 +421,8 @@ namespace coreci {
                                                        callback(stored);
                                                    } else if (run.at("status") != "completed") {
                                                        callback(stored);
+                                                   } else if (publication) {
+                                                       publicationResult(store.graph().node(execution), run, callback);
                                                    } else if (run.at("conclusion") != "success") {
                                                        try {
                                                            change(store.graph().failed(execution,
@@ -421,13 +433,8 @@ namespace coreci {
                                                        } catch (const std::exception& error) {
                                                            callback({409, {{"error", error.what()}}});
                                                        }
-                                                   } else if (!publication) {
-                                                       buildArtifacts(store.graph().node(execution), callback);
                                                    } else {
-                                                       callback({202,
-                                                                 {{"execution", execution},
-                                                                  {"state", "publishing"},
-                                                                  {"report", "awaiting verified feed publication receipt"}}});
+                                                       buildArtifacts(store.graph().node(execution), callback);
                                                    }
                                                });
                                     }
@@ -504,7 +511,13 @@ namespace coreci {
                                 const auto result = nlohmann::json{{"run", attempt.buildRun},
                                                                    {"assignment_sha256", Graph::digest(attempt.assignment)},
                                                                    {"artifacts", {selected}}};
-                                change(store.graph().built(node.id, attempt.id, result), callback);
+                                change(store.graph().built(node.id, attempt.id, result), [this, callback](const PipelineResult& stored) {
+                                    if (stored.status == 200) {
+                                        advance(callback);
+                                    } else {
+                                        callback(stored);
+                                    }
+                                });
                             } catch (const std::exception& error) {
                                 callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
                             }
@@ -513,6 +526,25 @@ namespace coreci {
                     callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
                 }
             });
+    }
+
+    void Pipeline::publicationResult(const Node& node, const nlohmann::json& run, const Callback& callback) {
+        feeds.verify(node, [this, node, run, callback](const FeedResult& result) {
+            if (result.error.empty()) {
+                try {
+                    change(store.graph().published(node.id, node.attempts.back().id, result.receipt), callback);
+                } catch (const std::exception& error) {
+                    callback({409, {{"error", error.what()}}});
+                }
+            } else {
+                callback({202,
+                          {{"execution", node.id},
+                           {"state", "publishing"},
+                           {"assignment_preserved", true},
+                           {"github_conclusion", run.at("conclusion")},
+                           {"error", result.error}}});
+            }
+        });
     }
 
     void Pipeline::search(const std::string& execution,
@@ -598,9 +630,13 @@ namespace coreci {
     }
 
     void Pipeline::change(const Node& node, const Callback& callback) {
-        store.commit({{node}, store.graph().nextRebuildRevision(), {}}, [node, callback](const DatabaseResult& result) {
+        store.commit({{node}, store.graph().nextRebuildRevision(), {}}, [this, node, callback](const DatabaseResult& result) {
             if (result.error.empty()) {
-                callback({200, {{"execution", node.id}, {"attempt", node.attempts.back().id}, {"state", node.attempts.back().state}}});
+                if (node.attempts.back().state == "published" || node.attempts.back().state == "failed") {
+                    advance(callback);
+                } else {
+                    callback({200, {{"execution", node.id}, {"attempt", node.attempts.back().id}, {"state", node.attempts.back().state}}});
+                }
             } else {
                 callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
             }

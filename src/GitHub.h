@@ -47,6 +47,7 @@ namespace coreci {
         std::uint64_t repositoryId(const std::string& repository) const;
         bool verifyWebhook(const std::string& body, const std::string& signature) const;
         static bool validRepository(const std::string& repository);
+        void publicRead(const std::string& repository, const std::string& suffix, const Callback& callback);
         void request(const std::string& repository,
                      const std::string& method,
                      const std::string& suffix,

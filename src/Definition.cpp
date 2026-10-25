@@ -119,22 +119,14 @@ namespace coreci {
                     throw std::invalid_argument("unsupported native package format");
                 }
             } else if (family == "openwrt") {
-                fields(build, {"release", "target", "format", "sdk"});
-                text(build, "release");
+                fields(build, {"target", "format"});
                 if (!safePath(text(build, "target"))) {
                     throw std::invalid_argument("unsafe OpenWrt target path");
                 }
                 if (text(build, "format") != "ipk" && text(build, "format") != "apk") {
                     throw std::invalid_argument("unsupported OpenWrt package format");
                 }
-                const auto& sdk = build.at("sdk");
-                fields(sdk, {"url", "sha256"});
-                const auto url = text(sdk, "url");
-                static const std::regex checksum(R"(^[a-fA-F0-9]{64}$)");
-                if (url.find("https://") != 0 || url.size() <= 8 || url.find_first_of("<> \t\r\n") != std::string::npos ||
-                    !std::regex_match(text(sdk, "sha256"), checksum)) {
-                    throw std::invalid_argument("SDK requires an actual HTTPS URL and SHA256");
-                }
+
             } else {
                 throw std::invalid_argument("unsupported target family");
             }
@@ -154,13 +146,7 @@ namespace coreci {
         if (row.at("family") == "native") {
             result["platform"] = row.at("build").at("platform");
         } else {
-            result["release"] = row.at("build").at("release");
             result["target"] = row.at("build").at("target");
-            auto hash = row.at("build").at("sdk").at("sha256").get<std::string>();
-            std::transform(hash.begin(), hash.end(), hash.begin(), [](unsigned char character) {
-                return static_cast<char>(std::tolower(character));
-            });
-            result["sdk_sha256"] = hash;
         }
         return result;
     }

@@ -22,14 +22,10 @@ int main(int argc, char* argv[]) {
     nlohmann::json sdkRow{{"id", "sdk"},
                           {"family", "openwrt"},
                           {"distribution", "openwrt"},
-                          {"suite", "series"},
+                          {"suite", "99.1"},
                           {"arch", "source-defined"},
                           {"runner", "source-defined"},
-                          {"build",
-                           {{"release", "exact-patch"},
-                            {"target", "selected/subtarget"},
-                            {"format", "apk"},
-                            {"sdk", {{"url", sdkUrl}, {"sha256", std::string(64, 'a')}}}}}};
+                          {"build", {{"target", "selected/subtarget"}, {"format", "apk"}}}};
     nlohmann::json source{{"definition",
                            {{"schema", 1},
                             {"title", "Example"},
@@ -37,6 +33,12 @@ int main(int argc, char* argv[]) {
                             {"depends_on", nlohmann::json::array()},
                             {"build", {{"native", "ci/native.sh"}, {"openwrt", "ci/openwrt.sh"}}},
                             {"matrix", {row, sdkRow}}}}};
+    if (testCase == "public-sdk") {
+        sdkRow["suite"] = "25.12";
+        sdkRow["arch"] = "x86_64";
+        sdkRow["build"]["target"] = "x86/64";
+        source["definition"]["matrix"] = {sdkRow};
+    }
     if (testCase == "public-image") {
         source["definition"]["matrix"] = {row};
         source["definition"]["matrix"][0]["build"]["image"] = "debian:trixie";
@@ -47,7 +49,15 @@ int main(int argc, char* argv[]) {
         resolver.configure();
         resolver.resolve(source, [&](const coreci::EnvironmentResult& result) {
             ++calls;
-            if (testCase == "public-image") {
+            if (testCase == "public-sdk") {
+                success = result.error.empty() &&
+                          result.source.at("environments").at("sdk").at("release").get<std::string>().starts_with("25.12.");
+                if (success) {
+                    std::cout << result.source.at("environments").dump() << '\n';
+                } else {
+                    std::cerr << result.error << '\n';
+                }
+            } else if (testCase == "public-image") {
                 success =
                     result.error.empty() && result.source.at("environments").at("native").at("digest").get<std::string>().size() == 71;
                 if (success) {
@@ -55,7 +65,7 @@ int main(int argc, char* argv[]) {
                 } else {
                     std::cerr << result.error << '\n';
                 }
-            } else if (testCase == "success" || testCase == "single" || testCase == "redirect") {
+            } else if (testCase == "success" || testCase == "single" || testCase == "redirect" || testCase == "sdk-advanced") {
                 if (!result.error.empty()) {
                     std::cerr << result.error << '\n';
                 } else {
@@ -64,7 +74,9 @@ int main(int argc, char* argv[]) {
                         result.source.at("definition") == source.at("definition") && environment.at("image") == "sample:series" &&
                         environment.at("platform") == "linux/amd64" && environment.at("digest") == std::getenv("CORE_CI_ENV_MANIFEST") &&
                         environment.at("resolved_image").get<std::string>().ends_with("@" + environment.at("digest").get<std::string>()) &&
-                        result.source.at("environments").at("sdk").at("sdk") == sdkRow.at("build").at("sdk");
+                        result.source.at("environments").at("sdk").at("sdk").at("url") == sdkUrl &&
+                        result.source.at("environments").at("sdk").at("sdk").at("sha256") == std::string(64, 'a') &&
+                        result.source.at("environments").at("sdk").at("release") == std::getenv("CORE_CI_ENV_RELEASE");
                 }
             } else {
                 success = result.source.is_null() && !result.error.empty();

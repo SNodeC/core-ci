@@ -3,6 +3,7 @@
 
 #include "Enrollment.h"
 #include "EnvironmentResolver.h"
+#include "FeedProof.h"
 #include "PipelineConfig.h"
 
 namespace coreci {
@@ -20,7 +21,8 @@ namespace coreci {
                  SourceReader& sources,
                  EnvironmentResolver& environments,
                  Enrollment& enrollment,
-                 GraphStore& store);
+                 GraphStore& store,
+                 FeedProof& feeds);
         void request(const std::string& repository,
                      const std::string& tag,
                      bool automatic,
@@ -59,6 +61,7 @@ namespace coreci {
                     const std::shared_ptr<std::vector<std::uint64_t>>& matches,
                     const Callback& callback);
         void buildArtifacts(const Node& node, const Callback& callback);
+        void publicationResult(const Node& node, const nlohmann::json& run, const Callback& callback);
         void change(const Node& node, const Callback& callback);
         static std::string title(const Attempt& attempt, bool publication);
 
@@ -69,6 +72,7 @@ namespace coreci {
         EnvironmentResolver& environments;
         Enrollment& enrollment;
         GraphStore& store;
+        FeedProof& feeds;
     };
 } // namespace coreci
 

@@ -43,6 +43,7 @@ add_executable(
     src/EnvironmentResolver.cpp
     src/PipelineConfig.cpp
     src/Pipeline.cpp
+    src/FeedProof.cpp
 )
 target_link_libraries(
     core-ci
@@ -239,6 +240,11 @@ if(BUILD_TESTING)
         unapproved-auth
         wrong-scope
         unapproved-redirect
+        sdk-advanced
+        sdk-wrong-arch
+        sdk-wrong-format
+        sdk-ambiguous
+        sdk-missing-release
     )
         add_test(
             NAME environment-${case}

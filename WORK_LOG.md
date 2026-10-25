@@ -326,3 +326,41 @@
 - The fixed-origin HTTP client refactoring remains deferred at the owner's instruction.
 - Checkpoint accounting before this entry: {'production': [1887, 1], 'tests': [482, 3], 'documentation': [277, 10], 'public_key_data': [29, 0]}. Growth implements the approved
   worker/signing boundary; one shared contract replaces duplicated metadata/version policy.
+
+## 2026-10-25 — committed publication and latest SDK inputs
+
+- Wired verified build results to committed publication authorization. Publishing attempts
+  themselves serialize the feed repository/branch; no writer pointer or durable queue exists.
+  State validation/restoration rejects conflicting writers. Terminal results traverse eligible
+  work, including publication dispatch rejected before submission.
+- Added a dedicated feed endpoint. Public GitHub reads bind the configured feed repository
+  ID and receipt commit; the existing exact Git tree/blob reader now supports explicit public
+  reads, replacing a separate receipt-file interpretation. Matching HTTPS bytes are required
+  before published state releases dependents. Missing/inaccessible proof preserves assignments.
+- Real-MariaDB/synthetic-TLS pipeline tests prove pre-dispatch committed publication state,
+  restart without replacement, duplicate/late reports, changed HTTPS receipt rejection and
+  recovery of a verified feed result despite a failed GitHub job. No fake record is described
+  as a live publication. Local empty Git fixtures additionally prove normal checked updates,
+  ignored-byte rejection and stale writer conflicts; their Git directories are cleaned up.
+- Owner changed SDK policy: choose latest automatically, with no SDK SHA maintained in JSON.
+  Removed exact release/SDK URL/checksum fields from OpenWrt definitions. Suite/arch remain
+  row-level; build contains target/format. Deployment selects the official metadata origin.
+  Read versions_list numerically, select the latest stable patch in that suite, check actual
+  target/package architecture/format through profiles.json, and record resolved URL/checksum
+  only as immutable execution evidence. Retries retain their recorded inputs.
+- SDK changes create distinct selections/rebuild revisions and retain superseded waiting
+  history. Prerequisite selection requires matching resolved SDKs; it never creates upward
+  prerequisite builds. Five new TLS cases cover a new patch, absent series, architecture and
+  format mismatches, and ambiguous SDK archives. No release/architecture/runner catalogue.
+- Real read-only metadata resolution through installed SNode.C selected 25.12.6/x86/64
+  from downloads.openwrt.org. No SDK archive was downloaded. Configured sdk-base-url only
+  in the protected external deployment file; no private credential or GitHub secret changed.
+- All 44 local suites passed after integration; subsequent focused graph/pipeline/Git checks
+  passed after final changes. Formatting, Python syntax and YAML parsing pass. Full live
+  GitHub/package-client acceptance, Docker isolation execution, OpenWrt worker/signing and
+  UI workflow installation remain unfinished. Failed privileged jobs without sufficient
+  pre-push/feed evidence remain uncertain rather than gaining an unsafe replacement retry.
+- SDK policy documentation supersedes the original prompt's manually configured SDK pins.
+  Existing multi-origin environment-client refactoring remains deferred at owner direction.
+- Checkpoint accounting before this entry: {'production': [462, 138], 'tests': [238, 33], 'documentation': [105, 22]}. Growth implements the approved
+  publication boundary/latest discovery; exact-file reading and SDK compatibility stay shared.

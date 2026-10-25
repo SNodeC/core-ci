@@ -61,7 +61,25 @@ def exercise(args, root):
                 errors.append("wrong registry Host")
             parsed = urllib.parse.urlsplit(self.path)
             authorization = self.headers.get("Authorization")
-            if parsed.path == "/token":
+            if parsed.path == "/.versions.json":
+                if authorization is not None:
+                    errors.append("registry token leaked to SDK metadata")
+                releases = ["99.1.9", "99.1.10", "99.2.999", "99.1.12-rc.1"]
+                if args.case == "sdk-advanced":
+                    releases.append("99.1.11")
+                if args.case == "sdk-missing-release":
+                    releases = ["98.1.99"]
+                self.reply(200, json.dumps({"versions_list": releases}).encode())
+            elif parsed.path.endswith("/profiles.json"):
+                self.reply(200, json.dumps({"version_number": release, "target": "selected/subtarget",
+                                           "arch_packages": "wrong" if args.case == "sdk-wrong-arch" else "source-defined",
+                                           "default_packages": ["opkg"] if args.case == "sdk-wrong-format" else ["apk-mbedtls"]}).encode())
+            elif parsed.path.endswith("/sha256sums"):
+                content = "a" * 64 + " *openwrt-sdk-fixture.Linux-x86_64.tar.zst\n"
+                if args.case == "sdk-ambiguous":
+                    content += "b" * 64 + " *openwrt-sdk-second.Linux-x86_64.tar.zst\n"
+                self.reply(200, content.encode())
+            elif parsed.path == "/token":
                 if authorization is not None or urllib.parse.parse_qs(parsed.query) != {"scope": ["repository:library/sample:pull"], "service": ["fixture"]}:
                     errors.append("incorrect token scope or leaked authorization")
                 self.reply(200, json.dumps({"token": "local-pull-token"}).encode())
@@ -115,9 +133,10 @@ def exercise(args, root):
     settings.write_text('registry.default-registry="127.0.0.1:' + str(registry.server_port) + '"\n'
                         'registry.default-namespace="library"\n'
                         'registry.allowed-origin=["' + origin + '", "' + redirect_origin + '"]\n'
-                        'registry.sdk-origin=["' + origin + '"]\n')
+                        'registry.sdk-base-url="' + origin + '"\n')
     environment = os.environ.copy()
-    environment.update(CORE_CI_ENV_CASE=args.case, CORE_CI_ENV_SDK=origin + "/sdk.tar.zst", CORE_CI_ENV_MANIFEST=digest(manifest))
+    release = "99.1.11" if args.case == "sdk-advanced" else "99.1.10"
+    environment.update(CORE_CI_ENV_CASE=args.case, CORE_CI_ENV_SDK=origin + "/releases/" + release + "/targets/selected/subtarget/openwrt-sdk-fixture.Linux-x86_64.tar.zst", CORE_CI_ENV_MANIFEST=digest(manifest), CORE_CI_ENV_RELEASE=release)
     try:
         result = subprocess.run([args.executable, "--config-file", str(settings), "--log-file", str(root / "framework.log"),
                                  "environment-http", "tls", "--ca-cert", str(certificate)],
@@ -125,7 +144,7 @@ def exercise(args, root):
         assert result.returncode == 0, result.stdout + result.stderr
         assert not errors, errors
         assert "local-pull-token" not in result.stdout + result.stderr
-        assert not any("sdk.tar" in path for path in seen), "controller downloaded an SDK instead of pinning its identity"
+        assert not any("openwrt-sdk-" in path for path in seen), "controller downloaded an SDK instead of pinning its identity"
         assert seen.count("/token?scope=repository%3Alibrary%2Fsample%3Apull&service=fixture") <= 1, "unbounded authentication retry"
         if args.case in ("unapproved-auth", "wrong-scope"):
             assert len(seen) == 1, "unapproved authentication caused additional requests"

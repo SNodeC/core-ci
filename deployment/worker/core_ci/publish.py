@@ -77,8 +77,12 @@ def run_identity(selected):
     return result
 
 
-def checked_push(feed, branch, token):
+def checked_push(feed, branch, token, expected_paths):
     run(["git", "-C", str(feed), "add", "--all"])
+    for path in expected_paths:
+        raw = output(["git", "-C", str(feed), "hash-object", "--no-filters", str(feed / path)])
+        staged = output(["git", "-C", str(feed), "rev-parse", ":" + path])
+        require(raw == staged, "feed index omits or transforms verified package/index bytes")
     changed = subprocess.run(["git", "-C", str(feed), "diff", "--cached", "--quiet"], check=False).returncode
     require(changed in (0, 1), "cannot inspect feed changes")
     if changed == 1:
@@ -184,7 +188,7 @@ def main():
             passphrase.write_text(value)
             passphrase.chmod(0o600)
         token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
-        update(
+        receipt = update(
             selected,
             read_json(arguments.build_result),
             identity,
@@ -204,7 +208,12 @@ def main():
             < 900 * 1024 * 1024,
             "new packages would exceed reviewed Pages capacity",
         )
-        revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
+        paths = [receipt_path(selected), "keys/apt.asc"] + [
+            item["path"] for item in receipt["packages"] + receipt["indexes"]
+        ]
+        if receipt.get("development_export"):
+            paths.append(receipt["development_export"]["path"])
+        revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, paths)
     wait_for_https(selected, feed)
     print("Verified feed revision:", revision)
 

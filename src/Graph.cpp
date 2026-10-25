@@ -26,6 +26,22 @@ namespace coreci {
                     {"reactivated", node.cause.value("reactivated", std::string{})}};
         }
 
+        bool compatibleSdk(const Node& selected, const Node& other) {
+            bool compatible = true;
+            if (selected.target.at("family") == "openwrt") {
+                compatible =
+                    selected.source.at("environment").at("release") == other.source.at("environment").at("release") &&
+                    selected.source.at("environment").at("sdk").at("sha256") == other.source.at("environment").at("sdk").at("sha256");
+            }
+            return compatible;
+        }
+
+        std::string publicationFeed(const Node& node) {
+            const auto& feed = node.source.at("deployment").at("feed");
+            const nlohmann::json identity{feed.at("repository_id"), feed.at("branch")};
+            return identity.dump();
+        }
+
         Attempt waiting(const std::string& id, std::uint64_t revision) {
             require(revision > 0 && revision < std::numeric_limits<std::uint64_t>::max(), "package rebuild revision is exhausted");
             Attempt result;
@@ -45,6 +61,7 @@ namespace coreci {
         void validateSource(const std::string& name, const nlohmann::json& source) {
             static const std::regex sha(R"(^[a-f0-9]{40}$)");
             static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
+            static const std::regex checksum(R"(^[a-f0-9]{64}$)");
             require(source.at("name") == name && source.at("repository_id").get<std::uint64_t>() != 0,
                     "invalid selected repository identity");
             require(std::regex_match(source.at("commit").get<std::string>(), sha) &&
@@ -61,7 +78,9 @@ namespace coreci {
                                 std::regex_match(environment.at("digest").get<std::string>(), digest),
                             "native image digest/platform is unresolved");
                 } else {
-                    require(environment.at("sdk") == target.at("build").at("sdk"), "OpenWrt SDK identity changed during selection");
+                    require(environment.at("release").get<std::string>().starts_with(target.at("suite").get<std::string>() + ".") &&
+                                std::regex_match(environment.at("sdk").at("sha256").get<std::string>(), checksum),
+                            "latest OpenWrt SDK identity is unresolved");
                 }
             }
             require(source.at("deployment").is_object() && !source.at("deployment").empty(),
@@ -138,10 +157,13 @@ namespace coreci {
     void Graph::restore(const std::vector<Node>& nodes, std::uint64_t next) {
         std::map<std::string, Node> restored;
         std::set<std::uint64_t> revisions;
+        std::set<std::string> publicationFeeds;
         for (const auto& node : nodes) {
             require(!node.id.empty() && !node.attempts.empty() && restored.emplace(node.id, node).second,
                     "duplicate or empty persisted execution");
             validateExecutionSource(node);
+            require(node.attempts.back().state != "publishing" || publicationFeeds.insert(publicationFeed(node)).second,
+                    "persisted graph has conflicting assigned feed writers");
             require(node.id == digest(identity(node)), "persisted execution selection identity changed");
             std::uint64_t previous = 0;
             for (const auto& attempt : node.attempts) {
@@ -270,7 +292,7 @@ namespace coreci {
                             for (const auto& [id, candidate] : records) {
                                 if (candidate.supersededBy.empty() && candidate.source.at("name") == dependencyName &&
                                     sameSource(candidate.source, sources.at(dependencyName)) &&
-                                    Definition::coordinates(candidate.target) == coordinate &&
+                                    Definition::coordinates(candidate.target) == coordinate && compatibleSdk(next, candidate) &&
                                     (prerequisite == nullptr ||
                                      candidate.attempts.front().revision > prerequisite->attempts.front().revision)) {
                                     prerequisite = &candidate;
@@ -279,6 +301,8 @@ namespace coreci {
                             require(prerequisite != nullptr,
                                     "missing selected prerequisite work for " + dependencyName + "; request it explicitly first");
                         }
+                        require(compatibleSdk(next, *prerequisite),
+                                "selected prerequisite SDK differs from the latest SDK; request compatible prerequisite work explicitly");
                         next.prerequisites.push_back(prerequisite->id);
                     }
                     next.id = digest(identity(next));
@@ -393,10 +417,25 @@ namespace coreci {
         return selected;
     }
 
+    bool Graph::publicationReady(const std::string& id) const {
+        const auto& selected = records.at(id);
+        const auto& attempt = selected.attempts.back();
+        bool ready = attempt.state == "building" && !attempt.buildResult.is_null();
+        if (ready) {
+            const auto feed = publicationFeed(selected);
+            for (const auto& [otherId, other] : records) {
+                if (other.attempts.back().state == "publishing" && publicationFeed(other) == feed) {
+                    ready = false;
+                }
+            }
+        }
+        return ready;
+    }
+
     Node Graph::beginPublication(const std::string& id) const {
         auto selected = records.at(id);
         auto& attempt = selected.attempts.back();
-        require(attempt.state == "building" && !attempt.buildResult.is_null(), "publication requires a verified assigned build");
+        require(publicationReady(id), "publication requires a verified assigned build and no uncertain writer for this feed");
         attempt.state = "publishing";
         return selected;
     }
@@ -453,6 +492,7 @@ namespace coreci {
         require(change.nextRevision >= nextRevision, "graph revision allocator regressed");
         std::map<std::string, const Node*> changed;
         std::set<std::uint64_t> allocated;
+        std::set<std::string> publicationFeeds;
         for (const auto& node : change.nodes) {
             require(changed.emplace(node.id, &node).second && !node.attempts.empty(), "duplicate/empty execution mutation");
             require(node.id == digest(identity(node)), "execution selection identity changed");
@@ -483,6 +523,10 @@ namespace coreci {
                             "assigned publication run changed");
                     require(before.buildResult.is_null() || before.buildResult == after.buildResult, "accepted build result changed");
                     require(before.receipt.is_null() || before.receipt == after.receipt, "published receipt changed");
+                    if (before.state == "building" && after.state == "publishing") {
+                        require(publicationReady(node.id) && publicationFeeds.insert(publicationFeed(node)).second,
+                                "publication conflicts with assigned work for the same feed");
+                    }
                     bool allowed = before.state == after.state;
                     if (index + 1 == old.attempts.size()) {
                         allowed = allowed || (before.state == "waiting" && after.state == "building") ||

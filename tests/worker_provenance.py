@@ -5,6 +5,8 @@ import copy
 from pathlib import Path
 import shutil
 import sys
+import subprocess
+import os
 import zipfile
 
 
@@ -127,6 +129,55 @@ def main():
     finally:
         github.api = original_api
         github.download_artifact = original_download
+    # These empty Git fixtures contain no application/source checkout or real credential.
+    import publish
+
+    remote = directory / "remote.git"
+    writer = directory / "writer"
+    os.environ["TMPDIR"] = str(directory)
+    subprocess.run(["git", "init", "--quiet", "--bare", "--initial-branch=main", str(remote)], check=True)
+    subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(writer)], check=True)
+    contract.run(["git", "-C", str(writer), "remote", "add", "origin", str(remote)])
+    (writer / "receipt.json").write_text("initial receipt\n")
+    first = publish.checked_push(writer, "main", "synthetic-no-access-token", ["receipt.json"])
+    assert contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == first
+    (writer / ".gitignore").write_text("ignored-package\n")
+    (writer / "ignored-package").write_text("must be committed with indexes")
+    rejected = False
+    try:
+        publish.checked_push(writer, "main", "synthetic-no-access-token", ["ignored-package"])
+    except (ValueError, subprocess.CalledProcessError):
+        rejected = True
+    assert rejected and contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == first
+    tree = contract.output(["git", "--git-dir", str(remote), "rev-parse", "main^{tree}"])
+    concurrent = contract.output(
+        [
+            "git",
+            "--git-dir",
+            str(remote),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit-tree",
+            tree,
+            "-p",
+            first,
+            "-m",
+            "Concurrent feed update",
+        ]
+    )
+    contract.run(["git", "--git-dir", str(remote), "update-ref", "refs/heads/main", concurrent, first])
+    (writer / "receipt.json").write_text("new receipt\n")
+    rejected = False
+    try:
+        publish.checked_push(writer, "main", "synthetic-no-access-token", ["receipt.json"])
+    except subprocess.CalledProcessError:
+        rejected = True
+    assert rejected and contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == concurrent
+    shutil.rmtree(writer)
+    shutil.rmtree(remote)
+    print("Real local Git: checked update accepted, ignored package and stale publication rejected")
     print(
         "Synthetic worker provenance: assigned artifact accepted; 12 run/job/workflow/artifact mismatches rejected before download"
     )

@@ -40,7 +40,8 @@ namespace graph_fixture {
               {"source_workflow", {{"path", ".github/workflows/core-ci-build.yml"}, {"ref", "main"}, {"blob_sha", std::string(40, 'c')}}},
               {"publication_workflow",
                {{"path", ".github/workflows/core-ci-publish.yml"}, {"ref", "main"}, {"blob_sha", std::string(40, 'd')}}},
-              {"controller_app_bot_id", 42}}}};
+              {"controller_app_bot_id", 42},
+              {"feed", {{"repository", "Owner/feed"}, {"repository_id", 2000}, {"branch", "main"}}}}}};
     }
 
 } // namespace graph_fixture

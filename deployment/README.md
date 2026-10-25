@@ -3,7 +3,7 @@
 These files are prepared locally. They have not been installed in GitHub. The native
 package build/sign/index boundary has local real-tool coverage; there is no live GitHub,
 container-isolation or package-manager installation acceptance yet. OpenWrt tooling and
-controller publication dispatch/receipt integration remain unfinished. Do not activate this
+full live publication acceptance remain unfinished. Controller dispatch/receipt proof is wired with local synthetic GitHub evidence. Do not activate this
 checkpoint as a complete core-ci deployment.
 
 The invariant is one immutable controller assignment across build, independent validation,
@@ -156,8 +156,10 @@ rewrite them. Index paths may have advanced after another publication; their rec
 refer to the original feed commit. Existing package identities reject differing bytes rather
 than overwrite them. Feed updates use a normal checked Git push, with no force/rebase. An
 indeterminate push or missing HTTPS receipt must be reconciled before replacement; GitHub job
-failure alone cannot prove the feed update did not happen. Controller receipt reconciliation
-and publication serialization integration are the next unfinished controller boundary.
+failure alone cannot prove the feed update did not happen. Controller receipt reconciliation and publication serialization are wired and exercised with
+real MariaDB and synthetic GitHub/HTTPS evidence. A failed privileged job with no verified
+receipt remains uncertain; proving a definite pre-push publication failure for explicit retry
+needs additional trusted result evidence. No replacement is inferred from a missing receipt.
 
 The worker checks a conservative 900 MiB site bound before push. Pages currently limits
 published sites to 1 GB, has a soft 100 GB/month bandwidth limit and a ten-minute deployment
@@ -197,3 +199,13 @@ matching OpenWrt client tooling. APT base is FEED_BASE_URL/apt/DISTRIBUTION/SUIT
 SUITE and component main, using a dedicated Signed-By=/usr/share/keyrings/core-ci.asc file.
 No --allow-untrusted, file-existence substitute or global trusted-key installation is accepted.
 Actual apt/dnf/opkg/apk refresh/install/runtime acceptance remains undone.
+
+## Latest OpenWrt SDK policy
+
+The owner selected automatic latest SDK discovery. Source rows use suite/arch at row level
+and build.target/build.format only. There is no SDK URL, SHA or exact patch release to edit.
+The controller reads its deployment-configured registry.sdk-base-url metadata service and
+records resolved release/URL/checksum in immutable execution evidence. New selections use
+the latest stable patch in that suite; retries retain recorded inputs. The worker must verify
+that checksum before extraction. A checksum remains integrity evidence, not source-owned
+configuration. OpenWrt build/sign/install execution is still unfinished.

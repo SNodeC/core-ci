@@ -16,7 +16,7 @@ namespace coreci {
         std::string defaultRegistry;
         std::string defaultNamespace;
         std::vector<std::string> allowedOrigins;
-        std::vector<std::string> sdkOrigins;
+        std::string sdkBaseUrl;
     };
 
     struct EnvironmentResult {
@@ -48,6 +48,7 @@ namespace coreci {
         };
 
         void next(const std::shared_ptr<Reading>& reading);
+        void sdk(const std::shared_ptr<Reading>& reading);
         void manifest(const std::shared_ptr<Reading>& reading, const nlohmann::json& descriptor, unsigned int depth);
         void configuration(const std::shared_ptr<Reading>& reading, const nlohmann::json& descriptor);
         void fetch(const std::shared_ptr<Reading>& reading,
@@ -60,7 +61,6 @@ namespace coreci {
 
         const RegistryConfig& config;
         std::set<std::string> allowedOrigins;
-        std::set<std::string> sdkOrigins;
         HttpClient http;
     };
 } // namespace coreci

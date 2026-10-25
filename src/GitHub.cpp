@@ -198,6 +198,14 @@ namespace coreci {
         return content + "." + base64url(signature);
     }
 
+    void GitHub::publicRead(const std::string& repository, const std::string& suffix, const Callback& callback) {
+        if (!validRepository(repository) || (!suffix.empty() && suffix.front() != '/')) {
+            callback({0, nullptr, "invalid public GitHub read"});
+        } else {
+            send("GET", "/repos/" + repository + suffix, "", nullptr, callback);
+        }
+    }
+
     void GitHub::request(const std::string& repository,
                          const std::string& method,
                          const std::string& suffix,
@@ -247,14 +255,16 @@ namespace coreci {
                       const std::string& authorization,
                       const nlohmann::json& body,
                       const Callback& callback) {
+        web::http::CiStringMap<std::string> headers{
+            {"Accept", "application/vnd.github+json"}, {"X-GitHub-Api-Version", config.apiVersion}, {"Content-Type", "application/json"}};
+        if (!authorization.empty()) {
+            headers["Authorization"] = "Bearer " + authorization;
+        }
         http.request("api.github.com",
                      443,
                      method,
                      path,
-                     {{"Accept", "application/vnd.github+json"},
-                      {"Authorization", "Bearer " + authorization},
-                      {"X-GitHub-Api-Version", config.apiVersion},
-                      {"Content-Type", "application/json"}},
+                     headers,
                      body.is_null() ? std::string{} : body.dump(),
                      [callback](const HttpResult& response) {
                          GitHubResult result;
