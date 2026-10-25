@@ -516,3 +516,11 @@
   code still exposes only its local HTTP listener; dedicated SNode.C TLS webhook setup needs
   the owner's DNS hostname and certificate/key paths. No reverse proxy was installed.
 - Documentation-only change; production/test lines unchanged. No runtime acceptance claimed.
+
+
+## 2026-10-25 — owner-selected public webhook hostname
+
+- Recorded gw-home.vchrist.at on public HTTPS port 443. DNS resolves, but the existing
+  endpoint's office.vchrist.at certificate fails verification for the selected hostname.
+  Valid TLS certificate/key paths remain required. No existing service or router changed.
+- Read-only DNS/TLS checks and documentation only; production/test lines unchanged.

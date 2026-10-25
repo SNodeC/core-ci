@@ -37,7 +37,7 @@ The agreed port allocation is:
 | --- | --- | --- |
 | Local configuration UI | 127.0.0.1:8080 HTTP | None |
 | Planned SNode.C HTTPS webhook listener | Machine LAN address:8443 TCP | External TCP 443 to this machine TCP 8443 |
-| Public GitHub webhook | https://OWNER_HOSTNAME/github/webhook | Standard HTTPS port 443 |
+| Public GitHub webhook | https://gw-home.vchrist.at/github/webhook | Standard HTTPS port 443 |
 
 On 2026-10-25 the machine's active IPv4 route used LAN address 192.168.1.239; ports 443,
 8080 and 8443 had no listeners. Reserve the machine's LAN address in the router's DHCP
@@ -49,7 +49,11 @@ has one loopback HTTP listener on 8080. Before activation, move the existing web
 to a dedicated SNode.C TLS listener on 8443, preserving its raw-body HMAC validation and
 initial-database-success lifecycle. Do not expose UI/API administration on that listener.
 No reverse proxy was found installed during this check; one is not assumed or installed.
-The owner must supply the public DNS hostname and valid certificate/private-key file paths.
+The owner supplied gw-home.vchrist.at on standard public HTTPS port 443. It resolved to
+212.241.96.69 during setup. The current public TLS endpoint presents an office.vchrist.at
+certificate and fails hostname verification for gw-home.vchrist.at. Valid certificate and
+private-key file paths for the selected hostname remain required. This does not authorize
+replacing or reconfiguring the currently reachable service.
 Keep TLS key material in protected local configuration, never source JSON or tracked files.
 Do not disable GitHub's certificate verification to bypass missing TLS setup.
 
