@@ -118,7 +118,7 @@ def main():
                     "dest root /\nlists_dir ext /var/opkg-lists\narch all 1\narch noarch 1\narch x86_64 10\n"
                     "option check_signature\nsrc/gz core-ci " + feed + "\n"
                 )
-                common = "mkdir -p /var/opkg-lists\n"
+                common = "mkdir -p /tmp /var/lock /var/opkg-lists\n"
                 negative = common + 'opkg -f /proof/opkg.conf update\nopkg -f /proof/opkg.conf install "$PACKAGE"'
                 positive = (
                     common
@@ -132,9 +132,9 @@ def main():
                 (public / "apk-keys").mkdir(mode=0o755)
                 shutil.copyfile(Path(args.keys) / "core-ci-apk.pem", public / "apk-keys/core-ci-apk.pem")
                 (public / "repositories").write_text(feed + "/packages.adb\n")
-                negative = "apk --keys-dir /etc/apk/keys --repositories-file /proof/repositories update"
+                negative = "mkdir -p /tmp\napk --keys-dir /etc/apk/keys --repositories-file /proof/repositories update"
                 positive = (
-                    "apk --version\napk --keys-dir /proof/apk-keys --repositories-file /proof/repositories update\n"
+                    "mkdir -p /tmp\napk --version\napk --keys-dir /proof/apk-keys --repositories-file /proof/repositories update\n"
                     'apk --keys-dir /proof/apk-keys --repositories-file /proof/repositories add "$PACKAGE=$VERSION"\n"$COMMAND"\n'
                 )
             for path in public.rglob("*"):

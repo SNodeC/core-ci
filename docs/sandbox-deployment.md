@@ -84,15 +84,31 @@ The controller verified publication receipts and marked all three targets publis
 The feed's pre-existing status/*.md and status.json are stale and are not updated by this
 publisher. Use the controller graph, assigned GitHub runs and HTTPS receipts for these results.
 
+## Actual package-manager client acceptance
+
+The following GitHub runs reject an unrelated key, refresh the signed HTTPS repository,
+install the exact selected package version, and execute the installed program:
+
+| Client | Version | Acceptance run |
+| --- | --- | --- |
+| apt / Debian trixie amd64 | 2.1.0-21 | [40234719240](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234719240) |
+| dnf / Fedora 43 x86_64 | 2.1.0-23 | [40234717535](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234717535) |
+| opkg / OpenWrt 24.10.8 x86_64 | 2.1.0-r24 | [40234883261](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234883261) |
+
+The OpenWrt IPK publisher [40234419872](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234419872)
+completed signing and a checked feed update. The controller verified the HTTPS receipt and
+started dependent work. These are real GitHub jobs using the published public keys;
+no untrusted-install override is used. Client runtime output is `demo-core 60`.
+
 ## Still outstanding
 
-Actual apt/dnf/opkg/apk client installation acceptance, dependency chains/diamonds and the
-remaining full live acceptance are outstanding. Both OpenWrt builds now pass with
+Actual APK and native arm64 client installation acceptance, completion of dependency
+chains/diamonds and the remaining full live acceptance are outstanding. Both OpenWrt builds now pass with
 corrected SDK preparation and source-owned tool lookup:
 [IPK 40231880390](https://github.com/VOC-Experiments/demo-core/actions/runs/40231880390),
 [APK 40231884159](https://github.com/VOC-Experiments/demo-core/actions/runs/40231884159).
-These runs include independent validation and artifact upload. OpenWrt signing/feed
-publication and actual package-manager installation remain unverified.
+These builds include independent validation and artifact upload. OpenWrt APK signing/feed
+publication and APK client installation remain unverified.
 Both SDK preparation stages passed in real GitHub runs
 [IPK 40231441419](https://github.com/VOC-Experiments/demo-core/actions/runs/40231441419) and
 [APK 40231443502](https://github.com/VOC-Experiments/demo-core/actions/runs/40231443502).

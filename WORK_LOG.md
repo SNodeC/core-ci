@@ -693,3 +693,9 @@
   production build/publication tooling stays pinned at 5d124fbdec05cfdfe2ac4998847c51325f6c7a98.
 - Created new v2.1.0 tags on the reviewed sandbox app/side/join source commits for the
   dependency diamond. Existing version tags and failed execution inputs remain unchanged.
+- OpenWrt IPK trusted publisher 40234419872 succeeded, with the committed receipt
+  available over HTTPS and verified by the running controller. Dependent demo-app IPK
+  work was then assigned using that exact published prerequisite.
+- Imported OpenWrt rootfs client checks require boot-created /tmp and lock directories;
+  added only test setup. Real opkg run 40234883261 passes wrong-key signature rejection,
+  trusted usign verification, HTTPS installation of 2.1.0-r24 and runtime demo-core 60.
