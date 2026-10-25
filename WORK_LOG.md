@@ -664,3 +664,9 @@
   anonymous forwarding branch. Production +7/-9; 16 affected local transport, source,
   enrollment and pipeline tests pass, including public-read authentication and rejection
   of writes outside the explicit repository grants. No token cache or retry mechanism.
+- Added 200 lines of GitHub-only acceptance test code/workflow, without production
+  runtime growth. It uses checksum-verified matching OpenWrt rootfs images, scoped public
+  inputs and repository-owned public keys, with no publication environment or secrets.
+  Checks reject unrelated keys, refresh/install the actual HTTPS feed, and verify the
+  installed executable output. Local syntax/permission/no-secret checks pass; live
+  installation proof remains pending publication.
