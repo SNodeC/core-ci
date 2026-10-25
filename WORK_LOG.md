@@ -732,3 +732,9 @@
 - Reviewed SNode.C TLS WebApp and MQTTSuite named listener/disabled-instance patterns for
   the remaining dedicated webhook listener. Production implementation awaits required
   growth approval; valid public TLS certificate/key paths remain owner inputs.
+- Retry publication 40236058413 succeeded and the controller marked side IPK rebuild 41
+  published. Read-only SQL proves attempts 34/failed/cancelled and 41/published both remain.
+  GitHub run history contains exactly those two build attempts, with no duplicate dispatch.
+- All three native join targets became eligible only after both branches' verified
+  publications. Real ARM64 join build 40235752993 and RPM join build 40236060513 pass;
+  amd64 join run 40236507555 is assigned. IPK/APK join work still waits for prerequisites.
