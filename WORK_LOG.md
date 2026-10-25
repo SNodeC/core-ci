@@ -23,3 +23,14 @@
 - Asked owner about already-tagged enrollment and coherent diamond change waves.
   These policies remain unsettled; no execution policy is silently selected.
 - No build, database, job, feed, key provisioning, install or live acceptance performed.
+
+## 2026-10-25 — owner-requested independent review
+
+- Asked the installed Claude CLI to review the complete design against a detailed
+  condensation of the owner specification, with tools and session persistence disabled.
+- Saved the full review in docs/claude-design-review.md. Verdict: approve with required
+  revisions, not as written. Review is advisory; external API claims remain unverified.
+- Accepted that the diamond safety requirement is mandatory, not an optional policy.
+  Retry-edge continuity, feed identity isolation, publication serialization and trusted
+  assignment/run binding need explicit resolution before implementation.
+- Did not implement reviewer suggestions, alter deployment settings or activate anything.
