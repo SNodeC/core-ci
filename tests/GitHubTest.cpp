@@ -21,7 +21,7 @@ int main(int argc, char* argv[]) {
     const std::string repository = requestedRepository == nullptr ? "Owner/example" : requestedRepository;
     try {
         github.loadCredentials();
-        github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, [&](const coreci::GitHubResult& result) {
+        const auto completed = [&](const coreci::GitHubResult& result) {
             ++calls;
             status = result.status;
             submitted = result.submitted;
@@ -34,7 +34,13 @@ int main(int argc, char* argv[]) {
                                  .dump()
                           << '\n';
             }
-        });
+        };
+        if (std::getenv("CORE_CI_TEST_PUBLIC_READ") != nullptr) {
+            github.publicRead(repository, "", completed);
+        } else {
+            const char* method = std::getenv("CORE_CI_TEST_METHOD");
+            github.request(repository, method == nullptr ? "GET" : method, "", nullptr, {{"contents", "read"}}, completed);
+        }
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
     }

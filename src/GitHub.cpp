@@ -199,11 +199,7 @@ namespace coreci {
     }
 
     void GitHub::publicRead(const std::string& repository, const std::string& suffix, const Callback& callback) {
-        if (!validRepository(repository) || (!suffix.empty() && suffix.front() != '/')) {
-            callback({0, nullptr, "invalid public GitHub read"});
-        } else {
-            send("GET", "/repos/" + repository + suffix, "", nullptr, callback);
-        }
+        request(repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback);
     }
 
     void GitHub::request(const std::string& repository,
@@ -214,19 +210,21 @@ namespace coreci {
                          const Callback& callback) {
         try {
             const auto slash = repository.find('/');
-            if (!validRepository(repository) || repository.substr(0, slash) != config.allowedOwner ||
+            const bool publicRead = method == "GET" && body.is_null() && permissions == nlohmann::json{{"contents", "read"}};
+            if (!validRepository(repository) || (!publicRead && repository.substr(0, slash) != config.allowedOwner) ||
                 (!suffix.empty() && suffix.front() != '/')) {
                 throw std::invalid_argument("repository must belong to the explicitly authorized GitHub owner");
             }
             const auto grant = repositoryIds.find(repository);
-            if (grant == repositoryIds.end()) {
+            if (grant == repositoryIds.end() && !publicRead) {
                 throw std::invalid_argument("repository is not in the deployment-owned name/ID grants");
             }
             const auto authorization = jwt();
             send("POST",
                  "/app/installations/" + std::to_string(config.installationId) + "/access_tokens",
                  authorization,
-                 {{"repository_ids", {grant->second}}, {"permissions", permissions}},
+                 {{"repository_ids", {grant == repositoryIds.end() ? repositoryIds.begin()->second : grant->second}},
+                  {"permissions", permissions}},
                  [this, repository, method, suffix, body, callback](const GitHubResult& token) {
                      if (token.status == 201 && token.error.empty() && token.body.contains("token") && token.body.at("token").is_string()) {
                          send(method,
@@ -234,7 +232,7 @@ namespace coreci {
                               token.body.at("token").get<std::string>(),
                               body,
                               [this, repository, method, suffix, callback](const GitHubResult& result) {
-                                  if (method == "GET" && suffix.empty() && result.status == 200 &&
+                                  if (method == "GET" && suffix.empty() && result.status == 200 && repositoryIds.contains(repository) &&
                                       (!result.body.contains("id") || result.body.at("id") != repositoryIds.at(repository))) {
                                       callback({502, nullptr, "GitHub repository ID differs from the configured grant"});
                                   } else {

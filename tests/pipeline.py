@@ -212,7 +212,7 @@ def exercise(args, directory):
                 self.close_connection = True
             else:
                 public = path.startswith("/repos/Owner/feed")
-                if (public and self.headers.get("Authorization")) or (not public and self.headers.get("Authorization") != "Bearer synthetic-pipeline-token"):
+                if self.headers.get("Authorization") != "Bearer synthetic-pipeline-token":
                     errors.append("missing scoped GitHub authorization")
                 prefix = "/repos/Owner/" + ("feed" if public else "worker" if path.startswith("/repos/Owner/worker") else "example")
                 suffix = path.removeprefix(prefix)

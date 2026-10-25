@@ -20,6 +20,7 @@ def run(command, data=None):
 
 
 def exercise(args, directory):
+    public_mode = False
     root = Path(directory)
     app_key = root / "app-key.pem"
     public = root / "app-public.pem"
@@ -77,12 +78,13 @@ def exercise(args, directory):
 
         def do_GET(self):
             seen.append("repository")
-            if self.path != "/repos/Owner/example" or self.headers.get("Authorization") != "Bearer unit-test-only-token":
+            selected = "Other/feed" if public_mode else "Owner/example"
+            if self.path != "/repos/" + selected or self.headers.get("Authorization") != "Bearer unit-test-only-token":
                 errors.append("unexpected repository request")
             if args.case == "lost-response":
                 self.close_connection = True
             else:
-                self.send_json(200, {"full_name": "Owner/example", "id": 99})
+                self.send_json(200, {"full_name": selected, "id": 1001 if public_mode else 99})
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -108,6 +110,24 @@ def exercise(args, directory):
             assert seen == ["token"], "a failed token request reached the repository operation"
         else:
             assert seen == ["token", "repository"], "request was dropped or replayed"
+        if args.case == "success":
+            public_mode = True
+            seen.clear()
+            environment["CORE_CI_TEST_REPOSITORY"] = "Other/feed"
+            environment["CORE_CI_TEST_PUBLIC_READ"] = "1"
+            result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+            assert result.returncode == 0 and not errors, result.stdout + result.stderr + str(errors)
+            assert seen == ["token", "repository"], "public read bypassed scoped installation authentication"
+            # Token fixture above still requires only repository 99 and contents:read, never feed repository 1001.
+            del environment["CORE_CI_TEST_PUBLIC_READ"]
+            environment["CORE_CI_TEST_METHOD"] = "POST"
+            environment["CORE_CI_TEST_EXPECTED_STATUS"] = "0"
+            environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "0"
+            for repository in ("Other/feed", "Owner/ungranted"):
+                seen.clear()
+                environment["CORE_CI_TEST_REPOSITORY"] = repository
+                result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+                assert result.returncode == 0 and seen == [], "ungranted write reached GitHub"
     finally:
         server.shutdown()
         server.server_close()

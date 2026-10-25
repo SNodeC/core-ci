@@ -651,3 +651,16 @@
   documentation accounted separately. No controller source changes or additional checkout.
   The application remains running locally with its managed database; no application push,
   PR, installation or public UI exposure. Sandbox tooling/source deployment is live.
+
+
+## 2026-10-25 — continue trusted publication and client acceptance
+
+- Live publication stalled on feed proof because anonymous GitHub reads exhausted their
+  60/hour quota. The completed publisher receipt is present; retain assigned uncertainty.
+- Live scope test proved that a contents:read token restricted to the existing worker
+  installation grant can read the public feed with the 5,000/hour installation quota.
+  Revoked that temporary token. No feed access grant, write privilege or credential added.
+- Route public reads through the existing authenticated request authority, replacing its
+  anonymous forwarding branch. Production +7/-9; 16 affected local transport, source,
+  enrollment and pipeline tests pass, including public-read authentication and rejection
+  of writes outside the explicit repository grants. No token cache or retry mechanism.
