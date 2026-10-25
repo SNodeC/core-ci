@@ -641,3 +641,13 @@
   stopping deliberately before compilation. Existing eight local DEB/RPM fixture builds
   also pass. Deploy source hook changes through new commits and a new sandbox source tag;
   preserve v2.0.0 and its recorded failing inputs.
+- Final source tag v2.1.0 selects 1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57 with worker
+  5d124fbdec05cfdfe2ac4998847c51325f6c7a98. Actual OpenWrt IPK run 40231880390 and APK
+  run 40231884159 both passed source compilation, packaging, independent validation and
+  artifact upload. All three v2.1.0 native builds also passed. OpenWrt signing/publication
+  and client installation are not yet claimed. Applied actual GitHub results through
+  controller reconciliation; retained every previous failed execution and immutable input.
+- Changed production code +14/-9 (net +5 within owner-approved growth), tests +133/-1;
+  documentation accounted separately. No controller source changes or additional checkout.
+  The application remains running locally with its managed database; no application push,
+  PR, installation or public UI exposure. Sandbox tooling/source deployment is live.

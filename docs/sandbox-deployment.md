@@ -10,10 +10,10 @@ preserved. A new demo-core v2.0.0 tag selects source commit
 | Repository | Installed revision |
 | --- | --- |
 | VOC-Experiments/ci-coordinator | [5d124fb](https://github.com/VOC-Experiments/ci-coordinator/commit/5d124fbdec05cfdfe2ac4998847c51325f6c7a98) |
-| VOC-Experiments/demo-core | [340a658](https://github.com/VOC-Experiments/demo-core/commit/340a6586cba7bfe5b645abfc272e0c321e3648ac) |
-| VOC-Experiments/demo-app | [13616a1](https://github.com/VOC-Experiments/demo-app/commit/13616a1d0207dcd376d5970f2705e50fb36d50f4) |
-| VOC-Experiments/demo-side | [1c845d3](https://github.com/VOC-Experiments/demo-side/commit/1c845d3740058df0a4fdf4281ec6104b71dc0e7b) |
-| VOC-Experiments/demo-join | [05ba8c1](https://github.com/VOC-Experiments/demo-join/commit/05ba8c1e1554c995662950d9222b5c5bf8556e66) |
+| VOC-Experiments/demo-core | [1cfcfa1](https://github.com/VOC-Experiments/demo-core/commit/1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57) |
+| VOC-Experiments/demo-app | [e406984](https://github.com/VOC-Experiments/demo-app/commit/e4069844a0b4235451a31e97b92818e991c6b4a6) |
+| VOC-Experiments/demo-side | [6b8f46a](https://github.com/VOC-Experiments/demo-side/commit/6b8f46a8311c0c968dc8fcbccf33f199b6e3dff9) |
+| VOC-Experiments/demo-join | [90f2dbb](https://github.com/VOC-Experiments/demo-join/commit/90f2dbbfb5ffcc138aaeccdc53cfcf394bbead81) |
 | VOC-Experiments/packages | [46530d7](https://github.com/VOC-Experiments/packages/commit/46530d78c2b7eb1438ed2a8c8f1537d439f0650f) |
 
 All source calls pin the full worker commit `5d124fbdec05cfdfe2ac4998847c51325f6c7a98`.
@@ -87,8 +87,17 @@ publisher. Use the controller graph, assigned GitHub runs and HTTPS receipts for
 ## Still outstanding
 
 Actual apt/dnf/opkg/apk client installation acceptance, dependency chains/diamonds and the
-remaining full live acceptance are outstanding. OpenWrt extraction now passes for both
-official SDKs; its SDK configuration/build verification continues with corrected tooling.
+remaining full live acceptance are outstanding. Both OpenWrt builds now pass with
+corrected SDK preparation and source-owned tool lookup:
+[IPK 40231880390](https://github.com/VOC-Experiments/demo-core/actions/runs/40231880390),
+[APK 40231884159](https://github.com/VOC-Experiments/demo-core/actions/runs/40231884159).
+These runs include independent validation and artifact upload. OpenWrt signing/feed
+publication and actual package-manager installation remain unverified.
+Both SDK preparation stages passed in real GitHub runs
+[IPK 40231441419](https://github.com/VOC-Experiments/demo-core/actions/runs/40231441419) and
+[APK 40231443502](https://github.com/VOC-Experiments/demo-core/actions/runs/40231443502).
+Their subsequent source-hook compiler lookup failure is corrected in new source tag
+v2.1.0 at 1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57; v2.0.0 remains unchanged.
 The core-ci application branch is committed locally; no application push, PR or installation
 was performed. The running executable is a development build under the temporary build root.
 The local SNode.C TLS webhook listener/certificate setup remains outstanding; selected public
