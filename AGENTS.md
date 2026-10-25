@@ -1,13 +1,50 @@
-# core-ci engineering and ownership
+# core-ci engineering
 
-core-ci is a single-process, single-threaded, event-driven SNode.C application. Follow framework apps/ patterns through installed public SNode.C targets; do not vendor the framework, introduce a second event loop or add an application thread pool. Keep blocking storage, subprocess waits and network work out of event handlers. The current repository is design-only: no implementation until design approval.
+The current owner specification is a fresh implementation. Do not recover requirements,
+source, architecture or protocols from discarded core-ci history. No migration or
+legacy compatibility. There is no IdP integration.
 
-Canonical checkout: `/home/voc/projects/snodec/core-ci` on jupiter, beside `/home/voc/projects/snodec/snode.c`. This is the new project, not a task worktree. Initial documentation establishes main; subsequent coherent implementation work uses feature branches. GitHub source: SNodeC/core-ci. Integration target: VOC-Experiments only. Do not change live SNodeC package CI, sources, credentials, tags or feeds through this task.
+Canonical checkout: /home/voc/projects/snodec/core-ci. GitHub: SNodeC/core-ci.
+Use feature branches based on main. External integration is restricted to explicitly
+authorized VOC-Experiments repositories. Never change production SNodeC workflows,
+credentials, tags or feeds. Commit, push, activation and publication are separate stages.
 
-Use persistent builds at `<repo-root>/build/codex/<configuration>`, temporary checks at `/tmp/codex/build/core-ci/<task>`. Any approved additional checkout belongs under `<repo-root>/checkouts/<task>` and needs recorded purpose and cleanup condition. Ignore build/, checkouts/ and local credential directories; never put credentials into tracked documentation. Do not move existing deployment credentials here implicitly.
+Use persistent builds under build/codex/<configuration> and temporary checks under
+/tmp/codex/build/core-ci/<task>. No additional source checkouts without approval.
+Ignore build/, checkouts/ and credential directories. Preserve .qtcreator/ and
+.local-credentials/; do not inspect or commit their contents.
 
-One authority per concept: local transactions own scheduling; verified feed receipts own publication outcomes; the publisher owns package-byte validation/signing. No permanent dual scheduler. Approval for this architecture does not authorize weakening dependency, provenance, callback or publication guarantees.
+Study SNode.C src/apps and relevant MQTTSuite applications before implementation.
+Use installed public SNode.C package targets, one thread and one framework event loop.
+Keep blocking storage, network operations and subprocess waits out of event handlers.
+Register configuration and named instances before core::SNodeC::init(). Call init once.
+Start managed MariaDB if selected and call MariaDBClient::connect() explicitly once.
+Only initial database success configures the application and starts the listener.
+On initial failure, log and release resources at the database boundary, leaving no
+listener or pending startup work. End main with return core::SNodeC::start().
+No startup polling, retry loops, deferred startup, explicit stop/exit or custom help.
+Later commands may use framework lazy establishment after the connection disappears;
+never replay uncertain mutations. Unmanaged mode must leave the external server alone.
+Keep configuration and route registration visible in main and useful callbacks inline.
+Separate successive tasks with blank lines.
 
-Use braces, one return at each function's end, no avoidable break/continue, changed production lines at most 160 characters. Before the first C++/CMake implementation commit, copy the applicable canonical formatting/analysis files and modules from ~/.codex/formatting byte-for-byte, integrate explicit formatting/check targets over src/ and tests/, and record exclusions. The initial Markdown-only stage intentionally does not introduce unused build tooling.
+GitHub ci/packages.json is authoritative for build definitions. MariaDB stores enrollment,
+immutable selections, dependency relationships and execution evidence. One graph/state
+authority; no persisted ready queue or generic workflow engine. Commit dispatch authority
+before calling GitHub. Unknown outcomes preserve assignments and uncertainty.
+A join waits for all relevant prerequisites; verified publication alone satisfies an edge.
+Builds, signing and publication run on GitHub, with privileged publication kept separate.
+Keep deployment secrets out of source definitions, browser code, artifacts and logs.
 
-Tests cover stable boundaries and restored invariants. Test the affected behavior; do not repeatedly run unrelated suites. Distinguish design estimates, local proofs and live evidence. Report production/test/docs growth and removed mechanisms separately. Preserve all earlier evidence. Do not claim operational readiness from documentation or synthetic tests.
+Use braces for compound statements, one return at function end and no avoidable
+break/continue. Changed production lines are at most 160 characters. Copy applicable
+canonical files and cmake modules from ~/.codex/formatting byte-for-byte before the
+first C++/CMake implementation commit. Use committed copies for formatting/check targets
+covering src/ and tests/, excluding generated/third-party files and .qtcreator/.
+Do not introduce unused build tooling in the design-only checkpoint.
+
+Record significant decisions and verification in WORK_LOG.md. Report production,
+test and documentation changes separately. Distinguish local proof from live acceptance.
+Before net production-code growth, present the design and estimate and obtain the
+explicit approval required by the global engineering instructions. Do not claim completion
+until the real graph-driven package pipeline and required acceptance have been verified.
