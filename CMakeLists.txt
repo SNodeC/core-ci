@@ -39,6 +39,8 @@ add_executable(
     src/UiConfig.cpp
     src/GraphStore.cpp
     src/SourceReader.cpp
+    src/HttpsUrl.cpp
+    src/EnvironmentResolver.cpp
 )
 target_link_libraries(
     core-ci
@@ -207,5 +209,43 @@ if(BUILD_TESTING)
                 ${PROJECT_BINARY_DIR}/tests/source-${case} --case ${case}
         )
         set_tests_properties(source-selection-${case} PROPERTIES TIMEOUT 30)
+    endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(
+        environment-test
+        tests/EnvironmentResolverTest.cpp src/EnvironmentResolver.cpp
+        src/HttpsUrl.cpp src/HttpClient.cpp
+    )
+    target_include_directories(environment-test PRIVATE src)
+    target_link_libraries(
+        environment-test PRIVATE core-ci-domain snodec::http-client
+                                 snodec::net-in-stream-tls OpenSSL::SSL
+    )
+    foreach(
+        case
+        success
+        single
+        redirect
+        ambiguous
+        wrong-platform
+        wrong-size
+        wrong-header
+        modified-manifest
+        modified-config
+        unapproved-auth
+        wrong-scope
+        unapproved-redirect
+    )
+        add_test(
+            NAME environment-${case}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/environment_resolution.py
+                --executable $<TARGET_FILE:environment-test> --directory
+                ${PROJECT_BINARY_DIR}/tests/environment-${case} --case ${case}
+        )
+        set_tests_properties(environment-${case} PROPERTIES TIMEOUT 25)
     endforeach()
 endif()

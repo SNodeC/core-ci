@@ -1,6 +1,7 @@
 #include "Database.h"
 #include "DatabaseConfig.h"
 #include "Enrollment.h"
+#include "EnvironmentResolver.h"
 #include "GitHub.h"
 #include "ManagedDatabase.h"
 #include "UiAssets.h"
@@ -24,6 +25,9 @@ int main(int argc, char* argv[]) {
     coreci::GitHub github(*githubConfig);
     coreci::SourceReader sources(github);
 
+    auto* registryConfig = utils::Config::configRoot.newSubCommand<coreci::RegistryConfig>();
+    coreci::EnvironmentResolver environments(*registryConfig);
+
     auto* uiConfig = utils::Config::configRoot.newSubCommand<coreci::UiConfig>();
 
     const express::legacy::in::WebApp app("web");
@@ -46,6 +50,7 @@ int main(int argc, char* argv[]) {
 
     try {
         github.loadCredentials();
+        environments.configure();
 
         database = std::make_unique<database::mariadb::MariaDBClient>(
             databaseConfig->connection(), [&](const database::mariadb::MariaDBState& state) {

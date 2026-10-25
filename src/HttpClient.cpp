@@ -19,7 +19,6 @@ namespace coreci {
                       operation->master = request;
                       request->method = operation->method;
                       request->url = operation->path;
-                      request->set("Host", operation->host + (operation->port == 443 ? "" : ":" + std::to_string(operation->port)));
                       request->set("User-Agent", "core-ci");
                       request->set("Accept-Encoding", "identity");
                       request->set("Connection", "close");
@@ -137,8 +136,13 @@ namespace coreci {
 
     void HttpClient::connect() {
         const auto operation = requests.front();
+        client.getConfig()->net::config::ConfigInstance::getSubCommand<web::http::client::ConfigHTTP>()->setHostHeader(
+            operation->host + (operation->port == 443 ? "" : ":" + std::to_string(operation->port)));
         if (fixedPeer.empty()) {
-            client.getConfig()->Remote::setHost(operation->host)->setPort(operation->port);
+            if (client.getConfig()->Remote::getHost() != operation->host || client.getConfig()->Remote::getPort() != operation->port) {
+                client.getConfig()->Remote::setHost(operation->host)->setPort(operation->port);
+                client.getConfig()->Remote::renew();
+            }
             client.getConfig()->Tls::setSni(operation->host);
         }
         client.connect([this, operation](const auto&, const core::socket::State& state) {

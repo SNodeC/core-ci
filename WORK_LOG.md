@@ -240,5 +240,29 @@
 - Exact older annotated-tag selection now tests +build metadata in the raw identity
   and %2B in the GitHub request. This boundary passes. The other seven source cases
   and real-MariaDB enrollment boundary passed with the updated dependency.
-- Production +5/-19; tests +5/-5; documentation updated separately. No install was
+- Production +4/-19; tests +4/-4; documentation updated separately. No install was
   performed by this core-ci change; it consumes the owner's installed update.
+
+## 2026-10-25 — immutable image and SDK selection
+
+- Added bounded OCI/Docker schema-2 index/manifest/configuration reads through the
+  installed SNode.C TLS client. Exact platform selection, descriptor/hash checks and
+  deployment-owned registry/token/redirect origins precede execution assignment.
+  OpenWrt SDK selections retain the source URL/checksum under a separate origin grant.
+- Source runner selectors and build parameters remain untouched. No local container,
+  filesystem layer or SDK processing occurs. Unsupported private registry auth and
+  ambiguous platforms report errors instead of guessing.
+- Twelve local TLS environment cases cover hashes, sizes, configuration mismatch,
+  ambiguous platforms, scoped pull authentication, origin rejection and credential-safe
+  redirects. All pass, along with seven lifecycle and six GitHub transport cases.
+- A redirect test exposed cached framework addresses; use its public renewal API only
+  when host/port changes. A real registry check exposed cached default HTTP Host handling;
+  select Host through ConfigHTTP before request construction. Client structure remains
+  unchanged. Owner explicitly deferred fixed-host:port client refactoring to later work.
+- Real public-registry metadata probing is separate from synthetic fixtures and package
+  acceptance. No GitHub job, SDK compilation, signing, installation or feed update yet.
+- Read-only real Docker registry resolution passed for debian:trixie/linux/amd64,
+  verifying manifest/configuration bytes through the approved registry, token service
+  and observed configuration CDN. Digest: sha256:15a71cc87173e191d5046f9c4288db4e8954b67f92e48d9587087826b0afe562.
+  Temporary probe settings are under the build directory, not deployment configuration.
+- Checkpoint accounting before this entry: {'production': [526, 2], 'tests': [234, 0], 'documentation': [55, 1]}. Canonical format-check and whitespace checks pass.

@@ -73,3 +73,34 @@ through the framework. Backup and restore guidance is in [setup inputs](setup-in
 
 Current implementation status and remaining pipeline work are recorded in the README
 and work log. These configuration instructions are not deployment/acceptance evidence.
+
+## Immutable build environments
+
+`registry.default-registry` supplies the HTTPS host[:port] for unqualified image names;
+`registry.default-namespace` optionally supplies the namespace for single-component names.
+There are no compiled registry aliases. Use an explicit registry authority in an image
+name when it differs from that default. Native images require an explicit tag or SHA-256
+digest and a literal `linux/architecture[/variant]` platform. Architecture names are not
+translated from package architecture names.
+
+Repeat `registry.allowed-origin` for every approved HTTPS registry, pull-token service
+and configuration-document redirect origin. Values contain only scheme and authority.
+Anonymous registry access and standard scoped Bearer pull challenges are supported;
+private registry credentials and other auth schemes are currently rejected clearly.
+Redirects are bounded and cannot send a registry token to another origin. IPv6 URL
+literals are currently unsupported; DNS and IPv4 endpoints are accepted.
+
+The controller reads bounded OCI/Docker schema-2 indexes, manifests and configuration
+blobs. It verifies SHA-256 and descriptor sizes, selects an unambiguous platform, checks
+the image configuration, and records the original image/platform, root and selected
+manifest digests, configuration digest and canonical digest-qualified image. It ignores
+optional embedded data/alternative descriptor URLs and fetches canonical registry paths.
+It never pulls filesystem layers or executes a container locally.
+
+`registry.sdk-origin` separately approves exact SDK download origins. Selection retains
+the source definition's exact SDK URL/checksum; GitHub workers must download, verify and
+validate release/toolchain compatibility before executing any hook. Pinning an SDK here
+is not approval to execute its tooling beside publication secrets.
+
+The registry transport still reuses one named instance between approved endpoints.
+The owner deferred refactoring to fixed endpoint clients; that work remains recorded.
