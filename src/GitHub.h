@@ -53,7 +53,8 @@ namespace coreci {
                      const std::string& suffix,
                      const nlohmann::json& body,
                      const nlohmann::json& permissions,
-                     const Callback& callback);
+                     const Callback& callback,
+                     bool publicRepository = false);
 
     private:
         std::string jwt() const;

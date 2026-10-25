@@ -232,11 +232,7 @@ namespace coreci {
     }
 
     void SourceReader::request(const std::shared_ptr<Reading>& reading, const std::string& suffix, const GitHub::Callback& callback) {
-        if (reading->publicRepository) {
-            github.publicRead(reading->repository, suffix, callback);
-        } else {
-            github.request(reading->repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback);
-        }
+        github.request(reading->repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback, reading->publicRepository);
     }
 
     void SourceReader::tree(const std::shared_ptr<Reading>& reading, const std::string& sha, unsigned int position) {

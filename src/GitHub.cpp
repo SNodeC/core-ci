@@ -199,7 +199,7 @@ namespace coreci {
     }
 
     void GitHub::publicRead(const std::string& repository, const std::string& suffix, const Callback& callback) {
-        request(repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback);
+        request(repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback, true);
     }
 
     void GitHub::request(const std::string& repository,
@@ -207,11 +207,12 @@ namespace coreci {
                          const std::string& suffix,
                          const nlohmann::json& body,
                          const nlohmann::json& permissions,
-                         const Callback& callback) {
+                         const Callback& callback,
+                         bool publicRepository) {
         try {
-            const auto slash = repository.find('/');
-            const bool publicRead = method == "GET" && body.is_null() && permissions == nlohmann::json{{"contents", "read"}};
-            if (!validRepository(repository) || (!publicRead && repository.substr(0, slash) != config.allowedOwner) ||
+            const bool publicRead =
+                publicRepository && method == "GET" && body.is_null() && permissions == nlohmann::json{{"contents", "read"}};
+            if (!validRepository(repository) || (!publicRead && !repository.starts_with(config.allowedOwner + "/")) ||
                 (!suffix.empty() && suffix.front() != '/')) {
                 throw std::invalid_argument("repository must belong to the explicitly authorized GitHub owner");
             }

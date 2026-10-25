@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
             }
         };
         if (std::getenv("CORE_CI_TEST_PUBLIC_READ") != nullptr) {
-            github.publicRead(repository, "", completed);
+            github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, completed, true);
         } else {
             const char* method = std::getenv("CORE_CI_TEST_METHOD");
             github.request(repository, method == nullptr ? "GET" : method, "", nullptr, {{"contents", "read"}}, completed);

@@ -120,14 +120,15 @@ def exercise(args, directory):
             assert seen == ["token", "repository"], "public read bypassed scoped installation authentication"
             # Token fixture above still requires only repository 99 and contents:read, never feed repository 1001.
             del environment["CORE_CI_TEST_PUBLIC_READ"]
-            environment["CORE_CI_TEST_METHOD"] = "POST"
             environment["CORE_CI_TEST_EXPECTED_STATUS"] = "0"
             environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "0"
-            for repository in ("Other/feed", "Owner/ungranted"):
-                seen.clear()
-                environment["CORE_CI_TEST_REPOSITORY"] = repository
-                result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
-                assert result.returncode == 0 and seen == [], "ungranted write reached GitHub"
+            for method in ("GET", "POST"):
+                environment["CORE_CI_TEST_METHOD"] = method
+                for repository in ("Other/feed", "Owner/ungranted"):
+                    seen.clear()
+                    environment["CORE_CI_TEST_REPOSITORY"] = repository
+                    result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+                    assert result.returncode == 0 and seen == [], "ungranted source request reached GitHub"
     finally:
         server.shutdown()
         server.server_close()

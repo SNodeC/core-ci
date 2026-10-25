@@ -679,3 +679,7 @@
   regression by re-reading the cached build; the rebuilt binary and graph suite pass.
 - Authenticated live startup reconciliation verified the formerly blocked feed receipt
   and advanced publication to the next assigned job. No replacement executions dispatched.
+- Tightened the public-read boundary: only explicit feed reads may use the existing
+  read-only installation token outside repository grants. Ordinary source reads and all
+  writes still require enrollment grants. Consolidated SourceReader's forwarding branch;
+  production +9/-11, tests +8/-7. All 16 affected boundary suites pass after rebuilding.
