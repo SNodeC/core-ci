@@ -1,0 +1,44 @@
+name: core-ci native client acceptance
+run-name: core-ci client acceptance ${{ inputs.receipt }}
+on:
+  workflow_dispatch:
+    inputs:
+      receipt:
+        required: true
+        type: string
+      command:
+        required: true
+        default: demo-core
+        type: string
+      expected_output:
+        required: true
+        default: demo-core 60
+        type: string
+      runner:
+        required: true
+        type: choice
+        options:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+permissions:
+  contents: read
+jobs:
+  clients:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Reject unrelated keys, then refresh, install and execute
+        env:
+          FEED_BASE_URL: ${{ vars.FEED_BASE_URL }}
+          RECEIPT: ${{ inputs.receipt }}
+          COMMAND: ${{ inputs.command }}
+          EXPECTED_OUTPUT: ${{ inputs.expected_output }}
+        run: |
+          set -euo pipefail
+          umask 022
+          python3 acceptance/native_clients.py --receipt "$RECEIPT" --keys keys \
+            --command "$COMMAND" --expected-output "$EXPECTED_OUTPUT"

@@ -683,3 +683,13 @@
   read-only installation token outside repository grants. Ordinary source reads and all
   writes still require enrollment grants. Consolidated SourceReader's forwarding branch;
   production +9/-11, tests +8/-7. All 16 affected boundary suites pass after rebuilding.
+- Added native GitHub client acceptance alongside the OpenWrt check. The first runs
+  exposed test-harness permissions needed by APT and DNF's zero exit after rejecting a
+  repository; fixed the harness to permit package-manager ownership/identity operations
+  and require an actual rejected installation. No production behavior or secret access added.
+- Real Fedora run 40234717535 and Debian amd64 run 40234719240 pass wrong-key rejection,
+  signed HTTPS refresh, exact-version package installation and installed runtime output.
+  Sandbox acceptance tooling deployed at 2fedc3498c566a3ad3101f6511a18274c2365edc;
+  production build/publication tooling stays pinned at 5d124fbdec05cfdfe2ac4998847c51325f6c7a98.
+- Created new v2.1.0 tags on the reviewed sandbox app/side/join source commits for the
+  dependency diamond. Existing version tags and failed execution inputs remain unchanged.
