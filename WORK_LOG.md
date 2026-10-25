@@ -584,3 +584,19 @@
   unresolved in this checkpoint; extraction protections have not been relaxed.
 - Native package/provenance suites pass with real package/signature tools. Production
   code +1/-1, tests unchanged. No successful GitHub artifact or publication claim.
+
+
+## 2026-10-25 — repair official SDK preparation
+
+- Inspected checksum-verified official SDKs 24.10.8 and 25.12.6. All absolute symlinks
+  are host/bin bindings to the SDK build machine, including missing /builder and /opt paths.
+  Omit precisely those archived bindings; keep internal links and the standard data filter.
+- Keep archive entry counting independent of retained members, preserving resource bounds.
+  Added regression cases for valid host links, builder bindings, traversal and external links
+  outside host/bin. The regression reproduced the original AbsoluteLinkError before the fix.
+- Both actual archives extract successfully, omitting 25 and 20 builder bindings respectively.
+  SDK target queries then exposed absent generated .config files. Run the standard SDK
+  defconfig on GitHub before queries, also regenerating host command bindings for that host.
+- Owner explicitly approved the narrowly scoped preparation fix. No controller architecture
+  changed. Local archive, worker environment and provenance suites pass; GitHub verification
+  of defconfig/build remains pending. No local package compilation or publication performed.

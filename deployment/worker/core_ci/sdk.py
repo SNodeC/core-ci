@@ -44,6 +44,7 @@ def prepare(target, environment, destination):
     roots = list(extracted.iterdir())
     require(len(roots) == 1 and roots[0].is_dir() and not roots[0].is_symlink(), "SDK archive requires one directory")
     root = roots[0]
+    subprocess.run(["make", "--no-print-directory", "-C", str(root), "defconfig"], check=True, timeout=120)
     query = destination / "query.mk"
     query.write_text("TOPDIR:=$(CURDIR)\nSDK:=1\ninclude $(TOPDIR)/rules.mk\ninclude $(TOPDIR)/include/version.mk\n")
     values = {}
@@ -101,13 +102,16 @@ def extract(archive, destination, zstd=False):
         with tarfile.open(archive, "r:*") as opened:
             members = []
             size = 0
-            for item in opened:
+            for index, item in enumerate(opened):
                 size += item.size
                 require(
-                    len(members) < 200000 and size <= 4 * 1024**3 and len(item.name) <= 1024,
+                    index < 200000 and size <= 4 * 1024**3 and len(item.name) <= 1024,
                     "SDK archive exceeds resource bounds",
                 )
-                members.append(item)
+                # Host bindings belong to the SDK builder; OpenWrt regenerates them for its current host.
+                host_command = Path(item.name).parts[1:-1] == ("staging_dir", "host", "bin")
+                if not (item.issym() and item.linkname.startswith("/") and host_command):
+                    members.append(item)
             # Python's standard data filter rejects traversal, external links, devices and special files.
             opened.extractall(destination, members=members, filter="data")
     finally:

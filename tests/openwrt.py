@@ -67,9 +67,33 @@ def main():
                 link.type = tarfile.SYMTYPE
                 link.linkname = "inside"
                 opened.addfile(link)
+                host_link = tarfile.TarInfo("sdk/staging_dir/host/bin/retained")
+                host_link.type = tarfile.SYMTYPE
+                host_link.linkname = "../../../inside"
+                opened.addfile(host_link)
+                # Official SDKs retain bindings to the machine that assembled them.
+                for name, target in (
+                    ("file", "/usr/bin/file"),
+                    ("gcc", "/builder/openwrt/ccache_cc.sh"),
+                    ("python3", "/opt/venv/bin/python3.9"),
+                ):
+                    binding = tarfile.TarInfo("sdk/staging_dir/host/bin/" + name)
+                    binding.type = tarfile.SYMTYPE
+                    binding.linkname = target
+                    opened.addfile(binding)
             sdk.extract(archive, root / "valid")
             assert (root / "valid/sdk/link").read_text() == "ok"
-            for name, target in (("sdk/../../escape", ""), ("sdk/escape", "/etc/passwd")):
+            assert (root / "valid/sdk/staging_dir/host/bin/retained").read_text() == "ok"
+            for name in ("file", "gcc", "python3"):
+                assert not os.path.lexists(root / "valid/sdk/staging_dir/host/bin" / name)
+            for name, target in (
+                ("sdk/../../escape", ""),
+                ("sdk/escape", "/etc/passwd"),
+                ("sdk/staging_dir/host/bin/escape", "../../../../../escape"),
+                ("sdk/staging_dir/host/lib/escape", "/etc/passwd"),
+                ("sdk/staging_dir/host/bin/../../../../escape", "/etc/passwd"),
+                ("sdk/staging_dir/toolchain/bin/escape", "/usr/bin/gcc"),
+            ):
                 with tarfile.open(archive, "w") as opened:
                     item = tarfile.TarInfo(name)
                     if target:
