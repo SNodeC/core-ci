@@ -472,3 +472,15 @@
   main-only sandbox package-publication environment via stdin. GitHub secret metadata
   confirms all three plus the previously provisioned feed-writer key. No new keys, rotation,
   repository-secret changes, workflow activation or publication. Production/test changes: 0.
+
+
+## 2026-10-25 — collect owner-requested local sandbox credentials
+
+- Copied existing package signing private/public keys, four sandbox App private/public
+  key pairs and the existing observer token into a Git-ignored local credential directory.
+  Added a local inventory of roles and source paths; no secret contents entered tracked files.
+- Verified copied bytes, standard OpenSSL public-key derivation, Git exclusion and owner-only
+  directory/file permissions (700/600). Originals and runtime configuration remain in place.
+  Production SNodeC credentials and personal GitHub login credentials were excluded.
+- No credential generation/rotation, GitHub changes, activation or publication. Production
+  and test changes: 0; no application tests needed for this local file collection.
