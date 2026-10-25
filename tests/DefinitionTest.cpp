@@ -2,6 +2,7 @@
 
 #include "Version.h"
 
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -42,9 +43,21 @@ namespace {
     }
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
     int status = 0;
     try {
+        check(argc == 2, "sandbox definitions directory required");
+        std::map<std::string, coreci::Definition> sandbox;
+        for (const auto* name : {"demo-core", "demo-app", "demo-side", "demo-join"}) {
+            std::ifstream input(std::string(argv[1]) + "/" + name + ".json");
+            nlohmann::json document;
+            input >> document;
+            auto parsed = coreci::Definition::parse(document);
+            check(parsed.json == document && document["matrix"].size() == 5, "sandbox targets changed");
+            sandbox.emplace(name, std::move(parsed));
+        }
+        coreci::Definition::validateGraph(sandbox);
+
         const std::vector<std::string> ordered{"1.0.0-alpha",
                                                "1.0.0-alpha.1",
                                                "1.0.0-alpha.beta",

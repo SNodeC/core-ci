@@ -484,3 +484,24 @@
   Production SNodeC credentials and personal GitHub login credentials were excluded.
 - No credential generation/rotation, GitHub changes, activation or publication. Production
   and test changes: 0; no application tests needed for this local file collection.
+
+
+## 2026-10-25 — prepare source-owned sandbox recipes and activation review
+
+- Read the four sandbox projects' current C sources and tag/workflow metadata. Prepared
+  source-owned hooks, own-only development exports, and explicit five-row definitions.
+  The controller gained no package build or discovery responsibility. Dependencies retain
+  source-declared broad compatibility while assigned build artifacts remain exact.
+- Local real-tool tests build all four synthetic source fixtures in DEB and RPM formats,
+  checking metadata, own exports and the joined runtime result. All eight builds pass.
+  The controller definition parser validates all four definitions as one graph; build,
+  canonical formatting, Python formatting/syntax and whitespace checks pass.
+- Recorded exact old sandbox workflows to disable, fresh worker/source/feed file placement,
+  Pages setup and proposed fresh v2.0.0 tags for owner activation review. No GitHub files,
+  workflows, tags or feeds changed. Public webhook/TLS deployment remains owner-supplied.
+- This checkpoint is preparation within the approved implementation scope; live GitHub,
+  SDK/container execution, signed feed and apt/dnf/opkg/apk installation remain outstanding.
+- Accounting: source hook code +175/-0, source-owned JSON +308/-0, tests +114/-1 and
+  test-build wiring +11/-1. Growth supplies original-scope source recipes and explicit
+  sandbox definitions within the approved estimate, without a second implementation in
+  the controller. Final hook tests pass after the package-license metadata adjustment.

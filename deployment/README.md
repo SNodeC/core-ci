@@ -158,8 +158,9 @@ than overwrite them. Feed updates use a normal checked Git push, with no force/r
 indeterminate push or missing HTTPS receipt must be reconciled before replacement; GitHub job
 failure alone cannot prove the feed update did not happen. Controller receipt reconciliation and publication serialization are wired and exercised with
 real MariaDB and synthetic GitHub/HTTPS evidence. A failed privileged job with no verified
-receipt remains uncertain; proving a definite pre-push publication failure for explicit retry
-needs additional trusted result evidence. No replacement is inferred from a missing receipt.
+receipt remains uncertain unless canonical assigned job/step evidence proves the sole
+feed-write step was skipped. That definite pre-push failure permits explicit retry; a possible
+write remains assigned until reconciliation. No replacement is inferred from a missing receipt.
 
 The worker checks a conservative 900 MiB site bound before push. Pages currently limits
 published sites to 1 GB, has a soft 100 GB/month bandwidth limit and a ten-minute deployment
@@ -218,3 +219,6 @@ read-only Actions access to earlier assigned runs and retain their resolved envi
 Evidence requests 90-day retention; repository limits and artifact expiry can prevent a
 retry, which then fails clearly instead of changing inputs. Source hooks receive no Actions
 token. Real GitHub execution remains an acceptance requirement.
+
+Sandbox source recipes, explicit matrices and the external activation review are in
+[sandbox/README.md](sandbox/README.md). No sandbox workflow installation is implied by local preparation.

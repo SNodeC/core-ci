@@ -153,7 +153,10 @@ if(BUILD_TESTING)
 
     add_executable(definition-test tests/DefinitionTest.cpp)
     target_link_libraries(definition-test PRIVATE core-ci-domain)
-    add_test(NAME definitions-and-versions COMMAND definition-test)
+    add_test(NAME definitions-and-versions
+             COMMAND definition-test
+                     ${PROJECT_SOURCE_DIR}/deployment/sandbox/definitions
+    )
 endif()
 
 if(BUILD_TESTING)
@@ -228,6 +231,13 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test(
+        NAME sandbox-hook-boundaries
+        COMMAND
+            ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/sandbox_hooks.py
+            ${PROJECT_BINARY_DIR}/tests/sandbox-hooks
+    )
+    set_tests_properties(sandbox-hook-boundaries PROPERTIES TIMEOUT 120)
     add_test(
         NAME openwrt-archive-boundaries
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/openwrt.py

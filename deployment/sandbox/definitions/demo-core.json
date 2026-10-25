@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "title": "Demo Core",
+  "package": "demo-core",
+  "depends_on": [],
+  "build": {
+    "native": "ci/native.sh",
+    "openwrt": "ci/openwrt.sh"
+  },
+  "matrix": [
+    {
+      "id": "debian-trixie-amd64",
+      "family": "native",
+      "distribution": "debian",
+      "suite": "trixie",
+      "arch": "amd64",
+      "runner": "ubuntu-24.04",
+      "build": {
+        "image": "debian:trixie",
+        "platform": "linux/amd64",
+        "format": "deb"
+      }
+    },
+    {
+      "id": "debian-trixie-arm64",
+      "family": "native",
+      "distribution": "debian",
+      "suite": "trixie",
+      "arch": "arm64",
+      "runner": "ubuntu-24.04-arm",
+      "build": {
+        "image": "debian:trixie",
+        "platform": "linux/arm64",
+        "format": "deb"
+      }
+    },
+    {
+      "id": "fedora-43-x86_64",
+      "family": "native",
+      "distribution": "fedora",
+      "suite": "43",
+      "arch": "x86_64",
+      "runner": "ubuntu-24.04",
+      "build": {
+        "image": "fedora:43",
+        "platform": "linux/amd64",
+        "format": "rpm"
+      }
+    },
+    {
+      "id": "openwrt-24.10-x86_64",
+      "family": "openwrt",
+      "distribution": "openwrt",
+      "suite": "24.10",
+      "arch": "x86_64",
+      "runner": "ubuntu-24.04",
+      "build": {
+        "target": "x86/64",
+        "format": "ipk"
+      }
+    },
+    {
+      "id": "openwrt-25.12-x86_64",
+      "family": "openwrt",
+      "distribution": "openwrt",
+      "suite": "25.12",
+      "arch": "x86_64",
+      "runner": "ubuntu-24.04",
+      "build": {
+        "target": "x86/64",
+        "format": "apk"
+      }
+    }
+  ]
+}
