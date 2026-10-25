@@ -23,7 +23,7 @@ keys; the eventual CLI/help must expose their registered framework equivalents.
 | github.webhook_secret_file | Protected raw-body HMAC secret file |
 | github.api_version | Verified REST version used for dispatch/evidence |
 | github.webhook_url | Actual public HTTPS endpoint and deployment TLS arrangement |
-| database.mode | Explicit managed or unmanaged, never inferred from default config |
+| database.mode | CLI-only --mode managed or unmanaged; never read from the default application config |
 | database.host / database.port | Explicit administrator endpoint when TCP is used |
 | database.socket | Explicit UNIX socket where selected |
 | database.name / database.user | Application schema and restricted account |

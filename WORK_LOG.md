@@ -78,3 +78,29 @@
 - Owner requested an explanation of runtime dependency constraints. No answer was inferred;
   this choice concerns installed package compatibility, not exact graph build inputs.
 - Clarified that build-only graph edges need not become runtime package dependencies.
+
+## 2026-10-25 — implementation continuation
+
+- Owner selected compatible source-declared runtime dependency ranges and instructed
+  continuation after the refined proposal/estimate. Builds remain pinned to exact artifacts.
+- Began the approved implementation checkpoints in the canonical feature branch. Copied
+  canonical source/CMake/analysis configurations byte-for-byte and wired explicit targets.
+- Installed MariaDB API has async commands/transactions but no prepared/escaping interface;
+  future text values will use SQL-mode-independent hex literals through one DB owner.
+- Implementing the database lifecycle first: explicit initial connect, named HTTP instance,
+  native child-authenticated MariaDB readiness and framework-owned descriptor observation.
+  No application startup timer, polling/retry loop, second event loop or thread is introduced.
+- initialConnection is consumed once so later framework reconnection cannot register routes
+  or a listener again. Managed watchers retain their resource owner through unregistering.
+- This is ongoing implementation, not a completed controller or a live package-pipeline claim.
+- Lifecycle checkpoint verified using installed SNode.C 2.1.0 interfaces, GCC 16.2 Debug,
+  and real isolated MariaDB under /tmp/codex/build/core-ci/foundation. All six relevant
+  tests executed and passed: help, managed readiness/shutdown, unmanaged session-loss
+  reconnection, managed initial DB failure, unmanaged initial DB failure, and child startup
+  failure. The help assertion was corrected to the framework's named-instance help surface.
+- Explicit format-check and diff whitespace checks passed. All eight canonical tooling
+  files match both source bytes and recorded SHA256. Source lines remain at most 160 chars.
+- Checkpoint adds 560 production lines and 174 test lines; canonical copied tooling
+  is 754 lines separately. No previous production mechanism is retained or removed in this
+  fresh checkpoint. Temporary builds stay at the permitted task location for ongoing work.
+- No GitHub enrollment/build/publication or client package installation has been tested.

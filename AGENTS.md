@@ -48,3 +48,12 @@ test and documentation changes separately. Distinguish local proof from live acc
 Before net production-code growth, present the design and estimate and obtain the
 explicit approval required by the global engineering instructions. Do not claim completion
 until the real graph-driven package pipeline and required acceptance have been verified.
+
+The owner instructed implementation continuation after the refined proposal and estimate
+(7,000-10,500 production lines, 2,500-4,000 test lines). Re-estimate before exceeding a
+checkpoint upper bound or adding unagreed architecture. Runtime dependency declarations
+remain source-owned compatible ranges; build artifact selection stays exact.
+
+Canonical formatting files/modules are byte copies. The top-level build extends the
+canonical format target to tests/ and adds format-check for src/ and tests/. Source
+and CMake discovery excludes generated builds, checkouts and user-owned .qtcreator/.

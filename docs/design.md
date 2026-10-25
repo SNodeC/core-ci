@@ -27,6 +27,8 @@ Owner decisions received on 2026-10-25:
 - Enrollment immediately requests the highest numeric semantic-version tag, if one exists.
 - New selections supersede older waiting automatic work, preserving its history.
 - Dependency-triggered selection includes semantic-version prereleases.
+- Runtime packages preserve source-declared compatible dependency ranges; graph builds
+  always consume exact selected artifact versions. Build-only edges need no runtime dependency.
 - A prerequisite target with no selected execution produces a visible work/configuration
   error until its work is explicitly requested; no implicit upward prerequisite builds.
 - An explicit successful retry of older inputs may become the feed's newest rebuild of
@@ -670,12 +672,11 @@ claimed by this design checkpoint.
 
 ## 16. Remaining owner choices and verification gates
 
-The five received policy choices are fixed in section 1. These remaining issues are
+The six received policy choices are fixed in section 1. These remaining issues are
 explicit rather than silently implemented:
 
 | Question | Proposed handling pending owner decision |
 | --- | --- |
-| Runtime dependency constraints | Owner requested clarification; no choice inferred. Builds use exact artifacts. Packages can require an exact runtime version or a source-declared compatible range. Build-only graph edges do not automatically become runtime dependencies |
 | Permanently unmatched dispatch | Preserve unknown state; do not add 'declare lost' replacement permission without a separately approved, evidence-based protocol |
 | Missed tag deliveries during downtime | Offer GitHub redelivery/explicit selected-version request now; an explicit tag-rescan action is a proposed scope choice, not hidden startup polling |
 | Feed retention/hosting capacity | Preserve all versions initially; no automatic deletion. Owner chooses retention before a capacity limit requires removal |
