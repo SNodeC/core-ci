@@ -107,8 +107,8 @@ SemVer build metadata is retained in provenance and omitted from package Version
 worker `contract.versions` codec is used for both building and validation. General prerelease
 identifiers use the numeric token scheme in docs/design.md. Adjacent ordering for numeric,
 alphabetic, hyphenated, prefix and multipart identifiers is proved with installed dpkg and
-RPM comparators. IPK and selected SDK APK v3 comparator proofs remain outstanding. No claim
-of OpenWrt version support is made from the native comparisons.
+RPM comparators. The actual OpenWrt 24.10.8 opkg comparator also passes the same ordering
+cases in GitHub acceptance. Selected OpenWrt APK v3 comparator proof remains outstanding.
 
 The schema-1 manifest contains the complete assignment evidence/hash, controller-assigned
 GitHub-safe artifact name, encoded package version, filenames/components, actual package

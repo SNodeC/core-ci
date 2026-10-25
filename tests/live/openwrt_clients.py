@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
+import sys
 import subprocess
 import tempfile
 
@@ -67,6 +69,53 @@ def container(image, public, script, package, command):
         timeout=180,
     )
     print(result.stdout, flush=True)
+    return result
+
+
+def version_comparisons(package_format):
+    # Use deployment-owned codec and actual selected OpenWrt client comparators.
+    sys.path.insert(0, str(Path("core_ci").resolve()))
+    from contract import versions
+
+    tags = [
+        "0.9.9",
+        "1.0.0-0",
+        "1.0.0-1",
+        "1.0.0-2",
+        "1.0.0-10",
+        "1.0.0-A",
+        "1.0.0-Z",
+        "1.0.0-a",
+        "1.0.0-a-",
+        "1.0.0-a0",
+        "1.0.0-alpha",
+        "1.0.0-alpha.0",
+        "1.0.0-alpha.1",
+        "1.0.0-alpha.2",
+        "1.0.0-alpha.10",
+        "1.0.0-alpha.A",
+        "1.0.0-alpha.a",
+        "1.0.0-alpha.beta",
+        "1.0.0-beta",
+        "1.0.0-rc.1",
+        "1.0.0",
+        "1.0.1-0",
+        "1.0.1",
+        "2.0.0",
+    ]
+    pairs = [
+        (versions(left, 7, package_format)["full"], versions(right, 1, package_format)["full"])
+        for left, right in zip(tags, tags[1:])
+    ]
+    pairs.append((versions("1.0.0", 1, package_format)["full"], versions("1.0.0", 2, package_format)["full"]))
+    commands = []
+    for left, right in pairs:
+        a, b = shlex.quote(left), shlex.quote(right)
+        if package_format == "ipk":
+            commands.append("opkg compare-versions " + a + " '<' " + b)
+        else:
+            commands.append('test "$(apk version -t ' + a + " " + b + ')" = "<"')
+    result = "\n".join(commands) + "\necho 'PASS OpenWrt SemVer/rebuild ordering'\n"
     return result
 
 
@@ -143,7 +192,13 @@ def main():
             assert rejected.returncode != 0 and re.search(
                 r"untrusted|signature.*fail|fail.*signature", rejected.stdout, re.IGNORECASE
             ), "no signature rejection observed with unrelated keys"
-            accepted = container(image, public, positive, package, args.command)
+            accepted = container(
+                image,
+                public,
+                "mkdir -p /tmp /var/lock\n" + version_comparisons(target["format"]) + positive,
+                package,
+                args.command,
+            )
             assert accepted.returncode == 0, "authenticated repository refresh/installation failed"
             assert accepted.stdout.strip().splitlines()[-1] == args.expected_output, "installed runtime output mismatch"
             print(

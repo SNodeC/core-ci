@@ -720,3 +720,15 @@
 - Updated stale setup/readme statements to distinguish the now-active sandbox and proved
   native/IPK client installation from outstanding APK, diamond and webhook acceptance.
   No operational-readiness claim, new credential grant or controller mechanism was added.
+- Added GitHub-only checks of the existing version codec against actual OpenWrt client
+  comparators, covering numeric/alphabetic/multipart prereleases and rebuild ordering.
+  Official opkg/apk command documentation and shell syntax were checked; no new codec.
+- IPK run 40235763176 passes ordering comparisons plus wrong-key rejection, signed refresh,
+  exact installation and runtime. A preceding new comparator run stopped because its
+  client setup ran after the comparisons; moved volatile-directory setup before all commands.
+- Saved live diamond evidence with demo-app amd64 published, demo-side amd64 unpublished
+  and demo-join amd64 waiting without an assigned run. ARM64 join became eligible after
+  both prerequisite publications. No injected graph state or synthetic GitHub result.
+- Reviewed SNode.C TLS WebApp and MQTTSuite named listener/disabled-instance patterns for
+  the remaining dedicated webhook listener. Production implementation awaits required
+  growth approval; valid public TLS certificate/key paths remain owner inputs.
