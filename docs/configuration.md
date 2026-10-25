@@ -214,3 +214,8 @@ A latest-SDK row is, for example:
 
 The suite is configured feed series, not a compiled support list. SDK discovery does not
 create a timer or an automatic rebuild policy: it runs in the GitHub worker for assigned work.
+
+The sandbox preserves the existing feed APT/usign identities. New SDK-specific APK feeds
+publish their EC P-256 public key as keys/core-ci-apk.pem; legacy keys/apk.pem remains RSA
+and unchanged. Install the key corresponding to the chosen feed. Do not substitute the
+legacy RSA file for the new APK publisher's EC P-256 key.

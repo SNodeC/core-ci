@@ -1,28 +1,28 @@
 # Trusted public verification keys
 
-These public files were read from SNodeC/DistributionPackages at commit
-`7a28f2bd8c21887453c968e095055c601702d4b6`. No private key was copied.
-The sandbox publisher must verify private/public correspondence before signing.
+APT/RPM and IPK use the existing VOC-Experiments/packages feed identities. Their public
+files were verified against feed commit da55734a76947186d675afd5b15367cc98738e0a and
+matching owner-held private keys. Standalone GnuPG/usign signing and verification passed.
+Private material is stored only in protected owner-held files and publication secrets.
 
 | File | SHA-256 |
 | --- | --- |
-| apt.asc | 746217db57c5a8667b9f827c41bf933b4972e62463555e4bf95b332c09c8ae39 |
-| opkg.pub | 8d31ae50a78ee2cd6935ec17e8e55fd3de7ccc787f66ef84e215889c4df208e6 |
-| apk.pem | 7cae8895c8af1a543c72f1676865fbd8dbf12b3015f6064a4d288a9aa3fe8f26 |
+| apt.asc | cc1ac352f62047eb693040b876e4c6bf6ca10da93cd8bb6bb130a618c572086d |
+| opkg.pub | 478a109a7c2c0d846801e4a4a6ad2873e885add6cbe3d6d7e01f7ff2c9b39aef |
+| core-ci-apk.pem | 7cae8895c8af1a543c72f1676865fbd8dbf12b3015f6064a4d288a9aa3fe8f26 |
 
-OpenPGP fingerprint: `8BBFD49E3C826FDB1416C79E60046744B15B0E05`.
-`apk.pem` is EC P-256, verified with OpenSSL. The usign public file has not yet
-been exercised with a signature/client locally; do not infer that from its name.
+OpenPGP fingerprint: A4B307A9CFD583089547481DE58C165F4340EE99.
+Usign fingerprint: 9bc0ca6b2dc8a9a9.
 
-Read-only GitHub metadata on 2026-10-25 confirmed repository secrets named
-APT_SIGNING_KEY, OPENWRT_USIGN_KEY, OPENWRT_APK_KEY, PACKAGES_APP_PRIVATE_KEY
-and PACKAGES_OBSERVER_TOKEN in both VOC-Experiments/ci-coordinator and
-SNodeC/DistributionPackages. Values cannot be retrieved and have not been inspected.
-Names do not prove correspondence with these keys. Neither repository currently
-has a publication environment. No secret was moved, replaced or rotated.
+The existing feed keys/apk.pem is RSA-3072 and remains unchanged for its legacy feeds.
+The new publisher requires EC P-256. Its already-provisioned public key is named
+core-ci-apk.pem, copied from SNodeC/DistributionPackages commit
+7a28f2bd8c21887453c968e095055c601702d4b6 and independently matched to the owner-held
+EC private key. New APK feeds are SDK-specific; their clients install this separate key.
+No existing key is replaced, and no new private key was generated for this correction.
 
-Only the privileged publication job may receive signing/feed credentials. Creating
-an environment does not remove access to existing repository-level secrets. Before
-activation, review worker workflows and restrict signing keys to the protected
-package-publication environment using the existing owner-held material. Do not
-export secret values through workflow logs or artifacts to accomplish that setup.
+Signing keys and the feed-writer key are supplied to the privileged publication job through
+package-publication, restricted to the trusted worker main branch. Source hooks receive none
+of these secrets. GitHub does not permit retrieving stored secret values. Verify identities
+with the trusted public files and standard signing tools; never expose private material in
+logs or artifacts. End-to-end package/client acceptance remains separate from key verification.

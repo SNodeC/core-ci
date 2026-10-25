@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deployment/worker/
 import contract
 import sdk
 import environment
+from sign_native import publish_key
 
 
 def rejects(operation):
@@ -29,6 +30,21 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=directory) as temporary:
         root = Path(temporary)
+        # A new SDK feed key must not replace the existing APK feed's trust file.
+        feed = root / "feed"
+        (feed / "keys").mkdir(parents=True)
+        legacy = feed / "keys/apk.pem"
+        legacy.write_bytes(b"retained legacy APK public key")
+        before = legacy.read_bytes()
+        selected = Path(__file__).resolve().parents[1] / "deployment/worker/keys/core-ci-apk.pem"
+        publish_key(feed, selected)
+        assert legacy.read_bytes() == before
+        assert (feed / "keys/core-ci-apk.pem").read_bytes() == selected.read_bytes()
+        publish_key(feed, selected)
+        replacement = root / "apk.pem"
+        replacement.write_bytes(selected.read_bytes())
+        rejects(lambda: publish_key(feed, replacement))
+        assert legacy.read_bytes() == before, "legacy APK key was replaced"
         with patch.dict(os.environ, {"RUNNER_TEMP": str(root)}):
             control = root / "control"
             control.write_text(

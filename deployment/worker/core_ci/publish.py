@@ -175,7 +175,7 @@ def main():
         "deb": ("APT_SIGNING_KEY", "apt.asc"),
         "rpm": ("APT_SIGNING_KEY", "apt.asc"),
         "ipk": ("OPENWRT_USIGN_KEY", "opkg.pub"),
-        "apk": ("OPENWRT_APK_KEY", "apk.pem"),
+        "apk": ("OPENWRT_APK_KEY", "core-ci-apk.pem"),
     }[package_format]
     identity = run_identity(selected)
     with tempfile.TemporaryDirectory(prefix="core-ci-secrets-", dir=os.environ["RUNNER_TEMP"]) as temporary:

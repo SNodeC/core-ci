@@ -543,3 +543,20 @@
   observer-token file failed authentication, but the actual GitHub reader secret passed.
 - No production SNodeC changes, application push/installation, extra source checkout or secret
   disclosure. Local production/test source changes: zero; live evidence is recorded separately.
+
+
+## 2026-10-25 — preserve feed trust while correcting signing configuration
+
+- Credential-only log/path inspection located the original sandbox private keys. Standard
+  GnuPG and usign signing/verification prove APT/IPK correspondence to the existing feed.
+  No discarded application/orchestration implementation was recovered or reused.
+- Existing APK trust is RSA-3072, incompatible with the required new EC P-256 publisher.
+  Preserve keys/apk.pem and its existing feeds; name the already-provisioned P-256 public
+  key core-ci-apk.pem for new SDK-specific feeds. One existing filename mapping changes;
+  the overwrite-rejection guard and package layout remain intact. No new private keys.
+- Copied active and legacy key files into owner-only Git-ignored credential storage, then
+  provisioned matching original APT/IPK exports into package-publication through stdin.
+  No signing private material entered logs, tracked files, build artifacts or MariaDB.
+- Three affected local suites pass, including native real-tool signatures, provenance,
+  and preservation/replay/rejection checks for the distinct APK public-key path. No
+  GitHub package publication or client-installation acceptance is inferred from these checks.
