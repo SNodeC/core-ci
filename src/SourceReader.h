@@ -22,7 +22,6 @@ namespace coreci {
         void select(const std::string& repository, const std::string& tag, const Callback& callback);
         void definition(const std::string& repository, const std::string& commit, const Callback& callback);
         static std::string blobSha(const std::string& content);
-        static std::string encode(const std::string& value);
 
     private:
         struct Reading {

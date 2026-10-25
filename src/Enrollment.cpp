@@ -3,6 +3,7 @@
 #include <openssl/evp.h>
 #include <regex>
 #include <stdexcept>
+#include <web/http/http_utils.h>
 
 namespace coreci {
 
@@ -197,7 +198,7 @@ namespace coreci {
     void Enrollment::readHead(const std::shared_ptr<Save>& save) {
         github.request(save->repository,
                        "GET",
-                       "/git/ref/heads/" + SourceReader::encode(save->branch),
+                       "/git/ref/heads/" + httputils::url_encode(save->branch),
                        nullptr,
                        {{"contents", "read"}},
                        [this, save](const GitHubResult& head) {

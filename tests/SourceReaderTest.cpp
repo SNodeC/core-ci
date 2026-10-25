@@ -31,8 +31,8 @@ int main(int argc, char* argv[]) {
                             result.source.at("commit") == std::string(40, 'd'),
                         "highest numeric/prerelease tag was not selected across pages");
                 const auto frozen = result.source;
-                sources.select("Owner/example", "v0.9.0", [&, frozen](const coreci::SourceResult& older) {
-                    require(older.status == 200 && older.source.at("tag") == "v0.9.0" &&
+                sources.select("Owner/example", "v0.9.0+build", [&, frozen](const coreci::SourceResult& older) {
+                    require(older.status == 200 && older.source.at("tag") == "v0.9.0+build" &&
                                 older.source.at("commit") == std::string(40, 'c') &&
                                 older.source.at("definition_revision") == std::string(40, 'c') &&
                                 older.source.at("tag_object_sha") == std::string(40, 'a') &&

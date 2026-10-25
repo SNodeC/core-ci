@@ -232,3 +232,13 @@
   The application retains its single correct encoder pending framework installation.
 - Checkpoint accounting: production +263/-138; tests +17/-2; documentation +58/-0.
   Removed the obsolete proposed patch after its upstream commit; retained the evidence guide.
+
+## 2026-10-25 — consume installed framework encoding correction
+
+- Owner updated installed SNode.C. The installed public-interface probe now returns
+  v1.0.0%2Bbuild. Deleted core-ci's encoder and use the framework helper for GitHub refs.
+- Exact older annotated-tag selection now tests +build metadata in the raw identity
+  and %2B in the GitHub request. This boundary passes. The other seven source cases
+  and real-MariaDB enrollment boundary passed with the updated dependency.
+- Production +5/-19; tests +5/-5; documentation updated separately. No install was
+  performed by this core-ci change; it consumes the owner's installed update.

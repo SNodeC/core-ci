@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <regex>
 #include <stdexcept>
+#include <web/http/http_utils.h>
 
 namespace coreci {
     namespace {
@@ -24,22 +25,6 @@ namespace coreci {
 
     SourceReader::SourceReader(GitHub& github)
         : github(github) {
-    }
-
-    std::string SourceReader::encode(const std::string& value) {
-        constexpr char digits[] = "0123456789ABCDEF";
-        std::string result;
-        for (const unsigned char character : value) {
-            if ((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-                (character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' || character == '~') {
-                result.push_back(static_cast<char>(character));
-            } else {
-                result.push_back('%');
-                result.push_back(digits[character >> 4]);
-                result.push_back(digits[character & 15]);
-            }
-        }
-        return result;
     }
 
     void SourceReader::select(const std::string& repository, const std::string& tag, const Callback& callback) {
@@ -130,7 +115,7 @@ namespace coreci {
         github.request(
             reading->repository,
             "GET",
-            "/git/ref/tags/" + encode(reading->tag),
+            "/git/ref/tags/" + httputils::url_encode(reading->tag),
             nullptr,
             {{"contents", "read"}},
             [this, reading](const GitHubResult& result) {

@@ -3,7 +3,7 @@
 Owner approved applying the fix and pushing without a new branch. Commit
 1092fda70a60dabd7ac4cf63dc109551784482bc was pushed directly to SNodeC/snode.c master.
 The canonical checkout remains on its existing fix/receiver-removal-callbacks branch;
-unrelated receiver edits were preserved. The installed framework was not changed.
+unrelated receiver edits were preserved. The owner subsequently updated the installed framework.
 
 The installed public httputils::url_encode("v1.0.0+build") returned v1.0.0%0+build.
 RFC 3986 requires v1.0.0%2Bbuild. The stream inserts unsigned char as a character rather
@@ -24,6 +24,7 @@ interface under /tmp/codex/build/core-ci/url-encode-probe. The corrected framewo
 regression and existing HTTP query-parser test pass. The regression fails against the
 installed buggy library. No installation was performed; installation is a separate action.
 
-core-ci currently has one correct path-component encoder. Replace it with the framework
-helper after the framework fix is available and verified; do not claim that duplication
-resolved before then.
+After the owner reported installation, the installed probe returned v1.0.0%2Bbuild.
+core-ci now calls httputils::url_encode directly for tag and branch references; its local
+encoder was deleted. The source-selection boundary test requests v0.9.0+build through
+its encoded URL and verifies that the recorded raw tag retains its literal plus sign.

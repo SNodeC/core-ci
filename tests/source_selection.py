@@ -91,8 +91,8 @@ def exercise(args, root):
             elif suffix == "/git/ref/tags/v2.0.0-rc.2":
                 selections += 1
                 self.send_json(200, {"ref": "refs/tags/v2.0.0-rc.2", "object": {"type": "commit", "sha": ("d" if selections == 1 else "e") * 40}})
-            elif suffix == "/git/ref/tags/v0.9.0":
-                self.send_json(200, {"ref": "refs/tags/v0.9.0", "object": {"type": "tag", "sha": "a" * 40}})
+            elif suffix == "/git/ref/tags/v0.9.0%2Bbuild":
+                self.send_json(200, {"ref": "refs/tags/v0.9.0+build", "object": {"type": "tag", "sha": "a" * 40}})
             elif suffix in ("/git/tags/" + "a" * 40, "/git/tags/" + "b" * 40):
                 first = suffix.endswith("a" * 40)
                 self.send_json(200, {"sha": ("a" if first else "b") * 40, "object": {"type": "tag" if first else "commit", "sha": ("b" if first else "c") * 40}})
