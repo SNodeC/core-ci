@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,22 +18,28 @@ namespace coreci {
         bool uncertain = false;
     };
 
+    struct DatabaseStatement {
+        std::string sql;
+        std::optional<std::uint64_t> affected;
+    };
+
     class Database {
     public:
         using Callback = std::function<void(const DatabaseResult&)>;
         explicit Database(database::mariadb::MariaDBClient& client);
         bool mutationsAllowed() const;
         void query(const std::string& sql, const Callback& callback);
-        void write(const std::vector<std::string>& statements, const Callback& callback);
+        void write(const std::vector<DatabaseStatement>& statements, const Callback& callback);
         static std::string text(const std::string& value);
 
     private:
         struct Write {
-            std::vector<std::string> statements;
+            std::vector<DatabaseStatement> statements;
             std::size_t index = 0;
             Callback callback;
         };
 
+        void read(const std::string& sql, const Callback& callback);
         void enqueue(const std::function<void()>& operation);
         void completed();
         void writeNext(const std::shared_ptr<Write>& write);

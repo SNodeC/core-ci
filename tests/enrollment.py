@@ -246,6 +246,26 @@ def exercise(args, root):
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
+            save["revision"] = head
+            save["definition"]["package"] = "renamed-example"
+            status, result = request("/api/repositories/save", save)
+            assert status == 200, result
+            namespaces = lifecycle.query(db_socket, "SELECT namespace FROM core_ci.namespace_claims ORDER BY namespace").splitlines()
+            assert namespaces == ["example", "renamed-example"], "editing a namespace released its prior ownership"
+            if args.graph_executable:
+                lifecycle.stop(application)
+                graph_config = directory / "graph.conf"
+                graph_config.write_text('database.socket="' + str(directory / "p.sock") + '"\n'
+                                        'database.user="core_ci_test"\ndatabase.name="core_ci"\n'
+                                        'database.password-file="' + str(password) + '"\n')
+                graph_config.chmod(0o600)
+                lifecycle.run([args.graph_executable, "--config-file", str(graph_config), "--log-level", "2", "database", "--mode", "unmanaged"])
+                application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+                lifecycle.wait_http(port, application)
+                status, graph = request("/api/graph")
+                assert status == 200 and len(graph["executions"]) == 2, graph
+                assert sorted(row["state"] for row in graph["executions"]) == ["building", "waiting"], graph
+                assert [row["build_run"]["id"] for row in graph["executions"] if row["build_run"] is not None] == [123], "assigned execution identity changed on restart"
             assert not errors, errors
             assert "synthetic-token" not in (directory / "application.log").read_text()
             for log in directory.glob("*.log"):
@@ -266,6 +286,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True)
     parser.add_argument("--directory", required=True)
+    parser.add_argument("--graph-executable")
     args = parser.parse_args()
     Path(args.directory).mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="enrollment-", dir=args.directory) as temporary:

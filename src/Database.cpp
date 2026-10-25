@@ -43,40 +43,45 @@ namespace coreci {
 
     void Database::query(const std::string& sql, const Callback& callback) {
         enqueue([this, sql, callback]() {
-            struct Query {
-                DatabaseResult result;
-                bool finished = false;
-            };
-            const auto query = std::make_shared<Query>();
-            client.query(
-                sql,
-                [this, query, callback](const MYSQL_ROW row) {
-                    if (!query->finished) {
-                        if (row != nullptr) {
-                            try {
-                                query->result.rows.push_back(row[0] == nullptr ? nlohmann::json{} : nlohmann::json::parse(row[0]));
-                            } catch (const std::exception&) {
-                                query->result.error = "database returned invalid JSON";
-                            }
-                        } else {
-                            query->finished = true;
-                            completed();
-                            callback(query->result);
-                        }
-                    }
-                },
-                [this, query, callback](const std::string& error, unsigned int) {
-                    if (!query->finished) {
-                        query->finished = true;
-                        query->result.error = error;
-                        completed();
-                        callback(query->result);
-                    }
-                });
+            read(sql, [this, callback](const DatabaseResult& result) {
+                completed();
+                callback(result);
+            });
         });
     }
 
-    void Database::write(const std::vector<std::string>& statements, const Callback& callback) {
+    void Database::read(const std::string& sql, const Callback& callback) {
+        struct Query {
+            DatabaseResult result;
+            bool finished = false;
+        };
+        const auto query = std::make_shared<Query>();
+        client.query(
+            sql,
+            [query, callback](const MYSQL_ROW row) {
+                if (!query->finished) {
+                    if (row != nullptr) {
+                        try {
+                            query->result.rows.push_back(row[0] == nullptr ? nlohmann::json{} : nlohmann::json::parse(row[0]));
+                        } catch (const std::exception&) {
+                            query->result.error = "database returned invalid JSON";
+                        }
+                    } else {
+                        query->finished = true;
+                        callback(query->result);
+                    }
+                }
+            },
+            [query, callback](const std::string& error, unsigned int) {
+                if (!query->finished) {
+                    query->finished = true;
+                    query->result.error = error;
+                    callback(query->result);
+                }
+            });
+    }
+
+    void Database::write(const std::vector<DatabaseStatement>& statements, const Callback& callback) {
         const auto write = std::make_shared<Write>();
         write->statements = statements;
         write->callback = callback;
@@ -101,10 +106,22 @@ namespace coreci {
     void Database::writeNext(const std::shared_ptr<Write>& write) {
         if (write->index < write->statements.size()) {
             client.exec(
-                write->statements[write->index],
+                write->statements[write->index].sql,
                 [this, write]() {
-                    ++write->index;
-                    writeNext(write);
+                    const auto expected = write->statements[write->index].affected;
+                    if (expected) {
+                        read("SELECT JSON_OBJECT('affected', ROW_COUNT())", [this, write, expected](const DatabaseResult& result) {
+                            if (result.error.empty() && result.rows.size() == 1 && result.rows.front().at("affected") == *expected) {
+                                ++write->index;
+                                writeNext(write);
+                            } else {
+                                writeFailed(write, "conditional mutation did not match the expected graph revision/state", 0);
+                            }
+                        });
+                    } else {
+                        ++write->index;
+                        writeNext(write);
+                    }
                 },
                 [this, write](const std::string& error, unsigned int code) {
                     writeFailed(write, error, code);

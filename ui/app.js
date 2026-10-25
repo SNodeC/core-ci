@@ -29,8 +29,42 @@ function select(repository) {
 }
 
 async function reload() {
-    const result = await api("/api/repositories");
+    const [result, graph] = await Promise.all([api("/api/repositories"), api("/api/graph")]);
     repositories = result.repositories;
+    element("graph").replaceChildren();
+    if (graph.executions.length === 0) {
+        element("graph").textContent = "No source executions selected yet.";
+    }
+    for (const execution of graph.executions) {
+        const card = document.createElement("article");
+        card.id = "execution-" + execution.id;
+        const title = document.createElement("h3");
+        title.textContent = execution.repository + " · " + execution.target;
+        const state = document.createElement("p");
+        state.textContent = execution.activity + " · " + execution.tag + " · rebuild " + execution.revision;
+        const source = document.createElement("pre");
+        source.textContent = "Source: " + execution.source_commit + "\nDefinition: " + execution.definition_revision;
+        const reasons = document.createElement("p");
+        reasons.textContent = execution.failure || execution.blockers.join("; ");
+        card.append(title, state, source, reasons);
+        for (const prerequisite of execution.prerequisites) {
+            const link = document.createElement("a");
+            link.href = "#execution-" + prerequisite;
+            link.textContent = "Prerequisite " + prerequisite.slice(0, 12) + " ";
+            card.append(link);
+        }
+        for (const run of [execution.build_run, execution.publication_run]) {
+            if (run && typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/")) {
+                const link = document.createElement("a");
+                link.href = run.html_url;
+                link.textContent = " GitHub execution log ";
+                link.rel = "noopener noreferrer";
+                card.append(link);
+            }
+        }
+        element("graph").append(card);
+    }
+
     element("repositories").replaceChildren();
     if (repositories.length === 0) {
         element("repositories").textContent = "No repositories enrolled.";

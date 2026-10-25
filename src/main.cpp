@@ -39,6 +39,7 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<coreci::ManagedDatabase> managed;
     std::unique_ptr<database::mariadb::MariaDBClient> database;
     std::unique_ptr<coreci::Database> store;
+    std::unique_ptr<coreci::GraphStore> graphStore;
     std::unique_ptr<coreci::Enrollment> enrollment;
     bool initialConnection = true;
 
@@ -51,6 +52,7 @@ int main(int argc, char* argv[]) {
                     snode::log::application().error() << "MariaDB connection failed: " << state.errorMessage << " [" << state.error << "]";
                     if (std::exchange(initialConnection, false)) {
                         enrollment.reset();
+                        graphStore.reset();
                         store.reset();
                         database.reset();
                         if (managed) {
@@ -64,6 +66,7 @@ int main(int argc, char* argv[]) {
                         if (restored.status != 200) {
                             snode::log::application().error() << "Database schema/configuration failed: " << restored.body.dump();
                             enrollment.reset();
+                            graphStore.reset();
                             store.reset();
                             database.reset();
                             if (managed) {
@@ -93,6 +96,10 @@ int main(int argc, char* argv[]) {
                             });
                             app.get("/app.js", [] APPLICATION(req, res) {
                                 res->type("application/javascript").send(coreci::ui::javascript);
+                            });
+
+                            app.get("/api/graph", [&] APPLICATION(req, res) {
+                                res->type("application/json").send(graphStore->view().dump());
                             });
 
                             app.get("/api/repositories", [&] APPLICATION(req, res) {
@@ -141,6 +148,7 @@ int main(int argc, char* argv[]) {
                                 } else if (listenerState == core::socket::State::ERROR || listenerState == core::socket::State::FATAL) {
                                     snode::log::application().error() << "Listener failed: " << listenerState.what();
                                     enrollment.reset();
+                                    graphStore.reset();
                                     store.reset();
                                     database.reset();
                                     if (managed) {
@@ -154,7 +162,8 @@ int main(int argc, char* argv[]) {
             });
 
         store = std::make_unique<coreci::Database>(*database);
-        enrollment = std::make_unique<coreci::Enrollment>(*store, github);
+        graphStore = std::make_unique<coreci::GraphStore>(*store);
+        enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore);
 
         if (databaseConfig->mode == "managed") {
             managed = std::make_unique<coreci::ManagedDatabase>();
@@ -167,6 +176,7 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception& error) {
         snode::log::application().error() << "Database startup failed: " << error.what();
         enrollment.reset();
+        graphStore.reset();
         store.reset();
         database.reset();
         if (managed) {

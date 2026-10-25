@@ -17,10 +17,14 @@ find_package(
                                       http-client net-in-stream-tls
 )
 
-add_library(core-ci-definitions STATIC src/Definition.cpp src/Version.cpp)
-target_link_libraries(core-ci-definitions PUBLIC nlohmann_json::nlohmann_json)
-target_include_directories(core-ci-definitions PUBLIC src)
-target_compile_options(core-ci-definitions PRIVATE -Wall -Wextra -Wpedantic)
+add_library(
+    core-ci-domain STATIC src/Definition.cpp src/Version.cpp src/Graph.cpp
+)
+target_link_libraries(
+    core-ci-domain PUBLIC nlohmann_json::nlohmann_json OpenSSL::Crypto
+)
+target_include_directories(core-ci-domain PUBLIC src)
+target_compile_options(core-ci-domain PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(
     core-ci
@@ -32,10 +36,11 @@ add_executable(
     src/Database.cpp
     src/Enrollment.cpp
     src/UiConfig.cpp
+    src/GraphStore.cpp
 )
 target_link_libraries(
     core-ci
-    PRIVATE core-ci-definitions
+    PRIVATE core-ci-domain
             snodec::db-mariadb
             snodec::http-server-express-legacy-in
             snodec::http-client
@@ -59,8 +64,7 @@ option(CORE_CI_CLANG_TIDY "Run clang-tidy during compilation" OFF)
 if(CORE_CI_CLANG_TIDY)
     find_program(CLANG_TIDY clang-tidy REQUIRED)
     set_property(
-        TARGET core-ci core-ci-definitions PROPERTY CXX_CLANG_TIDY
-                                                    "${CLANG_TIDY}"
+        TARGET core-ci core-ci-domain PROPERTY CXX_CLANG_TIDY "${CLANG_TIDY}"
     )
 endif()
 
@@ -120,12 +124,27 @@ if(BUILD_TESTING)
         COMMAND
             ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/enrollment.py
             --executable $<TARGET_FILE:core-ci> --directory
-            ${PROJECT_BINARY_DIR}/tests/enrollment
+            ${PROJECT_BINARY_DIR}/tests/enrollment --graph-executable
+            $<TARGET_FILE:graph-store-test>
     )
     set_tests_properties(enrollment-boundaries PROPERTIES TIMEOUT 75)
 
+    add_executable(
+        graph-store-test
+        tests/GraphStoreTest.cpp src/Database.cpp src/DatabaseConfig.cpp
+        src/PrivateFile.cpp src/GraphStore.cpp
+    )
+    target_include_directories(graph-store-test PRIVATE src)
+    target_link_libraries(
+        graph-store-test PRIVATE core-ci-domain snodec::db-mariadb
+    )
+
+    add_executable(graph-test tests/GraphTest.cpp)
+    target_link_libraries(graph-test PRIVATE core-ci-domain)
+    add_test(NAME graph-state-boundaries COMMAND graph-test)
+
     add_executable(definition-test tests/DefinitionTest.cpp)
-    target_link_libraries(definition-test PRIVATE core-ci-definitions)
+    target_link_libraries(definition-test PRIVATE core-ci-domain)
     add_test(NAME definitions-and-versions COMMAND definition-test)
 endif()
 

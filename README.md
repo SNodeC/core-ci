@@ -5,7 +5,8 @@ coordinates GitHub and MariaDB; GitHub runs builds and trusted publication. Ther
 
 Implementation is in progress. The initial database lifecycle works with real managed and
 unmanaged MariaDB. Local repository enrollment/editing and GitHub committed-revision feedback are implemented.
-Graph scheduling and the package pipeline remain in progress. Nothing has been installed, pushed or externally activated.
+Graph selections, attempt states and persistence are implemented locally. Live source-event
+coordination, dispatch/reconciliation and the package pipeline remain in progress. Nothing has been installed, pushed or externally activated.
 
 See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),
 [the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md). Deployment settings and credential-file ownership are

@@ -42,9 +42,10 @@ namespace coreci {
         }
     } // namespace
 
-    Enrollment::Enrollment(Database& database, GitHub& github)
+    Enrollment::Enrollment(Database& database, GitHub& github, GraphStore& graphStore)
         : database(database)
-        , github(github) {
+        , github(github)
+        , graphStore(graphStore) {
     }
 
     void Enrollment::restore(const Callback& callback) {
@@ -52,7 +53,13 @@ namespace coreci {
             if (!result.error.empty() || result.rows.size() != 1 || result.rows.front().value("version", 0) != 1) {
                 callback({503, {{"error", "database schema is unavailable; apply sql/schema.sql before startup"}}});
             } else {
-                list(callback);
+                graphStore.restore([this, callback](const DatabaseResult& graph) {
+                    if (graph.error.empty()) {
+                        list(callback);
+                    } else {
+                        callback({503, {{"error", graph.error}}});
+                    }
+                });
             }
         });
     }
@@ -100,6 +107,7 @@ namespace coreci {
                         "use an owner/repository name; enrolled names must be lowercase");
                 require(!save->branch.empty() && save->branch.size() <= 256, "specify the configuration editing branch");
                 save->name = save->repository.substr(separator + 1);
+                save->generation = graphStore.getGeneration();
                 saving = true;
                 list([this, save](const EnrollmentResult& listed) {
                     if (listed.status != 200) {
@@ -169,6 +177,7 @@ namespace coreci {
                 require(save->repository.size() <= 256 && std::regex_match(save->repository, syntax), "invalid repository name");
                 require(!save->branch.empty() && save->branch.size() <= 256, "specify the configuration editing branch");
                 save->name = save->repository.substr(save->repository.find('/') + 1);
+                save->generation = graphStore.getGeneration();
                 saving = true;
                 github.request(save->repository, "GET", "", nullptr, {{"contents", "read"}}, [this, save](const GitHubResult& metadata) {
                     try {
@@ -268,7 +277,9 @@ namespace coreci {
                                 }
                                 definitions.insert_or_assign(save->name, save->definition);
                                 Definition::validateGraph(definitions);
-                                remember(save, {200, {{"commit", {{"sha", save->head}}}, {"content", {{"sha", save->blob}}}}, ""});
+                                checkClaims(save, [this, save]() {
+                                    remember(save, {200, {{"commit", {{"sha", save->head}}}, {"content", {{"sha", save->blob}}}}, ""});
+                                });
                             } catch (const std::exception& error) {
                                 finish(save, 422, {{"error", error.what()}, {"github_committed", false}});
                             }
@@ -289,7 +300,40 @@ namespace coreci {
             });
     }
 
+    void Enrollment::checkClaims(const std::shared_ptr<Save>& save, const std::function<void()>& next) {
+        database.query(
+            "SELECT JSON_OBJECT('namespace',namespace,'repository_id',repository_id) FROM namespace_claims",
+            [this, save, next](const DatabaseResult& result) {
+                std::string error;
+                try {
+                    require(result.error.empty(), "could not read package namespace ownership");
+                    require(save->generation == graphStore.getGeneration(),
+                            "graph changed during configuration editing; refresh before saving");
+                    const auto package = save->definition.json.at("package").get<std::string>();
+                    for (const auto& row : result.rows) {
+                        const auto claimed = row.at("namespace").get<std::string>();
+                        require(row.at("repository_id") == save->id ||
+                                    !(claimed == package || claimed.starts_with(package + "-") || package.starts_with(claimed + "-")),
+                                "package namespace is permanently reserved by another repository");
+                    }
+                } catch (const std::exception& failure) {
+                    error = failure.what();
+                }
+                if (error.empty()) {
+                    next();
+                } else {
+                    finish(save, 409, {{"error", error}, {"github_committed", false}});
+                }
+            });
+    }
+
     void Enrollment::commit(const std::shared_ptr<Save>& save) {
+        checkClaims(save, [this, save]() {
+            writeDefinition(save);
+        });
+    }
+
+    void Enrollment::writeDefinition(const std::shared_ptr<Save>& save) {
         nlohmann::json body{{"message", "Configure package definition through core-ci"},
                             {"branch", save->branch},
                             {"content", base64(save->definition.json.dump(2) + "\n")}};
@@ -317,18 +361,12 @@ namespace coreci {
             const auto blob = result.body.at("content").at("sha").get<std::string>();
             static const std::regex sha(R"(^[a-f0-9]{40}$)");
             require(std::regex_match(revision, sha) && std::regex_match(blob, sha), "GitHub write returned invalid revision identities");
-            const auto id = std::to_string(save->id);
-            database.write(
-                {"INSERT INTO repositories(github_id,name,full_name,editing_ref,configuration_revision) VALUES (" + id + "," +
-                     Database::text(save->name) + "," + Database::text(save->repository) + "," + Database::text(save->branch) + "," +
-                     Database::text(revision) + ") ON DUPLICATE KEY UPDATE configuration_revision=VALUES(configuration_revision)",
-                 "INSERT INTO definitions(repository_id,revision,blob_sha,document) VALUES (" + id + "," + Database::text(revision) + "," +
-                     Database::text(blob) + "," + Database::text(save->definition.json.dump()) +
-                     ") ON DUPLICATE KEY UPDATE revision=VALUES(revision)",
-                 "DELETE FROM namespace_claims WHERE repository_id=" + id,
-                 "INSERT INTO namespace_claims(namespace,repository_id,definition_revision) VALUES (" +
-                     Database::text(save->definition.json.at("package").get<std::string>()) + "," + id + "," + Database::text(revision) +
-                     ")"},
+            graphStore.enroll(
+                save->name,
+                save->repository,
+                save->branch,
+                {save->id, revision, blob, save->definition.json},
+                save->generation,
                 [this, save, revision](const DatabaseResult& persisted) {
                     if (persisted.error.empty()) {
                         finish(save,

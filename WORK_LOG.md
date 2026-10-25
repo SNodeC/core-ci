@@ -138,3 +138,43 @@
   This is deliberate local fault injection, not live GitHub/package acceptance.
 - Checkpoint accounting (source/UI/schema/config/build versus tests separately): {'docs/tooling': [117, 3], 'production': [1801, 52], 'tests': [604, 20]}; counts precede this log entry. No legacy implementation is retained.
 - Relevant local suites passed across their final affected runs: seven lifecycle cases, enrollment HTTP/real-DB fault boundaries, definition/SemVer cases, and four TLS/App cases. Explicit format-check and staged whitespace review passed. Read-only live access also passed with ID-scoped configuration.
+
+
+## 2026-10-25 — graph and state persistence checkpoint
+
+- Added the ordinary graph with immutable selected sources/targets and prerequisite IDs.
+  States live on attempts only; readiness is derived from all prerequisite publications.
+  Atomic diamond planning, independent targets, explicit older selections, history-preserving
+  automatic supersession and definitive-failure retry use the same graph.
+- Execution identity uses selected inputs/prerequisite IDs, not request type. Explicitly
+  claiming waiting work protects it without duplicating it; explicitly requesting a
+  superseded selection retains the old record and references it from the new selection.
+- Removed full-matrix copies from each target execution. Definitions are stored once per
+  immutable repository revision, referenced by foreign keys; compact execution snapshots
+  are checked against that definition before persistence and again on restore.
+- Added asynchronous conditional transactions against a graph-generation row. Commit
+  acknowledgement precedes graph mutation. Stale callbacks fail and roll back without
+  authorizing dispatch. Removed the redundant unconditional database mutation API.
+- Centralized enrollment persistence at the same graph-generation boundary. Namespace
+  reservations survive configuration renames and are enforced for selected source revisions;
+  tests prove another repository cannot claim an earlier reserved namespace.
+- Added /api/graph and UI rendering of authoritative state, source/definition revisions,
+  dependency links, blockers, failures and assigned GitHub log links.
+- Local tests prove diamond gating, failure/retry, duplicate/late/conflicting reports,
+  exact retained inputs, supersession, independent targets, real MariaDB atomic persistence,
+  restart of assigned/unknown work, stale run-identity rejection and namespace rollback.
+  The database driver uses synthetic source/run metadata; this is not live GitHub job evidence.
+- Observed framework diagnostic during deliberate lost-COMMIT fault injection: installed
+  SNode.C may log epoll_ctl MOD/EBADF while suspending a socket already closed by libmariadb.
+  Traced to MariaDBConnection::checkStatus() descriptor handling before its error callback.
+  State uncertainty/reconnection tests pass. No framework source was changed and no application
+  timer/deferral workaround was added; retain this as an integration limitation for handover.
+- Live event-to-build/publication coordination, worker tooling and full acceptance remain
+  ongoing; nothing has been deployed, pushed or published by these changes.
+- Namespace checks retain all historical claims and reject conflicts in the same conditional
+  transaction as enrollment/selection. Preflight checks precede UI-authored GitHub writes.
+  Configuration operations retain their original graph generation throughout GitHub I/O.
+- Local enrollment/graph persistence and domain suites passed after the final namespace
+  changes; the seven lifecycle cases and definition/version suite also passed. No simulated
+  job result or local graph fixture is counted as live package-pipeline acceptance.
+- Checkpoint line accounting (before this log entry): {'production': [1163, 63], 'docs': [41, 1], 'tests': [383, 0]}. Formatting, staged whitespace and 160-column source checks passed.
