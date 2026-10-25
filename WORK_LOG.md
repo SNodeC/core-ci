@@ -717,3 +717,6 @@
 - Regenerated embedded UI assets through the existing CMake build. Node syntax check,
   HTTP-served JavaScript and Chrome UI verify the comma-separated direct prerequisites.
   Runtime remains a temporary development build, with no application installation/push.
+- Updated stale setup/readme statements to distinguish the now-active sandbox and proved
+  native/IPK client installation from outstanding APK, diamond and webhook acceptance.
+  No operational-readiness claim, new credential grant or controller mechanism was added.

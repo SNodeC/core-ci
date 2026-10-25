@@ -3,23 +3,25 @@
 A persistent dependency graph and package execution state machine. The SNode.C controller
 coordinates GitHub and MariaDB; GitHub runs builds and trusted publication. There is no IdP.
 
-Implementation is in progress. The initial database lifecycle works with real managed and
-unmanaged MariaDB. Local repository enrollment/editing and GitHub committed-revision feedback are implemented.
-The UI, authenticated tag events, immutable source selection, graph traversal,
-committed GitHub dispatch authority and assigned-run/job/artifact reconciliation are wired
-and covered locally. Trusted worker tooling, signing/publication and live package acceptance
-remain in progress. Fresh native worker workflows, isolated build preparation and trusted
-DEB/RPM signing/indexing are now prepared under deployment/. Local tests build real packages,
-verify signatures, reject modified data and preserve bytes on replay. OpenWrt workers and
-live package publication acceptance are unfinished. Controller publication dispatch and
-Git/HTTPS receipt proof are now wired and covered by local synthetic-service fixtures. Nothing has been installed, pushed or
-externally activated. See [worker setup and limitations](deployment/README.md).
+Implementation and live acceptance are in progress. The development controller runs locally
+with real managed MariaDB. Repository enrollment/editing, committed-revision feedback,
+authenticated tag events, immutable selections, dependency traversal, committed dispatch
+and assigned-run/job/artifact reconciliation are implemented. Builds, signing and feed
+publication run on GitHub in the authorized VOC-Experiments sandbox.
 
-Controller-side registry authentication, image parsing and SDK discovery have been removed.
-GitHub workers own environment resolution and return identities in verified publication
-receipts. GitHub records environment evidence before hooks; explicit retries reuse it
-through read-only artifact retrieval and assigned-run references. Missing evidence after
-a possible build stops retry without changing inputs. Live activation remains outstanding.
+Actual Debian amd64/arm64, Fedora x86_64 and OpenWrt IPK jobs have built and published
+packages. Real apt/dnf/opkg clients reject unrelated keys, install exact package versions
+from the signed HTTPS feed and execute the installed program. OpenWrt APK publication/client
+acceptance and completion of the live dependency diamond remain outstanding. See
+[verified sandbox status](docs/sandbox-deployment.md) for evidence and remaining limits.
+The application branch is committed locally; the running application is a temporary
+development build, with no application push or installation. Sandbox workflows are active.
+
+GitHub workers own image/SDK resolution and record immutable identities in verified
+publication receipts. Explicit retries reuse existing environment evidence through read-only
+artifact retrieval and assigned-run references. Missing evidence after a possible build
+stops retry without changing inputs. Public webhook TLS activation remains outstanding;
+the configuration-writing UI stays local. See [worker setup](deployment/README.md).
 
 See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),
 [the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md). Deployment settings and credential-file ownership are

@@ -191,15 +191,17 @@ mutation replay or automatic retry. Identical results require no database write.
 Current limit: assignments up to 60,000 UTF-8 bytes, at most 100 jobs/artifacts per inspected
 run, one assigned build artifact up to one GiB, and bounded workflow-run history search.
 A successful build records GitHub job/artifact identities; it remains building while waiting
-for trusted publication. Signing, feed receipts and the worker tooling remain ongoing work;
-these interfaces do not claim a working live deployment.
+for trusted publication. Signing and Git/HTTPS receipt verification operate in the sandbox;
+format-specific live acceptance is recorded in [sandbox status](sandbox-deployment.md).
 
 ## Verified feed receipts
 
 The named feed-http instance is registered before init and used only for the configured
 feed origin. Publication authorization is committed before dispatch and derived from graph
 state: an unresolved writer blocks the same repository/branch. The public feed is excluded
-from controller App grants. Public GitHub reads verify its immutable repository ID, receipt
+from controller App grants. Explicit public reads use an existing granted repository
+contents:read installation token, without adding feed access grants or anonymous quota use.
+Ordinary source reads/writes still require explicit repository grants. Reads verify feed ID, receipt
 commit and exact regular Git blob through the existing file reader. HTTPS receipt bytes must
 match before published state releases dependents. Failed jobs without sufficient feed proof
 remain publishing/uncertain; no replacement is dispatched. Explicit inspection exposes the

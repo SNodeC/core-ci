@@ -3,9 +3,9 @@
 The fresh workflows/tooling are now installed in VOC-Experiments. See the
 [verified deployment status](../docs/sandbox-deployment.md) for exact commits and live
 Pages/credential checks and resolved signing identities. Existing feed trust keys are
-preserved; no graph-driven GitHub package build, client installation or operational readiness
-is claimed. Local package/signature checks and synthetic controller integration evidence
-remain distinct from the live acceptance still required.
+preserved. Graph-driven native/IPK publication and actual apt/dnf/opkg installation are
+verified; APK and complete diamond acceptance remain pending. Local package/signature checks,
+synthetic service fixtures and actual GitHub/client acceptance remain distinct.
 
 The invariant is one immutable controller assignment across build, independent validation,
 signing and feed publication. The manifest describes bytes; it never grants namespace rights.
@@ -37,8 +37,8 @@ No old orchestration code or workflow was reused.
    Old assigned work with unavailable approved workflow bytes is an error, never rewritten.
 5. Review `feed/.github/workflows/pages.yml` for the chosen feed branch. The prepared sandbox
    branch is main in VOC-Experiments/packages. Proposed HTTPS root is
-   https://voc-experiments.github.io/packages/. Pages is currently disabled. Installing a
-   workflow and enabling Pages are external activation steps, not performed by these files.
+   https://voc-experiments.github.io/packages/. Pages is enabled in the authorized sandbox.
+   Other deployments must separately authorize workflow installation and hosting activation.
 6. Review credential scopes, protect environments and complete live acceptance before use.
 
 The controller commits dispatch authorization before POST. An uncertain response remains
@@ -79,8 +79,8 @@ privileges, a read-only root and input mounts, bounded memory/processes/CPU, and
 scratch/output only. They receive no Docker socket, Actions environment tokens, checkout
 credentials or signing files. The build image is prepared before hooks run. A second fresh
 container without network validates outputs after the hook container exits, preventing a
-background hook process from racing the manifest step. This isolation is prepared code;
-Docker is unavailable locally and the boundary still needs execution/adversarial proof.
+background hook process from racing the manifest step. This boundary executes in actual sandbox GitHub jobs. Docker remains unavailable locally;
+further adversarial isolation acceptance is distinct from successful package builds.
 
 The hook writes `outputs.json`, for example:
 
@@ -102,7 +102,7 @@ from the packages unchanged. Graph edges may be build-only; they do not invent r
 
 ## Versions and artifacts
 
-Stable 1.2.3 at rebuild 7 becomes DEB/RPM 1.2.3-7 and planned IPK/APK 1.2.3-r7.
+Stable 1.2.3 at rebuild 7 becomes DEB/RPM 1.2.3-7 and IPK/APK 1.2.3-r7.
 SemVer build metadata is retained in provenance and omitted from package Version. The single
 worker `contract.versions` codec is used for both building and validation. General prerelease
 identifiers use the numeric token scheme in docs/design.md. Adjacent ordering for numeric,
@@ -125,8 +125,9 @@ the graph assigns the safe artifact_name once and all consumers use that frozen 
 ## Trusted native publication
 
 The separate validation job has no signing/feed key. PACKAGES_OBSERVER_TOKEN is the existing
-sandbox secret name used as source artifact reader. Its actual type, minimum actions/read
-repository grants and cross-repository access are unverified activation inputs. Do not reuse
+sandbox secret name used successfully for cross-repository source artifact reads. Its
+actual credential type and minimum grants still require owner review; secret values cannot
+be retrieved from GitHub. Do not reuse
 an overly broad token silently. If it cannot meet least privilege, the owner must supply the
 reviewed read-only App/token path described in docs/setup-inputs.md. Controller App private
 keys never enter a workflow.
