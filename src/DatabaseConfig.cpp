@@ -1,12 +1,8 @@
 #include "DatabaseConfig.h"
 
-#include <array>
-#include <cerrno>
-#include <fcntl.h>
+#include "PrivateFile.h"
+
 #include <stdexcept>
-#include <sys/stat.h>
-#include <system_error>
-#include <unistd.h>
 
 namespace coreci {
 
@@ -54,23 +50,7 @@ namespace coreci {
             throw std::runtime_error("configure an explicit database socket or host");
         }
 
-        const int fd = ::open(passwordFile.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-        if (fd < 0) {
-            throw std::system_error(errno, std::generic_category(), "open database password file");
-        }
-
-        struct stat info{};
-        const bool privateFile =
-            ::fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && (info.st_mode & 0077) == 0 && info.st_uid == ::geteuid();
-        std::array<char, 4097> buffer{};
-        const ssize_t size = privateFile ? ::read(fd, buffer.data(), buffer.size()) : -1;
-        ::close(fd);
-
-        if (!privateFile || size < 0 || static_cast<std::size_t>(size) == buffer.size()) {
-            throw std::runtime_error("database password file must be a private owned regular file of at most 4096 bytes");
-        }
-
-        std::string password(buffer.data(), static_cast<std::size_t>(size));
+        std::string password = readPrivateFile(passwordFile, 4096);
         if (password.find('\0') != std::string::npos) {
             throw std::runtime_error("database password file contains an unsupported NUL byte");
         }

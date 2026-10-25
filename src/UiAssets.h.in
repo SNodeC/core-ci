@@ -1,0 +1,10 @@
+#ifndef CORE_CI_UI_ASSETS_H
+#define CORE_CI_UI_ASSETS_H
+
+namespace coreci::ui {
+    constexpr const char* html = R"CORECI(@CORE_CI_UI_HTML@)CORECI";
+    constexpr const char* css = R"CORECI(@CORE_CI_UI_CSS@)CORECI";
+    constexpr const char* javascript = R"CORECI(@CORE_CI_UI_JAVASCRIPT@)CORECI";
+}
+
+#endif

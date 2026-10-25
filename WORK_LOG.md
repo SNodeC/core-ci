@@ -104,3 +104,37 @@
   is 754 lines separately. No previous production mechanism is retained or removed in this
   fresh checkpoint. Temporary builds stay at the permitted task location for ongoing work.
 - No GitHub enrollment/build/publication or client package installation has been tested.
+- Accounting correction: the canonical byte copies contain pre-existing EOF blank lines
+  reported by staged diff --check. They are preserved unchanged as required; task-owned
+  source/changes pass whitespace checks. Format-check and SHA256/byte-copy checks passed.
+
+## 2026-10-25 — configuration and enrollment checkpoint
+
+- Owner confirmed signing keys remain GitHub Actions secrets. The controller App PEM
+  is separate and referenced by a protected external SNode.C configuration file.
+- Read the new controller App/installation settings through Chrome; verified the supplied
+  private file's public fingerprint against GitHub and restricted its permissions to 0600.
+  Created the external GitHub config under the owner-supplied ci-test directory, without
+  copying private material into the checkout. Deployment IDs remain outside application source.
+- Real GitHub App JWT/token authentication and repository-scoped metadata reads succeeded
+  for all five authorized sandbox source/worker repositories. No GitHub repository writes,
+  workflow dispatches, signing, feed publication or public listener activation performed.
+- Added configurable repository name/ID grants; token requests use repository_ids and
+  metadata reads verify the configured ID. Rechecked framework/MQTTSuite configuration,
+  Express, MariaDB and HTTP client patterns before implementing the boundary.
+- Implemented strict definition/target/graph validation and numeric SemVer ordering,
+  asynchronous serialized database operations, fresh enrollment schema/startup validation,
+  local UI editing, GitHub commits/import and committed-revision feedback.
+- Local enrollment fixture uses real isolated MariaDB and synthetic TLS GitHub responses.
+  Covers stale edits, origin rejection, rejected/lost GitHub writes, reconciliation, restart,
+  and rollback after a verified remote commit. Restart exposed missing address reuse;
+  corrected through SNode.C's existing setReuseAddress(), with no startup retry mechanism.
+- Uncertain database COMMIT/rollback blocks later mutations until reconciliation after
+  restart. This replaces unconditional mutation progression after uncertain outcomes.
+- Pipeline scheduler, worker tooling and complete live acceptance remain ongoing work.
+- Added a real MariaDB wire fault test: the proxy forwards COMMIT to the server, observes
+  success, then drops its acknowledgement. Verified durable server data, an uncertain
+  application result, prevention of further GitHub writes, and restoration after restart.
+  This is deliberate local fault injection, not live GitHub/package acceptance.
+- Checkpoint accounting (source/UI/schema/config/build versus tests separately): {'docs/tooling': [117, 3], 'production': [1801, 52], 'tests': [604, 20]}; counts precede this log entry. No legacy implementation is retained.
+- Relevant local suites passed across their final affected runs: seven lifecycle cases, enrollment HTTP/real-DB fault boundaries, definition/SemVer cases, and four TLS/App cases. Explicit format-check and staged whitespace review passed. Read-only live access also passed with ID-scoped configuration.

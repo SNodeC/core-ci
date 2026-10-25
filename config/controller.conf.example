@@ -1,0 +1,19 @@
+# Template only. Copy outside the checkout, protect it with chmod 600, and supply
+# actual IDs/paths. Secrets are read from protected files; never paste PEM here.
+# SNode.C accepts these dotted keys through --config-file /absolute/settings.conf.
+# Database ownership is deliberately CLI-only: database --mode unmanaged|managed.
+
+# database.socket="/absolute/private/server.sock"
+# database.user="restricted-account"
+# database.name="selected-schema"
+# database.password-file="/absolute/private/database-password"
+
+# github.app-id=NUMERIC_APP_ID
+# github.installation-id=NUMERIC_INSTALLATION_ID
+# github.allowed-owner="authorized-owner"
+# github.private-key-file="/absolute/private/controller-app.pem"
+# github.repository=["owner/source=NUMERIC_REPOSITORY_ID", "owner/worker=NUMERIC_REPOSITORY_ID"]
+
+web.local.host="127.0.0.1"
+web.local.port=8080
+ui.origin="http://127.0.0.1:8080"

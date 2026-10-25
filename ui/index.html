@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>core-ci</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><header><h1>core-ci</h1><p>Repositories, dependencies and package targets</p></header>
+<main><section aria-labelledby="repositories-heading"><h2 id="repositories-heading">Enrolled repositories</h2>
+<button id="reload">Refresh view</button><div id="repositories"></div></section>
+<section aria-labelledby="editor-heading"><h2 id="editor-heading">Enroll or edit a repository</h2>
+<form id="editor"><label>GitHub repository <input id="repository" required placeholder="owner/repository" autocomplete="off"></label>
+<label>Configuration branch <input id="branch" required autocomplete="off"></label>
+<p id="revision">No committed revision selected</p>
+<button type="button" id="import">Read committed definition from GitHub</button>
+<label>Package definition — dependencies, hooks and explicit target rows
+<textarea id="definition" rows="22" spellcheck="false" required></textarea></label>
+<button type="submit">Commit definition to GitHub</button></form>
+<pre id="feedback" role="status" aria-live="polite"></pre></section>
+</main></body></html>

@@ -9,22 +9,59 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+find_package(OpenSSL REQUIRED)
+find_package(nlohmann_json 3.7.0 REQUIRED)
+
 find_package(
     snodec CONFIG REQUIRED COMPONENTS db-mariadb http-server-express-legacy-in
+                                      http-client net-in-stream-tls
 )
 
+add_library(core-ci-definitions STATIC src/Definition.cpp src/Version.cpp)
+target_link_libraries(core-ci-definitions PUBLIC nlohmann_json::nlohmann_json)
+target_include_directories(core-ci-definitions PUBLIC src)
+target_compile_options(core-ci-definitions PRIVATE -Wall -Wextra -Wpedantic)
+
 add_executable(
-    core-ci src/main.cpp src/DatabaseConfig.cpp src/ManagedDatabase.cpp
+    core-ci
+    src/main.cpp
+    src/DatabaseConfig.cpp
+    src/ManagedDatabase.cpp
+    src/GitHub.cpp
+    src/PrivateFile.cpp
+    src/Database.cpp
+    src/Enrollment.cpp
+    src/UiConfig.cpp
 )
 target_link_libraries(
-    core-ci PRIVATE snodec::db-mariadb snodec::http-server-express-legacy-in
+    core-ci
+    PRIVATE core-ci-definitions
+            snodec::db-mariadb
+            snodec::http-server-express-legacy-in
+            snodec::http-client
+            snodec::net-in-stream-tls
+            OpenSSL::Crypto
+            OpenSSL::SSL
 )
+file(READ ui/index.html CORE_CI_UI_HTML)
+file(READ ui/style.css CORE_CI_UI_CSS)
+file(READ ui/app.js CORE_CI_UI_JAVASCRIPT)
+set_property(
+    DIRECTORY
+    APPEND
+    PROPERTY CMAKE_CONFIGURE_DEPENDS ui/index.html ui/style.css ui/app.js
+)
+configure_file(src/UiAssets.h.in generated/UiAssets.h @ONLY)
+target_include_directories(core-ci PRIVATE "${PROJECT_BINARY_DIR}/generated")
 target_compile_options(core-ci PRIVATE -Wall -Wextra -Wpedantic)
 
 option(CORE_CI_CLANG_TIDY "Run clang-tidy during compilation" OFF)
 if(CORE_CI_CLANG_TIDY)
     find_program(CLANG_TIDY clang-tidy REQUIRED)
-    set_property(TARGET core-ci PROPERTY CXX_CLANG_TIDY "${CLANG_TIDY}")
+    set_property(
+        TARGET core-ci core-ci-definitions PROPERTY CXX_CLANG_TIDY
+                                                    "${CLANG_TIDY}"
+    )
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
@@ -58,11 +95,15 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-endif()
-
-if(BUILD_TESTING)
-    foreach(case help managed unmanaged initial-failure
-                 unmanaged-initial-failure startup-failure
+    foreach(
+        case
+        help
+        managed
+        unmanaged
+        initial-failure
+        unmanaged-initial-failure
+        startup-failure
+        schema-failure
     )
         add_test(
             NAME lifecycle-${case}
@@ -72,5 +113,41 @@ if(BUILD_TESTING)
                 ${PROJECT_BINARY_DIR}/tests/${case} --case ${case}
         )
         set_tests_properties(lifecycle-${case} PROPERTIES TIMEOUT 45)
+    endforeach()
+
+    add_test(
+        NAME enrollment-boundaries
+        COMMAND
+            ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/enrollment.py
+            --executable $<TARGET_FILE:core-ci> --directory
+            ${PROJECT_BINARY_DIR}/tests/enrollment
+    )
+    set_tests_properties(enrollment-boundaries PROPERTIES TIMEOUT 75)
+
+    add_executable(definition-test tests/DefinitionTest.cpp)
+    target_link_libraries(definition-test PRIVATE core-ci-definitions)
+    add_test(NAME definitions-and-versions COMMAND definition-test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(
+        github-test tests/GitHubTest.cpp src/GitHub.cpp src/PrivateFile.cpp
+    )
+    target_include_directories(github-test PRIVATE src)
+    target_link_libraries(
+        github-test
+        PRIVATE nlohmann_json::nlohmann_json snodec::http-client
+                snodec::net-in-stream-tls OpenSSL::SSL OpenSSL::Crypto
+    )
+    foreach(case success wrong-hostname wrong-ca lost-response)
+        add_test(
+            NAME github-transport-${case}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/github_transport.py --executable
+                $<TARGET_FILE:github-test> --directory
+                ${PROJECT_BINARY_DIR}/tests/github-${case} --case ${case}
+        )
+        set_tests_properties(github-transport-${case} PROPERTIES TIMEOUT 25)
     endforeach()
 endif()

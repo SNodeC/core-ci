@@ -90,13 +90,15 @@ def exercise(args):
         datadir = directory / "data"
         assert not datadir.exists(), "use a clean task test directory"
         datadir.mkdir(mode=0o700)
+        temporary = directory / "tmp"
+        temporary.mkdir(mode=0o700)
         account = pwd.getpwuid(os.geteuid()).pw_name
-        run(["mariadb-install-db", "--no-defaults", "--datadir=" + str(datadir), "--auth-root-authentication-method=normal", "--skip-test-db", "--user=" + account])
+        run(["mariadb-install-db", "--no-defaults", "--datadir=" + str(datadir), "--auth-root-authentication-method=normal", "--skip-test-db", "--tmpdir=" + str(temporary)])
         datadir.chmod(0o700)
         db_socket = datadir / "server.sock"
         pid_file = datadir / "server.pid"
         server_config = directory / "server.cnf"
-        server_config.write_text("[mariadbd]\nuser=" + account + "\ninnodb-buffer-pool-size=32M\nlog-error=" + str(directory / "server.log") + "\n")
+        server_config.write_text("[mariadbd]\nuser=" + account + "\ninnodb-buffer-pool-size=32M\ntmpdir=" + str(temporary) + "\nlog-error=" + str(directory / "server.log") + "\n")
         server_command = ["/usr/sbin/mariadbd", "--defaults-file=" + str(server_config), "--datadir=" + str(datadir), "--socket=" + str(db_socket), "--pid-file=" + str(pid_file), "--skip-networking"]
         fixture = None
         application = None
@@ -108,6 +110,10 @@ def exercise(args):
                 wait_sql(db_socket, fixture)
                 query(db_socket, "CREATE DATABASE core_ci; CREATE USER 'core_ci_test'@'localhost' IDENTIFIED BY ''; GRANT SELECT,INSERT,UPDATE,DELETE ON core_ci.* TO 'core_ci_test'@'localhost';")
 
+                schema = (Path(__file__).resolve().parent.parent / "sql/schema.sql").read_text()
+                if args.case != "schema-failure":
+                    query(db_socket, "USE core_ci; " + schema)
+
                 managed = args.case in ("managed", "initial-failure", "startup-failure")
                 if managed:
                     stop(fixture)
@@ -118,11 +124,12 @@ def exercise(args):
                 command += ["web", "local", "--port", str(port)]
                 with app_log.open("w") as output:
                     application = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
-                    if args.case in ("initial-failure", "unmanaged-initial-failure", "startup-failure"):
+                    if args.case in ("initial-failure", "unmanaged-initial-failure", "startup-failure", "schema-failure"):
                         application.wait(timeout=10)
                         log = app_log.read_text()
                         assert "Listening on" not in log, log
-                        assert "Initial MariaDB connection established" not in log, log
+                        if args.case != "schema-failure":
+                            assert "Initial MariaDB connection established" not in log, log
                         if managed:
                             assert not db_socket.exists(), "managed failure left its server running"
                         else:
@@ -156,19 +163,20 @@ def exercise(args):
     print("PASS", args.case)
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--executable", required=True)
-parser.add_argument("--directory", required=True)
-parser.add_argument("--case", required=True)
-arguments = parser.parse_args()
-Path(arguments.directory).mkdir(parents=True, exist_ok=True)
-with tempfile.TemporaryDirectory(prefix="run-", dir=arguments.directory) as temporary:
-    arguments.directory = temporary
-    try:
-        exercise(arguments)
-    except Exception:
-        for filename in ("application.log", "server.log", "fixture.log"):
-            report = Path(temporary) / filename
-            if report.exists():
-                print(filename, report.read_text(errors="replace"))
-        raise
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--executable", required=True)
+    parser.add_argument("--directory", required=True)
+    parser.add_argument("--case", required=True)
+    arguments = parser.parse_args()
+    Path(arguments.directory).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="run-", dir=arguments.directory) as temporary:
+        arguments.directory = temporary
+        try:
+            exercise(arguments)
+        except Exception:
+            for filename in ("application.log", "server.log", "fixture.log"):
+                report = Path(temporary) / filename
+                if report.exists():
+                    print(filename, report.read_text(errors="replace"))
+            raise

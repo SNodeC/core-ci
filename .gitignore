@@ -4,3 +4,6 @@
 /.qtcreator/
 /local/
 *.swp
+
+__pycache__/
+*.pyc

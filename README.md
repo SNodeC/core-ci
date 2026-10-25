@@ -4,11 +4,12 @@ A persistent dependency graph and package execution state machine. The SNode.C c
 coordinates GitHub and MariaDB; GitHub runs builds and trusted publication. There is no IdP.
 
 Implementation is in progress. The initial database lifecycle works with real managed and
-unmanaged MariaDB. Repository enrollment, graph scheduling and the package pipeline are
-not implemented yet. Nothing has been installed, pushed or externally activated.
+unmanaged MariaDB. Local repository enrollment/editing and GitHub committed-revision feedback are implemented.
+Graph scheduling and the package pipeline remain in progress. Nothing has been installed, pushed or externally activated.
 
 See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),
-[the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md).
+[the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md). Deployment settings and credential-file ownership are
+documented in [configuration](docs/configuration.md).
 No discarded implementation, protocol or design is reused.
 
 ## Build and focused checks
@@ -52,6 +53,10 @@ networking disabled and waits for its native authenticated readiness notificatio
 polling. It owns shutdown only for that child. No datadir/schema initialization runs inside
 the controller. Later command execution uses the framework's lazy connection establishment
 when its connection object has disappeared; mutations will not be automatically replayed.
+
+Apply the fresh `sql/schema.sql` before startup; missing/invalid schema leaves no listener.
+The local web UI supports enrollment, JSON target/dependency editing, import and GitHub save
+feedback. Existing committed definitions must be read before replacing them.
 
 GET /api/status queries the real database asynchronously and returns available/unavailable.
 It is a lifecycle boundary check, not evidence that repository orchestration is ready.
