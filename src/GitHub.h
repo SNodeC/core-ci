@@ -41,6 +41,7 @@ namespace coreci {
         using Callback = std::function<void(const GitHubResult&)>;
         explicit GitHub(const GitHubConfig& config);
         void loadCredentials();
+        static bool validRepository(const std::string& repository);
         void request(const std::string& repository,
                      const std::string& method,
                      const std::string& suffix,

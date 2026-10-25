@@ -1,5 +1,7 @@
 #include "Definition.h"
 
+#include "RepositoryName.h"
+
 #include <algorithm>
 #include <cctype>
 #include <functional>
@@ -66,7 +68,7 @@ namespace coreci {
         std::set<std::string> dependencies;
         for (const auto& dependency : input.at("depends_on")) {
             const std::string name = dependency.get<std::string>();
-            if (!std::regex_match(name, packageSyntax) || !dependencies.insert(name).second) {
+            if (!repositoryName(name) || !dependencies.insert(name).second) {
                 throw std::invalid_argument("invalid or duplicate dependency name");
             }
         }

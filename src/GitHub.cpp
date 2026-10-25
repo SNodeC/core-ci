@@ -1,6 +1,7 @@
 #include "GitHub.h"
 
 #include "PrivateFile.h"
+#include "RepositoryName.h"
 
 #include <algorithm>
 #include <charconv>
@@ -8,7 +9,7 @@
 #include <ctime>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
-#include <regex>
+#include <set>
 #include <stdexcept>
 #include <utility>
 #include <web/http/ConfigHttpParser.h>
@@ -144,11 +145,23 @@ namespace coreci {
         });
     }
 
+    bool GitHub::validRepository(const std::string& repository) {
+        const auto separator = repository.find('/');
+        const std::string_view value(repository);
+        const auto owner = value.substr(0, separator);
+        const bool ownerCharacters = std::all_of(owner.begin(), owner.end(), [](unsigned char ch) {
+            return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+        });
+        return separator != std::string::npos && !owner.empty() && owner.size() <= 128 && ownerCharacters &&
+               repositoryName(value.substr(separator + 1));
+    }
+
     void GitHub::loadCredentials() {
         if (!config.privateKeyFile.empty()) {
             if (config.appId == 0 || config.installationId == 0 || config.allowedOwner.empty()) {
                 throw std::runtime_error("GitHub App requires explicit App ID, installation ID and allowed owner");
             }
+            std::set<std::uint64_t> ids;
             for (const auto& entry : config.repositories) {
                 const auto separator = entry.find('=');
                 if (separator == std::string::npos) {
@@ -157,8 +170,9 @@ namespace coreci {
                 const auto repository = entry.substr(0, separator);
                 std::uint64_t id = 0;
                 const auto parsed = std::from_chars(entry.data() + separator + 1, entry.data() + entry.size(), id);
-                if (!repository.starts_with(config.allowedOwner + "/") || parsed.ec != std::errc{} ||
-                    parsed.ptr != entry.data() + entry.size() || id == 0 || !repositoryIds.emplace(repository, id).second) {
+                if (!validRepository(repository) || !repository.starts_with(config.allowedOwner + "/") || parsed.ec != std::errc{} ||
+                    parsed.ptr != entry.data() + entry.size() || id == 0 || !ids.insert(id).second ||
+                    !repositoryIds.emplace(repository, id).second) {
                     throw std::runtime_error("GitHub repository grant has an invalid/duplicate name or ID");
                 }
             }
@@ -215,10 +229,9 @@ namespace coreci {
                          const nlohmann::json& permissions,
                          const Callback& callback) {
         try {
-            static const std::regex name(R"(^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$)");
             const auto slash = repository.find('/');
-            if (!std::regex_match(repository, name) || repository.substr(0, slash) != config.allowedOwner ||
-                repository.substr(slash + 1) == "." || repository.substr(slash + 1) == ".." || (!suffix.empty() && suffix.front() != '/')) {
+            if (!validRepository(repository) || repository.substr(0, slash) != config.allowedOwner ||
+                (!suffix.empty() && suffix.front() != '/')) {
                 throw std::invalid_argument("repository must belong to the explicitly authorized GitHub owner");
             }
             const auto grant = repositoryIds.find(repository);

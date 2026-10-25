@@ -61,7 +61,8 @@ leaves no listener. This is fresh setup, with no legacy import or migration.
 GitHub owns build definitions. MariaDB retains each committed definition revision and
 its enrollment pointer; there is no independently editable local matrix. The enrollment
 UI can import committed `ci/packages.json` or commit an explicitly edited definition.
-Stale branch revisions are rejected. A lost GitHub write response is shown as uncertain,
+Stale effective revisions and changed file blobs are rejected; unrelated branch commits
+do not prevent an edit. Invalid committed JSON can be read and repaired explicitly. A lost GitHub write response is shown as uncertain,
 not retried automatically; reading the committed definition reconciles enrollment.
 A successful GitHub commit followed by database failure is reported with its revision.
 

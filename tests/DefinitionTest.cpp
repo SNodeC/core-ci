@@ -74,6 +74,9 @@ int main() {
         app["matrix"][0]["id"] = "different-repository-local-label";
         coreci::Definition::validateGraph({{"demo-core", coreci::Definition::parse(core)}, {"demo-app", coreci::Definition::parse(app)}});
         check(coreci::Definition::parse(app).json == app, "worker data was rewritten");
+        auto named = app;
+        named["depends_on"] = {"Mixed_Name"};
+        coreci::Definition::validateGraph({{"Mixed_Name", coreci::Definition::parse(core)}, {"app", coreci::Definition::parse(named)}});
 
         auto overlap = app;
         overlap["package"] = "demo-core-extra";

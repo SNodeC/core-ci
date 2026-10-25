@@ -15,7 +15,9 @@ async function api(path, body) {
     const response = await fetch(path, options);
     const result = await response.json();
     if (!response.ok) {
-        throw new Error(JSON.stringify(result, null, 2));
+        const error = new Error(JSON.stringify(result, null, 2));
+        error.result = result;
+        throw error;
     }
     return result;
 }
@@ -111,9 +113,21 @@ element("repository").addEventListener("input", () => {
     element("revision").textContent = "No committed revision selected";
 });
 element("import").addEventListener("click", () => operation(async () => {
-    const result = await api("/api/repositories/refresh", {
-        repository: element("repository").value, branch: element("branch").value
-    });
+    let result;
+    try {
+        result = await api("/api/repositories/refresh", {
+            repository: element("repository").value, branch: element("branch").value
+        });
+    } catch (error) {
+        const body = error.result;
+        if (body && typeof body.content === "string" && body.blob_sha) {
+            const effective = repositories.find((row) => row.repository === element("repository").value);
+            selected = {revision: effective ? effective.revision : "", blob_sha: body.blob_sha};
+            element("definition").value = body.content;
+            element("revision").textContent = "Read GitHub revision: " + body.github_revision + " · repair the invalid definition before saving";
+        }
+        throw error;
+    }
     await reload();
     const repository = repositories.find((row) => row.repository === result.repository);
     if (repository) {
@@ -128,6 +142,7 @@ element("editor").addEventListener("submit", (event) => {
             repository: element("repository").value,
             branch: element("branch").value,
             revision: selected ? selected.revision : "",
+            blob_sha: selected ? selected.blob_sha : "",
             definition: JSON.parse(element("definition").value)
         });
         await reload();

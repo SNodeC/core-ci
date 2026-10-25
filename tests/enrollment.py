@@ -3,6 +3,7 @@
 import argparse
 import base64
 import http.server
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -89,6 +90,7 @@ def exercise(args, root):
     head = "a" * 40
     blob = None
     document = None
+    raw_document = b""
     writes = 0
     reject = False
     lose = False
@@ -121,17 +123,21 @@ def exercise(args, root):
                 self.send_json(200, {"id": 99, "full_name": "Owner/example"})
             elif self.path == "/repos/Owner/example/git/ref/heads/main":
                 self.send_json(200, {"object": {"sha": head}})
-            elif self.path == "/repos/Owner/example/contents/ci/packages.json?ref=" + head:
-                if document is None:
-                    self.send_json(404, {"message": "not found"})
-                else:
-                    self.send_json(200, {"type": "file", "sha": blob, "encoding": "base64", "content": base64.b64encode(json.dumps(document).encode()).decode()})
+            elif self.path == "/repos/Owner/example/git/commits/" + head:
+                self.send_json(200, {"sha": head, "tree": {"sha": "c" * 40}})
+            elif self.path == "/repos/Owner/example/git/trees/" + "c" * 40:
+                entries = [] if document is None else [{"path": "ci", "type": "tree", "mode": "040000", "sha": "d" * 40}]
+                self.send_json(200, {"sha": "c" * 40, "truncated": False, "tree": entries})
+            elif self.path == "/repos/Owner/example/git/trees/" + "d" * 40:
+                self.send_json(200, {"sha": "d" * 40, "truncated": False, "tree": [{"path": "packages.json", "type": "blob", "mode": "100644", "sha": blob}]})
+            elif self.path == "/repos/Owner/example/git/blobs/" + str(blob):
+                self.send_json(200, {"sha": blob, "encoding": "base64", "content": base64.b64encode(raw_document).decode()})
             else:
                 errors.append("unexpected GitHub read: " + self.path)
                 self.send_json(404, {})
 
         def do_PUT(self):
-            nonlocal head, blob, document, writes
+            nonlocal head, blob, document, raw_document, writes
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             assert self.path == "/repos/Owner/example/contents/ci/packages.json"
             if reject:
@@ -141,8 +147,9 @@ def exercise(args, root):
             else:
                 writes += 1
                 head = format(writes + 10, "040x")
-                blob = format(writes + 20, "040x")
-                document = json.loads(base64.b64decode(body["content"]))
+                raw_document = base64.b64decode(body["content"])
+                blob = hashlib.sha1(b"blob " + str(len(raw_document)).encode() + b"\0" + raw_document).hexdigest()
+                document = json.loads(raw_document)
                 if lose:
                     self.close_connection = True
                 else:
@@ -252,6 +259,35 @@ def exercise(args, root):
             assert status == 200, result
             namespaces = lifecycle.query(db_socket, "SELECT namespace FROM core_ci.namespace_claims ORDER BY namespace").splitlines()
             assert namespaces == ["example", "renamed-example"], "editing a namespace released its prior ownership"
+            # An unrelated branch commit must not invalidate the definition's blob CAS.
+            save["revision"] = result["revision"]
+            head = "f" * 40
+            status, result = request("/api/repositories/save", save)
+            assert status == 200, result
+            effective = result["revision"]
+            # Read an invalid committed JSON file, then repair it using the explicitly read blob.
+            head = "e" * 40
+            document = {}
+            raw_document = b"{"
+            blob = hashlib.sha1(b"blob 1\0" + raw_document).hexdigest()
+            status, invalid = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
+            assert status == 422 and invalid["content"] == "{" and invalid["blob_sha"] == blob, invalid
+            save["revision"] = effective
+            save["blob_sha"] = invalid["blob_sha"]
+            status, result = request("/api/repositories/save", save)
+            assert status == 200, result
+            # A different external edit must still be rejected before writing.
+            save["revision"] = result["revision"]
+            save["blob_sha"] = request("/api/repositories")[1]["repositories"][0]["blob_sha"]
+            document["title"] = "external edit"
+            raw_document = json.dumps(document).encode()
+            blob = hashlib.sha1(b"blob " + str(len(raw_document)).encode() + b"\0" + raw_document).hexdigest()
+            head = "d" * 40
+            previous_writes = writes
+            status, result = request("/api/repositories/save", save)
+            assert status == 409 and writes == previous_writes, result
+            status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
+            assert status == 200, result
             if args.graph_executable:
                 lifecycle.stop(application)
                 graph_config = directory / "graph.conf"

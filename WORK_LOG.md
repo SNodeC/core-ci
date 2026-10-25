@@ -178,3 +178,26 @@
   changes; the seven lifecycle cases and definition/version suite also passed. No simulated
   job result or local graph fixture is counted as live package-pipeline acceptance.
 - Checkpoint line accounting (before this log entry): {'production': [1163, 63], 'docs': [41, 1], 'tests': [383, 0]}. Formatting, staged whitespace and 160-column source checks passed.
+
+
+## 2026-10-25 — immutable GitHub source reading
+
+- Implemented one source reader for enrollment and execution selection: paginated numeric
+  SemVer selection including prereleases, explicit older tags, bounded annotated-tag peeling,
+  exact commit/tree/blob reads, regular ci/packages.json validation and Git blob hash checks.
+  Ambiguous highest precedence requires an exact request; no default branch fallback exists.
+- Enrollment uses that reader rather than a second contents decoder. Optimistic writes
+  compare file blobs and effective configuration revisions, allowing unrelated branch commits.
+  Invalid committed JSON can be read/repaired without accepting an invalid effective graph.
+  Confirmed write receipts must contain the expected blob identity before local acceptance.
+- Consolidated repository name validation separately from package namespaces; underscores
+  and canonical uppercase repository names are supported. Config grants reject duplicate IDs.
+- Synthetic TLS source tests passed for pagination/prereleases, older nested annotated tags,
+  moved tags, ambiguity, no version tags, symlink definitions, changed blob bytes, invalid
+  definitions and invalid direct tags. Added duplicate-grant startup rejection coverage.
+  Real MariaDB enrollment tests cover definition repair, unrelated commits and changed-file CAS.
+- Read the public bot/feed identities for later deployment configuration; no repository,
+  workflow, secret or feed write was made. Chrome became unavailable for optional UI visual
+  verification; JavaScript syntax/API boundary checks remain separate from browser rendering.
+- Source-event coordination and trusted worker/publication code remain ongoing work.
+- Checkpoint accounting (before this entry): {'production': [546, 94], 'docs': [24, 1], 'tests': [266, 8]}. Explicit format-check, JavaScript syntax and staged whitespace checks passed.

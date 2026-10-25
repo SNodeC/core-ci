@@ -37,6 +37,7 @@ add_executable(
     src/Enrollment.cpp
     src/UiConfig.cpp
     src/GraphStore.cpp
+    src/SourceReader.cpp
 )
 target_link_libraries(
     core-ci
@@ -168,5 +169,38 @@ if(BUILD_TESTING)
                 ${PROJECT_BINARY_DIR}/tests/github-${case} --case ${case}
         )
         set_tests_properties(github-transport-${case} PROPERTIES TIMEOUT 25)
+    endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(
+        source-reader-test tests/SourceReaderTest.cpp src/SourceReader.cpp
+                           src/GitHub.cpp src/PrivateFile.cpp
+    )
+    target_include_directories(source-reader-test PRIVATE src)
+    target_link_libraries(
+        source-reader-test PRIVATE core-ci-domain snodec::http-client
+                                   snodec::net-in-stream-tls OpenSSL::SSL
+    )
+    foreach(
+        case
+        success
+        ambiguous
+        no-tags
+        symlink
+        modified-blob
+        invalid-definition
+        invalid-tag
+        duplicate-grant
+    )
+        add_test(
+            NAME source-selection-${case}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/source_selection.py --executable
+                $<TARGET_FILE:source-reader-test> --directory
+                ${PROJECT_BINARY_DIR}/tests/source-${case} --case ${case}
+        )
+        set_tests_properties(source-selection-${case} PROPERTIES TIMEOUT 30)
     endforeach()
 endif()

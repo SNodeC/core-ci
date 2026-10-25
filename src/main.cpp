@@ -22,6 +22,7 @@ int main(int argc, char* argv[]) {
 
     auto* githubConfig = utils::Config::configRoot.newSubCommand<coreci::GitHubConfig>();
     coreci::GitHub github(*githubConfig);
+    coreci::SourceReader sources(github);
 
     auto* uiConfig = utils::Config::configRoot.newSubCommand<coreci::UiConfig>();
 
@@ -32,7 +33,7 @@ int main(int argc, char* argv[]) {
     app.getConfig()
         ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
         ->getParserConfig()
-        ->setMaximumBodyBytes(1024 * 1024);
+        ->setMaximumBodyBytes(2 * 1024 * 1024);
 
     core::SNodeC::init(argc, argv);
 
@@ -163,7 +164,7 @@ int main(int argc, char* argv[]) {
 
         store = std::make_unique<coreci::Database>(*database);
         graphStore = std::make_unique<coreci::GraphStore>(*store);
-        enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore);
+        enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources);
 
         if (databaseConfig->mode == "managed") {
             managed = std::make_unique<coreci::ManagedDatabase>();
@@ -174,7 +175,7 @@ int main(int argc, char* argv[]) {
             database->connect();
         }
     } catch (const std::exception& error) {
-        snode::log::application().error() << "Database startup failed: " << error.what();
+        snode::log::application().error() << "Controller startup failed: " << error.what();
         enrollment.reset();
         graphStore.reset();
         store.reset();

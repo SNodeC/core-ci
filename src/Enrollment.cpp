@@ -1,7 +1,5 @@
 #include "Enrollment.h"
 
-#include <algorithm>
-#include <cctype>
 #include <openssl/evp.h>
 #include <regex>
 #include <stdexcept>
@@ -9,23 +7,6 @@
 namespace coreci {
 
     namespace {
-        std::string encoded(const std::string& value) {
-            constexpr char digits[] = "0123456789ABCDEF";
-            std::string result;
-            for (const unsigned char character : value) {
-                if ((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-                    (character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' ||
-                    character == '~') {
-                    result.push_back(static_cast<char>(character));
-                } else {
-                    result.push_back('%');
-                    result.push_back(digits[character >> 4]);
-                    result.push_back(digits[character & 15]);
-                }
-            }
-            return result;
-        }
-
         std::string base64(const std::string& value) {
             std::string result(4 * ((value.size() + 2) / 3) + 1, '\0');
             const int size = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(result.data()),
@@ -42,10 +23,11 @@ namespace coreci {
         }
     } // namespace
 
-    Enrollment::Enrollment(Database& database, GitHub& github, GraphStore& graphStore)
+    Enrollment::Enrollment(Database& database, GitHub& github, GraphStore& graphStore, SourceReader& sources)
         : database(database)
         , github(github)
-        , graphStore(graphStore) {
+        , graphStore(graphStore)
+        , sources(sources) {
     }
 
     void Enrollment::restore(const Callback& callback) {
@@ -67,7 +49,8 @@ namespace coreci {
     void Enrollment::list(const Callback& callback) {
         database.query(
             "SELECT JSON_OBJECT('id', r.github_id, 'name', r.name, 'repository', r.full_name, "
-            "'branch', r.editing_ref, 'revision', r.configuration_revision, 'definition', JSON_EXTRACT(d.document, '$')) "
+            "'branch', r.editing_ref, 'revision', r.configuration_revision, 'blob_sha',d.blob_sha, 'definition', JSON_EXTRACT(d.document, "
+            "'$')) "
             "FROM repositories r JOIN definitions d ON d.repository_id=r.github_id AND d.revision=r.configuration_revision ORDER BY r.name",
             [callback](const DatabaseResult& result) {
                 if (result.error.empty()) {
@@ -99,12 +82,11 @@ namespace coreci {
                 save->repository = request.at("repository").get<std::string>();
                 save->branch = request.at("branch").get<std::string>();
                 save->expectedRevision = request.value("revision", std::string{});
+                save->expectedBlob = request.value("blob_sha", std::string{});
                 save->definition = Definition::parse(request.at("definition"));
                 save->callback = callback;
                 const auto separator = save->repository.find('/');
-                static const std::regex syntax(R"(^[A-Za-z0-9_-]+/[a-z0-9][a-z0-9.-]*$)");
-                require(save->repository.size() <= 256 && std::regex_match(save->repository, syntax),
-                        "use an owner/repository name; enrolled names must be lowercase");
+                require(GitHub::validRepository(save->repository), "use a valid owner/repository name");
                 require(!save->branch.empty() && save->branch.size() <= 256, "specify the configuration editing branch");
                 save->name = save->repository.substr(separator + 1);
                 save->generation = graphStore.getGeneration();
@@ -124,6 +106,9 @@ namespace coreci {
                                     require(row.at("branch") == save->branch, "configuration branch must match the enrolled branch");
                                     require(row.at("revision") == save->expectedRevision,
                                             "configuration revision changed; refresh before saving");
+                                    if (save->expectedBlob.empty()) {
+                                        save->expectedBlob = row.at("blob_sha").get<std::string>();
+                                    }
                                     save->id = row.at("id").get<std::uint64_t>();
                                     enrolled = true;
                                 }
@@ -173,8 +158,7 @@ namespace coreci {
                 save->branch = request.at("branch").get<std::string>();
                 save->callback = callback;
                 save->importing = true;
-                static const std::regex syntax(R"(^[A-Za-z0-9_-]+/[a-z0-9][a-z0-9.-]*$)");
-                require(save->repository.size() <= 256 && std::regex_match(save->repository, syntax), "invalid repository name");
+                require(GitHub::validRepository(save->repository), "invalid repository name");
                 require(!save->branch.empty() && save->branch.size() <= 256, "specify the configuration editing branch");
                 save->name = save->repository.substr(save->repository.find('/') + 1);
                 save->generation = graphStore.getGeneration();
@@ -213,7 +197,7 @@ namespace coreci {
     void Enrollment::readHead(const std::shared_ptr<Save>& save) {
         github.request(save->repository,
                        "GET",
-                       "/git/ref/heads/" + encoded(save->branch),
+                       "/git/ref/heads/" + SourceReader::encode(save->branch),
                        nullptr,
                        {{"contents", "read"}},
                        [this, save](const GitHubResult& head) {
@@ -230,45 +214,17 @@ namespace coreci {
     }
 
     void Enrollment::readFile(const std::shared_ptr<Save>& save) {
-        github.request(
-            save->repository,
-            "GET",
-            "/contents/ci/packages.json?ref=" + save->head,
-            nullptr,
-            {{"contents", "read"}},
-            [this, save](const GitHubResult& file) {
-                try {
-                    require(file.error.empty() && (file.status == 200 || file.status == 404), "could not read current GitHub definition");
-                    if (file.status == 200) {
-                        require(file.body.at("type") == "file", "ci/packages.json must be a regular GitHub file");
-                        save->blob = file.body.at("sha").get<std::string>();
-                    }
-                    // Existing enrollment checks the selected branch revision before replacing its definition.
-                    if (save->importing) {
-                        require(file.status == 200 && file.body.at("encoding") == "base64", "no committed packages.json to import");
-                        auto content = file.body.at("content").get<std::string>();
-                        content.erase(std::remove_if(content.begin(),
-                                                     content.end(),
-                                                     [](unsigned char ch) {
-                                                         return std::isspace(ch);
-                                                     }),
-                                      content.end());
-                        require(content.size() <= 1400000 && content.size() % 4 == 0, "invalid definition encoding/size");
-                        std::string decoded(content.size() / 4 * 3 + 1, '\0');
-                        const int count = EVP_DecodeBlock(reinterpret_cast<unsigned char*>(decoded.data()),
-                                                          reinterpret_cast<const unsigned char*>(content.data()),
-                                                          static_cast<int>(content.size()));
-                        require(count >= 0, "invalid base64 definition");
-                        std::size_t size = static_cast<std::size_t>(count);
-                        if (!content.empty() && content.back() == '=') {
-                            --size;
-                        }
-                        if (content.size() >= 2 && content[content.size() - 2] == '=') {
-                            --size;
-                        }
-                        decoded.resize(size);
-                        save->definition = Definition::parse(nlohmann::json::parse(decoded));
-                        list([this, save](const EnrollmentResult& current) {
+        sources.definition(save->repository, save->head, [this, save](const SourceResult& file) {
+            const bool missing = file.status == 404 && file.source.is_object() && file.source.value("commit", std::string{}) == save->head;
+            if (file.status != 200 && !missing) {
+                finish(save, file.status, {{"error", file.error}, {"github_committed", false}});
+            } else {
+                save->blob = file.blobSha;
+                if (save->importing) {
+                    try {
+                        require(file.status == 200, "no committed ci/packages.json to import");
+                        save->definition = Definition::parse(nlohmann::json::parse(file.content));
+                        list([this, save, content = file.content](const EnrollmentResult& current) {
                             try {
                                 require(current.status == 200, "cannot validate effective dependency graph");
                                 std::map<std::string, Definition> definitions;
@@ -281,23 +237,36 @@ namespace coreci {
                                     remember(save, {200, {{"commit", {{"sha", save->head}}}, {"content", {{"sha", save->blob}}}}, ""});
                                 });
                             } catch (const std::exception& error) {
-                                finish(save, 422, {{"error", error.what()}, {"github_committed", false}});
+                                finish(save,
+                                       422,
+                                       {{"error", error.what()},
+                                        {"github_committed", false},
+                                        {"github_revision", save->head},
+                                        {"blob_sha", save->blob},
+                                        {"content", content}});
                             }
                         });
-                    } else if ((!save->expectedRevision.empty() && save->expectedRevision != save->head) ||
-                               (save->expectedRevision.empty() && file.status == 200)) {
+                    } catch (const std::exception& error) {
                         finish(save,
-                               409,
-                               {{"error", "GitHub branch advanced; refresh/reconcile its definition before saving"},
+                               422,
+                               {{"error", error.what()},
+                                {"github_committed", false},
                                 {"github_revision", save->head},
-                                {"github_committed", false}});
-                    } else {
-                        commit(save);
+                                {"blob_sha", save->blob},
+                                {"content", file.content}});
                     }
-                } catch (const std::exception& error) {
-                    finish(save, 502, {{"error", error.what()}, {"github_status", file.status}, {"github_committed", false}});
+                } else if (save->expectedBlob != save->blob) {
+                    finish(save,
+                           409,
+                           {{"error", "GitHub definition changed; read its committed contents before saving"},
+                            {"github_revision", save->head},
+                            {"blob_sha", save->blob},
+                            {"github_committed", false}});
+                } else {
+                    commit(save);
                 }
-            });
+            }
+        });
     }
 
     void Enrollment::checkClaims(const std::shared_ptr<Save>& save, const std::function<void()>& next) {
@@ -361,6 +330,8 @@ namespace coreci {
             const auto blob = result.body.at("content").at("sha").get<std::string>();
             static const std::regex sha(R"(^[a-f0-9]{40}$)");
             require(std::regex_match(revision, sha) && std::regex_match(blob, sha), "GitHub write returned invalid revision identities");
+            require(save->importing || blob == SourceReader::blobSha(save->definition.json.dump(2) + "\n"),
+                    "GitHub write returned a different definition blob; reconcile its committed contents");
             graphStore.enroll(
                 save->name,
                 save->repository,
