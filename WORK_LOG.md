@@ -699,3 +699,8 @@
 - Imported OpenWrt rootfs client checks require boot-created /tmp and lock directories;
   added only test setup. Real opkg run 40234883261 passes wrong-key signature rejection,
   trusted usign verification, HTTPS installation of 2.1.0-r24 and runtime demo-core 60.
+- Debian ARM64 real client run 40235051112 also passes wrong-key rejection, signed
+  refresh, exact 2.1.0-22 installation and executable output on an ARM GitHub runner.
+- Cancelled only the assigned sandbox demo-side IPK run 40234976218 to test real failure,
+  join blocking and explicit retry. GitHub confirms cancellation; graph reconciliation and
+  retry proof remain pending. No injected result or database record is used.

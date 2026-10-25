@@ -92,6 +92,7 @@ install the exact selected package version, and execute the installed program:
 | Client | Version | Acceptance run |
 | --- | --- | --- |
 | apt / Debian trixie amd64 | 2.1.0-21 | [40234719240](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234719240) |
+| apt / Debian trixie arm64 | 2.1.0-22 | [40235051112](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40235051112) |
 | dnf / Fedora 43 x86_64 | 2.1.0-23 | [40234717535](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234717535) |
 | opkg / OpenWrt 24.10.8 x86_64 | 2.1.0-r24 | [40234883261](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234883261) |
 
@@ -102,7 +103,7 @@ no untrusted-install override is used. Client runtime output is `demo-core 60`.
 
 ## Still outstanding
 
-Actual APK and native arm64 client installation acceptance, completion of dependency
+Actual APK client installation acceptance, completion of dependency
 chains/diamonds and the remaining full live acceptance are outstanding. Both OpenWrt builds now pass with
 corrected SDK preparation and source-owned tool lookup:
 [IPK 40231880390](https://github.com/VOC-Experiments/demo-core/actions/runs/40231880390),
