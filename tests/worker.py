@@ -45,12 +45,10 @@ def selected(package_format):
             "suite": "configured",
             "arch": "amd64" if package_format == "deb" else "x86_64",
             "runner": "configured",
-            "build": {"format": package_format, "platform": "linux/amd64"},
+            "build": {"format": package_format, "platform": "linux/amd64", "image": "configured:tag"},
         },
-        "environment": {},
         "dependencies": [],
     }
-    result["source"]["environment"] = result["environment"]
     return result
 
 
@@ -167,16 +165,30 @@ def main():
                     stderr=subprocess.STDOUT,
                 )
             declared = contract.read_json(root / "outputs.json")
-            manifest = contract.validate_outputs(request, root, declared)
+            resolved = {
+                "image": "configured:tag",
+                "platform": "linux/amd64",
+                "digest": "sha256:" + "a" * 64,
+                "config_digest": "sha256:" + "b" * 64,
+                "resolved_image": "registry.example/image@sha256:" + "a" * 64,
+            }
+            manifest = contract.validate_outputs(request, root, declared, resolved)
             (root / "outputs.json").unlink()
             contract.write_json(root / "manifest.json", manifest)
             assert contract.verify_manifest(request, root) == manifest
+            changed = copy.deepcopy(manifest)
+            changed["environment"]["image"] = "another:image"
+            contract.write_json(root / "manifest.json", changed)
+            rejected(lambda: contract.verify_manifest(request, root), "environment disagreed with assigned image")
+            contract.write_json(root / "manifest.json", manifest)
             wrong = copy.deepcopy(request)
             wrong["source"]["package"] = "another-repository"
-            rejected(lambda: contract.validate_outputs(wrong, root, declared), "namespace escape accepted")
+            rejected(lambda: contract.validate_outputs(wrong, root, declared, resolved), "namespace escape accepted")
             wrong = copy.deepcopy(request)
             wrong["target"]["arch"] = "wrong-architecture"
-            rejected(lambda: contract.validate_outputs(wrong, root, declared), "architecture mismatch accepted")
+            rejected(
+                lambda: contract.validate_outputs(wrong, root, declared, resolved), "architecture mismatch accepted"
+            )
             wrong = copy.deepcopy(manifest)
             wrong["packages"][0]["sha256"] = "0" * 64
             contract.write_json(root / "manifest.json", wrong)

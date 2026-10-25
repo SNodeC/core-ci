@@ -34,6 +34,9 @@ authority; no persisted ready queue or generic workflow engine. Commit dispatch 
 before calling GitHub. Unknown outcomes preserve assignments and uncertainty.
 A join waits for all relevant prerequisites; verified publication alone satisfies an edge.
 Builds, signing and publication run on GitHub, with privileged publication kept separate.
+Image/SDK discovery and registry authentication also belong to GitHub worker tooling.
+The controller dispatches selected source/target/prerequisite inputs and records verified
+execution evidence; do not introduce controller registry/SDK clients.
 Keep deployment secrets out of source definitions, browser code, artifacts and logs.
 
 Use braces for compound statements, one return at function end and no avoidable

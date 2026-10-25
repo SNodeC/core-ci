@@ -18,11 +18,6 @@ web.local.host="127.0.0.1"
 web.local.port=8080
 ui.origin="http://127.0.0.1:8080"
 
-# registry.default-registry="approved-registry.example"
-# registry.default-namespace="approved-namespace"
-# registry.allowed-origin=["https://approved-registry.example", "https://approved-token-service.example"]
-# registry.sdk-base-url="https://downloads.openwrt.org"
-
 # github.bot-id=NUMERIC_CONTROLLER_BOT_USER_ID
 # github.webhook-secret-file="/absolute/private/raw-webhook-secret"
 # pipeline.worker-repository="owner/trusted-worker"

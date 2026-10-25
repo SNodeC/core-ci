@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--assignment", required=True)
     parser.add_argument("--assignment-sha256", required=True)
+    parser.add_argument("--environment", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", required=True)
     arguments = parser.parse_args()

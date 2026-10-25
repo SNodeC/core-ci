@@ -2,7 +2,6 @@
 #define CORE_CI_PIPELINE_H
 
 #include "Enrollment.h"
-#include "EnvironmentResolver.h"
 #include "FeedProof.h"
 #include "PipelineConfig.h"
 
@@ -19,7 +18,6 @@ namespace coreci {
                  const GitHubConfig& app,
                  GitHub& github,
                  SourceReader& sources,
-                 EnvironmentResolver& environments,
                  Enrollment& enrollment,
                  GraphStore& store,
                  FeedProof& feeds);
@@ -46,12 +44,11 @@ namespace coreci {
             std::vector<nlohmann::json> repositories;
             std::size_t index = 0;
             std::map<std::string, nlohmann::json> sources;
-            std::vector<std::string> order;
             Callback callback;
         };
 
         void readSources(const std::shared_ptr<Selecting>& selection);
-        void resolveEnvironments(const std::shared_ptr<Selecting>& selection);
+        void commitSelection(const std::shared_ptr<Selecting>& selection);
         void workflow(const std::string& repository, const nlohmann::json& definition, const SourceReader::Callback& callback);
         void dispatch(const Node& node, bool publication, const Callback& callback);
         void search(const std::string& execution,
@@ -69,7 +66,6 @@ namespace coreci {
         const GitHubConfig& app;
         GitHub& github;
         SourceReader& sources;
-        EnvironmentResolver& environments;
         Enrollment& enrollment;
         GraphStore& store;
         FeedProof& feeds;

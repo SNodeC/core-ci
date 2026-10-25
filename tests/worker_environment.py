@@ -1,0 +1,251 @@
+"""Worker resolution boundaries with tool responses supplied by fixtures, not live Docker."""
+
+import copy
+import json
+from pathlib import Path
+import sys
+import tempfile
+import zipfile
+import shutil
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deployment/worker/core_ci"))
+import environment
+from contract import compatibility, digest, file_hash
+import github
+
+
+def rejects(operation):
+    rejected = False
+    try:
+        operation()
+    except ValueError:
+        rejected = True
+    assert rejected, "invalid worker environment accepted"
+
+
+def retry_evidence(directory):
+    selected = {
+        "source": {
+            "repository": "Example/source",
+            "repository_id": 11,
+            "deployment": {
+                "controller_app_bot_id": 42,
+                "source_workflow": {"path": ".github/workflows/core-ci-build.yml", "blob_sha": "b" * 40},
+            },
+        }
+    }
+    earlier = {
+        "run": {"id": 100, "workflow_commit": "c" * 40, "workflow_blob_sha": "b" * 40},
+        "attempt": "a" * 64 + ":1",
+        "assignment_sha256": "d" * 64,
+        "artifact_name": "assigned-environment",
+    }
+    selected["execution"] = "a" * 64
+    selected["attempt"] = "a" * 64 + ":2"
+    selected["environment_from"] = [earlier]
+    prefix = "/repos/Example/source"
+    environment_identity = {
+        "image": "configured:tag",
+        "platform": "linux/amd64",
+        "digest": "sha256:" + "e" * 64,
+        "resolved_image": "registry.example/image@sha256:" + "e" * 64,
+        "config_digest": "sha256:" + "f" * 64,
+    }
+    with tempfile.TemporaryDirectory(dir=directory) as temporary:
+        root = Path(temporary)
+        archive = root / "recorded.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr(
+                "environment.json",
+                json.dumps({"assignment_sha256": earlier["assignment_sha256"], "environment": environment_identity}),
+            )
+        item = {
+            "id": 101,
+            "name": earlier["artifact_name"],
+            "expired": False,
+            "workflow_run": {"id": 100},
+            "digest": "sha256:" + file_hash(archive),
+            "size_in_bytes": archive.stat().st_size,
+        }
+        fixtures = {
+            prefix: {"id": 11},
+            prefix
+            + "/actions/runs/100": {
+                "id": 100,
+                "repository": {"id": 11},
+                "head_repository": {"id": 11},
+                "actor": {"id": 42},
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "failure",
+                "run_attempt": 1,
+                "head_sha": "c" * 40,
+                "path": ".github/workflows/core-ci-build.yml",
+                "display_title": "core-ci build " + earlier["attempt"] + " " + earlier["assignment_sha256"],
+            },
+            prefix + "/contents/.github/workflows/core-ci-build.yml?ref=" + "c" * 40: {"sha": "b" * 40},
+            prefix + "/actions/runs/100/artifacts?per_page=100": {"total_count": 1, "artifacts": [item]},
+            prefix
+            + "/actions/runs/100/jobs?per_page=100": {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "name": "build / core-ci package " + earlier["attempt"],
+                        "run_id": 100,
+                        "run_attempt": 1,
+                        "steps": [
+                            {"name": "Build selected packages in an isolated container", "conclusion": "skipped"},
+                            {"name": "Record resolved build environment", "conclusion": "failure"},
+                        ],
+                    }
+                ],
+            },
+        }
+
+        def read(path, token):
+            assert token == "synthetic-read-only-token"
+            return fixtures[path]
+
+        def download(path, token, destination, expected):
+            assert path == prefix + "/actions/artifacts/101/zip"
+            assert expected["digest"] == "sha256:" + file_hash(archive)
+            shutil.copyfile(archive, destination)
+
+        with patch.dict(
+            environment.os.environ, {"RUNNER_TEMP": str(root), "GITHUB_TOKEN": "synthetic-read-only-token"}
+        ), patch.object(environment, "api", side_effect=read), patch.object(
+            github, "api", side_effect=read
+        ), patch.object(
+            environment, "download_artifact", side_effect=download
+        ), patch.object(
+            environment, "native", side_effect=AssertionError("retry resolved a mutable image")
+        ):
+            assert environment.previous(selected) == environment_identity
+            wrapped = root / "next-environment.json"
+            with patch.object(environment, "assignment", return_value=selected), patch.object(
+                sys,
+                "argv",
+                [
+                    "environment.py",
+                    "--assignment",
+                    "assigned.json",
+                    "--assignment-sha256",
+                    digest(selected),
+                    "--output",
+                    str(wrapped),
+                ],
+            ), patch.dict(environment.os.environ, {"EXECUTION": selected["execution"], "ATTEMPT": selected["attempt"]}):
+                environment.main()
+            assert json.loads(wrapped.read_text()) == {
+                "assignment_sha256": digest(selected),
+                "environment": environment_identity,
+            }
+            # A retry that failed before resolving anything still refers back to older usable evidence.
+            selected["environment_from"].append({**earlier, "run": {**earlier["run"], "id": 102}})
+            fixtures[prefix + "/actions/runs/102"] = {**fixtures[prefix + "/actions/runs/100"], "id": 102}
+            fixtures[prefix + "/actions/runs/102/artifacts?per_page=100"] = {"total_count": 0, "artifacts": []}
+            fixtures[prefix + "/actions/runs/102/jobs?per_page=100"] = copy.deepcopy(
+                fixtures[prefix + "/actions/runs/100/jobs?per_page=100"]
+            )
+            fixtures[prefix + "/actions/runs/102/jobs?per_page=100"]["jobs"][0]["run_id"] = 102
+            assert environment.previous(selected) == environment_identity
+            selected["environment_from"].pop()
+            original = archive.read_bytes()
+            with zipfile.ZipFile(archive, "w") as zipped:
+                zipped.writestr(
+                    "environment.json",
+                    json.dumps({"assignment_sha256": "wrong-assignment", "environment": environment_identity}),
+                )
+            item.update(digest="sha256:" + file_hash(archive), size_in_bytes=archive.stat().st_size)
+            rejects(lambda: environment.previous(selected))
+            archive.write_bytes(original)
+            item.update(digest="sha256:" + file_hash(archive), size_in_bytes=archive.stat().st_size)
+            item["expired"] = True
+            rejects(lambda: environment.previous(selected))
+            item["expired"] = False
+            fixtures[prefix + "/actions/runs/100"]["actor"]["id"] = 999
+            rejects(lambda: environment.previous(selected))
+            fixtures[prefix + "/actions/runs/100"]["actor"]["id"] = 42
+            listing = fixtures[prefix + "/actions/runs/100/artifacts?per_page=100"]
+            listing.update(total_count=0, artifacts=[])
+            assert environment.previous(selected) is None, "pre-build failure must permit first resolution"
+            steps = fixtures[prefix + "/actions/runs/100/jobs?per_page=100"]["jobs"][0]["steps"]
+            steps[0]["conclusion"] = "failure"
+            rejects(lambda: environment.previous(selected))
+            steps[0]["conclusion"] = "skipped"
+            steps[1]["conclusion"] = "success"
+            rejects(lambda: environment.previous(selected))
+
+
+def main():
+    target = {"family": "native", "build": {"image": "configured:tag", "platform": "linux/amd64"}}
+    metadata = [
+        {
+            "Os": "linux",
+            "Architecture": "amd64",
+            "Id": "sha256:" + "a" * 64,
+            "RepoDigests": ["registry.example/image@sha256:" + "b" * 64],
+        }
+    ]
+    with patch.object(environment.subprocess, "run") as pull, patch.object(
+        environment, "output", return_value=json.dumps(metadata)
+    ):
+        resolved = environment.native(target)
+        pull.assert_called_once_with(
+            ["docker", "pull", "--platform", "linux/amd64", "configured:tag"], check=True, timeout=600
+        )
+        assert resolved["config_digest"] == metadata[0]["Id"] and resolved["digest"] == "sha256:" + "b" * 64
+    for invalid in ({**metadata[0], "Architecture": "arm64"}, {**metadata[0], "RepoDigests": []}):
+        with patch.object(environment.subprocess, "run"), patch.object(
+            environment, "output", return_value=json.dumps([invalid])
+        ):
+            rejects(lambda: environment.native(target))
+    target = {
+        "family": "openwrt",
+        "distribution": "openwrt",
+        "suite": "99.1",
+        "arch": "configured",
+        "build": {"target": "custom/target", "format": "apk"},
+    }
+    versions = {"versions_list": ["99.1.9", "99.1.11-rc1", "99.1.10", "100.1.1", "99.1.11"]}
+    profile = {
+        "version_number": "99.1.11",
+        "target": "custom/target",
+        "arch_packages": "configured",
+        "default_packages": ["apk-openssl"],
+    }
+    sums = "a" * 64 + "  openwrt-sdk-configured.tar.zst\n"
+    # Standard tools own TLS; fixtures exercise the selection and compatibility contract.
+    with patch.dict(environment.os.environ, {"OPENWRT_DOWNLOAD_BASE_URL": "https://sdk.example"}):
+        with patch.object(environment, "output", side_effect=[json.dumps(versions), json.dumps(profile), sums]):
+            resolved = environment.sdk(target)
+        assert resolved["release"] == "99.1.11"
+        assert resolved["sdk"] == {
+            "sha256": "a" * 64,
+            "url": "https://sdk.example/releases/99.1.11/targets/custom/target/openwrt-sdk-configured.tar.zst",
+        }
+        for key, value in (("arch_packages", "wrong"), ("target", "wrong/target"), ("default_packages", ["opkg"])):
+            invalid = {**profile, key: value}
+            with patch.object(environment, "output", side_effect=[json.dumps(versions), json.dumps(invalid)]):
+                rejects(lambda: environment.sdk(target))
+        with patch.object(
+            environment, "output", return_value=json.dumps({"versions_list": ["99.1.11-rc1", "100.1.1"]})
+        ):
+            rejects(lambda: environment.sdk(target))
+        with patch.object(environment, "output", side_effect=[json.dumps(versions), json.dumps(profile), sums + sums]):
+            rejects(lambda: environment.sdk(target))
+    selected = {"target": target}
+    other = copy.deepcopy(resolved)
+    other["sdk"]["sha256"] = "b" * 64
+    assert compatibility(selected, resolved) != compatibility(
+        selected, other
+    ), "SDK exports lost physical compatibility checks"
+    directory = Path(sys.argv[1])
+    directory.mkdir(parents=True, exist_ok=True)
+    retry_evidence(directory)
+    print("PASS worker-only image/SDK resolution fixtures; no Docker or SDK archive was executed")
+
+
+if __name__ == "__main__":
+    main()

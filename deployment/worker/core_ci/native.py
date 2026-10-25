@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import tempfile
@@ -69,15 +68,11 @@ def build(arguments):
         require(document[key] == selected["source"][key], "committed definition differs from assignment")
     hook = (source / selected["source"]["build"]["native"]).resolve()
     require(hook.is_relative_to(source) and hook.is_file(), "hook escapes selected source checkout")
-    environment = selected["environment"]
+    resolved = read_json(arguments.environment, 16384)
+    require(resolved["assignment_sha256"] == arguments.assignment_sha256, "environment belongs to another assignment")
+    environment = resolved["environment"]
     image = environment["resolved_image"]
-    require(
-        re.fullmatch(r"[a-z0-9][a-z0-9.:/_-]*@sha256:[a-f0-9]{64}", image) is not None,
-        "worker requires digest-qualified image",
-    )
-    require(image.endswith("@" + environment["digest"]), "image identity mismatch")
     platform = selected["target"]["build"]["platform"]
-    require(re.fullmatch(r"linux/[a-z0-9_]+(?:/[a-z0-9_]+)?", platform) is not None, "invalid image platform")
     package_format = selected["target"]["build"]["format"]
     require(package_format in TOOLS, "unsupported native format")
     destination = Path(arguments.output).resolve()
@@ -89,6 +84,7 @@ def build(arguments):
         work = Path(temporary)
         write_json(work / "assignment.json", selected)
         write_json(work / "target.json", selected["target"])
+        write_json(work / "environment.json", environment)
         prepare_dependencies(selected, work / "prerequisites")
         # Only this copied tree enters the hook container. No .git credentials or host workspace.
         shutil.copytree(source, work / "source", ignore=shutil.ignore_patterns(".git"), symlinks=True)
@@ -106,7 +102,7 @@ def build(arguments):
             metadata = json.loads(output(["docker", "image", "inspect", image]))
             require(
                 len(metadata) == 1 and metadata[0]["Id"] == environment["config_digest"],
-                "Docker image configuration differs from pinned registry evidence",
+                "resolved image configuration changed",
             )
             # Hosted runner UID need not be the container UID. Every mounted input is read-only.
             for path in work.rglob("*"):
@@ -134,6 +130,8 @@ def build(arguments):
                 "type=bind,source=" + str(work / "assignment.json") + ",target=/assignment.json,readonly",
                 "--mount",
                 "type=bind,source=" + str(work / "target.json") + ",target=/target.json,readonly",
+                "--mount",
+                "type=bind,source=" + str(work / "environment.json") + ",target=/environment.json,readonly",
                 "--mount",
                 "type=bind,source=" + str(work / "prerequisites") + ",target=/prerequisites,readonly",
             ]
@@ -189,7 +187,8 @@ def build(arguments):
                     "python3",
                     "-c",
                     "from contract import *; s=assignment('/assignment.json'); "
-                    "print(canonical(validate_outputs(s, '/work/output', read_json('/work/output/outputs.json'))))",
+                    "print(canonical(validate_outputs(s, '/work/output', "
+                    "read_json('/work/output/outputs.json'), read_json('/environment.json'))))",
                 ],
                 check=True,
                 text=True,

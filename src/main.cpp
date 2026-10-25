@@ -1,7 +1,6 @@
 #include "Database.h"
 #include "DatabaseConfig.h"
 #include "Enrollment.h"
-#include "EnvironmentResolver.h"
 #include "GitHub.h"
 #include "ManagedDatabase.h"
 #include "Pipeline.h"
@@ -31,9 +30,6 @@ int main(int argc, char* argv[]) {
 
     coreci::FeedProof feeds(*pipelineConfig, github, sources);
 
-    auto* registryConfig = utils::Config::configRoot.newSubCommand<coreci::RegistryConfig>();
-    coreci::EnvironmentResolver environments(*registryConfig);
-
     auto* uiConfig = utils::Config::configRoot.newSubCommand<coreci::UiConfig>();
 
     const express::legacy::in::WebApp app("web");
@@ -57,7 +53,6 @@ int main(int argc, char* argv[]) {
 
     try {
         github.loadCredentials();
-        environments.configure();
         feeds.configure();
 
         database = std::make_unique<database::mariadb::MariaDBClient>(
@@ -244,8 +239,7 @@ int main(int argc, char* argv[]) {
         store = std::make_unique<coreci::Database>(*database);
         graphStore = std::make_unique<coreci::GraphStore>(*store);
         enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources, *pipelineConfig);
-        pipeline = std::make_unique<coreci::Pipeline>(
-            *pipelineConfig, *githubConfig, github, sources, environments, *enrollment, *graphStore, feeds);
+        pipeline = std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, *enrollment, *graphStore, feeds);
 
         if (databaseConfig->mode == "managed") {
             managed = std::make_unique<coreci::ManagedDatabase>();

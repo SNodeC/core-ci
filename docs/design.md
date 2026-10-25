@@ -8,7 +8,7 @@ Owner SDK policy update on 2026-10-25 supersedes the original exact source-owned
 use the latest stable SDK for each configured OpenWrt suite/target on new selections. No
 SDK SHA, URL or exact patch release is maintained in repository JSON. Resolve these through
 the configured official metadata service and freeze the resulting identities per execution.
-Existing executions and retries retain their inputs.
+Existing execution evidence remains immutable. The owner approved GitHub-owned evidence artifacts and read-only retry retrieval; see section 4.
 
 ## 1. Scope, roles and decisions
 
@@ -54,7 +54,8 @@ for older tags are not silently superseded. Other unresolved choices are listed 
 4. A join becomes eligible only after every specifically selected prerequisite execution
    has a verified publication. An unrelated or older published prerequisite cannot satisfy it.
 5. Every dispatched attempt has one immutable assignment, including actual prerequisite
-   publication identities, image/SDK content identities and tooling/workflow revisions.
+   publication identities and tooling/workflow revisions. Workers resolve and record image/SDK
+   content identities before using them; they are execution evidence, not controller discovery.
 6. Dispatch authority is committed before the HTTP request. Unknown dispatch or COMMIT
    outcomes preserve uncertainty and never authorize another request or replacement.
 7. Published package identities are immutable. Publisher replay preserves existing signed
@@ -72,7 +73,7 @@ Finalize schema 1 with the owner's field layout:
 | build | native and/or openwrt repository-relative hook paths used by the corresponding rows |
 | Every row | id, family, distribution, suite, arch, runner, build |
 | Native row build | image, platform, format=deb or rpm |
-| OpenWrt row build | target, format=ipk or apk; latest SDK resolved per suite at selection |
+| OpenWrt row build | target, format=ipk or apk; latest SDK resolved per suite on GitHub |
 
 Runner may be a GitHub-supported selector string or label array; preserve it without
 rewriting. Runner-group objects require a separately specified worker capability, not a
@@ -111,8 +112,8 @@ Missing/invalid definitions at the highest tag are errors; do not fall back to a
 
 Row id is a local label, not a cross-repository foreign key. Match native prerequisites by
 family/distribution/suite/arch/format plus build.platform. Match OpenWrt prerequisites by
-family/distribution/suite/arch/format and build.target, then require identical resolved
-SDK release/content identities. Different row labels can match; zero or multiple matching
+family/distribution/suite/arch/format and build.target. The worker additionally requires
+identical resolved SDK release/content identities when consuming artifacts. Different row labels can match; zero or multiple matching
 rows is an explicit configuration error. An old prerequisite selected with a different SDK
 is not silently substituted or rebuilt; request compatible prerequisite work explicitly.
 
@@ -123,19 +124,29 @@ inventing arch aliases. Incompatible images/sysroots fail clearly. OpenWrt expor
 SDK hash, toolchain identity, release, target and package architecture; verify all of them.
 Runner identity is never a substitute for either compatibility check.
 
-Keep tag-form image references, as allowed by the specification. Before a native dispatch,
-the controller resolves the configured image using asynchronous registry HTTPS requests.
-Resolve the OCI/Docker manifest or platform-specific index member by the explicit platform,
-verify content digests, and record both original reference and selected immutable digest.
-The worker pulls only that digest and verifies the image configuration. Do not silently
-rewrite JSON to a digest or resolve a mutable image again on retry. Digest-form inputs
-are verified too. Unsupported registries/authentication/platform descriptors fail explicitly.
-Use existing HTTPS/cryptographic libraries, with no local image pull or package work.
+Keep tag-form image references as allowed by the specification. Environment resolution runs
+in the trusted GitHub worker. For native work, use standard Docker pull/inspect to select the
+configured platform and freeze the digest-qualified image/configuration identity before
+hooks execute. Do not implement registry authentication or OCI parsing in the controller.
 
-SDK bytes are pinned in execution evidence by the automatically resolved official checksum. Actual release/architecture/toolchain
-metadata is verified in the worker before any source hook runs; record that evidence.
-Do not pretend the controller knows extracted SDK metadata before downloading it. The
-publisher independently obtains the same verified SDK's host tooling when signing APK.
+The worker discovers latest SDK metadata from its deployment-owned official HTTPS origin.
+It records the release, URL and official checksum and verifies downloaded bytes before
+extraction. Actual SDK/toolchain/architecture checks and SDK signing remain unfinished.
+The publisher obtains trusted tooling independently of source artifact executables.
+
+The artifact manifest carries resolved environment evidence separately from the immutable
+controller assignment. The publisher checks it against the assigned target, and the
+verified feed receipt carries that identity back to the graph. Physical SDK/export
+compatibility is checked by the worker when importing selected prerequisites, not by a
+controller SDK resolver. The graph checks declared target coordinates and all prerequisites.
+
+The trusted build workflow records a separate environment artifact before source hooks.
+An explicit retry carries references to prior assigned runs and their assignment hashes;
+the worker validates those GitHub identities using the same run validator as package
+artifact retrieval and reuses the recorded environment. Evidence is requested for 90 days.
+Expired/inaccessible evidence after a possible build fails clearly, never authorizing an
+upgrade. An attempt proven not to have reached recording/hooks permits first resolution.
+This owner-approved path adds no graph state or controller discovery client.
 
 ## 5. Graph selection and diamond traversal
 
@@ -158,7 +169,7 @@ On a tag delivery, enrollment request or explicit request:
    is explicitly requested. Do not create upward work automatically. Existing waiting or
    failed prerequisites remain explicit blocking edges. Never substitute a default branch
    or last-published source.
-4. Gather GitHub/registry information outside the transaction. In one transaction validate
+4. Gather GitHub source information outside the transaction. In one transaction validate
    the graph generation, create/reuse the affected logical executions, and bind prerequisite
    execution IDs. If the generation changed, discard the uncommitted selection and re-read;
    do not replay an uncertain committed mutation.
@@ -276,7 +287,7 @@ authorized workflow change. Use OpenSSL for JWT signing and existing TLS verific
 Never give source builds the controller App key or publication credentials.
 
 The dispatch payload contains execution ID, attempt ID, assignment JSON and its SHA256.
-It includes exact selected source/definition/row, prerequisite receipts, image/SDK identity,
+It includes exact selected source/definition/row and prerequisite receipts,
 version/revision and trusted tooling identity. All values are data, never shell interpolation.
 Use a run name containing attempt identity and assignment hash. Bound the compact payload
 and reject oversize assignments explicitly; do not add an unplanned object store. Current
@@ -633,7 +644,7 @@ key generation/rotation. Avoid passphrases/secret values in arguments; use file/
 
 The estimate is now 7,000-10,500 new production lines and 2,500-4,000 test lines, excluding
 documentation and byte-copied canonical formatting modules. These are design estimates,
-not measured finished code. Controller includes JWT/registry HTTPS, graph, database ownership,
+not measured finished code. Controller includes GitHub App HTTPS, graph, database ownership,
 managed resource and reconciliation; worker includes version encoding, four publication
 formats and archive isolation. There is no justification for hiding these costs in scripts.
 
@@ -705,7 +716,7 @@ limitation must be surfaced before replacing the design with a new authenticatio
 | D2 retry orphans edges | Stable logical execution with historical attempts and one active attempt, section 6 |
 | D3 feed collisions | Suite-separated APT pools and SDK/release/format-separated OpenWrt feeds, section 11 |
 | D4 writer retention | One controller-authorized publisher per feed branch, section 11; GitHub pending queues are not state authority |
-| D5 image timing | Resolve configured tag refs through async registry HTTPS before assignment, section 4; digest-only restriction rejected as an unnecessary narrowing |
+| D5 image timing | Resolve configured images on GitHub using standard tooling, section 4; retain tag-form source inputs |
 | D6 forged runs | App actor, approved actual workflow blob, reusable SHA, run-attempt/job/upload/artifact checks, section 8 |
 | D7 manifest authority | Authenticated assignment supplies expectations; manifest only cross-check; isolated hooks, approved publisher SDK tooling and independent package tooling, sections 4/9-11 |
 | Async transaction/COMMIT gaps | Single database operation owner and explicit uncertain-outcome readback, section 7 |

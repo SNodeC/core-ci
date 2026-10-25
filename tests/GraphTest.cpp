@@ -77,6 +77,7 @@ namespace {
                            {"run", publishing.publicationRun},
                            {"source_commit", graph.node(id).source.at("commit")},
                            {"feed_revision", std::string(40, 'f')},
+                           {"environment", {{"worker_evidence", "immutable identity"}}},
                            {"packages", {{{"name", "fixture-package"}, {"sha256", std::string(64, 'e')}}}}};
         apply(graph, graph.published(id, attempt, receipt));
         apply(graph, graph.published(id, attempt, receipt));
@@ -102,7 +103,6 @@ int main() {
         check(graph.select("r", sources, false).nodes.empty(), "duplicate selection created executions");
         auto unrelated = sources;
         unrelated["unrelated"] = graph_fixture::source("unrelated", 9, {"tagless"});
-        unrelated["unrelated"].erase("environments");
         check(graph.select("r", unrelated, false).nodes.empty(), "unrelated tagless work blocked an independent selection");
         auto claimed = graph;
         claimed.apply(claimed.select("r", sources, true));
@@ -159,6 +159,12 @@ int main() {
         rejects([&]() {
             graph.failed(b, failedAttempt, "late report");
         });
+        const auto priorBuild = graph.node(b).attempts.front();
+        const auto retryBuild = graph.beginBuild(b).attempts.back().assignment;
+        check(retryBuild.at("environment_from").size() == 1 && retryBuild.at("environment_from").front().at("run") == priorBuild.buildRun &&
+                  retryBuild.at("environment_from").front().at("assignment_sha256") == coreci::Graph::digest(priorBuild.assignment),
+              "retry lost its assigned environment evidence reference");
+        check(retryBuild.at("dependencies") == priorBuild.assignment.at("dependencies"), "retry changed prerequisite artifact identities");
         publish(graph, b);
         check(graph.blockers(join).empty(), "retried prerequisite did not unblock the same logical join");
         check(!graph.blockers(otherJoin).empty(), "one target unblocked an independent target");
@@ -230,37 +236,19 @@ int main() {
             row["build"] = {{"target", "custom/target"}, {"format", "apk"}};
             source["definition"]["build"] = {{"openwrt", "ci/openwrt.sh"}};
             source["definition"]["matrix"] = {row};
-            source["environments"] = {
-                {row["id"].get<std::string>(),
-                 {{"release", "99.1.10"}, {"sdk", {{"url", "https://sdk.example/archive.tar.zst"}, {"sha256", std::string(64, 'a')}}}}}};
         }
         coreci::Graph sdkGraph;
-        const auto firstSdk = sdkGraph.select("sdkroot", sdkSources, false);
-        check(firstSdk.nodes.size() == 2, "latest SDK selection lost dependent work");
-        sdkGraph.apply(firstSdk);
-        for (auto& [name, source] : sdkSources) {
-            source["environments"]["target-first"]["sdk"]["sha256"] = std::string(64, 'b');
-        }
-        const auto newerSdk = sdkGraph.select("sdkroot", sdkSources, false);
-        std::size_t newSelections = 0;
-        std::size_t supersededSelections = 0;
-        for (const auto& node : newerSdk.nodes) {
-            if (!sdkGraph.nodes().contains(node.id)) {
-                ++newSelections;
-                check(node.source.at("environment").at("sdk").at("sha256") == std::string(64, 'b'),
-                      "new work did not retain the newly resolved SDK identity");
-            } else {
-                ++supersededSelections;
-                check(!node.supersededBy.empty() && node.source.at("environment").at("sdk").at("sha256") == std::string(64, 'a'),
-                      "superseded waiting SDK inputs/history were rewritten");
+        const auto sdkWork = sdkGraph.select("sdkroot", sdkSources, false);
+        check(sdkWork.nodes.size() == 2, "OpenWrt graph selection must not require controller SDK resolution");
+        sdkGraph.apply(sdkWork);
+        for (const auto& [id, node] : sdkGraph.nodes()) {
+            check(!node.source.contains("environment"), "worker environment leaked into graph source selection");
+            if (node.prerequisites.empty()) {
+                const auto assigned = sdkGraph.beginBuild(id);
+                check(!assigned.attempts.back().assignment.contains("environment"), "controller assigned a resolved SDK");
             }
         }
-        check(newSelections == 2 && supersededSelections == 2,
-              "latest SDK selection must create distinct work and retain superseded waiting history");
-        sdkSources["sdkapp"]["environments"]["target-first"]["sdk"]["sha256"] = std::string(64, 'c');
-        rejects([&]() {
-            sdkGraph.select("sdkroot", sdkSources, false);
-        });
+
         std::cout << "PASS local graph/state boundaries: diamond, independent targets, pinned inputs, failures/retry, delayed reports and "
                      "supersession\n";
     } catch (const std::exception& error) {

@@ -48,9 +48,7 @@ keys; the eventual CLI/help must expose their registered framework equivalents.
 | signing.apk_public_key | Reviewed EC P-256 public-key identity/path |
 | limits.definition_bytes / limits.graph_nodes | Explicit supported controller resource bounds |
 | limits.assignment_bytes | Bound within verified GitHub dispatch payload limit |
-| registry.credentials_file | Optional protected credentials for explicitly configured private registry auth |
-| registry.allowed-origin / registry.sdk-base-url | Deployment-approved registry/token origins and OpenWrt metadata service |
-| worker.sdk_metadata_origin | Trusted official SDK metadata service; resolved checksums are execution evidence, not manual source inputs |
+| OPENWRT_DOWNLOAD_BASE_URL | Public trusted-worker variable selecting the official SDK metadata origin; defaults to https://downloads.openwrt.org |
 
 Secrets are read as files and not serialized back into UI responses, source definitions,
 logging or database snapshots. Repository installation grants and actual SDK URLs/checksums

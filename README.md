@@ -5,7 +5,7 @@ coordinates GitHub and MariaDB; GitHub runs builds and trusted publication. Ther
 
 Implementation is in progress. The initial database lifecycle works with real managed and
 unmanaged MariaDB. Local repository enrollment/editing and GitHub committed-revision feedback are implemented.
-The UI, authenticated tag events, immutable source/environment selection, graph traversal,
+The UI, authenticated tag events, immutable source selection, graph traversal,
 committed GitHub dispatch authority and assigned-run/job/artifact reconciliation are wired
 and covered locally. Trusted worker tooling, signing/publication and live package acceptance
 remain in progress. Fresh native worker workflows, isolated build preparation and trusted
@@ -14,6 +14,12 @@ verify signatures, reject modified data and preserve bytes on replay. OpenWrt wo
 live package publication acceptance are unfinished. Controller publication dispatch and
 Git/HTTPS receipt proof are now wired and covered by local synthetic-service fixtures. Nothing has been installed, pushed or
 externally activated. See [worker setup and limitations](deployment/README.md).
+
+Controller-side registry authentication, image parsing and SDK discovery have been removed.
+GitHub workers own environment resolution and return identities in verified publication
+receipts. GitHub records environment evidence before hooks; explicit retries reuse it
+through read-only artifact retrieval and assigned-run references. Missing evidence after
+a possible build stops retry without changing inputs. Live activation remains outstanding.
 
 See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),
 [the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md). Deployment settings and credential-file ownership are

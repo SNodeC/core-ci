@@ -151,7 +151,6 @@ def assignment(path, expected_hash=None):
         "invalid source definition identity",
     )
     require(SHA1.fullmatch(source["deployment"]["worker"]["tooling_sha"]), "tooling must select an exact commit")
-    require(selected["environment"] == source["environment"], "assigned environment mismatch")
     versions(source["tag"], selected["revision"], selected["target"]["build"]["format"])
     return selected
 
@@ -233,7 +232,7 @@ def package_metadata(path, package_format):
     return result
 
 
-def compatibility(selected):
+def compatibility(selected, environment=None):
     target = selected["target"]
     result = {key: target[key] for key in ("family", "distribution", "suite", "arch")}
     result["format"] = target["build"]["format"]
@@ -242,9 +241,9 @@ def compatibility(selected):
     else:
         result.update(
             {
-                "release": selected["environment"]["release"],
+                "release": environment["release"],
                 "target": target["build"]["target"],
-                "sdk_sha256": selected["environment"]["sdk"]["sha256"],
+                "sdk_sha256": environment["sdk"]["sha256"],
             }
         )
     return result
@@ -261,7 +260,6 @@ def evidence(selected):
             "artifact_name",
             "source",
             "target",
-            "environment",
             "dependencies",
         )
     }
@@ -269,7 +267,26 @@ def evidence(selected):
     return result
 
 
-def validate_outputs(selected, directory, declared):
+def validate_outputs(selected, directory, declared, environment):
+    build = selected["target"]["build"]
+    if selected["target"]["family"] == "native":
+        require(
+            environment["image"] == build["image"] and environment["platform"] == build["platform"],
+            "image selection mismatch",
+        )
+        require(
+            re.fullmatch(r"sha256:[a-f0-9]{64}", environment["digest"])
+            and re.fullmatch(r"sha256:[a-f0-9]{64}", environment["config_digest"])
+            and re.fullmatch(r"[a-z0-9][a-z0-9.:/_-]*@sha256:[a-f0-9]{64}", environment["resolved_image"])
+            and environment["resolved_image"].endswith("@" + environment["digest"]),
+            "invalid immutable image identity",
+        )
+    else:
+        require(
+            environment["release"].startswith(selected["target"]["suite"] + ".")
+            and SHA256.fullmatch(environment["sdk"]["sha256"]),
+            "invalid resolved SDK identity",
+        )
     directory = Path(directory)
     require(set(declared) <= {"packages", "development_export"}, "unknown hook output fields")
     packages = declared["packages"]
@@ -280,6 +297,7 @@ def validate_outputs(selected, directory, declared):
     files = set()
     identities = set()
     result = evidence(selected)
+    result["environment"] = environment
     result["package_version"] = expected
     result["packages"] = []
     for package in packages:
@@ -336,7 +354,7 @@ def validate_outputs(selected, directory, declared):
             "file": filename,
             "size": path.stat().st_size,
             "sha256": file_hash(path),
-            "compatibility": compatibility(selected),
+            "compatibility": compatibility(selected, environment),
         }
     require({file.name for file in directory.iterdir()} == files | {"outputs.json"}, "undeclared files in hook output")
     return result
@@ -361,7 +379,7 @@ def verify_manifest(selected, directory):
             file = regular_file(path, name)
             os.link(file, temporary / name)
         write_json(temporary / "outputs.json", declared)
-        actual = validate_outputs(selected, temporary, declared)
+        actual = validate_outputs(selected, temporary, declared, manifest["environment"])
         require(actual == manifest, "package bytes/metadata/export differ from manifest")
         require(
             {file.name for file in path.iterdir()}

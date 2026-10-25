@@ -16,6 +16,7 @@ on:
         type: string
 permissions:
   contents: read
+  actions: read
 jobs:
   package:
     name: core-ci package ${{ inputs.attempt }}
@@ -35,9 +36,34 @@ jobs:
           ref: ${{ fromJSON(inputs.assignment).source.commit }}
           path: source
           persist-credentials: false
-      - name: Build selected packages in an isolated container
+      - name: Resolve build environment on GitHub
         env:
           ASSIGNMENT: ${{ inputs.assignment }}
+          ASSIGNMENT_SHA256: ${{ inputs.assignment_sha256 }}
+          EXECUTION: ${{ inputs.execution }}
+          ATTEMPT: ${{ inputs.attempt }}
+          OPENWRT_DOWNLOAD_BASE_URL: ${{ vars.OPENWRT_DOWNLOAD_BASE_URL || 'https://downloads.openwrt.org' }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/core-ci-assignment.json"
+          mkdir "$RUNNER_TEMP/core-ci-environment"
+          python3 tooling/core_ci/environment.py \
+            --assignment "$RUNNER_TEMP/core-ci-assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --output "$RUNNER_TEMP/core-ci-environment/environment.json"
+      - name: Record resolved build environment
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ fromJSON(inputs.assignment).artifact_name }}-environment
+          path: ${{ runner.temp }}/core-ci-environment/environment.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+      - name: Build selected packages in an isolated container
+        env:
           ASSIGNMENT_SHA256: ${{ inputs.assignment_sha256 }}
           EXECUTION: ${{ inputs.execution }}
           ATTEMPT: ${{ inputs.attempt }}
@@ -45,10 +71,10 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/core-ci-assignment.json"
           python3 tooling/core_ci/build.py \
             --assignment "$RUNNER_TEMP/core-ci-assignment.json" \
             --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --environment "$RUNNER_TEMP/core-ci-environment/environment.json" \
             --source "$GITHUB_WORKSPACE/source" \
             --output "$RUNNER_TEMP/core-ci-output"
       - name: Upload only the validated package artifact

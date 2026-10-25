@@ -68,7 +68,7 @@ The hook runs with `/bin/sh`, its source directory as cwd, and these environment
 | OUTPUT_DIR | Writable output directory only |
 
 The native worker pulls the assigned image digest/platform and verifies Docker's image config
-identity against the controller's registry evidence. It installs baseline tools with apt-get
+identity against worker-recorded immutable image evidence. It installs baseline tools with apt-get
 or dnf according to package format, checks actual `/etc/os-release` and the package manager's
 architecture without aliases, imports the exact prerequisite packages and verifies installed
 versions. A matching CPU runner or working emulation is required; none is silently selected.
@@ -204,8 +204,13 @@ Actual apt/dnf/opkg/apk refresh/install/runtime acceptance remains undone.
 
 The owner selected automatic latest SDK discovery. Source rows use suite/arch at row level
 and build.target/build.format only. There is no SDK URL, SHA or exact patch release to edit.
-The controller reads its deployment-configured registry.sdk-base-url metadata service and
-records resolved release/URL/checksum in immutable execution evidence. New selections use
-the latest stable patch in that suite; retries retain recorded inputs. The worker must verify
-that checksum before extraction. A checksum remains integrity evidence, not source-owned
-configuration. OpenWrt build/sign/install execution is still unfinished.
+The trusted worker owns discovery through its public OPENWRT_DOWNLOAD_BASE_URL variable
+(default https://downloads.openwrt.org). It selects the latest stable patch in that suite
+and records release/URL/official checksum as execution evidence. The worker must verify
+that checksum before extraction. No registry/SDK request is made by the controller.
+OpenWrt build/sign/install execution is still unfinished. The trusted build workflow stores
+resolved environment evidence before hooks, separate from package artifacts. Retries use
+read-only Actions access to earlier assigned runs and retain their resolved environment.
+Evidence requests 90-day retention; repository limits and artifact expiry can prevent a
+retry, which then fails clearly instead of changing inputs. Source hooks receive no Actions
+token. Real GitHub execution remains an acceptance requirement.

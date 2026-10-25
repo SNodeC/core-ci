@@ -20,7 +20,6 @@ namespace coreci {
                        const GitHubConfig& app,
                        GitHub& github,
                        SourceReader& sources,
-                       EnvironmentResolver& environments,
                        Enrollment& enrollment,
                        GraphStore& store,
                        FeedProof& feeds)
@@ -28,7 +27,6 @@ namespace coreci {
         , app(app)
         , github(github)
         , sources(sources)
-        , environments(environments)
         , enrollment(enrollment)
         , store(store)
         , feeds(feeds) {
@@ -73,9 +71,7 @@ namespace coreci {
                 if (!selection->sources.contains(selection->root) && selection->tag.empty()) {
                     selection->callback({200, {{"selected", 0}, {"reason", "repository has no semantic-version tag"}}});
                 } else {
-                    selection->order = Graph::traverseSources(selection->root, selection->sources).order;
-                    selection->index = 0;
-                    resolveEnvironments(selection);
+                    commitSelection(selection);
                 }
             } catch (const std::exception& error) {
                 selection->callback({422, {{"error", error.what()}}});
@@ -110,36 +106,23 @@ namespace coreci {
         }
     }
 
-    void Pipeline::resolveEnvironments(const std::shared_ptr<Selecting>& selection) {
-        if (selection->index == selection->order.size()) {
-            try {
-                require(selection->generation == store.getGeneration(), "graph changed during selection; request it again");
-                const auto change = store.graph().select(selection->root, selection->sources, !selection->automatic);
-                store.commit(change, [this, selection, count = change.nodes.size()](const DatabaseResult& result) {
-                    if (!result.error.empty()) {
-                        selection->callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
-                    } else {
-                        advance([selection, count](const PipelineResult& dispatched) {
-                            auto response = dispatched.body;
-                            response["selected"] = count;
-                            selection->callback({dispatched.status, response});
-                        });
-                    }
-                });
-            } catch (const std::exception& error) {
-                selection->callback({409, {{"error", error.what()}}});
-            }
-        } else {
-            const auto name = selection->order.at(selection->index);
-            environments.resolve(selection->sources.at(name), [this, selection, name](const EnvironmentResult& result) {
+    void Pipeline::commitSelection(const std::shared_ptr<Selecting>& selection) {
+        try {
+            require(selection->generation == store.getGeneration(), "graph changed during selection; request it again");
+            const auto change = store.graph().select(selection->root, selection->sources, !selection->automatic);
+            store.commit(change, [this, selection, count = change.nodes.size()](const DatabaseResult& result) {
                 if (!result.error.empty()) {
-                    selection->callback({422, {{"error", result.error}, {"repository", name}}});
+                    selection->callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
                 } else {
-                    selection->sources.at(name) = result.source;
-                    ++selection->index;
-                    resolveEnvironments(selection);
+                    advance([selection, count](const PipelineResult& dispatched) {
+                        auto response = dispatched.body;
+                        response["selected"] = count;
+                        selection->callback({dispatched.status, response});
+                    });
                 }
             });
+        } catch (const std::exception& error) {
+            selection->callback({409, {{"error", error.what()}}});
         }
     }
 

@@ -74,40 +74,42 @@ through the framework. Backup and restore guidance is in [setup inputs](setup-in
 Current implementation status and remaining pipeline work are recorded in the README
 and work log. These configuration instructions are not deployment/acceptance evidence.
 
-## Immutable build environments
+## Build environments belong to GitHub
 
-`registry.default-registry` supplies the HTTPS host[:port] for unqualified image names;
-`registry.default-namespace` optionally supplies the namespace for single-component names.
-There are no compiled registry aliases. Use an explicit registry authority in an image
-name when it differs from that default. Native images require an explicit tag or SHA-256
-digest and a literal `linux/architecture[/variant]` platform. Architecture names are not
-translated from package architecture names.
+The controller has no registry or SDK client. Remove obsolete `registry.*` options and
+`environment-http` instance settings from controller configuration. Repository JSON keeps
+its image/platform or OpenWrt suite/arch/target/format inputs unchanged.
 
-Repeat `registry.allowed-origin` for every approved HTTPS registry, pull-token service
-and configuration-document redirect origin. Values contain only scheme and authority.
-Anonymous registry access and standard scoped Bearer pull challenges are supported;
-private registry credentials and other auth schemes are currently rejected clearly.
-Redirects are bounded and cannot send a registry token to another origin. IPv6 URL
-literals are currently unsupported; DNS and IPv4 endpoints are accepted.
+The trusted native worker uses standard Docker pull/inspect on GitHub to resolve the image,
+check its actual platform, and build with its digest-qualified reference. It records that
+reference and the configuration digest in the artifact manifest. The trusted publisher
+validates agreement with the assigned row and records the environment in its verified
+publication receipt; MariaDB retains that receipt as execution evidence.
 
-The controller reads bounded OCI/Docker schema-2 indexes, manifests and configuration
-blobs. It verifies SHA-256 and descriptor sizes, selects an unambiguous platform, checks
-the image configuration, and records the original image/platform, root and selected
-manifest digests, configuration digest and canonical digest-qualified image. It ignores
-optional embedded data/alternative descriptor URLs and fetches canonical registry paths.
-It never pulls filesystem layers or executes a container locally.
+OpenWrt metadata discovery is worker code. Public worker variable
+`OPENWRT_DOWNLOAD_BASE_URL` defaults to the official `https://downloads.openwrt.org`
+origin. The helper selects the latest stable numeric patch in the configured series,
+checks profiles.json and records the official SDK URL/checksum. Repository owners maintain
+no SDK SHA. SDK execution and signing remain unfinished.
 
-`registry.sdk-base-url` selects the deployment-owned OpenWrt HTTPS metadata origin.
-OpenWrt JSON rows contain target and format, with suite and arch at row level. There is no
-source-owned SDK SHA, URL or exact patch release. For each new selection, read .versions.json,
-choose the highest stable numeric release in that suite, verify target/architecture/format
-from profiles.json, and resolve the SDK through sha256sums. The resulting URL, release and
-checksum are recorded only in immutable execution inputs. Workers verify bytes before use;
-retries keep their recorded inputs. No compiled release/architecture/runner catalogue exists.
-The sandbox origin is https://downloads.openwrt.org, configured outside the checkout.
+GitHub records a separate `<assigned artifact name>-environment` artifact before source
+hooks run. It contains the assignment hash and resolved environment identities, with
+90-day requested retention, subject to repository/organization limits:
+[GitHub artifact retention](https://docs.github.com/en/enterprise-cloud%40latest/actions/tutorials/store-and-share-data). The source and
+reusable workflows request only contents/read and actions/read; the Actions token is
+passed only to the environment step and never to the source hook. The caller must grant
+these permissions because a reusable workflow cannot elevate them:
+[GitHub reusable-workflow permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations).
 
-The registry transport still reuses one named instance between approved endpoints.
-The owner deferred refactoring to fixed endpoint clients; that work remains recorded.
+On explicit retry, the assignment references earlier assigned runs, their assignment hashes
+and environment artifact names. The worker checks the same approved run/workflow identity
+used for package validation, verifies downloaded bytes, and reuses the recorded environment.
+A prior attempt without evidence is skipped only when GitHub proves the hook step was
+skipped and environment recording did not succeed. Missing, expired or inaccessible evidence
+after a possible build stops the retry clearly; it never permits mutable re-resolution.
+Prerequisite receipts also remain the originally assigned inputs. No new controller state,
+registry client or scheduling queue is introduced. This path has local fixture coverage;
+real GitHub execution and full package pipeline acceptance remain outstanding.
 
 ## Source requests, dispatch and reports
 
@@ -169,8 +171,7 @@ commit and exact regular Git blob through the existing file reader. HTTPS receip
 match before published state releases dependents. Failed jobs without sufficient feed proof
 remain publishing/uncertain; no replacement is dispatched. Explicit inspection exposes the
 reason. An assigned origin differing from the configured feed endpoint remains unresolved
-until inspected with the proper deployment settings. Existing environment-client endpoint
-refactoring remains deferred as instructed.
+until inspected with the proper deployment settings. The environment client has been removed.
 
 A latest-SDK row is, for example:
 
@@ -179,4 +180,4 @@ A latest-SDK row is, for example:
 ```
 
 The suite is configured feed series, not a compiled support list. SDK discovery does not
-create a timer or an automatic rebuild policy: it runs when new work is selected.
+create a timer or an automatic rebuild policy: it runs in the GitHub worker for assigned work.

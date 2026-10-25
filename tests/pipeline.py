@@ -63,12 +63,7 @@ def exercise(args, directory):
     workflow = b"fixture reviewed source workflow; no job is executed\n"
     workflow_blob = hashlib.sha1(b"blob " + str(len(workflow)).encode() + b"\0" + workflow).hexdigest()
     blobs[workflow_blob] = workflow
-    image_config = json.dumps({"os": "linux", "architecture": "amd64"}).encode()
-    config_digest = "sha256:" + hashlib.sha256(image_config).hexdigest()
-    manifest = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                           "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": config_digest,
-                                      "size": len(image_config)}, "layers": []}).encode()
-    manifest_digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+
     definition = {"schema": 1, "title": "Example ü", "package": "example", "depends_on": [], "build": {"native": "ci/native.sh"},
                   "matrix": [{"id": "native", "family": "native", "distribution": "source-defined", "suite": "series", "arch": "amd64",
                               "runner": ["self-hosted", "selected"], "build": {"image": "sample:series", "platform": "linux/amd64", "format": "deb"}}]}
@@ -127,7 +122,7 @@ def exercise(args, directory):
                     lifecycle.run(["python3", "-c", "import sys; sys.path.insert(0,sys.argv[1]); from contract import assignment; assignment(sys.argv[2],sys.argv[3])",
                                    worker_path, str(assignment_file), value["inputs"]["assignment_sha256"]])
                     assert assignment["target"]["runner"] == ["self-hosted", "selected"]
-                    assert assignment["environment"]["digest"] == manifest_digest
+                    assert "environment" not in assignment and "environment" not in assignment["source"]
                     run_id = 100 + len(dispatches)
                     run = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 99}, "head_repository": {"id": 99},
                            "actor": {"id": 42}, "display_title": "core-ci build " + assignment["attempt"] + " " + value["inputs"]["assignment_sha256"],
@@ -195,15 +190,6 @@ def exercise(args, directory):
                 self.end_headers()
                 self.wfile.write(content or b"")
                 self.close_connection = True
-            elif path == "/v2/library/sample/manifests/series":
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(manifest)))
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.wfile.write(manifest)
-                self.close_connection = True
-            elif path == "/v2/library/sample/blobs/" + config_digest:
-                self.reply(200, json.loads(image_config))
             else:
                 public = path.startswith("/repos/Owner/feed")
                 if (public and self.headers.get("Authorization")) or (not public and self.headers.get("Authorization") != "Bearer synthetic-pipeline-token"):
@@ -249,7 +235,7 @@ def exercise(args, directory):
                         self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
                                          "name": "build / core-ci package " + assignment["attempt"], "status": run["status"], "conclusion": run["conclusion"]}]})
                     elif parts[4] == "artifacts":
-                        self.reply(200, {"total_count": 1, "artifacts": [{"id": run_id + 2000, "name": assignment["artifact_name"],
+                        self.reply(200, {"total_count": 2, "artifacts": [{"id": run_id + 3000, "name": assignment["artifact_name"] + "-environment"}, {"id": run_id + 2000, "name": assignment["artifact_name"],
                                          "digest": "sha256:" + "e" * 64, "size_in_bytes": 1024, "expired": False, "workflow_run": {"id": run_id}}]})
                     else:
                         errors.append("unexpected run query " + suffix)
@@ -266,21 +252,20 @@ def exercise(args, directory):
     thread.start()
     port = lifecycle.free_port()
     origin = "http://127.0.0.1:" + str(port)
-    registry = "https://127.0.0.1:" + str(github.server_port)
+    feed_origin = "https://127.0.0.1:" + str(github.server_port)
     settings = root / "controller.conf"
     settings.write_text('github.app-id=42\ngithub.installation-id=7\ngithub.bot-id=42\ngithub.allowed-owner="Owner"\n'
         'github.repository=["Owner/example=99", "Owner/worker=1000"]\ngithub.private-key-file="' + str(app_key) + '"\n'
         'github.webhook-secret-file="' + str(secret_file) + '"\nui.origin="' + origin + '"\n'
-        'registry.default-registry="127.0.0.1:' + str(github.server_port) + '"\nregistry.default-namespace="library"\n'
-        'registry.allowed-origin=["' + registry + '"]\npipeline.worker-repository="Owner/worker"\npipeline.tooling-sha="' + "f" * 40 + '"\n'
+        'pipeline.worker-repository="Owner/worker"\npipeline.tooling-sha="' + "f" * 40 + '"\n'
         'pipeline.source-workflow-blob="' + workflow_blob + '"\npipeline.publication-ref="main"\npipeline.publication-workflow-blob="' + workflow_blob + '"\n'
-        'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="' + registry + '/"\n'
+        'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="' + feed_origin + '/"\n'
         'pipeline.gpg-fingerprint="' + "A" * 40 + '"\npipeline.usign-key-sha256="' + "a" * 64 + '"\npipeline.apk-key-sha256="' + "b" * 64 + '"\n')
     settings.chmod(0o600)
     command = [args.executable, "--config-file", str(settings), "--log-file", str(root / "framework.log"), "database", "--mode", "unmanaged",
                "--socket", str(db_socket), "--user", "core_ci_test", "--name", "core_ci", "--password-file", str(password),
                "web", "local", "--port", str(port), "github-http", "remote", "--host", "127.0.0.1", "--port", str(github.server_port),
-               "tls", "--ca-cert", str(certificate), "environment-http", "tls", "--ca-cert", str(certificate), "feed-http", "tls", "--ca-cert", str(certificate)]
+               "tls", "--ca-cert", str(certificate), "feed-http", "tls", "--ca-cert", str(certificate)]
 
     def request(path, body=None, headers=None):
         payload = None if body is None else json.dumps(body).encode()
@@ -337,6 +322,10 @@ def exercise(args, directory):
             assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["state"] == "failed"
             assert request("/api/work/retry", {"execution": older["execution"]})[0] == 202 and len(dispatches) == 3
             assert dispatches[2]["source"]["commit"] == older_sha and dispatches[2]["revision"] > dispatches[0]["revision"]
+            reference = dispatches[2]["environment_from"]
+            assert len(reference) == 1 and reference[0]["run"]["id"] == 101
+            assert reference[0]["attempt"] == older["attempt"] and reference[0]["artifact_name"] == older["artifact_name"] + "-environment"
+            assert reference[0]["assignment_sha256"] == hashlib.sha256(json.dumps(older, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             assert report(101)[0] == 200, "late report was not idempotent"
             runs[102].update(status="completed", conclusion="success")
             assert report(102)[0] == 202 and len(publications) == 1
@@ -357,6 +346,7 @@ def exercise(args, directory):
             selected = publications[0]["assignment"]
             public_run = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["publication_run"]
             receipt = {"schema": 1, "execution": selected["execution"], "attempt": selected["attempt"],
+                       "environment": {"image": "worker-resolved", "digest": "sha256:" + "a" * 64},
                        "assignment_sha256": hashlib.sha256(json.dumps(selected, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                        "source_commit": selected["source"]["commit"], "run": public_run, "build_result": publications[0]["build_result"],
                        "feed": selected["source"]["deployment"]["feed"], "packages": [{"name": "example", "sha256": "e" * 64}]}

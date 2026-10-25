@@ -364,3 +364,58 @@
   Existing multi-origin environment-client refactoring remains deferred at owner direction.
 - Checkpoint accounting before this entry: {'production': [462, 138], 'tests': [238, 33], 'documentation': [105, 22]}. Growth implements the approved
   publication boundary/latest discovery; exact-file reading and SDK compatibility stay shared.
+
+
+## 2026-10-25 — restore the controller/worker boundary
+
+- Owner identified scope drift. Removed the controller registry/OCI/SDK resolver, named
+  environment HTTP client and configuration, and its pre-selection callback traversal.
+  The graph selects source/target/prerequisite work directly. It keeps one state authority.
+- Native image resolution now uses standard Docker tools in GitHub worker code; latest
+  SDK metadata discovery moved to worker tooling. No controller Docker/build/signing work
+  was introduced. Physical SDK compatibility belongs at prerequisite import in the worker.
+- Resolved identities are separate manifest evidence, checked by the trusted publisher and
+  included in the verified publication receipt retained by the graph. Historical receipts
+  remain immutable; no migration or compatibility layer was introduced.
+- Removed tests for the deleted controller resolver and replaced the relevant platform,
+  latest SDK, format and export-compatibility cases at the worker boundary. Pipeline tests
+  assert that dispatch requires no controller-resolved environment. These remain fixtures,
+  not live GitHub/Docker/SDK acceptance.
+- Automatic approval review rejected a proposed additional retry-evidence artifact protocol,
+  GitHub reads/permissions and controller reference field as an unapproved architectural
+  extension. None of that proposal was executed. Environment pinning across retries remains
+  an explicit blocking boundary for activation; no silent environment upgrade is approved.
+- Verification: reduced controller builds; the initial local run passed 27/28 suites.
+  The new worker SDK fixture exposed standard checksum whitespace handling; corrected it,
+  then all four affected graph/pipeline/worker suites passed. Final package/signature tests,
+  canonical C++/CMake formatting, Python syntax and whitespace checks passed. These are
+  local checks, with real MariaDB/package tools and synthetic GitHub/worker responses.
+- Working-tree checkpoint accounting before this entry: {'production': [136, 664], 'tests': [125, 324], 'documentation': [90, 68]}.
+  No commit, push, installation or external activation. Retry completion remains pending
+  explicit approval; this working tree must not be described as a finished correction.
+
+
+## 2026-10-25 — approved GitHub retry environment evidence
+
+- Owner explicitly approved the separate workflow evidence artifact, read-only retrieval
+  on retry and prior assigned-run references in assignments. This resolves the preceding
+  approval block; no controller registry/SDK functionality is reintroduced.
+- GitHub records assignment-bound environment evidence before any source hook. Retried
+  work reuses that identity, including across an intervening pre-build failure. Missing
+  or expired evidence after a possible build fails clearly instead of changing inputs.
+  An attempt proven not to reach recording/hooks permits initial resolution.
+- Consolidated run provenance checks for package and environment artifacts. Both use the
+  existing bounded, digest-verified download and archive checks. Only contents/read and
+  actions/read are requested; the token stays in the trusted environment step.
+- Controller changes carry prior assigned-run references and preserve original prerequisite
+  receipts. No graph state, durable queue or controller environment client was added.
+- Verification: final six affected suites passed (graph, enrollment/persistence, pipeline,
+  worker environment, artifact provenance and native packages/signatures). Subsequent
+  focused evidence tests also pass after the final missing-proof check. C++ build and
+  canonical formatting, Python formatting/syntax, rendered workflow YAML permissions,
+  maximum production line lengths and whitespace checks pass. No live GitHub/Docker or
+  package-client installation acceptance is claimed.
+- Combined correction accounting before this entry: production +297/-676 (net -379),
+  tests +297/-325 (net -28), documentation +135/-69. Approved retry completion accounts
+  for 149 net production lines within the 130-170 estimate, while the whole correction
+  reduces production code. No push, installation, secret update or external activation.

@@ -26,16 +26,6 @@ namespace coreci {
                     {"reactivated", node.cause.value("reactivated", std::string{})}};
         }
 
-        bool compatibleSdk(const Node& selected, const Node& other) {
-            bool compatible = true;
-            if (selected.target.at("family") == "openwrt") {
-                compatible =
-                    selected.source.at("environment").at("release") == other.source.at("environment").at("release") &&
-                    selected.source.at("environment").at("sdk").at("sha256") == other.source.at("environment").at("sdk").at("sha256");
-            }
-            return compatible;
-        }
-
         std::string publicationFeed(const Node& node) {
             const auto& feed = node.source.at("deployment").at("feed");
             const nlohmann::json identity{feed.at("repository_id"), feed.at("branch")};
@@ -60,8 +50,6 @@ namespace coreci {
 
         void validateSource(const std::string& name, const nlohmann::json& source) {
             static const std::regex sha(R"(^[a-f0-9]{40}$)");
-            static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
-            static const std::regex checksum(R"(^[a-f0-9]{64}$)");
             require(source.at("name") == name && source.at("repository_id").get<std::uint64_t>() != 0,
                     "invalid selected repository identity");
             require(std::regex_match(source.at("commit").get<std::string>(), sha) &&
@@ -69,33 +57,18 @@ namespace coreci {
                         std::regex_match(source.at("definition_blob_sha").get<std::string>(), sha),
                     "source must select immutable commits");
             const Version version(source.at("tag").get<std::string>());
-            const auto definition = Definition::parse(source.at("definition"));
-            for (const auto& target : definition.json.at("matrix")) {
-                const auto& environment = source.at("environments").at(target.at("id").get<std::string>());
-                if (target.at("family") == "native") {
-                    require(environment.at("image") == target.at("build").at("image") &&
-                                environment.at("platform") == target.at("build").at("platform") &&
-                                std::regex_match(environment.at("digest").get<std::string>(), digest),
-                            "native image digest/platform is unresolved");
-                } else {
-                    require(environment.at("release").get<std::string>().starts_with(target.at("suite").get<std::string>() + ".") &&
-                                std::regex_match(environment.at("sdk").at("sha256").get<std::string>(), checksum),
-                            "latest OpenWrt SDK identity is unresolved");
-                }
-            }
+            Definition::parse(source.at("definition"));
             require(source.at("deployment").is_object() && !source.at("deployment").empty(),
                     "trusted deployment must be pinned at selection");
         }
 
-        nlohmann::json executionSource(const nlohmann::json& source, const nlohmann::json& row) {
+        nlohmann::json executionSource(const nlohmann::json& source) {
             auto result = source;
             const auto& definition = source.at("definition");
             for (const auto* key : {"title", "package", "depends_on", "build"}) {
                 result[key] = definition.at(key);
             }
-            result["environment"] = source.at("environments").at(row.at("id").get<std::string>());
             result.erase("definition");
-            result.erase("environments");
             return result;
         }
 
@@ -107,7 +80,6 @@ namespace coreci {
                                       {"depends_on", selected.at("depends_on")},
                                       {"build", selected.at("build")},
                                       {"matrix", {node.target}}};
-            selected["environments"] = {{node.target.at("id").get<std::string>(), selected.at("environment")}};
             validateSource(selected.at("name").get<std::string>(), selected);
         }
 
@@ -276,7 +248,7 @@ namespace coreci {
                 const auto& source = sources.at(name);
                 for (const auto& row : source.at("definition").at("matrix")) {
                     Node next;
-                    next.source = executionSource(source, row);
+                    next.source = executionSource(source);
                     next.target = row;
                     next.cause = cause;
                     next.automatic = name != root || !explicitRequest;
@@ -292,7 +264,7 @@ namespace coreci {
                             for (const auto& [id, candidate] : records) {
                                 if (candidate.supersededBy.empty() && candidate.source.at("name") == dependencyName &&
                                     sameSource(candidate.source, sources.at(dependencyName)) &&
-                                    Definition::coordinates(candidate.target) == coordinate && compatibleSdk(next, candidate) &&
+                                    Definition::coordinates(candidate.target) == coordinate &&
                                     (prerequisite == nullptr ||
                                      candidate.attempts.front().revision > prerequisite->attempts.front().revision)) {
                                     prerequisite = &candidate;
@@ -301,8 +273,6 @@ namespace coreci {
                             require(prerequisite != nullptr,
                                     "missing selected prerequisite work for " + dependencyName + "; request it explicitly first");
                         }
-                        require(compatibleSdk(next, *prerequisite),
-                                "selected prerequisite SDK differs from the latest SDK; request compatible prerequisite work explicitly");
                         next.prerequisites.push_back(prerequisite->id);
                     }
                     next.id = digest(identity(next));
@@ -366,10 +336,14 @@ namespace coreci {
         auto selected = records.at(id);
         auto& attempt = selected.attempts.back();
         nlohmann::json dependencies = nlohmann::json::array();
-        for (const auto& prerequisite : selected.prerequisites) {
-            const auto& other = records.at(prerequisite);
-            dependencies.push_back(
-                {{"execution", other.id}, {"attempt", other.attempts.back().id}, {"receipt", other.attempts.back().receipt}});
+        if (selected.attempts.size() > 1) {
+            dependencies = selected.attempts.front().assignment.at("dependencies");
+        } else {
+            for (const auto& prerequisite : selected.prerequisites) {
+                const auto& other = records.at(prerequisite);
+                dependencies.push_back(
+                    {{"execution", other.id}, {"attempt", other.attempts.back().id}, {"receipt", other.attempts.back().receipt}});
+            }
         }
         attempt.assignment = {{"schema", 1},
                               {"execution", id},
@@ -378,8 +352,19 @@ namespace coreci {
                               {"artifact_name", "core-ci-build-" + id + "-r" + std::to_string(attempt.revision)},
                               {"source", selected.source},
                               {"target", selected.target},
-                              {"environment", selected.source.at("environment")},
                               {"dependencies", dependencies}};
+        nlohmann::json previous = nlohmann::json::array();
+        for (const auto& earlier : selected.attempts) {
+            if (earlier.id != attempt.id && !earlier.buildRun.is_null()) {
+                previous.push_back({{"run", earlier.buildRun},
+                                    {"attempt", earlier.id},
+                                    {"assignment_sha256", digest(earlier.assignment)},
+                                    {"artifact_name", earlier.assignment.at("artifact_name").get<std::string>() + "-environment"}});
+            }
+        }
+        if (!previous.empty()) {
+            attempt.assignment["environment_from"] = previous;
+        }
         attempt.state = "building";
         return selected;
     }
@@ -448,7 +433,8 @@ namespace coreci {
         require(receipt.at("execution") == id && receipt.at("attempt") == attemptId &&
                     receipt.at("assignment_sha256") == digest(attempt.assignment) && receipt.at("run") == attempt.publicationRun &&
                     receipt.at("source_commit") == selected.source.at("commit") && receipt.at("feed_revision").is_string() &&
-                    receipt.at("packages").is_array() && !receipt.at("packages").empty(),
+                    receipt.at("environment").is_object() && !receipt.at("environment").empty() && receipt.at("packages").is_array() &&
+                    !receipt.at("packages").empty(),
                 "publication receipt identities differ from assignment");
         require(attempt.receipt.is_null() || attempt.receipt == receipt, "conflicting publication receipt");
         attempt.receipt = receipt;

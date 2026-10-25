@@ -37,21 +37,19 @@ def api(path, token, method="GET", value=None):
     return result
 
 
-def artifact(selected, build_result, token, destination):
+def assigned_run(selected, identity, attempt, assignment_hash, token):
     source = selected["source"]
     deployment = source["deployment"]
     repository = source["repository"]
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is not None, "invalid source repository")
-    require(
-        build_result["assignment_sha256"] == digest(selected) and len(build_result["artifacts"]) == 1,
-        "build assignment/artifact mismatch",
-    )
     prefix = "/repos/" + repository
     metadata = api(prefix, token)
     require(metadata["id"] == source["repository_id"], "source repository ID changed")
-    run = api(prefix + "/actions/runs/" + str(build_result["run"]["id"]), token)
+    run = api(prefix + "/actions/runs/" + str(identity["id"]), token)
     require(
-        run["repository"]["id"] == source["repository_id"] and run["head_repository"]["id"] == source["repository_id"],
+        run["id"] == identity["id"]
+        and run["repository"]["id"] == source["repository_id"]
+        and run["head_repository"]["id"] == source["repository_id"],
         "build run repository mismatch",
     )
     require(
@@ -59,21 +57,32 @@ def artifact(selected, build_result, token, destination):
         "build run actor/event mismatch",
     )
     require(
-        run["run_attempt"] == 1 and run["status"] == "completed" and run["conclusion"] == "success",
-        "assigned build did not succeed",
+        run["run_attempt"] == 1 and run["status"] == "completed",
+        "assigned build has not completed",
     )
-    require(run["head_sha"] == build_result["run"]["workflow_commit"], "assigned workflow commit mismatch")
+    require(run["head_sha"] == identity["workflow_commit"], "assigned workflow commit mismatch")
     require(
-        run["display_title"] == "core-ci build " + selected["attempt"] + " " + digest(selected),
+        run["display_title"] == "core-ci build " + attempt + " " + assignment_hash,
         "build run title mismatch",
     )
     workflow = deployment["source_workflow"]
     require(run["path"] == workflow["path"], "build workflow path mismatch")
     file = api(prefix + "/contents/" + workflow["path"] + "?ref=" + run["head_sha"], token)
     require(
-        file["sha"] == workflow["blob_sha"] == build_result["run"]["workflow_blob_sha"],
+        file["sha"] == workflow["blob_sha"] == identity["workflow_blob_sha"],
         "build workflow differs from approval",
     )
+    return run
+
+
+def artifact(selected, build_result, token, destination):
+    require(
+        build_result["assignment_sha256"] == digest(selected) and len(build_result["artifacts"]) == 1,
+        "build assignment/artifact mismatch",
+    )
+    run = assigned_run(selected, build_result["run"], selected["attempt"], digest(selected), token)
+    require(run["conclusion"] == "success", "assigned build did not succeed")
+    prefix = "/repos/" + selected["source"]["repository"]
     assigned = build_result["artifacts"][0]
     job = api(prefix + "/actions/jobs/" + str(assigned["job_id"]), token)
     require(
