@@ -76,14 +76,18 @@ environment alone prevents untrusted workflow edits. Keep builds outside this en
 
 The prepared worker uses the sandbox's existing secret names below rather than creating a
 second set of aliases. Metadata confirms these signing/App names already exist at repository
-level; their values and correspondence to the public keys remain unverified. The protected
+level; repository-secret values cannot be read back. The protected
 package-publication environment was created on 2026-10-25 with a main-branch-only policy.
 PACKAGES_APP_PRIVATE_KEY was provisioned from the existing sandbox coordinator App PEM.
 Public environment variables FEED_WRITER_APP_ID and FEED_WRITER_INSTALLATION_ID identify the
 verified App and installation; a temporary Contents-write token was restricted to the sandbox
-feed and revoked after verification. No key was generated or rotated. Signing private-key
-files were not found in the owner-named directory, so the three signing environment secrets
-remain unprovisioned. Existing repository secrets were not removed or changed.
+feed and revoked after verification. The owner-authorized project-directory search located
+all three existing signing private-key files. The OpenPGP fingerprint and APK EC P-256 public
+key match the trusted worker keys; standard usign signing/verification proves the IPK match.
+The three signing secrets were provisioned into this environment via stdin, and their names
+were verified through GitHub metadata. The OpenPGP export is not passphrase-protected, so no
+passphrase secret was provisioned. No key was generated or rotated. Existing repository
+secrets were not removed or changed. This setup is not live package pipeline acceptance.
 See [worker setup](../deployment/README.md) for current implementation status and public inputs.
 
 | Exact GitHub environment secret | Input material |
@@ -94,8 +98,8 @@ See [worker setup](../deployment/README.md) for current implementation status an
 | OPENWRT_APK_KEY | Existing PEM EC P-256 key for OpenWrt APK |
 | PACKAGES_APP_PRIVATE_KEY | Feed-only GitHub App key; never the controller App key |
 
-Provision signing secrets when the owner-held files are available, using file input.
-The commands below document setup; only the feed-writer provisioning was performed.
+Provision existing keys using file input. All four required key secrets below have been
+provisioned in the sandbox environment; the optional passphrase command was not needed.
 The /secure paths describe owner-held files and must be replaced with their actual paths.
 
 ```sh

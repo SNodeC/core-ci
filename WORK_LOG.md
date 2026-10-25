@@ -458,3 +458,17 @@
 - Checkpoint accounting: production +616/-76 (net +540), tests +117/-0 and test-build wiring
   +5/-0. Growth implements the originally approved missing OpenWrt worker/signing path,
   reusing existing artifact, receipt and publication boundaries. No controller expansion.
+
+
+## 2026-10-25 — locate and provision existing package signing keys
+
+- Owner authorized a project-directory search before Codex-log searches. Found all three
+  existing package signing files in an owner-held private directory, with directory mode
+  700 and files mode 600. No Codex-log search was necessary and no private values were printed.
+- Verified OpenPGP fingerprint and APK EC P-256 public-key agreement with trusted worker
+  keys, plus a temporary standard usign signature/verification. OpenPGP packet inspection
+  shows no passphrase protection. Temporary verification files were removed.
+- Provisioned APT_SIGNING_KEY, OPENWRT_USIGN_KEY and OPENWRT_APK_KEY into the existing
+  main-only sandbox package-publication environment via stdin. GitHub secret metadata
+  confirms all three plus the previously provisioned feed-writer key. No new keys, rotation,
+  repository-secret changes, workflow activation or publication. Production/test changes: 0.
