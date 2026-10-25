@@ -34,3 +34,36 @@
   Retry-edge continuity, feed identity isolation, publication serialization and trusted
   assignment/run binding need explicit resolution before implementation.
 - Did not implement reviewer suggestions, alter deployment settings or activate anything.
+
+## 2026-10-25 — complete proposal refinement
+
+- Replaced the initial proposal with an original-scope crosswalk and explicit disposition
+  of every Claude finding. Kept the independent review unchanged as earlier evidence.
+- Owner chose immediate highest-SemVer enrollment work, supersession of older waiting
+  automatic work with history, and inclusion of prereleases. These supersede the earlier
+  unanswered-policy entries; diamond safety is mandatory, not another optional policy.
+- Defined stable logical executions/attempts, exact prerequisite edges, atomic diamond
+  selection, serialized async DB ownership and uncertain-COMMIT/dispatch reconciliation.
+- Specified tag-preserving image digest resolution, workflow/App actor/artifact checks,
+  isolated hooks, suite/SDK-separated feeds and one publisher per repository/branch.
+- Checked current official GitHub docs: dispatch now documents a run ID response; optional
+  larger concurrency queues exist, but do not replace persisted publication authority.
+- Proposed a shared prerelease codec; 20 adjacent comparisons passed using local dpkg and
+  20 using local RPM. This is a design experiment, not package/live acceptance. IPK/APK
+  and complete ordering/bounds proof remain required. No source/test implementation added.
+- Verified MariaDB source readiness notification and SNode.C descriptor receiver interfaces;
+  actual managed-process readiness/shutdown integration remains a checkpoint-1 proof gate.
+- Added explicit setup/configuration/secret inventory and file-input provisioning examples.
+  Cross-repository private artifact reading is an explicit conditional credential choice,
+  never assumed worker-token access or reuse of the controller/feed-writer private key.
+- Revised estimate to 7,000-10,500 production / 2,500-4,000 test lines; moved a real signed
+  DEB+apt+dependent path to checkpoint 2. Growth approval and external activation are separate.
+- Asked remaining prerequisite-closure, runtime-dependency and older-retry promotion policy
+  questions. No response is inferred. No production deployment or acceptance was performed.
+- Final reduction pass removed a proposed redundant current-publisher pointer: the
+  feed row lock plus authoritative publishing-attempt predicate provides serialization.
+- Security-boundary review made publisher SDK trust explicit: a source-provided hash
+  is integrity evidence, not permission to run its tooling with signing keys. Exact SDK/tool
+  approval belongs in reviewed worker trust configuration, without a controller release list.
+- Verification: git diff --check passed; local Markdown links resolve; all original A-S
+  sections and Claude D1-D7 findings have explicit coverage. Only documentation changed.
