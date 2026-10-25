@@ -133,3 +133,14 @@ then rejected an unrelated key and installed all four signed packages from the H
 core 2.1.0-21, app 2.1.0-26, side 2.1.0-31 and join 2.1.0-36. The installed join printed
 `demo-join core 60, side 62`. This is actual package-manager dependency resolution and
 execution, not a manifest/file-existence check.
+
+
+## OpenWrt IPK diamond installation
+
+All four projects published against the same recorded OpenWrt 24.10.8 SDK identity,
+including [join publication 40237059539](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237059539).
+[opkg client run 40237394589](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237394589)
+passes prerelease/rebuild comparisons, rejects an unrelated signing key, refreshes the
+signed HTTPS feed and installs the join and prerequisites. Installed runtime output is
+`demo-join core 60, side 62`. The side prerequisite's cancelled rebuild 34 and explicit
+successful retry/rebuild 41 are both retained in MariaDB.

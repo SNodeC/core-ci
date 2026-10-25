@@ -114,6 +114,7 @@ def version_comparisons(package_format):
         if package_format == "ipk":
             commands.append("opkg compare-versions " + a + " '<' " + b)
         else:
+            commands.append("apk version -c " + a + " " + b)
             commands.append('test "$(apk version -t ' + a + " " + b + ')" = "<"')
     result = "\n".join(commands) + "\necho 'PASS OpenWrt SemVer/rebuild ordering'\n"
     return result

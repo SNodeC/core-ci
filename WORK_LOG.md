@@ -759,3 +759,11 @@
 - Real APT diamond client run 40236964119 passes signed installation of core/app/side/join
   and runtime `demo-join core 60, side 62`. Native diamond publication/installation is now
   proved on amd64; further target publications and APK client acceptance continue.
+- Complete IPK diamond publication passed, including join publisher 40237059539.
+  Read-only graph proof confirms all four receipts share SDK SHA-256
+  ac4a0405d2eea821b06f93c14ba13ffa90ad0457648903df7dde02570027ab21.
+  Real opkg diamond run 40237394589 verifies version ordering, wrong-key rejection,
+  signed refresh, package/dependency installation and `demo-join core 60, side 62`.
+- Added one test-only APK grammar check before the existing APK comparator assertions,
+  using standard `apk version -c`. No production version codec change. Acceptance-only
+  worker deployment is 190e97e5e491e45cfd38f5bee9e17b1dfeb3ca5a; build tooling stays pinned.
