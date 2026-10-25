@@ -206,7 +206,7 @@ def build(arguments):
                     tag,
                     "python3",
                     "-c",
-                    "from contract import *; s=assignment('/assignment.json'); "
+                    "import sys; sys.path.insert(0, '/tool'); from contract import *; s=assignment('/assignment.json'); "
                     "print(canonical(validate_outputs(s, '/work/output', "
                     "read_json('/work/output/outputs.json'), read_json('/environment.json'))))",
                 ],

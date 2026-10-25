@@ -568,3 +568,19 @@
   verified owner-held backups; active signing/feed keys remain environment-only.
 - Executable production code +1/-1 (one filename), public key data +23/-22, tests +16/-0.
   No new controller mechanism, source tags, package publication or client-installation claim.
+
+
+## 2026-10-25 — first real graph-driven sandbox builds
+
+- Started the controller on loopback HTTP 8080 with an isolated managed MariaDB under
+  /tmp/codex/build/core-ci/live-sandbox. The administrator database remains untouched.
+- Enrolled demo-core through the actual UI. Selected v2.0.0 at immutable commit
+  7cffc1403a20664c8c07e49ae559e16b7089479e and dispatched all five target assignments.
+- GitHub runs 40228867034, 40228875914 and 40228871183 built native DEB/RPM packages,
+  then failed independent validation because Python could not import the trusted module.
+  Set that invocation's module path explicitly; source output stays read-only and offline.
+- OpenWrt runs 40228873452 and 40228869039 failed before hooks: the official SDKs
+  contain absolute host-tool symlinks rejected by the archive data filter. This remains
+  unresolved in this checkpoint; extraction protections have not been relaxed.
+- Native package/provenance suites pass with real package/signature tools. Production
+  code +1/-1, tests unchanged. No successful GitHub artifact or publication claim.
