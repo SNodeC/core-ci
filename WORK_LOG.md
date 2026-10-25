@@ -781,3 +781,13 @@
   package-manager installation/runtime proof. APK dependent builds continue via the graph.
 - Corrected an obsolete synthetic-test docstring mentioning OCI; the fixture covers only
   GitHub/feed HTTPS. No controller registry or SDK implementation exists or was added.
+
+- Final APK diamond publisher 40238830522 and actual client 40239260480 pass. The client
+  rejects an unrelated key, installs all four signed packages with apk-tools 3.0.5 and
+  executes `demo-join core 60, side 62`. All four APK receipts share the pinned SDK hash.
+- Real persisted graph now reports all 20 v2.1.0 executions published. Explicit idle
+  reconciliation assigns zero work and leaves all revisions/states/run identities unchanged.
+  The bounded external acceptance observer has finished; no application scheduler was added.
+- Recorded all 20 build/publication links in deployment documentation. Public webhook
+  certificate/key paths and feed status renderer approval remain outstanding. No private
+  material, application installation/push, or public webhook activation was performed.

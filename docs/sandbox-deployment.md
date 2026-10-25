@@ -61,7 +61,7 @@ key files against the selected or preserved local public bytes.
 [Pages deployment after key alignment](https://github.com/VOC-Experiments/packages/actions/runs/40228213639)
 succeeded. Three affected local suites pass, including real native signatures and regression
 checks for preserving the old APK file, replaying the new key and rejecting an overwrite.
-Actual OpenWrt package signing/client installation remains outstanding.
+Actual OpenWrt package signing/client installation is verified in the later acceptance results below.
 
 Obsolete signing/feed-writer repository secrets and old source App secrets were removed as
 planned. Active keys remain in main-only package-publication; the valid read-only observer
@@ -103,8 +103,9 @@ no untrusted-install override is used. Client runtime output is `demo-core 60`.
 
 ## Still outstanding
 
-Completion of the APK dependency diamond, public webhook activation and remaining full
-live acceptance are outstanding. Native/IPK diamonds and all four package clients pass. Both OpenWrt builds now pass with
+Public webhook activation and remaining full live acceptance are outstanding. All 20 v2.1.0
+graph executions are published. Native/IPK diamond clients and all four root package clients
+pass, including the final APK diamond client check recorded below. Both OpenWrt builds now pass with
 corrected SDK preparation and source-owned tool lookup:
 [IPK 40231880390](https://github.com/VOC-Experiments/demo-core/actions/runs/40231880390),
 [APK 40231884159](https://github.com/VOC-Experiments/demo-core/actions/runs/40231884159).
@@ -159,4 +160,45 @@ completed EC P-256 package/index signing, checked feed publication and HTTPS rec
 uses the checksum-verified OpenWrt 25.12.6 rootfs and its actual apk-tools 3.0.5. It rejects
 an unrelated key with `UNTRUSTED signature`, validates encoded version grammar and ordering,
 refreshes signed `packages.adb`, installs demo-core 2.1.0-r25 and executes `demo-core 60`.
-There is no APK v2 index or untrusted-install override. Dependent APK builds are now running.
+There is no APK v2 index or untrusted-install override. All dependent APK builds and
+publications subsequently passed, including join publisher
+[40238830522](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40238830522).
+All four receipts record the same SDK SHA-256
+`1864152619092e781fa36a401960c8e9ae42d6a364c44ee5f0b197ca5f3c0fcc`.
+
+
+[APK diamond client 40239260480](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40239260480)
+passes wrong-key rejection, version grammar/ordering, signed index refresh and installation
+of core 2.1.0-r25, app 2.1.0-r30, side 2.1.0-r35 and join 2.1.0-r40. The installed join
+prints `demo-join core 60, side 62`. All five configured targets now have complete diamond
+publication and actual package-manager installation/runtime proof.
+
+## Final v2.1.0 graph snapshot
+
+The following is dated acceptance evidence, not a separate state authority. On 2026-10-25,
+the real MariaDB-backed graph reports all 20 executions published. A further explicit
+reconciliation returns `assigned: 0` and preserves execution revisions and run assignments.
+This proves idle reconciliation, not public webhook delivery or duplicate delivery acceptance.
+
+| Repository | Target | Rebuild | Build | Publication |
+| --- | --- | --- | --- | --- |
+| demo-app | debian-trixie-amd64 | 26 | [40234838728](https://github.com/VOC-Experiments/demo-app/actions/runs/40234838728) | [40235213985](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40235213985) |
+| demo-app | debian-trixie-arm64 | 27 | [40235215552](https://github.com/VOC-Experiments/demo-app/actions/runs/40235215552) | [40235428210](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40235428210) |
+| demo-app | fedora-43-x86_64 | 28 | [40234840873](https://github.com/VOC-Experiments/demo-app/actions/runs/40234840873) | [40235920829](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40235920829) |
+| demo-app | openwrt-24.10-x86_64 | 29 | [40234882705](https://github.com/VOC-Experiments/demo-app/actions/runs/40234882705) | [40236509206](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40236509206) |
+| demo-app | openwrt-25.12-x86_64 | 30 | [40237822465](https://github.com/VOC-Experiments/demo-app/actions/runs/40237822465) | [40238385559](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40238385559) |
+| demo-core | debian-trixie-amd64 | 21 | [40231878745](https://github.com/VOC-Experiments/demo-core/actions/runs/40231878745) | [40234287306](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234287306) |
+| demo-core | debian-trixie-arm64 | 22 | [40231882198](https://github.com/VOC-Experiments/demo-core/actions/runs/40231882198) | [40234884519](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234884519) |
+| demo-core | fedora-43-x86_64 | 23 | [40231876849](https://github.com/VOC-Experiments/demo-core/actions/runs/40231876849) | [40232214325](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40232214325) |
+| demo-core | openwrt-24.10-x86_64 | 24 | [40231880390](https://github.com/VOC-Experiments/demo-core/actions/runs/40231880390) | [40234419872](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40234419872) |
+| demo-core | openwrt-25.12-x86_64 | 25 | [40231884159](https://github.com/VOC-Experiments/demo-core/actions/runs/40231884159) | [40237512801](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237512801) |
+| demo-join | debian-trixie-amd64 | 36 | [40236507555](https://github.com/VOC-Experiments/demo-join/actions/runs/40236507555) | [40236806285](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40236806285) |
+| demo-join | debian-trixie-arm64 | 37 | [40235752993](https://github.com/VOC-Experiments/demo-join/actions/runs/40235752993) | [40236928097](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40236928097) |
+| demo-join | fedora-43-x86_64 | 38 | [40236060513](https://github.com/VOC-Experiments/demo-join/actions/runs/40236060513) | [40237366899](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237366899) |
+| demo-join | openwrt-24.10-x86_64 | 39 | [40236808481](https://github.com/VOC-Experiments/demo-join/actions/runs/40236808481) | [40237059539](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237059539) |
+| demo-join | openwrt-25.12-x86_64 | 40 | [40238571733](https://github.com/VOC-Experiments/demo-join/actions/runs/40238571733) | [40238830522](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40238830522) |
+| demo-side | debian-trixie-amd64 | 31 | [40234978539](https://github.com/VOC-Experiments/demo-side/actions/runs/40234978539) | [40236338792](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40236338792) |
+| demo-side | debian-trixie-arm64 | 32 | [40235217799](https://github.com/VOC-Experiments/demo-side/actions/runs/40235217799) | [40235560767](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40235560767) |
+| demo-side | fedora-43-x86_64 | 33 | [40234973732](https://github.com/VOC-Experiments/demo-side/actions/runs/40234973732) | [40235750833](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40235750833) |
+| demo-side | openwrt-24.10-x86_64 | 41 | [40235443413](https://github.com/VOC-Experiments/demo-side/actions/runs/40235443413) | [40236058413](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40236058413) |
+| demo-side | openwrt-25.12-x86_64 | 35 | [40237824712](https://github.com/VOC-Experiments/demo-side/actions/runs/40237824712) | [40238019305](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40238019305) |
