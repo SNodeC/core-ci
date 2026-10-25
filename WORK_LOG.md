@@ -774,3 +774,10 @@
   and Fedora DNF (40237553823), in addition to amd64 APT and OpenWrt opkg. All use actual
   signed HTTPS feeds and reject unrelated keys first. Controller assigned the root APK
   publisher 40237512801 after the preceding feed writers completed.
+- Root APK publisher 40237512801 passed EC P-256 package/index signing and checked
+  Git/HTTPS publication. Actual OpenWrt 25.12.6 apk-tools 3.0.5 client run 40237801462
+  rejects an unrelated key, validates version grammar/ordering, refreshes packages.adb,
+  installs exact 2.1.0-r25 and runs demo-core 60. All four formats now have actual signed
+  package-manager installation/runtime proof. APK dependent builds continue via the graph.
+- Corrected an obsolete synthetic-test docstring mentioning OCI; the fixture covers only
+  GitHub/feed HTTPS. No controller registry or SDK implementation exists or was added.

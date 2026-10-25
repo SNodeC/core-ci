@@ -1,4 +1,4 @@
-"""Real MariaDB and synthetic GitHub/OCI HTTPS pipeline boundaries, not live jobs."""
+"""Real MariaDB and synthetic GitHub/feed HTTPS pipeline boundaries, not live jobs."""
 
 import argparse
 import base64

@@ -4,7 +4,8 @@ The fresh workflows/tooling are now installed in VOC-Experiments. See the
 [verified deployment status](../docs/sandbox-deployment.md) for exact commits and live
 Pages/credential checks and resolved signing identities. Existing feed trust keys are
 preserved. Graph-driven native/IPK publication and actual apt/dnf/opkg installation are
-verified; APK and complete diamond acceptance remain pending. Local package/signature checks,
+verified, as are APK signing and actual APK v3 client installation. Complete APK diamond
+acceptance remains pending. Local package/signature checks,
 synthetic service fixtures and actual GitHub/client acceptance remain distinct.
 
 The invariant is one immutable controller assignment across build, independent validation,
@@ -108,7 +109,7 @@ worker `contract.versions` codec is used for both building and validation. Gener
 identifiers use the numeric token scheme in docs/design.md. Adjacent ordering for numeric,
 alphabetic, hyphenated, prefix and multipart identifiers is proved with installed dpkg and
 RPM comparators. The actual OpenWrt 24.10.8 opkg comparator also passes the same ordering
-cases in GitHub acceptance. Selected OpenWrt APK v3 comparator proof remains outstanding.
+cases in GitHub acceptance. OpenWrt 25.12.6 APK v3 also passes grammar, ordering, signing and client installation checks.
 
 The schema-1 manifest contains the complete assignment evidence/hash, controller-assigned
 GitHub-safe artifact name, encoded package version, filenames/components, actual package

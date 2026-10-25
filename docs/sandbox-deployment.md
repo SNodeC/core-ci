@@ -103,13 +103,13 @@ no untrusted-install override is used. Client runtime output is `demo-core 60`.
 
 ## Still outstanding
 
-Actual APK client installation acceptance, completion of dependency
-chains/diamonds and the remaining full live acceptance are outstanding. Both OpenWrt builds now pass with
+Completion of the APK dependency diamond, public webhook activation and remaining full
+live acceptance are outstanding. Native/IPK diamonds and all four package clients pass. Both OpenWrt builds now pass with
 corrected SDK preparation and source-owned tool lookup:
 [IPK 40231880390](https://github.com/VOC-Experiments/demo-core/actions/runs/40231880390),
 [APK 40231884159](https://github.com/VOC-Experiments/demo-core/actions/runs/40231884159).
-These builds include independent validation and artifact upload. OpenWrt APK signing/feed
-publication and APK client installation remain unverified.
+These builds include independent validation and artifact upload. APK signing and client
+installation are now verified below.
 Both SDK preparation stages passed in real GitHub runs
 [IPK 40231441419](https://github.com/VOC-Experiments/demo-core/actions/runs/40231441419) and
 [APK 40231443502](https://github.com/VOC-Experiments/demo-core/actions/runs/40231443502).
@@ -149,3 +149,14 @@ The same native diamond installation/runtime check also passes on
 [ARM64 APT 40237555269](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237555269)
 and [Fedora DNF 40237553823](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237553823).
 These are native GitHub runners for the selected architectures, not file-only checks.
+
+
+## OpenWrt APK v3 signing and installation
+
+[Publisher 40237512801](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237512801)
+completed EC P-256 package/index signing, checked feed publication and HTTPS receipt proof.
+[Client run 40237801462](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237801462)
+uses the checksum-verified OpenWrt 25.12.6 rootfs and its actual apk-tools 3.0.5. It rejects
+an unrelated key with `UNTRUSTED signature`, validates encoded version grammar and ordering,
+refreshes signed `packages.adb`, installs demo-core 2.1.0-r25 and executes `demo-core 60`.
+There is no APK v2 index or untrusted-install override. Dependent APK builds are now running.
