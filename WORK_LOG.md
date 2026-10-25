@@ -647,7 +647,7 @@
   artifact upload. All three v2.1.0 native builds also passed. OpenWrt signing/publication
   and client installation are not yet claimed. Applied actual GitHub results through
   controller reconciliation; retained every previous failed execution and immutable input.
-- Changed production code +14/-9 (net +5 within owner-approved growth), tests +133/-1;
+- Changed production code +14/-9 (net +5 within owner-approved growth), tests +129/-1;
   documentation accounted separately. No controller source changes or additional checkout.
   The application remains running locally with its managed database; no application push,
   PR, installation or public UI exposure. Sandbox tooling/source deployment is live.
