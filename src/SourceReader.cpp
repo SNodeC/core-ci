@@ -97,7 +97,7 @@ namespace coreci {
                         } else if (result.body.size() == 100) {
                             reading->callback({422, nullptr, "", "", "tag enumeration exceeds the 128-page bound; request an exact tag"});
                         } else if (!reading->highest) {
-                            reading->callback({404, nullptr, "", "", "repository has no numeric semantic-version tag"});
+                            reading->callback({404, reading->source, "", "", "repository has no numeric semantic-version tag"});
                         } else if (reading->ambiguous) {
                             reading->callback({409, nullptr, "", "", "highest SemVer precedence is ambiguous; request an exact tag"});
                         } else {
@@ -182,31 +182,54 @@ namespace coreci {
     }
 
     void SourceReader::definition(const std::string& repository, const std::string& commit, const Callback& callback) {
-        if (!validSha(commit)) {
-            callback({422, nullptr, "", "", "definition requires an exact source commit"});
-        } else {
-            const auto reading = std::make_shared<Reading>();
-            reading->repository = repository;
-            reading->source = {{"commit", commit}};
-            reading->callback = callback;
-            github.request(repository,
-                           "GET",
-                           "/git/commits/" + commit,
-                           nullptr,
-                           {{"contents", "read"}},
-                           [this, reading, commit](const GitHubResult& result) {
-                               if (result.status != 200 || !result.error.empty()) {
-                                   reading->callback(
-                                       {result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
-                               } else {
-                                   try {
-                                       require(result.body.at("sha") == commit, "definition commit differs from selected source");
-                                       tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
-                                   } catch (const std::exception& error) {
-                                       reading->callback({422, nullptr, "", "", error.what()});
-                                   }
-                               }
-                           });
+        file(repository, commit, "ci/packages.json", callback);
+    }
+
+    void SourceReader::file(const std::string& repository, const std::string& commit, const std::string& path, const Callback& callback) {
+        try {
+            static const std::regex pathSyntax(R"(^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$)");
+            if (!validSha(commit) || path.size() > 512 || !std::regex_match(path, pathSyntax)) {
+                callback({422, nullptr, "", "", "file requires an exact commit and a bounded repository-relative path"});
+            } else {
+                const auto reading = std::make_shared<Reading>();
+                reading->repository = repository;
+                reading->source = {{"commit", commit}};
+                reading->callback = callback;
+                std::size_t offset = 0;
+                while (offset < path.size()) {
+                    const auto end = path.find('/', offset);
+                    reading->path.push_back(path.substr(offset, end == std::string::npos ? end : end - offset));
+                    offset = end == std::string::npos ? path.size() : end + 1;
+                }
+                const bool safe =
+                    reading->path.size() <= 32 && std::all_of(reading->path.begin(), reading->path.end(), [](const auto& part) {
+                        return part != "." && part != "..";
+                    });
+                if (!safe) {
+                    throw std::invalid_argument("selected file must remain inside its checkout");
+                }
+                github.request(
+                    repository,
+                    "GET",
+                    "/git/commits/" + commit,
+                    nullptr,
+                    {{"contents", "read"}},
+                    [this, reading, commit](const GitHubResult& result) {
+                        if (result.status != 200 || !result.error.empty()) {
+                            reading->callback(
+                                {result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
+                        } else {
+                            try {
+                                require(result.body.at("sha") == commit, "definition commit differs from selected source");
+                                tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
+                            } catch (const std::exception& error) {
+                                reading->callback({422, nullptr, "", "", error.what()});
+                            }
+                        }
+                    });
+            }
+        } catch (const std::exception& error) {
+            callback({422, nullptr, "", "", error.what()});
         }
     }
 
@@ -226,7 +249,7 @@ namespace coreci {
                                    try {
                                        require(result.body.at("sha") == sha && !result.body.value("truncated", true),
                                                "definition tree is truncated or has changed identity");
-                                       const std::string name = position == 0 ? "ci" : "packages.json";
+                                       const auto& name = reading->path.at(position);
                                        nlohmann::json selected;
                                        for (const auto& entry : result.body.at("tree")) {
                                            if (entry.at("path") == name) {
@@ -235,16 +258,15 @@ namespace coreci {
                                            }
                                        }
                                        if (selected.is_null()) {
-                                           reading->callback(
-                                               {404, reading->source, "", "", "ci/packages.json is absent at the selected commit"});
-                                       } else if (position == 0) {
+                                           reading->callback({404, reading->source, "", "", "selected file is absent at the exact commit"});
+                                       } else if (position + 1 < reading->path.size()) {
                                            require(selected.at("type") == "tree" && selected.at("mode") == "040000",
-                                                   "ci must be a directory inside the source checkout");
-                                           tree(reading, selected.at("sha").get<std::string>(), 1);
+                                                   "selected file parent must be a directory inside the checkout");
+                                           tree(reading, selected.at("sha").get<std::string>(), position + 1);
                                        } else {
                                            require(selected.at("type") == "blob" &&
                                                        (selected.at("mode") == "100644" || selected.at("mode") == "100755"),
-                                                   "ci/packages.json must be a regular file, not a symlink or submodule");
+                                                   "selected file must be regular, not a symlink or submodule");
                                            blob(reading, selected.at("sha").get<std::string>());
                                        }
                                    } catch (const std::exception& error) {

@@ -24,7 +24,9 @@ namespace coreci {
 
         std::uint64_t appId = 0;
         std::uint64_t installationId = 0;
+        std::uint64_t botId = 0;
         std::string privateKeyFile;
+        std::string webhookSecretFile;
         std::string allowedOwner;
         std::string apiVersion;
         std::vector<std::string> repositories;
@@ -42,6 +44,8 @@ namespace coreci {
         using Callback = std::function<void(const GitHubResult&)>;
         explicit GitHub(const GitHubConfig& config);
         void loadCredentials();
+        std::uint64_t repositoryId(const std::string& repository) const;
+        bool verifyWebhook(const std::string& body, const std::string& signature) const;
         static bool validRepository(const std::string& repository);
         void request(const std::string& repository,
                      const std::string& method,
@@ -61,6 +65,7 @@ namespace coreci {
 
         const GitHubConfig& config;
         std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> key{nullptr, EVP_PKEY_free};
+        std::string webhookSecret;
         HttpClient http;
     };
 

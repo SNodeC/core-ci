@@ -104,3 +104,53 @@ is not approval to execute its tooling beside publication secrets.
 
 The registry transport still reuses one named instance between approved endpoints.
 The owner deferred refactoring to fixed endpoint clients; that work remains recorded.
+
+## Source requests, dispatch and reports
+
+`github.bot-id` is the immutable controller App bot user ID expected on dispatches.
+`github.webhook-secret-file` is a protected file containing the exact raw GitHub webhook
+secret bytes (32–4096 bytes); trailing newlines are significant. Configure the same secret
+in the App's webhook settings without printing it. A missing secret rejects all deliveries.
+The controller App PEM remains server-side and does not become a workflow secret.
+
+`pipeline.worker-repository` selects a configured GitHub grant; its repository ID comes
+from that single grant mapping. `pipeline.tooling-sha` is the reviewed full worker commit.
+The source/publication workflow path and approved Git blob SHA are configured separately
+with `pipeline.source-workflow`, `pipeline.source-workflow-blob`,
+`pipeline.publication-workflow`, `pipeline.publication-workflow-blob` and
+`pipeline.publication-ref`. Source dispatch uses the enrollment's explicit editing branch.
+Workflow code is read at its actual GitHub run commit and checked against its approved
+blob; that commit is intentionally independent of the exact selected source commit.
+
+The feed role uses `pipeline.feed-repository`, `pipeline.feed-id`, `pipeline.feed-branch`
+and `pipeline.feed-base-url`. It must differ from source and worker roles. Feed-write
+access remains with the separate worker App. Public trust inputs are
+`pipeline.gpg-fingerprint` (uppercase OpenPGP fingerprint), `pipeline.usign-key-sha256`
+and `pipeline.apk-key-sha256` (reviewed public-key file SHA-256). No actual signing private
+key belongs in these options. All deployment values are snapshotted into selected inputs.
+
+New enrollment requests the highest SemVer tag when present; a configuration save and
+initial-work failure are reported separately. Existing enrollment edits do not rewrite
+old work. The UI can request an exact older tag, retry definitively failed work with a
+new rebuild revision, or inspect assigned work. Missing setup, incompatible/missing
+prerequisites and changed workflows remain explicit errors. Tagless unrelated repositories
+do not acquire execution inputs or block independent work.
+
+`POST /github/webhook` handles raw-body HMAC-SHA256 authenticated `push`, `workflow_run`
+and `workflow_job` deliveries before browser-origin middleware. It checks installation
+and configured repository identity. Non-version/deleted tags and unassigned job reports
+create no work. Duplicate events use the existing graph identities. REST inspection
+verifies run/attempt/event/actor, approved workflow bytes, assigned package job and bounded
+artifact ID/digest metadata; an arbitrary success string cannot publish a node.
+
+The graph transaction authorizes dispatch before the GitHub request. A definitively
+rejected or never-submitted dispatch can fail; a timeout, inaccessible result or lost
+response preserves the assignment for reconciliation. Startup inspects assigned work once
+after listener success, then advances eligible waiting work. There is no startup polling,
+mutation replay or automatic retry. Identical results require no database write.
+
+Current limit: assignments up to 60,000 UTF-8 bytes, at most 100 jobs/artifacts per inspected
+run, one assigned build artifact up to one GiB, and bounded workflow-run history search.
+A successful build records GitHub job/artifact identities; it remains building while waiting
+for trusted publication. Signing, feed receipts and the worker tooling remain ongoing work;
+these interfaces do not claim a working live deployment.

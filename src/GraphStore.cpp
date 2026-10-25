@@ -1,5 +1,6 @@
 #include "GraphStore.h"
 
+#include <algorithm>
 #include <exception>
 
 namespace coreci {
@@ -37,7 +38,7 @@ namespace coreci {
 
     std::string GraphStore::guard(std::uint64_t nextRevision, std::uint64_t expectedGeneration) const {
         return "UPDATE graph_revision SET generation=generation+1,next_revision=" + std::to_string(nextRevision) +
-               " WHERE id=1 AND generation=" + std::to_string(generation) +
+               " WHERE id=1 AND generation=" + std::to_string(expectedGeneration) +
                " AND next_revision=" + std::to_string(state.nextRebuildRevision());
     }
 
@@ -189,6 +190,11 @@ namespace coreci {
         }
         if (!invalid.empty()) {
             callback({{}, invalid, false});
+        } else if (change.nextRevision == state.nextRebuildRevision() && change.definitions.empty() &&
+                   std::all_of(change.nodes.begin(), change.nodes.end(), [&](const auto& node) {
+                       return state.nodes().contains(node.id) && state.node(node.id) == node;
+                   })) {
+            callback({});
         } else {
             std::vector<DatabaseStatement> statements{{guard(change.nextRevision, generation), 1}};
             for (const auto& selected : change.definitions) {

@@ -4,6 +4,7 @@
 #include "Database.h"
 #include "Definition.h"
 #include "GraphStore.h"
+#include "PipelineConfig.h"
 #include "SourceReader.h"
 
 #include <functional>
@@ -20,7 +21,7 @@ namespace coreci {
     class Enrollment {
     public:
         using Callback = std::function<void(const EnrollmentResult&)>;
-        Enrollment(Database& database, GitHub& github, GraphStore& graphStore, SourceReader& sources);
+        Enrollment(Database& database, GitHub& github, GraphStore& graphStore, SourceReader& sources, const PipelineConfig& deployment);
         void restore(const Callback& callback);
         void list(const Callback& callback);
         void save(const nlohmann::json& request, const Callback& callback);
@@ -54,6 +55,7 @@ namespace coreci {
         GitHub& github;
         GraphStore& graphStore;
         SourceReader& sources;
+        const PipelineConfig& deployment;
         bool saving = false;
     };
 

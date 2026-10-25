@@ -64,6 +64,16 @@ async function reload() {
                 card.append(link);
             }
         }
+        if (execution.state === "failed" && !execution.superseded_by) {
+            const retry = document.createElement("button");
+            retry.textContent = "Retry with a new rebuild revision";
+            retry.addEventListener("click", () => operation(async () => {
+                const result = await api("/api/work/retry", {execution: execution.id});
+                await reload();
+                feedback(result);
+            }));
+            card.append(retry);
+        }
         element("graph").append(card);
     }
 
@@ -90,7 +100,17 @@ async function reload() {
         const edit = document.createElement("button");
         edit.textContent = "Edit";
         edit.addEventListener("click", () => select(repository));
-        card.append(title, name, dependencies, revision, targets, edit);
+        const tag = document.createElement("input");
+        tag.placeholder = "Exact version tag; empty selects highest";
+        tag.setAttribute("aria-label", "Version tag for " + repository.repository);
+        const build = document.createElement("button");
+        build.textContent = "Request build";
+        build.addEventListener("click", () => operation(async () => {
+            const result = await api("/api/work/request", {repository: repository.repository, tag: tag.value});
+            await reload();
+            feedback(result);
+        }));
+        card.append(title, name, dependencies, revision, targets, edit, tag, build);
         element("repositories").append(card);
     }
 }
@@ -107,6 +127,11 @@ async function operation(action) {
     }
 }
 
+element("reconcile").addEventListener("click", () => operation(async () => {
+    const result = await api("/api/work/reconcile", {});
+    await reload();
+    feedback(result);
+}));
 element("reload").addEventListener("click", () => operation(reload));
 element("repository").addEventListener("input", () => {
     selected = null;

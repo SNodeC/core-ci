@@ -197,40 +197,48 @@ namespace coreci {
         return reasons;
     }
 
-    GraphChange Graph::select(const std::string& root, const std::map<std::string, nlohmann::json>& sources, bool explicitRequest) const {
+    SourceTraversal Graph::traverseSources(const std::string& root, const std::map<std::string, nlohmann::json>& sources) {
         require(sources.contains(root), "requested repository has no pinned semantic-version source");
-        std::map<std::string, Definition> definitions;
+        SourceTraversal result;
         std::map<std::string, std::vector<std::string>> dependents;
         for (const auto& [name, source] : sources) {
-            validateSource(name, source);
-            definitions.emplace(name, Definition::parse(source.at("definition")));
             for (const auto& dependency : source.at("definition").at("depends_on")) {
                 dependents[dependency.get<std::string>()].push_back(name);
             }
         }
-        Definition::validateGraph(definitions);
-
-        std::set<std::string> affected{root};
+        result.affected.insert(root);
         std::vector<std::string> traversal{root};
         for (std::size_t index = 0; index < traversal.size(); ++index) {
             for (const auto& dependent : dependents[traversal[index]]) {
-                if (affected.insert(dependent).second) {
+                if (result.affected.insert(dependent).second) {
                     traversal.push_back(dependent);
                 }
             }
         }
-        std::vector<std::string> order;
         std::set<std::string> visited;
+        std::map<std::string, Definition> definitions;
         std::function<void(const std::string&)> visit = [&](const std::string& name) {
+            require(sources.contains(name), "required prerequisite has no selected version tag: " + name);
             if (visited.insert(name).second) {
+                definitions.emplace(name, Definition::parse(sources.at(name).at("definition")));
                 for (const auto& dependency : sources.at(name).at("definition").at("depends_on")) {
                     visit(dependency.get<std::string>());
                 }
-                order.push_back(name);
+                result.order.push_back(name);
             }
         };
         for (const auto& name : traversal) {
             visit(name);
+        }
+        Definition::validateGraph(definitions);
+        return result;
+    }
+
+    GraphChange Graph::select(const std::string& root, const std::map<std::string, nlohmann::json>& sources, bool explicitRequest) const {
+        const auto traversal = traverseSources(root, sources);
+        const auto& affected = traversal.affected;
+        for (const auto& name : traversal.order) {
+            validateSource(name, sources.at(name));
         }
 
         GraphChange change;
@@ -241,7 +249,7 @@ namespace coreci {
                                    {"commit", sources.at(root).at("commit")},
                                    {"explicit", explicitRequest}};
         bool acceptedRoot = false;
-        for (const auto& name : order) {
+        for (const auto& name : traversal.order) {
             if (affected.contains(name) && (name == root || acceptedRoot)) {
                 const auto& source = sources.at(name);
                 for (const auto& row : source.at("definition").at("matrix")) {
@@ -354,7 +362,7 @@ namespace coreci {
     Node Graph::bindRun(const std::string& id, const std::string& attemptId, bool publication, const nlohmann::json& run) const {
         auto selected = records.at(id);
         require(run.at("id").get<std::uint64_t>() != 0 && run.at("run_attempt").get<std::uint64_t>() != 0 &&
-                    run.at("repository_id").get<std::uint64_t>() != 0 && run.contains("workflow_sha") && run.contains("actor_id"),
+                    run.at("repository_id").get<std::uint64_t>() != 0 && run.contains("workflow_blob_sha") && run.contains("actor_id"),
                 "incomplete GitHub run identity");
         auto found = std::find_if(selected.attempts.begin(), selected.attempts.end(), [&](const auto& attempt) {
             return attempt.id == attemptId;
@@ -362,8 +370,8 @@ namespace coreci {
         require(found != selected.attempts.end() && !found->assignment.is_null(), "run report does not match assigned work");
         const auto& deployment = selected.source.at("deployment");
         const auto expectedRepository = publication ? deployment.at("worker").at("repository_id") : selected.source.at("repository_id");
-        const auto expectedWorkflow = deployment.at(publication ? "publication_workflow_sha" : "source_workflow_sha");
-        require(run.at("repository_id") == expectedRepository && run.at("workflow_sha") == expectedWorkflow &&
+        const auto expectedWorkflow = deployment.at(publication ? "publication_workflow" : "source_workflow").at("blob_sha");
+        require(run.at("repository_id") == expectedRepository && run.at("workflow_blob_sha") == expectedWorkflow &&
                     run.at("actor_id") == deployment.at("controller_app_bot_id"),
                 "GitHub run repository/workflow/actor differs from assignment");
         auto& assigned = publication ? found->publicationRun : found->buildRun;
@@ -419,6 +427,24 @@ namespace coreci {
         require(attempt.failure.empty() || attempt.failure == reason, "conflicting failure result");
         attempt.failure = reason;
         attempt.state = "failed";
+        return selected;
+    }
+
+    Node Graph::rejectedDispatch(const std::string& id,
+                                 const std::string& attemptId,
+                                 bool publication,
+                                 int status,
+                                 bool submitted,
+                                 const std::string& reason) const {
+        auto selected = records.at(id);
+        auto& attempt = current(selected, attemptId);
+        require(attempt.state == (publication ? "publishing" : "building") && !attempt.assignment.is_null() &&
+                    (publication ? attempt.publicationRun : attempt.buildRun).is_null(),
+                "dispatch failure does not match assigned work");
+        require(!reason.empty() && (!submitted || (status >= 400 && status < 500 && status != 408)),
+                "uncertain dispatch outcome is not proof of failure");
+        attempt.state = "failed";
+        attempt.failure = reason;
         return selected;
     }
 

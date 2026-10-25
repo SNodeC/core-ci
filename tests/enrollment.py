@@ -15,6 +15,7 @@ import socketserver
 import ssl
 import subprocess
 import tempfile
+import time
 import threading
 import urllib.error
 import urllib.request
@@ -112,7 +113,7 @@ def exercise(args, root):
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            if self.path != "/app/installations/7/access_tokens" or body["repository_ids"] != [99] or body["permissions"] not in ({"contents": "read"}, {"contents": "write"}):
+            if self.path != "/app/installations/7/access_tokens" or body["repository_ids"] != [99] or body["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}):
                 errors.append("unexpected App scope")
             self.send_json(201, {"token": "synthetic-token"})
 
@@ -121,6 +122,10 @@ def exercise(args, root):
                 errors.append("missing scoped token")
             if self.path == "/repos/Owner/example":
                 self.send_json(200, {"id": 99, "full_name": "Owner/example"})
+            elif self.path == "/repos/Owner/example/actions/runs/123":
+                self.send_json(404, {})
+            elif self.path == "/repos/Owner/example/commits/main":
+                self.send_json(200, {"sha": head})
             elif self.path == "/repos/Owner/example/git/ref/heads/main":
                 self.send_json(200, {"object": {"sha": head}})
             elif self.path == "/repos/Owner/example/git/commits/" + head:
@@ -298,9 +303,14 @@ def exercise(args, root):
                 lifecycle.run([args.graph_executable, "--config-file", str(graph_config), "--log-level", "2", "database", "--mode", "unmanaged"])
                 application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
                 lifecycle.wait_http(port, application)
+                deadline = time.monotonic() + 5
                 status, graph = request("/api/graph")
+                while sorted(row["state"] for row in graph["executions"]) != ["building", "failed"] and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                    status, graph = request("/api/graph")
                 assert status == 200 and len(graph["executions"]) == 2, graph
-                assert sorted(row["state"] for row in graph["executions"]) == ["building", "waiting"], graph
+                assert sorted(row["state"] for row in graph["executions"]) == ["building", "failed"], graph
+                assert "workflow" in next(row for row in graph["executions"] if row["state"] == "failed")["failure"], graph
                 assert [row["build_run"]["id"] for row in graph["executions"] if row["build_run"] is not None] == [123], "assigned execution identity changed on restart"
             assert not errors, errors
             assert "synthetic-token" not in (directory / "application.log").read_text()

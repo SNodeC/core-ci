@@ -1,0 +1,329 @@
+"""Real MariaDB and synthetic GitHub/OCI HTTPS pipeline boundaries, not live jobs."""
+
+import argparse
+import base64
+import hashlib
+import hmac
+import http.server
+import json
+import os
+from pathlib import Path
+import pwd
+import ssl
+import subprocess
+import tempfile
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import lifecycle
+
+
+def exercise(args, directory):
+    root = Path(directory)
+    data = root / "data"
+    temporary = root / "tmp"
+    data.mkdir(mode=0o700)
+    temporary.mkdir(mode=0o700)
+    lifecycle.run(["mariadb-install-db", "--no-defaults", "--datadir=" + str(data), "--tmpdir=" + str(temporary),
+                   "--auth-root-authentication-method=normal", "--skip-test-db"])
+    data.chmod(0o700)
+    db_socket = data / "server.sock"
+    app_key = root / "app.pem"
+    tls_key = root / "tls-key.pem"
+    certificate = root / "tls.pem"
+    lifecycle.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(app_key)])
+    app_key.chmod(0o600)
+    lifecycle.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", str(tls_key),
+                   "-out", str(certificate), "-subj", "/CN=api.github.com", "-addext", "subjectAltName=DNS:api.github.com,IP:127.0.0.1"])
+    tls_key.chmod(0o600)
+    secret = os.urandom(48)
+    secret_file = root / "webhook.secret"
+    secret_file.write_bytes(secret)
+    secret_file.chmod(0o600)
+    password = root / "password"
+    password.write_text("")
+    password.chmod(0o600)
+    source_sha = "d" * 40
+    older_sha = "c" * 40
+    head = "a" * 40
+    definitions = {}
+    trees = {}
+    blobs = {}
+    writes = 0
+    dispatches = []
+    runs = {}
+    errors = []
+    lose_next = False
+    workflow = b"fixture reviewed source workflow; no job is executed\n"
+    workflow_blob = hashlib.sha1(b"blob " + str(len(workflow)).encode() + b"\0" + workflow).hexdigest()
+    blobs[workflow_blob] = workflow
+    image_config = json.dumps({"os": "linux", "architecture": "amd64"}).encode()
+    config_digest = "sha256:" + hashlib.sha256(image_config).hexdigest()
+    manifest = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                           "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": config_digest,
+                                      "size": len(image_config)}, "layers": []}).encode()
+    manifest_digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    definition = {"schema": 1, "title": "Example", "package": "example", "depends_on": [], "build": {"native": "ci/native.sh"},
+                  "matrix": [{"id": "native", "family": "native", "distribution": "source-defined", "suite": "series", "arch": "amd64",
+                              "runner": ["self-hosted", "selected"], "build": {"image": "sample:series", "platform": "linux/amd64", "format": "deb"}}]}
+
+    def register(commit, document):
+        raw = json.dumps(document).encode()
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+        definitions[commit] = (document, blob)
+        blobs[blob] = raw
+        ids = [hashlib.sha1((kind + commit).encode()).hexdigest() for kind in ("root", "ci", "github", "workflows")]
+        trees[ids[0]] = [{"path": "ci", "type": "tree", "mode": "040000", "sha": ids[1]},
+                         {"path": ".github", "type": "tree", "mode": "040000", "sha": ids[2]}]
+        trees[ids[1]] = [{"path": "packages.json", "type": "blob", "mode": "100644", "sha": blob}]
+        trees[ids[2]] = [{"path": "workflows", "type": "tree", "mode": "040000", "sha": ids[3]}]
+        trees[ids[3]] = [{"path": "core-ci-build.yml", "type": "blob", "mode": "100644", "sha": workflow_blob}]
+        return blob
+
+    register(head, definition)
+    register(source_sha, definition)
+    older_definition = json.loads(json.dumps(definition))
+    older_definition["build"]["native"] = "ci/native-older.sh"
+    register(older_sha, older_definition)
+
+    class GitHub(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, status, body):
+            content = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(content)
+            self.close_connection = True
+
+        def do_POST(self):
+            nonlocal lose_next
+            value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/app/installations/7/access_tokens":
+                if value["repository_ids"] != [99] or value["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}):
+                    errors.append("unexpected installation token scope")
+                self.reply(201, {"token": "synthetic-pipeline-token"})
+            elif self.path == "/repos/Owner/example/actions/workflows/core-ci-build.yml/dispatches":
+                try:
+                    assignment = json.loads(value["inputs"]["assignment"])
+                    execution = value["inputs"]["execution"]
+                    # Read real durable state at the instant the fake GitHub receives dispatch.
+                    durable = lifecycle.query(db_socket, "SELECT state FROM core_ci.attempts WHERE id='" + assignment["attempt"] + "'").strip()
+                    assert durable == "building", "dispatch occurred before durable build authorization"
+                    assert assignment["execution"] == execution and value["inputs"]["assignment_sha256"] == hashlib.sha256(json.dumps(assignment, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    assert assignment["target"]["runner"] == ["self-hosted", "selected"]
+                    assert assignment["environment"]["digest"] == manifest_digest
+                    run_id = 100 + len(dispatches)
+                    run = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 99}, "head_repository": {"id": 99},
+                           "actor": {"id": 42}, "display_title": "core-ci build " + assignment["attempt"] + " " + value["inputs"]["assignment_sha256"],
+                           "path": ".github/workflows/core-ci-build.yml", "head_sha": head,
+                           "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id), "status": "in_progress", "conclusion": None}
+                    runs[run_id] = run
+                    dispatches.append(assignment)
+                    if lose_next:
+                        lose_next = False
+                        self.close_connection = True
+                    else:
+                        self.reply(200, {"workflow_run_id": run_id})
+                except Exception as error:
+                    errors.append(str(error))
+                    self.reply(422, {})
+            else:
+                errors.append("unexpected mutation " + self.path)
+                self.reply(404, {})
+
+        def do_PUT(self):
+            nonlocal head, writes
+            value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            try:
+                assert self.path == "/repos/Owner/example/contents/ci/packages.json"
+                raw = base64.b64decode(value["content"])
+                assert value["sha"] == definitions[head][1]
+                writes += 1
+                head = hashlib.sha1(("head-" + str(writes)).encode()).hexdigest()
+                document = json.loads(raw)
+                register(head, document)
+                # Preserve the exact committed bytes, including the UI writer's formatting.
+                blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+                definitions[head] = (document, blob)
+                blobs[blob] = raw
+                trees[hashlib.sha1(("ci" + head).encode()).hexdigest()][0]["sha"] = blob
+                self.reply(201, {"commit": {"sha": head}, "content": {"sha": blob}})
+            except Exception as error:
+                errors.append(str(error))
+                self.reply(422, {})
+
+        def do_GET(self):
+            parsed = urllib.parse.urlsplit(self.path)
+            path = parsed.path
+            if path == "/v2/library/sample/manifests/series":
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(manifest)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(manifest)
+                self.close_connection = True
+            elif path == "/v2/library/sample/blobs/" + config_digest:
+                self.reply(200, json.loads(image_config))
+            else:
+                if self.headers.get("Authorization") != "Bearer synthetic-pipeline-token":
+                    errors.append("missing scoped GitHub authorization")
+                prefix = "/repos/Owner/example"
+                suffix = path.removeprefix(prefix)
+                if path == prefix:
+                    self.reply(200, {"id": 99, "full_name": "Owner/example"})
+                elif suffix == "/git/ref/heads/main":
+                    self.reply(200, {"object": {"sha": head}})
+                elif suffix == "/commits/main":
+                    self.reply(200, {"sha": head})
+                elif suffix == "/tags":
+                    self.reply(200, [{"name": "v0.9.0+build"}, {"name": "v2.0.0-rc.1"}])
+                elif suffix in ("/git/ref/tags/v0.9.0%2Bbuild", "/git/ref/tags/v2.0.0-rc.1"):
+                    older = "%2B" in suffix
+                    self.reply(200, {"ref": "refs/tags/" + ("v0.9.0+build" if older else "v2.0.0-rc.1"),
+                                     "object": {"type": "commit", "sha": older_sha if older else source_sha}})
+                elif suffix.startswith("/git/commits/") and suffix[13:] in definitions:
+                    commit = suffix[13:]
+                    self.reply(200, {"sha": commit, "tree": {"sha": hashlib.sha1(("root" + commit).encode()).hexdigest()}})
+                elif suffix.startswith("/git/trees/") and suffix[11:] in trees:
+                    sha = suffix[11:]
+                    self.reply(200, {"sha": sha, "truncated": False, "tree": trees[sha]})
+                elif suffix.startswith("/git/blobs/") and suffix[11:] in blobs:
+                    sha = suffix[11:]
+                    self.reply(200, {"sha": sha, "encoding": "base64", "content": base64.b64encode(blobs[sha]).decode()})
+                elif suffix == "/actions/workflows/core-ci-build.yml/runs":
+                    self.reply(200, {"workflow_runs": list(runs.values())})
+                elif suffix.startswith("/actions/runs/"):
+                    parts = suffix.split("/")
+                    run_id = int(parts[3])
+                    run = runs[run_id]
+                    assignment = dispatches[run_id - 100]
+                    if len(parts) == 4:
+                        self.reply(200, run)
+                    elif parts[4] == "jobs":
+                        self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
+                                         "name": "build / core-ci package " + assignment["attempt"], "status": run["status"], "conclusion": run["conclusion"]}]})
+                    elif parts[4] == "artifacts":
+                        self.reply(200, {"total_count": 1, "artifacts": [{"id": run_id + 2000, "name": "core-ci-build-" + assignment["attempt"],
+                                         "digest": "sha256:" + "e" * 64, "size_in_bytes": 1024, "expired": False, "workflow_run": {"id": run_id}}]})
+                    else:
+                        errors.append("unexpected run query " + suffix)
+                        self.reply(404, {})
+                else:
+                    errors.append("unexpected GitHub query " + suffix)
+                    self.reply(404, {})
+
+    github = http.server.HTTPServer(("127.0.0.1", 0), GitHub)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certificate, tls_key)
+    github.socket = context.wrap_socket(github.socket, server_side=True)
+    thread = threading.Thread(target=github.serve_forever, daemon=True)
+    thread.start()
+    port = lifecycle.free_port()
+    origin = "http://127.0.0.1:" + str(port)
+    registry = "https://127.0.0.1:" + str(github.server_port)
+    settings = root / "controller.conf"
+    settings.write_text('github.app-id=42\ngithub.installation-id=7\ngithub.bot-id=42\ngithub.allowed-owner="Owner"\n'
+        'github.repository=["Owner/example=99", "Owner/worker=1000"]\ngithub.private-key-file="' + str(app_key) + '"\n'
+        'github.webhook-secret-file="' + str(secret_file) + '"\nui.origin="' + origin + '"\n'
+        'registry.default-registry="127.0.0.1:' + str(github.server_port) + '"\nregistry.default-namespace="library"\n'
+        'registry.allowed-origin=["' + registry + '"]\npipeline.worker-repository="Owner/worker"\npipeline.tooling-sha="' + "f" * 40 + '"\n'
+        'pipeline.source-workflow-blob="' + workflow_blob + '"\npipeline.publication-ref="main"\npipeline.publication-workflow-blob="' + "a" * 40 + '"\n'
+        'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="https://feed.invalid/"\n'
+        'pipeline.gpg-fingerprint="' + "A" * 40 + '"\npipeline.usign-key-sha256="' + "a" * 64 + '"\npipeline.apk-key-sha256="' + "b" * 64 + '"\n')
+    settings.chmod(0o600)
+    command = [args.executable, "--config-file", str(settings), "--log-file", str(root / "framework.log"), "database", "--mode", "unmanaged",
+               "--socket", str(db_socket), "--user", "core_ci_test", "--name", "core_ci", "--password-file", str(password),
+               "web", "local", "--port", str(port), "github-http", "remote", "--host", "127.0.0.1", "--port", str(github.server_port),
+               "tls", "--ca-cert", str(certificate), "environment-http", "tls", "--ca-cert", str(certificate)]
+
+    def request(path, body=None, headers=None):
+        payload = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(origin + path, data=payload, headers=headers or {"Content-Type": "application/json", "Origin": origin})
+        try:
+            response = urllib.request.urlopen(req, timeout=15)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            result = (response.status, json.load(response))
+        return result
+
+    def report(run_id, signature=None, repository_id=99):
+        body = {"installation": {"id": 7}, "repository": {"id": repository_id, "full_name": "Owner/example"}, "workflow_run": runs[run_id]}
+        raw = json.dumps(body).encode()
+        signature = signature or "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
+        return request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature})
+
+    database = None
+    application = None
+    try:
+        with (root / "db.log").open("w") as db_log, (root / "app.log").open("w") as app_log:
+            database = subprocess.Popen(["/usr/sbin/mariadbd", "--no-defaults", "--datadir=" + str(data), "--socket=" + str(db_socket),
+                "--pid-file=" + str(data / "pid"), "--skip-networking", "--innodb-buffer-pool-size=32M", "--tmpdir=" + str(temporary),
+                "--user=" + pwd.getpwuid(os.geteuid()).pw_name], stdout=db_log, stderr=subprocess.STDOUT)
+            lifecycle.wait_sql(db_socket, database)
+            schema = (Path(__file__).resolve().parents[1] / "sql/schema.sql").read_text()
+            lifecycle.query(db_socket, "CREATE DATABASE core_ci; USE core_ci; " + schema +
+                " CREATE USER 'core_ci_test'@'localhost'; GRANT SELECT,INSERT,UPDATE,DELETE ON core_ci.* TO 'core_ci_test'@'localhost';")
+            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
+            status, saved = request("/api/repositories/save", {"repository": "Owner/example", "branch": "main", "revision": "",
+                "blob_sha": definitions[head][1], "definition": definition})
+            assert status == 200 and saved["enrolled"] and saved["work"]["status"] == 202, saved
+            assert writes == 1 and len(dispatches) == 1 and dispatches[0]["source"]["commit"] == source_sha
+            assert runs[100]["head_sha"] != source_sha, "workflow and selected source were conflated"
+            assert report(100, "sha256=" + "0" * 64)[0] == 401
+            assert report(100, repository_id=999)[0] == 422
+            assert report(100)[0] == 200 and len(dispatches) == 1
+            lifecycle.stop(application)
+            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
+            assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 1, "restart dispatched a replacement"
+            lose_next = True
+            status, selected = request("/api/work/request", {"repository": "Owner/example", "tag": "v0.9.0+build"})
+            assert status == 202 and len(dispatches) == 2, selected
+            older = dispatches[1]
+            assert older["source"]["commit"] == older_sha and older["source"]["build"]["native"] == "ci/native-older.sh"
+            graph = request("/api/graph")[1]["executions"]
+            assert next(row for row in graph if row["id"] == older["execution"])["build_run"] is None
+            assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 2, "lost dispatch response caused replay"
+            runs[101].update(status="completed", conclusion="failure")
+            assert report(101)[0] == 200
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["state"] == "failed"
+            assert request("/api/work/retry", {"execution": older["execution"]})[0] == 202 and len(dispatches) == 3
+            assert dispatches[2]["source"]["commit"] == older_sha and dispatches[2]["revision"] > dispatches[0]["revision"]
+            assert report(101)[0] == 200, "late report was not idempotent"
+            runs[102].update(status="completed", conclusion="success")
+            assert report(102)[0] == 200
+            current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
+            assert current["state"] == "building" and current["activity"] == "build complete; waiting for publication"
+            assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
+            generation = request("/api/graph")[1]["generation"]
+            assert report(102)[0] == 200 and len(dispatches) == 3
+            assert request("/api/graph")[1]["generation"] == generation, "duplicate report caused a redundant mutation"
+            assert request("/api/repositories/save", {"repository": "Owner/worker", "branch": "main", "definition": definition})[0] == 422
+            assert not errors, errors
+            assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts").strip() == "3"
+            print("PASS local pipeline: enrollment/highest tag, committed dispatch, raw HMAC, exact older source, lost response, restart, failure/retry, late reports and assigned artifact identities")
+    finally:
+        lifecycle.stop(application)
+        lifecycle.stop(database)
+        github.shutdown()
+        github.server_close()
+        thread.join(timeout=3)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--executable", required=True)
+    parser.add_argument("--directory", required=True)
+    args = parser.parse_args()
+    Path(args.directory).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="pipeline-", dir=args.directory) as temporary:
+        exercise(args, temporary)

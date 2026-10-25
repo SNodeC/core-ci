@@ -21,6 +21,7 @@ namespace coreci {
         explicit SourceReader(GitHub& github);
         void select(const std::string& repository, const std::string& tag, const Callback& callback);
         void definition(const std::string& repository, const std::string& commit, const Callback& callback);
+        void file(const std::string& repository, const std::string& commit, const std::string& path, const Callback& callback);
         static std::string blobSha(const std::string& content);
 
     private:
@@ -28,6 +29,7 @@ namespace coreci {
             std::string repository;
             nlohmann::json source;
             std::string tag;
+            std::vector<std::string> path;
             std::optional<Version> highest;
             bool ambiguous = false;
             unsigned int page = 1;

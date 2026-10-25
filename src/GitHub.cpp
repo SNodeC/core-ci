@@ -4,8 +4,10 @@
 #include "RepositoryName.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <ctime>
+#include <openssl/hmac.h>
 #include <openssl/pem.h>
 #include <set>
 #include <stdexcept>
@@ -41,9 +43,20 @@ namespace coreci {
                                           std::uint64_t{0},
                                           CLI::TypeValidator<std::uint64_t>()),
                         true);
+        setConfigurable(addOptionVariable("--bot-id",
+                                          botId,
+                                          "Controller App bot user ID expected on dispatches",
+                                          "uint64",
+                                          std::uint64_t{0},
+                                          CLI::TypeValidator<std::uint64_t>()),
+                        true);
         setConfigurable(
             addOptionVariable(
                 "--private-key-file", privateKeyFile, "Protected controller App RSA private-key file", "path", CLI::ExistingFile),
+            true);
+        setConfigurable(
+            addOptionVariable(
+                "--webhook-secret-file", webhookSecretFile, "Protected GitHub App webhook HMAC secret file", "path", CLI::ExistingFile),
             true);
         setConfigurable(addOptionVariable("--allowed-owner",
                                           allowedOwner,
@@ -72,6 +85,35 @@ namespace coreci {
         , http("github-http", "api.github.com") {
     }
 
+    std::uint64_t GitHub::repositoryId(const std::string& repository) const {
+        return repositoryIds.at(repository);
+    }
+
+    bool GitHub::verifyWebhook(const std::string& body, const std::string& signature) const {
+        bool valid = false;
+        if (!webhookSecret.empty() && signature.size() == 71 && signature.starts_with("sha256=")) {
+            std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
+            unsigned int size = 0;
+            const auto* calculated = HMAC(EVP_sha256(),
+                                          webhookSecret.data(),
+                                          static_cast<int>(webhookSecret.size()),
+                                          reinterpret_cast<const unsigned char*>(body.data()),
+                                          body.size(),
+                                          digest.data(),
+                                          &size);
+            if (calculated != nullptr && size == 32) {
+                std::string expected = "sha256=";
+                constexpr char hex[] = "0123456789abcdef";
+                for (unsigned int index = 0; index < size; ++index) {
+                    expected.push_back(hex[digest[index] >> 4]);
+                    expected.push_back(hex[digest[index] & 15]);
+                }
+                valid = CRYPTO_memcmp(expected.data(), signature.data(), expected.size()) == 0;
+            }
+        }
+        return valid;
+    }
+
     bool GitHub::validRepository(const std::string& repository) {
         const auto separator = repository.find('/');
         const std::string_view value(repository);
@@ -85,6 +127,12 @@ namespace coreci {
 
     void GitHub::loadCredentials() {
         http.configure();
+        if (!config.webhookSecretFile.empty()) {
+            webhookSecret = readPrivateFile(config.webhookSecretFile, 4096);
+            if (webhookSecret.size() < 32) {
+                throw std::invalid_argument("webhook secret file must contain at least 32 bytes");
+            }
+        }
         if (!config.privateKeyFile.empty()) {
             if (config.appId == 0 || config.installationId == 0 || config.allowedOwner.empty()) {
                 throw std::runtime_error("GitHub App requires explicit App ID, installation ID and allowed owner");

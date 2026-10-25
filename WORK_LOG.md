@@ -266,3 +266,33 @@
   and observed configuration CDN. Digest: sha256:15a71cc87173e191d5046f9c4288db4e8954b67f92e48d9587087826b0afe562.
   Temporary probe settings are under the build directory, not deployment configuration.
 - Checkpoint accounting before this entry: {'production': [526, 2], 'tests': [234, 0], 'documentation': [55, 1]}. Canonical format-check and whitespace checks pass.
+
+## 2026-10-25 — graph-driven build coordination checkpoint
+
+- Connected UI enrollment/highest-tag policy, explicit older source requests, tag webhooks,
+  graph selection, durable dispatch authority, assigned run/job/artifact inspection and
+  explicit retry. Added raw-body HMAC verification and repository/installation checks;
+  workflow files use the existing exact Git tree/blob reader, not a second reader.
+- Preserved separate source and workflow commits. Approved workflow blob identities and
+  deployment roles/public signing identities are explicit configuration, frozen per source.
+  Added the previously verified controller bot ID to the protected external config only.
+- Reconciliation preserves lost/inaccessible assignments, advances independent eligible
+  targets and runs once after listener success. Unknown outcomes never authorize replacement
+  jobs. Identical report application avoids redundant graph-generation writes.
+- Found and corrected an existing guard bug: enrollment's captured expected generation
+  was ignored in SQL. Real MariaDB regression now rejects stale enrollment after another
+  committed graph change; generation guards remain the sole mutation authorization.
+- Local end-to-end fixture uses actual HTTP routes and real MariaDB with explicitly
+  synthetic GitHub/OCI servers. Proves pre-request committed state, highest prerelease,
+  older +build tags/hooks, distinct workflow/source commits, HMAC rejection, lost dispatch
+  response, restart, assigned-run failure, fresh retry revision, duplicate/late reports and
+  assigned job/artifact metadata. It executes no GitHub job or source package hook.
+- Worker/feed enrollment is rejected. The UI exposes source requests, retry, log links,
+  blockers and explicit inspection. Client endpoint refactoring remains deferred at owner
+  direction. No public UI, App webhook, workflow, job, signing key or feed was activated.
+- Trusted build/publication tooling, verified feed receipts and required live package-manager
+  installation/signature acceptance remain unfinished; do not describe this as deployment ready.
+- All 37 local suites pass after the final coordinator changes. Canonical formatting,
+  JavaScript syntax, whitespace and 160-column source checks pass. Live GitHub jobs and
+  package publication/installation acceptance remain unperformed.
+- Checkpoint accounting before this entry: {'production': [1179, 78], 'tests': [480, 98], 'documentation': [83, 2]}. No generic workflow engine or persisted ready queue added.

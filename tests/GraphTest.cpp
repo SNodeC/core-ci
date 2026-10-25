@@ -46,7 +46,7 @@ namespace {
                 {"run_attempt", 1},
                 {"repository_id", publication ? json(1000) : node.source.at("repository_id")},
                 {"actor_id", 42},
-                {"workflow_sha", std::string(40, publication ? 'd' : 'c')}};
+                {"workflow_blob_sha", std::string(40, publication ? 'd' : 'c')}};
     }
 
     void publish(coreci::Graph& graph, const std::string& id) {
@@ -92,6 +92,10 @@ int main() {
         check(selection.nodes.size() == 8, "diamond must be created atomically for both targets");
         graph.apply(selection);
         check(graph.select("r", sources, false).nodes.empty(), "duplicate selection created executions");
+        auto unrelated = sources;
+        unrelated["unrelated"] = graph_fixture::source("unrelated", 9, {"tagless"});
+        unrelated["unrelated"].erase("environments");
+        check(graph.select("r", unrelated, false).nodes.empty(), "unrelated tagless work blocked an independent selection");
         auto claimed = graph;
         claimed.apply(claimed.select("r", sources, true));
         check(claimed.nodes().size() == 8 && claimed.nextRebuildRevision() == graph.nextRebuildRevision(),
@@ -166,6 +170,24 @@ int main() {
             graph.select("a", missing, true);
         });
         check(graph.nodes().size() == count, "missing prerequisite created automatic upward work");
+
+        coreci::Graph rejectedDispatch;
+        auto independent = graph_fixture::source("solo", 8, {});
+        rejectedDispatch.apply(rejectedDispatch.select("solo", {{"solo", independent}}, true));
+        const auto soloId = rejectedDispatch.nodes().begin()->first;
+        apply(rejectedDispatch, rejectedDispatch.beginBuild(soloId));
+        const auto soloAttempt = rejectedDispatch.node(soloId).attempts.back().id;
+        rejects([&]() {
+            rejectedDispatch.rejectedDispatch(soloId, soloAttempt, false, 500, true, "uncertain server response");
+        });
+        rejects([&]() {
+            rejectedDispatch.rejectedDispatch(soloId, soloAttempt, false, 408, true, "uncertain timeout");
+        });
+        apply(rejectedDispatch, rejectedDispatch.rejectedDispatch(soloId, soloAttempt, false, 403, true, "definitive dispatch rejection"));
+        const auto rejectedRevision = rejectedDispatch.node(soloId).attempts.back().revision;
+        rejectedDispatch.apply(rejectedDispatch.retry(soloId));
+        check(rejectedDispatch.node(soloId).attempts.back().revision > rejectedRevision,
+              "dispatch rejection retry reused package identity");
 
         std::vector<coreci::Node> persisted;
         for (const auto& [id, node] : graph.nodes()) {

@@ -19,26 +19,28 @@ namespace graph_fixture {
             environments[row] = {
                 {"image", "configured:tag"}, {"platform", std::string("linux/") + arch}, {"digest", "sha256:" + std::string(64, '1')}};
         }
-        return {{"name", name},
-                {"repository", "Owner/" + name},
-                {"repository_id", id},
-                {"tag", "v1.0.0"},
-                {"commit", std::string(40, 'a')},
-                {"definition_revision", std::string(40, 'a')},
-                {"definition_blob_sha", std::string(40, 'b')},
-                {"definition",
-                 {{"schema", 1},
-                  {"title", name},
-                  {"package", name + "pkg"},
-                  {"depends_on", dependencies},
-                  {"build", {{"native", "ci/native.sh"}}},
-                  {"matrix", matrix}}},
-                {"environments", environments},
-                {"deployment",
-                 {{"worker", {{"repository_id", 1000}}},
-                  {"source_workflow_sha", std::string(40, 'c')},
-                  {"publication_workflow_sha", std::string(40, 'd')},
-                  {"controller_app_bot_id", 42}}}};
+        return {
+            {"name", name},
+            {"repository", "Owner/" + name},
+            {"repository_id", id},
+            {"tag", "v1.0.0"},
+            {"commit", std::string(40, 'a')},
+            {"definition_revision", std::string(40, 'a')},
+            {"definition_blob_sha", std::string(40, 'b')},
+            {"definition",
+             {{"schema", 1},
+              {"title", name},
+              {"package", name + "pkg"},
+              {"depends_on", dependencies},
+              {"build", {{"native", "ci/native.sh"}}},
+              {"matrix", matrix}}},
+            {"environments", environments},
+            {"deployment",
+             {{"worker", {{"repository_id", 1000}, {"repository", "Owner/worker"}, {"tooling_sha", std::string(40, 'd')}}},
+              {"source_workflow", {{"path", ".github/workflows/core-ci-build.yml"}, {"ref", "main"}, {"blob_sha", std::string(40, 'c')}}},
+              {"publication_workflow",
+               {{"path", ".github/workflows/core-ci-publish.yml"}, {"ref", "main"}, {"blob_sha", std::string(40, 'd')}}},
+              {"controller_app_bot_id", 42}}}};
     }
 
 } // namespace graph_fixture

@@ -41,6 +41,8 @@ add_executable(
     src/SourceReader.cpp
     src/HttpsUrl.cpp
     src/EnvironmentResolver.cpp
+    src/PipelineConfig.cpp
+    src/Pipeline.cpp
 )
 target_link_libraries(
     core-ci
@@ -248,4 +250,15 @@ if(BUILD_TESTING)
         )
         set_tests_properties(environment-${case} PROPERTIES TIMEOUT 25)
     endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_test(
+        NAME pipeline-boundaries
+        COMMAND
+            ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/pipeline.py
+            --executable $<TARGET_FILE:core-ci> --directory
+            ${PROJECT_BINARY_DIR}/tests/pipeline
+    )
+    set_tests_properties(pipeline-boundaries PROPERTIES TIMEOUT 75)
 endif()

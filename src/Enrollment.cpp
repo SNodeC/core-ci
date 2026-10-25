@@ -24,11 +24,13 @@ namespace coreci {
         }
     } // namespace
 
-    Enrollment::Enrollment(Database& database, GitHub& github, GraphStore& graphStore, SourceReader& sources)
+    Enrollment::Enrollment(
+        Database& database, GitHub& github, GraphStore& graphStore, SourceReader& sources, const PipelineConfig& deployment)
         : database(database)
         , github(github)
         , graphStore(graphStore)
-        , sources(sources) {
+        , sources(sources)
+        , deployment(deployment) {
     }
 
     void Enrollment::restore(const Callback& callback) {
@@ -87,6 +89,8 @@ namespace coreci {
                 save->definition = Definition::parse(request.at("definition"));
                 save->callback = callback;
                 const auto separator = save->repository.find('/');
+                require(save->repository != deployment.workerRepository && save->repository != deployment.feedRepository,
+                        "trusted worker/feed repositories cannot be enrolled as sources");
                 require(GitHub::validRepository(save->repository), "use a valid owner/repository name");
                 require(!save->branch.empty() && save->branch.size() <= 256, "specify the configuration editing branch");
                 save->name = save->repository.substr(separator + 1);
@@ -159,6 +163,8 @@ namespace coreci {
                 save->branch = request.at("branch").get<std::string>();
                 save->callback = callback;
                 save->importing = true;
+                require(save->repository != deployment.workerRepository && save->repository != deployment.feedRepository,
+                        "trusted worker/feed repositories cannot be enrolled as sources");
                 require(GitHub::validRepository(save->repository), "invalid repository name");
                 require(!save->branch.empty() && save->branch.size() <= 256, "specify the configuration editing branch");
                 save->name = save->repository.substr(save->repository.find('/') + 1);
@@ -178,6 +184,7 @@ namespace coreci {
                                         require(row.at("id") == save->id && row.at("repository") == save->repository &&
                                                     row.at("branch") == save->branch,
                                                 "repository ID, owner and editing branch must match enrollment");
+                                        save->expectedRevision = row.at("revision").get<std::string>();
                                     }
                                 }
                                 readHead(save);
@@ -333,26 +340,29 @@ namespace coreci {
             require(std::regex_match(revision, sha) && std::regex_match(blob, sha), "GitHub write returned invalid revision identities");
             require(save->importing || blob == SourceReader::blobSha(save->definition.json.dump(2) + "\n"),
                     "GitHub write returned a different definition blob; reconcile its committed contents");
-            graphStore.enroll(
-                save->name,
-                save->repository,
-                save->branch,
-                {save->id, revision, blob, save->definition.json},
-                save->generation,
-                [this, save, revision](const DatabaseResult& persisted) {
-                    if (persisted.error.empty()) {
-                        finish(save,
-                               200,
-                               {{"repository", save->repository}, {"revision", revision}, {"github_committed", true}, {"enrolled", true}});
-                    } else {
-                        finish(save,
-                               503,
-                               {{"error", "GitHub committed the definition but database enrollment needs reconciliation"},
-                                {"revision", revision},
-                                {"github_committed", true},
-                                {"enrolled", nullptr}});
-                    }
-                });
+            graphStore.enroll(save->name,
+                              save->repository,
+                              save->branch,
+                              {save->id, revision, blob, save->definition.json},
+                              save->generation,
+                              [this, save, revision](const DatabaseResult& persisted) {
+                                  if (persisted.error.empty()) {
+                                      finish(save,
+                                             200,
+                                             {{"repository", save->repository},
+                                              {"revision", revision},
+                                              {"github_committed", true},
+                                              {"enrolled", true},
+                                              {"new_enrollment", save->expectedRevision.empty()}});
+                                  } else {
+                                      finish(save,
+                                             503,
+                                             {{"error", "GitHub committed the definition but database enrollment needs reconciliation"},
+                                              {"revision", revision},
+                                              {"github_committed", true},
+                                              {"enrolled", nullptr}});
+                                  }
+                              });
         } catch (const std::exception& error) {
             finish(save, 502, {{"error", error.what()}, {"github_committed", nullptr}});
         }

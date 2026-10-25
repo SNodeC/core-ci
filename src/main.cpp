@@ -4,6 +4,8 @@
 #include "EnvironmentResolver.h"
 #include "GitHub.h"
 #include "ManagedDatabase.h"
+#include "Pipeline.h"
+#include "PipelineConfig.h"
 #include "UiAssets.h"
 #include "UiConfig.h"
 
@@ -24,6 +26,8 @@ int main(int argc, char* argv[]) {
     auto* githubConfig = utils::Config::configRoot.newSubCommand<coreci::GitHubConfig>();
     coreci::GitHub github(*githubConfig);
     coreci::SourceReader sources(github);
+
+    auto* pipelineConfig = utils::Config::configRoot.newSubCommand<coreci::PipelineConfig>();
 
     auto* registryConfig = utils::Config::configRoot.newSubCommand<coreci::RegistryConfig>();
     coreci::EnvironmentResolver environments(*registryConfig);
@@ -46,6 +50,7 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<coreci::Database> store;
     std::unique_ptr<coreci::GraphStore> graphStore;
     std::unique_ptr<coreci::Enrollment> enrollment;
+    std::unique_ptr<coreci::Pipeline> pipeline;
     bool initialConnection = true;
 
     try {
@@ -57,6 +62,7 @@ int main(int argc, char* argv[]) {
                 if (state.error != 0) {
                     snode::log::application().error() << "MariaDB connection failed: " << state.errorMessage << " [" << state.error << "]";
                     if (std::exchange(initialConnection, false)) {
+                        pipeline.reset();
                         enrollment.reset();
                         graphStore.reset();
                         store.reset();
@@ -71,6 +77,7 @@ int main(int argc, char* argv[]) {
                     enrollment->restore([&](const coreci::EnrollmentResult& restored) {
                         if (restored.status != 200) {
                             snode::log::application().error() << "Database schema/configuration failed: " << restored.body.dump();
+                            pipeline.reset();
                             enrollment.reset();
                             graphStore.reset();
                             store.reset();
@@ -79,6 +86,15 @@ int main(int argc, char* argv[]) {
                                 managed->stop();
                             }
                         } else {
+                            app.post("/github/webhook", [&] APPLICATION(req, res) {
+                                pipeline->event(req->get("X-GitHub-Event"),
+                                                req->get("X-Hub-Signature-256"),
+                                                std::string(req->body.begin(), req->body.end()),
+                                                [res](const coreci::PipelineResult& result) {
+                                                    res->status(result.status).type("application/json").send(result.body.dump());
+                                                });
+                            });
+
                             app.use([&] MIDDLEWARE(req, res, next) {
                                 res->set("Cache-Control", "no-store");
                                 res->set("X-Content-Type-Options", "nosniff");
@@ -117,8 +133,19 @@ int main(int argc, char* argv[]) {
                             app.post("/api/repositories/save", [&] APPLICATION(req, res) {
                                 try {
                                     const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    enrollment->save(body, [res](const coreci::EnrollmentResult& result) {
-                                        res->status(result.status).type("application/json").send(result.body.dump());
+                                    enrollment->save(body, [&, res](const coreci::EnrollmentResult& result) {
+                                        if (result.status == 200 && result.body.value("new_enrollment", false)) {
+                                            pipeline->request(result.body.at("repository").get<std::string>(),
+                                                              "",
+                                                              true,
+                                                              [res, result](const coreci::PipelineResult& work) {
+                                                                  auto response = result.body;
+                                                                  response["work"] = {{"status", work.status}, {"result", work.body}};
+                                                                  res->status(result.status).type("application/json").send(response.dump());
+                                                              });
+                                        } else {
+                                            res->status(result.status).type("application/json").send(result.body.dump());
+                                        }
                                     });
                                 } catch (const std::exception&) {
                                     res->status(422).type("application/json").send(R"({"error":"invalid enrollment JSON"})");
@@ -128,12 +155,52 @@ int main(int argc, char* argv[]) {
                             app.post("/api/repositories/refresh", [&] APPLICATION(req, res) {
                                 try {
                                     const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    enrollment->refresh(body, [res](const coreci::EnrollmentResult& result) {
-                                        res->status(result.status).type("application/json").send(result.body.dump());
+                                    enrollment->refresh(body, [&, res](const coreci::EnrollmentResult& result) {
+                                        if (result.status == 200 && result.body.value("new_enrollment", false)) {
+                                            pipeline->request(result.body.at("repository").get<std::string>(),
+                                                              "",
+                                                              true,
+                                                              [res, result](const coreci::PipelineResult& work) {
+                                                                  auto response = result.body;
+                                                                  response["work"] = {{"status", work.status}, {"result", work.body}};
+                                                                  res->status(result.status).type("application/json").send(response.dump());
+                                                              });
+                                        } else {
+                                            res->status(result.status).type("application/json").send(result.body.dump());
+                                        }
                                     });
                                 } catch (const std::exception&) {
                                     res->status(422).type("application/json").send(R"({"error":"invalid enrollment JSON"})");
                                 }
+                            });
+
+                            app.post("/api/work/request", [&] APPLICATION(req, res) {
+                                try {
+                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
+                                    pipeline->request(body.at("repository").get<std::string>(),
+                                                      body.value("tag", std::string{}),
+                                                      false,
+                                                      [res](const coreci::PipelineResult& result) {
+                                                          res->status(result.status).type("application/json").send(result.body.dump());
+                                                      });
+                                } catch (const std::exception&) {
+                                    res->status(422).type("application/json").send(R"({"error":"invalid source request JSON"})");
+                                }
+                            });
+                            app.post("/api/work/retry", [&] APPLICATION(req, res) {
+                                try {
+                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
+                                    pipeline->retry(body.at("execution").get<std::string>(), [res](const coreci::PipelineResult& result) {
+                                        res->status(result.status).type("application/json").send(result.body.dump());
+                                    });
+                                } catch (const std::exception&) {
+                                    res->status(422).type("application/json").send(R"({"error":"invalid retry JSON"})");
+                                }
+                            });
+                            app.post("/api/work/reconcile", [&] APPLICATION(req, res) {
+                                pipeline->reconcile([res](const coreci::PipelineResult& result) {
+                                    res->status(result.status).type("application/json").send(result.body.dump());
+                                });
                             });
 
                             app.get("/api/status", [&] APPLICATION(req, res) {
@@ -151,8 +218,12 @@ int main(int argc, char* argv[]) {
                             app.listen([&](const auto& address, const core::socket::State& listenerState) {
                                 if (listenerState == core::socket::State::OK) {
                                     snode::log::application().info() << "Listening on " << address.toString();
+                                    pipeline->reconcile([](const coreci::PipelineResult& result) {
+                                        snode::log::application().info() << "Startup graph reconciliation: " << result.body.dump();
+                                    });
                                 } else if (listenerState == core::socket::State::ERROR || listenerState == core::socket::State::FATAL) {
                                     snode::log::application().error() << "Listener failed: " << listenerState.what();
+                                    pipeline.reset();
                                     enrollment.reset();
                                     graphStore.reset();
                                     store.reset();
@@ -169,7 +240,9 @@ int main(int argc, char* argv[]) {
 
         store = std::make_unique<coreci::Database>(*database);
         graphStore = std::make_unique<coreci::GraphStore>(*store);
-        enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources);
+        enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources, *pipelineConfig);
+        pipeline =
+            std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, environments, *enrollment, *graphStore);
 
         if (databaseConfig->mode == "managed") {
             managed = std::make_unique<coreci::ManagedDatabase>();
@@ -181,6 +254,7 @@ int main(int argc, char* argv[]) {
         }
     } catch (const std::exception& error) {
         snode::log::application().error() << "Controller startup failed: " << error.what();
+        pipeline.reset();
         enrollment.reset();
         graphStore.reset();
         store.reset();
