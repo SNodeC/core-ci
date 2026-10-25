@@ -14,7 +14,7 @@ import tempfile
 
 from contract import (
     assignment,
-    compatibility,
+    publication_receipt,
     digest,
     file_hash,
     output,
@@ -149,6 +149,28 @@ def add_new(source, destination):
     shutil.copyfile(source, destination)
 
 
+def publish_key(feed, public_key):
+    destination = feed / "keys" / Path(public_key).name
+    destination.parent.mkdir(exist_ok=True)
+    if destination.exists():
+        require(
+            file_hash(destination) == file_hash(public_key),
+            "deployed verification key differs; rotation needs owner approval",
+        )
+    else:
+        shutil.copyfile(public_key, destination)
+
+
+def publish_export(feed, selected, manifest, artifacts):
+    result = None
+    if manifest["development_export"]:
+        export = manifest["development_export"]
+        destination = feed / "exports" / selected["execution"] / str(selected["revision"]) / "development.tar.gz"
+        add_new(Path(artifacts) / export["file"], destination)
+        result = {**export, **file_identity(feed, destination)}
+    return result
+
+
 def update(
     selected, build_result, publication_run, artifacts, feed, private_key, passphrase, public_key, temporary_root
 ):
@@ -165,21 +187,7 @@ def update(
         arch = feed_component(target["arch"])
         namespace = selected["source"]["package"]
         expected = selected["source"]["deployment"]["signing"]["gpg_fingerprint"]
-        receipt = {
-            "schema": 1,
-            "execution": selected["execution"],
-            "attempt": selected["attempt"],
-            "assignment_sha256": digest(selected),
-            "source_commit": selected["source"]["commit"],
-            "run": publication_run,
-            "build_result": build_result,
-            "feed": selected["source"]["deployment"]["feed"],
-            "environment": manifest["environment"],
-            "compatibility": compatibility(selected, manifest["environment"]),
-            "packages": [],
-            "development_export": None,
-            "indexes": [],
-        }
+        receipt = publication_receipt(selected, build_result, publication_run, manifest)
         with signing_key(private_key, passphrase, public_key, expected, temporary_root) as (key_home, gpg, keyring):
             rpmdb = key_home / "rpmdb"
             rpmdb.mkdir()
@@ -227,26 +235,13 @@ def update(
                 receipt["packages"].append(
                     {**package, **file_identity(feed, file), "file": filename, "unsigned_sha256": package["sha256"]}
                 )
-            keys = feed / "keys"
-            keys.mkdir(exist_ok=True)
-            public_destination = keys / "apt.asc"
-            if public_destination.exists():
-                require(
-                    file_hash(public_destination) == file_hash(public_key),
-                    "deployed archive key differs; key rotation needs owner approval",
-                )
-            else:
-                shutil.copyfile(public_key, public_destination)
+            publish_key(feed, public_key)
             if package_format == "deb":
                 indexes = apt_indexes(feed, distribution, suite, arch, gpg, keyring)
             else:
                 indexes = rpm_indexes(feed, distribution, suite, arch, gpg, keyring)
             receipt["indexes"] = [file_identity(feed, path) for path in indexes]
-            if manifest["development_export"]:
-                export = manifest["development_export"]
-                path = feed / "exports" / selected["execution"] / str(selected["revision"]) / "development.tar.gz"
-                add_new(Path(artifacts) / export["file"], path)
-                receipt["development_export"] = {**export, **file_identity(feed, path)}
+            receipt["development_export"] = publish_export(feed, selected, manifest, artifacts)
         path = feed / receipt_path(selected)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_json(path, receipt)

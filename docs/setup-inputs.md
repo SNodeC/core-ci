@@ -77,7 +77,13 @@ environment alone prevents untrusted workflow edits. Keep builds outside this en
 The prepared worker uses the sandbox's existing secret names below rather than creating a
 second set of aliases. Metadata confirms these signing/App names already exist at repository
 level; their values and correspondence to the public keys remain unverified. The protected
-package-publication environment does not exist yet. No provisioning or rotation was performed.
+package-publication environment was created on 2026-10-25 with a main-branch-only policy.
+PACKAGES_APP_PRIVATE_KEY was provisioned from the existing sandbox coordinator App PEM.
+Public environment variables FEED_WRITER_APP_ID and FEED_WRITER_INSTALLATION_ID identify the
+verified App and installation; a temporary Contents-write token was restricted to the sandbox
+feed and revoked after verification. No key was generated or rotated. Signing private-key
+files were not found in the owner-named directory, so the three signing environment secrets
+remain unprovisioned. Existing repository secrets were not removed or changed.
 See [worker setup](../deployment/README.md) for current implementation status and public inputs.
 
 | Exact GitHub environment secret | Input material |
@@ -88,8 +94,8 @@ See [worker setup](../deployment/README.md) for current implementation status an
 | OPENWRT_APK_KEY | Existing PEM EC P-256 key for OpenWrt APK |
 | PACKAGES_APP_PRIVATE_KEY | Feed-only GitHub App key; never the controller App key |
 
-After the owner creates/protects the environment and supplies actual files, provision the
-sandbox worker using file input. These are setup commands, not commands executed here.
+Provision signing secrets when the owner-held files are available, using file input.
+The commands below document setup; only the feed-writer provisioning was performed.
 The /secure paths describe owner-held files and must be replaced with their actual paths.
 
 ```sh

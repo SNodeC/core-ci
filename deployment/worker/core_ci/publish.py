@@ -170,12 +170,19 @@ def main():
         < 900 * 1024 * 1024,
         "feed exceeds reviewed Pages capacity",
     )
+    package_format = selected["target"]["build"]["format"]
+    secret_name, public_name = {
+        "deb": ("APT_SIGNING_KEY", "apt.asc"),
+        "rpm": ("APT_SIGNING_KEY", "apt.asc"),
+        "ipk": ("OPENWRT_USIGN_KEY", "opkg.pub"),
+        "apk": ("OPENWRT_APK_KEY", "apk.pem"),
+    }[package_format]
     identity = run_identity(selected)
     with tempfile.TemporaryDirectory(prefix="core-ci-secrets-", dir=os.environ["RUNNER_TEMP"]) as temporary:
         root = Path(temporary)
         root.chmod(0o700)
         keys = {}
-        for name in ("APT_SIGNING_KEY",) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
+        for name in (secret_name,) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
             value = os.environ.pop(name, "")
             require(bool(value), "missing protected publication secret: " + name)
             path = root / name
@@ -189,17 +196,32 @@ def main():
             passphrase.write_text(value)
             passphrase.chmod(0o600)
         if arguments.phase == "prepare":
-            receipt = update(
-                selected,
-                read_json(arguments.build_result),
-                identity,
-                arguments.artifacts,
-                feed,
-                keys["APT_SIGNING_KEY"],
-                passphrase,
-                Path(__file__).resolve().parents[1] / "keys/apt.asc",
-                root,
-            )
+            public_key = Path(__file__).resolve().parents[1] / "keys" / public_name
+            if package_format in ("ipk", "apk"):
+                from sign_openwrt import update as update_openwrt
+
+                receipt = update_openwrt(
+                    selected,
+                    read_json(arguments.build_result),
+                    identity,
+                    arguments.artifacts,
+                    feed,
+                    keys[secret_name],
+                    public_key,
+                    root,
+                )
+            else:
+                receipt = update(
+                    selected,
+                    read_json(arguments.build_result),
+                    identity,
+                    arguments.artifacts,
+                    feed,
+                    keys[secret_name],
+                    passphrase,
+                    public_key,
+                    root,
+                )
         else:
             receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
             require(receipt is not None, "publication requires the prepared verified receipt")
@@ -213,7 +235,7 @@ def main():
             "new packages would exceed reviewed Pages capacity",
         )
         if arguments.phase == "push":
-            paths = [receipt_path(selected), "keys/apt.asc"] + [
+            paths = [receipt_path(selected), "keys/" + public_name] + [
                 item["path"] for item in receipt["packages"] + receipt["indexes"]
             ]
             if receipt.get("development_export"):

@@ -1,0 +1,78 @@
+"""Local archive/control boundaries only; SDK execution and signatures require real GitHub acceptance."""
+
+import io
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tarfile
+import tempfile
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deployment/worker/core_ci"))
+import contract
+import sdk
+import environment
+
+
+def rejects(operation):
+    rejected = False
+    try:
+        operation()
+    except (ValueError, tarfile.TarError):
+        rejected = True
+    assert rejected, "unsafe SDK/input was accepted"
+
+
+def main():
+    directory = Path(sys.argv[1])
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=directory) as temporary:
+        root = Path(temporary)
+        with patch.dict(os.environ, {"RUNNER_TEMP": str(root)}):
+            control = root / "control"
+            control.write_text(
+                "Package: selected-project\nVersion: 1.2.3-r7\nArchitecture: configured\nDepends: libc\nDescription: Local control fixture\n"
+            )
+            subprocess.run(["tar", "-czf", str(root / "control.tar.gz"), "-C", str(root), "./control"], check=True)
+            subprocess.run(["tar", "-czf", str(root / "selected.ipk"), "-C", str(root), "./control.tar.gz"], check=True)
+            assert contract.package_metadata(root / "selected.ipk", "ipk") == {
+                "name": "selected-project",
+                "version": "1.2.3-r7",
+                "arch": "configured",
+                "dependencies": "libc",
+            }
+            archive = root / "sdk.tar"
+            with tarfile.open(archive, "w") as opened:
+                item = tarfile.TarInfo("sdk/inside")
+                item.size = 2
+                opened.addfile(item, io.BytesIO(b"ok"))
+                link = tarfile.TarInfo("sdk/link")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "inside"
+                opened.addfile(link)
+            sdk.extract(archive, root / "valid")
+            assert (root / "valid/sdk/link").read_text() == "ok"
+            for name, target in (("sdk/../../escape", ""), ("sdk/escape", "/etc/passwd")):
+                with tarfile.open(archive, "w") as opened:
+                    item = tarfile.TarInfo(name)
+                    if target:
+                        item.type = tarfile.SYMTYPE
+                        item.linkname = target
+                    opened.addfile(item)
+                rejects(lambda: sdk.extract(archive, root / "invalid"))
+            # A mismatched official checksum is rejected before any SDK extraction/tool execution.
+            expected = {"release": "99.1.1", "sdk": {"url": "https://sdk.example/sdk.tar.xz", "sha256": "a" * 64}}
+
+            def download(arguments, **options):
+                Path(arguments[arguments.index("--output") + 1]).write_bytes(b"modified SDK bytes")
+
+            with patch.object(environment, "sdk", return_value=expected), patch.object(
+                sdk.subprocess, "run", side_effect=download
+            ), patch.object(sdk, "extract", side_effect=AssertionError("unverified SDK extracted")):
+                rejects(lambda: sdk.prepare({}, expected, root / "checksum"))
+    print("PASS actual IPK controls and safe SDK archive/checksum boundaries; no SDK or APK execution claimed")
+
+
+if __name__ == "__main__":
+    main()

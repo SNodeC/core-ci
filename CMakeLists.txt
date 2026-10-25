@@ -229,6 +229,11 @@ endif()
 
 if(BUILD_TESTING)
     add_test(
+        NAME openwrt-archive-boundaries
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/openwrt.py
+                ${PROJECT_BINARY_DIR}/tests/openwrt
+    )
+    add_test(
         NAME worker-environment-boundaries
         COMMAND
             ${Python3_EXECUTABLE}

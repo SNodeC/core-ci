@@ -32,6 +32,7 @@ env:
   FEED_BRANCH: ${{ vars.FEED_BRANCH }}
   FEED_BASE_URL: ${{ vars.FEED_BASE_URL }}
   PACKAGES_GPG_FINGERPRINT: ${{ vars.PACKAGES_GPG_FINGERPRINT }}
+  OPENWRT_DOWNLOAD_BASE_URL: ${{ vars.OPENWRT_DOWNLOAD_BASE_URL || 'https://downloads.openwrt.org' }}
   EXECUTION: ${{ inputs.execution }}
   ATTEMPT: ${{ inputs.attempt }}
   ASSIGNMENT: ${{ inputs.assignment }}
@@ -51,7 +52,7 @@ jobs:
           path: tooling
           persist-credentials: false
       - name: Install standard package metadata tools
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: sudo apt-get update && sudo apt-get install -y rpm zstd build-essential
       - name: Validate provenance, archive and actual package metadata
         env:
           SOURCE_ARTIFACT_TOKEN: ${{ secrets.PACKAGES_OBSERVER_TOKEN }}
@@ -97,11 +98,15 @@ jobs:
           path: ${{ runner.temp }}/validated
           merge-multiple: true
       - name: Install standard signing and repository tools
-        run: sudo apt-get update && sudo apt-get install -y rpm gnupg apt-utils createrepo-c
+        run: sudo apt-get update && sudo apt-get install -y rpm gnupg apt-utils createrepo-c zstd build-essential
       - name: Prepare signed feed update
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          APT_SIGNING_KEY: >-
+            ${{ (fromJSON(inputs.assignment).target.build.format == 'deb' || fromJSON(inputs.assignment).target.build.format == 'rpm')
+            && secrets.APT_SIGNING_KEY || '' }}
+          OPENWRT_USIGN_KEY: ${{ fromJSON(inputs.assignment).target.build.format == 'ipk' && secrets.OPENWRT_USIGN_KEY || '' }}
+          OPENWRT_APK_KEY: ${{ fromJSON(inputs.assignment).target.build.format == 'apk' && secrets.OPENWRT_APK_KEY || '' }}
           PACKAGES_GPG_PASSPHRASE: ${{ secrets.PACKAGES_GPG_PASSPHRASE }}
         run: |
           set -euo pipefail

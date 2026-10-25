@@ -1,6 +1,7 @@
 """Shared build/publisher contract. Assignments grant authority; manifests never do."""
 
 import hashlib
+from email.parser import Parser
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -227,8 +228,44 @@ def package_metadata(path, package_format):
         require(len(fields) == 4 and fields[3] == "0", "unexpected RPM epoch/metadata")
         dependencies = output(["rpm", "-qp", "--nosignature", "--nodigest", "--requires", str(path)]).splitlines()
         result = {"name": fields[0], "version": fields[1], "arch": fields[2], "dependencies": dependencies}
+    elif package_format == "ipk":
+        with tempfile.TemporaryDirectory(prefix="core-ci-ipk-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+            controls = Path(temporary) / "control.tar.gz"
+            with controls.open("wb") as outgoing:
+                subprocess.run(
+                    ["tar", "-xzOf", str(path), "./control.tar.gz"],
+                    check=True,
+                    stdout=outgoing,
+                    stderr=subprocess.PIPE,
+                    timeout=120,
+                    preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024**2, 2 * 1024**2)),
+                )
+            control = Parser().parsestr(output(["tar", "-xzOf", str(controls), "./control"]), headersonly=True)
+        require(
+            all(len(control.get_all(key, [])) == 1 for key in ("Package", "Version", "Architecture")),
+            "invalid IPK control fields",
+        )
+        result = {
+            "name": control["Package"],
+            "version": control["Version"],
+            "arch": control["Architecture"],
+            "dependencies": control.get("Depends", ""),
+        }
+    elif package_format == "apk":
+        tool = os.environ["CORE_CI_APK"]
+        require(
+            output([tool, "--version"]).startswith("apk-tools 3."), "APK metadata requires selected SDK apk-tools v3"
+        )
+        document = json.loads(output([tool, "adbdump", "--format", "json", str(path)]))
+        info = document["info"]
+        result = {
+            "name": info["name"],
+            "version": info["version"],
+            "arch": info["arch"],
+            "dependencies": info.get("depends", []),
+        }
     else:
-        raise ValueError("OpenWrt metadata validation requires the approved matching SDK tooling")
+        raise ValueError("unsupported package format")
     return result
 
 
@@ -244,6 +281,7 @@ def compatibility(selected, environment=None):
                 "release": environment["release"],
                 "target": target["build"]["target"],
                 "sdk_sha256": environment["sdk"]["sha256"],
+                "toolchain": environment["toolchain"],
             }
         )
     return result
@@ -264,6 +302,25 @@ def evidence(selected):
         )
     }
     result["assignment_sha256"] = digest(selected)
+    return result
+
+
+def publication_receipt(selected, build_result, publication_run, manifest):
+    result = {
+        "schema": 1,
+        "execution": selected["execution"],
+        "attempt": selected["attempt"],
+        "assignment_sha256": digest(selected),
+        "source_commit": selected["source"]["commit"],
+        "run": publication_run,
+        "build_result": build_result,
+        "feed": selected["source"]["deployment"]["feed"],
+        "environment": manifest["environment"],
+        "compatibility": compatibility(selected, manifest["environment"]),
+        "packages": [],
+        "development_export": None,
+        "indexes": [],
+    }
     return result
 
 

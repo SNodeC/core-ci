@@ -129,9 +129,14 @@ in the trusted GitHub worker. For native work, use standard Docker pull/inspect 
 configured platform and freeze the digest-qualified image/configuration identity before
 hooks execute. Do not implement registry authentication or OCI parsing in the controller.
 
-The worker discovers latest SDK metadata from its deployment-owned official HTTPS origin.
-It records the release, URL and official checksum and verifies downloaded bytes before
-extraction. Actual SDK/toolchain/architecture checks and SDK signing remain unfinished.
+OpenWrt roots discover the latest stable SDK patch for their configured series from the
+worker's deployment-owned official HTTPS origin. Dependents inherit the exact SDK, release,
+toolchain and staging identity from their selected prerequisite receipts. Every prerequisite
+must agree; an incompatible join fails before SDK preparation rather than selecting one.
+Retries retain their recorded environment. The worker records the official URL/checksum,
+verifies downloaded bytes before extraction, then queries actual release, target, package
+architecture and compiler identity. SDK execution/signing code is prepared; real GitHub
+SDK and package-client acceptance remains outstanding.
 The publisher obtains trusted tooling independently of source artifact executables.
 
 The artifact manifest carries resolved environment evidence separately from the immutable

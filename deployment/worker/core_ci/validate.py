@@ -60,6 +60,11 @@ def main():
     token = os.environ["SOURCE_ARTIFACT_TOKEN"]
     require(bool(token), "configure read-only source Actions artifact access before activation")
     artifact(selected, read_json(arguments.build_result), token, arguments.output)
+    if selected["target"]["family"] == "openwrt":
+        from sdk import prepare
+
+        environment = read_json(Path(arguments.output) / "manifest.json")["environment"]
+        prepare(selected["target"], environment, Path(os.environ["RUNNER_TEMP"]) / "validation-sdk")
     verify_manifest(selected, arguments.output)
 
 

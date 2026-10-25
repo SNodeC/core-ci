@@ -29,7 +29,7 @@ No old orchestration code or workflow was reused.
    It prints the Git blob identity for controller `pipeline.source-workflow-blob` approval.
    Review and commit the rendered `.github/workflows/core-ci-build.yml` separately in each
    source repository. JSON save does not silently authorize a workflow write. The UI workflow
-   installation/diff action is not implemented yet. Commit feedback for JSON remains accurate.
+   preview/commit action uses the same approved workflow blob and reports the committed revision.
 4. Record the publication workflow Git blob SHA, dispatch ref and tooling SHA in the protected
    controller config. Keep workflow and source-to-build commits separate. A workflow upgrade
    needs review, updated approved blobs and a new tooling pin; old assignments remain unchanged.
@@ -174,8 +174,7 @@ Configure public worker variables CORE_CI_TOOLING_SHA, CONTROLLER_APP_BOT_ID, FE
 FEED_REPOSITORY_ID, FEED_BRANCH, FEED_BASE_URL, PACKAGES_GPG_FINGERPRINT, FEED_WRITER_APP_ID
 and FEED_WRITER_INSTALLATION_ID. Values belong to deployment configuration, not source JSON.
 The native workflow consumes existing secret names APT_SIGNING_KEY, PACKAGES_APP_PRIVATE_KEY
-and PACKAGES_OBSERVER_TOKEN, plus optional PACKAGES_GPG_PASSPHRASE. Future OpenWrt publication
-uses existing OPENWRT_USIGN_KEY and OPENWRT_APK_KEY. Secret names alone do not prove key match.
+and PACKAGES_OBSERVER_TOKEN, plus optional PACKAGES_GPG_PASSPHRASE. OpenWrt publication uses existing OPENWRT_USIGN_KEY and OPENWRT_APK_KEY. Secret names alone do not prove key match.
 See keys/README.md for public provenance and the read-only secret-name inventory.
 
 Use file input if owner-held material needs provisioning; these are templates, not executed
@@ -208,7 +207,12 @@ The trusted worker owns discovery through its public OPENWRT_DOWNLOAD_BASE_URL v
 (default https://downloads.openwrt.org). It selects the latest stable patch in that suite
 and records release/URL/official checksum as execution evidence. The worker must verify
 that checksum before extraction. No registry/SDK request is made by the controller.
-OpenWrt build/sign/install execution is still unfinished. The trusted build workflow stores
+Roots choose the latest stable SDK; dependent work reuses the exact SDK/toolchain identity
+in all selected prerequisite receipts, failing on disagreement. The prepared GitHub worker
+verifies the SDK archive, imports only selected dependencies/own development exports and
+runs the source OpenWrt hook. The publisher uses independently verified SDK host tools for
+IPK/usign and APKv3/EC signing and indexing. Real SDK/build/sign/install execution has not
+been accepted yet. The trusted build workflow stores
 resolved environment evidence before hooks, separate from package artifacts. Retries use
 read-only Actions access to earlier assigned runs and retain their resolved environment.
 Evidence requests 90-day retention; repository limits and artifact expiry can prevent a

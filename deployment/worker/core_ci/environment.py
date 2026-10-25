@@ -7,7 +7,7 @@ import tempfile
 import re
 import subprocess
 
-from contract import assignment, digest, extract_archive, output, read_json, require, write_json
+from contract import assignment, compatibility, digest, extract_archive, output, read_json, require, write_json
 from github import api, assigned_run, download_artifact
 
 
@@ -36,23 +36,29 @@ def native(target):
     return result
 
 
-def sdk(target):
+def sdk(target, release=None):
     # This public variable belongs to the trusted worker deployment, not source JSON.
     base = os.environ.get("OPENWRT_DOWNLOAD_BASE_URL", "https://downloads.openwrt.org").rstrip("/")
     require(re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]+)?", base), "SDK metadata requires an HTTPS origin")
     require(re.fullmatch(r"[0-9]+\.[0-9]+", target["suite"]), "SDK suite must be a numeric release series")
     require(re.fullmatch(r"[a-z0-9_-]+/[a-z0-9_-]+", target["build"]["target"]), "invalid SDK target")
-    versions = json.loads(output(["curl", "--fail", "--silent", "--show-error", base + "/.versions.json"]))
+    if release is None:
+        versions = json.loads(output(["curl", "--fail", "--silent", "--show-error", base + "/.versions.json"]))
+        require(
+            isinstance(versions["versions_list"], list) and len(versions["versions_list"]) <= 4096,
+            "invalid release list",
+        )
+        releases = [
+            value
+            for value in versions["versions_list"]
+            if re.fullmatch(re.escape(target["suite"]) + r"\.(0|[1-9][0-9]*)", value)
+        ]
+        require(bool(releases), "no stable SDK release exists for the configured series")
+        release = max(releases, key=lambda value: tuple(map(int, value.split("."))))
     require(
-        isinstance(versions["versions_list"], list) and len(versions["versions_list"]) <= 4096, "invalid release list"
+        re.fullmatch(re.escape(target["suite"]) + r"\.(0|[1-9][0-9]*)", release),
+        "SDK release is outside configured series",
     )
-    releases = [
-        value
-        for value in versions["versions_list"]
-        if re.fullmatch(re.escape(target["suite"]) + r"\.(0|[1-9][0-9]*)", value)
-    ]
-    require(bool(releases), "no stable SDK release exists for the configured series")
-    release = max(releases, key=lambda value: tuple(map(int, value.split("."))))
     root = base + "/releases/" + release + "/targets/" + target["build"]["target"] + "/"
     profile = json.loads(output(["curl", "--fail", "--silent", "--show-error", root + "profiles.json"]))
     require(
@@ -153,7 +159,35 @@ def main():
     )
     resolved = previous(selected)
     if resolved is None:
-        resolved = native(selected["target"]) if selected["target"]["family"] == "native" else sdk(selected["target"])
+        if selected["target"]["family"] == "native":
+            resolved = native(selected["target"])
+        elif selected["dependencies"]:
+            # The selected receipts own physical compatibility, including at joins.
+            inherited = selected["dependencies"][0]["receipt"]["environment"]
+            resolved = {key: inherited[key] for key in ("release", "sdk", "toolchain", "staging_dir")}
+            expected = compatibility(selected, resolved)
+            for dependency in selected["dependencies"]:
+                receipt = dependency["receipt"]
+                require(receipt["compatibility"] == expected, "prerequisites require incompatible SDKs or targets")
+                require(
+                    all(receipt["environment"][key] == resolved[key] for key in resolved),
+                    "prerequisite SDK identities disagree",
+                )
+        else:
+            resolved = sdk(selected["target"])
+    if selected["target"]["family"] == "openwrt":
+        from sdk import prepare
+
+        prepare(selected["target"], resolved, Path(os.environ["RUNNER_TEMP"]) / "core-ci-sdk")
+        if "host" not in resolved:
+            resolved["host"] = native(
+                {
+                    "build": {
+                        "image": os.environ.get("OPENWRT_WORKER_IMAGE", "ubuntu:24.04"),
+                        "platform": os.environ.get("OPENWRT_WORKER_PLATFORM", "linux/amd64"),
+                    }
+                }
+            )
     write_json(arguments.output, {"assignment_sha256": digest(selected), "environment": resolved})
 
 

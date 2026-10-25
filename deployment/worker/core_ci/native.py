@@ -16,7 +16,7 @@ TOOLS = {
 }
 
 
-def prepare_dependencies(selected, destination):
+def prepare_dependencies(selected, destination, environment):
     destination.mkdir()
     for dependency in selected["dependencies"]:
         receipt = dependency["receipt"]
@@ -25,7 +25,7 @@ def prepare_dependencies(selected, destination):
             receipt["execution"] == dependency["execution"] and receipt["attempt"] == dependency["attempt"],
             "prerequisite receipt mismatch",
         )
-        require(receipt["compatibility"] == compatibility(selected), "prerequisite target incompatibility")
+        require(receipt["compatibility"] == compatibility(selected, environment), "prerequisite target incompatibility")
         root = destination / dependency["execution"]
         root.mkdir()
         write_json(root / "receipt.json", receipt)
@@ -34,7 +34,7 @@ def prepare_dependencies(selected, destination):
             download_feed(base, package["path"], root / package["file"], package)
         if receipt.get("development_export"):
             export = receipt["development_export"]
-            require(export["compatibility"] == compatibility(selected), "incompatible development export")
+            require(export["compatibility"] == compatibility(selected, environment), "incompatible development export")
             archive = root / "development.tar.gz"
             download_feed(base, export["path"], archive, export)
             extract_archive(archive, root / "development", "tar")
@@ -47,7 +47,6 @@ def build(arguments):
         str(selected["source"]["repository_id"]) == os.environ["GITHUB_REPOSITORY_ID"], "source repository ID mismatch"
     )
     require(os.environ["GITHUB_RUN_ATTEMPT"] == "1", "reruns require an explicit controller retry")
-    require(selected["target"]["family"] == "native", "OpenWrt requires its SDK worker")
     source = Path(arguments.source).resolve()
     tooling = Path(__file__).resolve().parents[1]
     require(
@@ -66,15 +65,20 @@ def build(arguments):
     require(selected["target"] in document["matrix"], "selected target absent from committed definition")
     for key in ("package", "title", "depends_on", "build"):
         require(document[key] == selected["source"][key], "committed definition differs from assignment")
-    hook = (source / selected["source"]["build"]["native"]).resolve()
+    family = selected["target"]["family"]
+    hook = (source / selected["source"]["build"][family]).resolve()
     require(hook.is_relative_to(source) and hook.is_file(), "hook escapes selected source checkout")
     resolved = read_json(arguments.environment, 16384)
     require(resolved["assignment_sha256"] == arguments.assignment_sha256, "environment belongs to another assignment")
     environment = resolved["environment"]
-    image = environment["resolved_image"]
-    platform = selected["target"]["build"]["platform"]
+    host = environment if family == "native" else environment["host"]
+    image = host["resolved_image"]
+    platform = host["platform"]
     package_format = selected["target"]["build"]["format"]
-    require(package_format in TOOLS, "unsupported native format")
+    require(
+        package_format in TOOLS or (family == "openwrt" and package_format in ("ipk", "apk")),
+        "unsupported worker format",
+    )
     destination = Path(arguments.output).resolve()
     require(not destination.exists(), "output destination must be new")
     destination.mkdir()
@@ -85,23 +89,39 @@ def build(arguments):
         write_json(work / "assignment.json", selected)
         write_json(work / "target.json", selected["target"])
         write_json(work / "environment.json", environment)
-        prepare_dependencies(selected, work / "prerequisites")
+        prepare_dependencies(selected, work / "prerequisites", environment)
         # Only this copied tree enters the hook container. No .git credentials or host workspace.
         shutil.copytree(source, work / "source", ignore=shutil.ignore_patterns(".git"), symlinks=True)
         shutil.copytree(tooling / "core_ci", work / "core_ci")
+        sdk_setup = ""
+        install = "RUN python3 /tool/native_container.py --install\n"
+        tools = TOOLS.get(
+            package_format,
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
+            "build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync swig "
+            "unzip zlib1g-dev file wget curl zstd ca-certificates",
+        )
+        if family == "openwrt":
+            roots = list((Path(os.environ["RUNNER_TEMP"]) / "core-ci-sdk/extracted").iterdir())
+            require(len(roots) == 1, "resolved SDK workspace is unavailable")
+            shutil.move(str(roots[0]), work / "sdk")
+            sdk_setup = "COPY sdk /sdk\nENV CORE_CI_APK=/sdk/staging_dir/host/bin/apk\n"
+            install = ""
         (work / "Dockerfile").write_text(
             "FROM "
             + image
             + "\nRUN "
-            + TOOLS[package_format]
+            + tools
             + "\nCOPY core_ci /tool\nCOPY prerequisites /prerequisites\n"
-            + "COPY assignment.json /assignment.json\nRUN python3 /tool/native_container.py --install\n"
+            + "COPY assignment.json /assignment.json\n"
+            + sdk_setup
+            + install
         )
         try:
             subprocess.run(["docker", "pull", "--platform", platform, image], check=True, timeout=600)
             metadata = json.loads(output(["docker", "image", "inspect", image]))
             require(
-                len(metadata) == 1 and metadata[0]["Id"] == environment["config_digest"],
+                len(metadata) == 1 and metadata[0]["Id"] == host["config_digest"],
                 "resolved image configuration changed",
             )
             # Hosted runner UID need not be the container UID. Every mounted input is read-only.
@@ -163,7 +183,7 @@ def build(arguments):
                     "type=bind,source=" + str(destination) + ",target=/output",
                     tag,
                     "python3",
-                    "/tool/native_container.py",
+                    "/tool/native_container.py" if family == "native" else "/tool/openwrt_container.py",
                 ],
                 check=True,
                 timeout=3600,

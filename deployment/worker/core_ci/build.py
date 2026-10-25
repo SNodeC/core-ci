@@ -21,9 +21,6 @@ def main():
         selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"],
         "workflow inputs do not match assignment",
     )
-    require(
-        selected["target"]["family"] == "native", "OpenWrt SDK worker is not implemented yet; no fallback permitted"
-    )
     build(arguments)
 
 

@@ -36,12 +36,17 @@ jobs:
           ref: ${{ fromJSON(inputs.assignment).source.commit }}
           path: source
           persist-credentials: false
+      - name: Install SDK inspection prerequisites
+        if: ${{ fromJSON(inputs.assignment).target.family == 'openwrt' }}
+        run: sudo apt-get update && sudo apt-get install -y zstd make
       - name: Resolve build environment on GitHub
         env:
           ASSIGNMENT: ${{ inputs.assignment }}
           ASSIGNMENT_SHA256: ${{ inputs.assignment_sha256 }}
           EXECUTION: ${{ inputs.execution }}
           ATTEMPT: ${{ inputs.attempt }}
+          OPENWRT_WORKER_IMAGE: ${{ vars.OPENWRT_WORKER_IMAGE || 'ubuntu:24.04' }}
+          OPENWRT_WORKER_PLATFORM: ${{ vars.OPENWRT_WORKER_PLATFORM || 'linux/amd64' }}
           OPENWRT_DOWNLOAD_BASE_URL: ${{ vars.OPENWRT_DOWNLOAD_BASE_URL || 'https://downloads.openwrt.org' }}
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash

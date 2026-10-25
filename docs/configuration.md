@@ -88,9 +88,12 @@ publication receipt; MariaDB retains that receipt as execution evidence.
 
 OpenWrt metadata discovery is worker code. Public worker variable
 `OPENWRT_DOWNLOAD_BASE_URL` defaults to the official `https://downloads.openwrt.org`
-origin. The helper selects the latest stable numeric patch in the configured series,
-checks profiles.json and records the official SDK URL/checksum. Repository owners maintain
-no SDK SHA. SDK execution and signing remain unfinished.
+origin. Roots select the latest stable numeric patch in the configured series; dependents
+reuse the SDK/toolchain identities in all selected prerequisite receipts. Incompatible joins
+fail explicitly. The worker checks profiles.json and records the official SDK URL/checksum.
+Repository owners maintain no SDK SHA. Prepared SDK execution/signing still needs live proof.
+`OPENWRT_WORKER_IMAGE` (default ubuntu:24.04) and `OPENWRT_WORKER_PLATFORM` (default linux/amd64)
+select the GitHub-side SDK host container, resolved to an immutable identity before hooks.
 
 GitHub records a separate `<assigned artifact name>-environment` artifact before source
 hooks run. It contains the assignment hash and resolved environment identities, with

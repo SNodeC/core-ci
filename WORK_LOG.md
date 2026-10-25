@@ -434,3 +434,27 @@
 - Local HTTP/MariaDB tests prove workflow preview/create/update/no-op, conflicts/denied writes,
   pre-push explicit retry, malformed evidence rejection, and uncertainty after possible push.
   Native package/signature tests pass. These remain local fixtures, not live acceptance.
+
+
+## 2026-10-25 — OpenWrt worker path and authorized sandbox secret setup
+
+- Prepared GitHub-side SDK extraction/toolchain checks, source hook execution, selected
+  prerequisite imports, IPK/usign and APKv3 signing/indexing. The controller gained no build,
+  SDK or signing responsibility. Standard SDK/package tools remain authoritative.
+- Owner approved roots choosing latest SDKs and dependents reusing prerequisite SDKs.
+  Updated the existing worker resolver; all selected prerequisite receipts must agree before
+  preparation, including joins. Retries retain prior assigned environment evidence.
+- Created sandbox package-publication with a main-only branch policy. Verified the existing
+  sandbox coordinator App PEM and a feed-only Contents-write token, then revoked the token.
+  Provisioned PACKAGES_APP_PRIVATE_KEY via stdin and the two public feed-writer identifiers
+  as environment variables. No repository secrets, signing keys or production settings changed.
+- Package signing private-key files are absent from the owner-named local directory. GitHub
+  secret values cannot be retrieved. Requested actual file paths; no replacement keys created.
+- Local archive/package-metadata and worker-resolution fixtures are distinct from outstanding
+  real SDK, GitHub pipeline, publication and package-client installation acceptance.
+- Verification: four affected local worker suites pass (SDK inheritance, archive boundaries,
+  native package/signature tooling and provenance). Canonical C++/CMake format checks, Python
+  formatting/syntax, workflow YAML parsing, hook shell syntax and whitespace checks pass.
+- Checkpoint accounting: production +616/-76 (net +540), tests +117/-0 and test-build wiring
+  +5/-0. Growth implements the originally approved missing OpenWrt worker/signing path,
+  reusing existing artifact, receipt and publication boundaries. No controller expansion.

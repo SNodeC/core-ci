@@ -41,6 +41,7 @@ def retry_evidence(directory):
         "assignment_sha256": "d" * 64,
         "artifact_name": "assigned-environment",
     }
+    selected["target"] = {"family": "native"}
     selected["execution"] = "a" * 64
     selected["attempt"] = "a" * 64 + ":2"
     selected["environment_from"] = [earlier]
@@ -235,6 +236,8 @@ def main():
             rejects(lambda: environment.sdk(target))
         with patch.object(environment, "output", side_effect=[json.dumps(versions), json.dumps(profile), sums + sums]):
             rejects(lambda: environment.sdk(target))
+    resolved["toolchain"] = {"triple": "configured", "version": "1", "compiler_sha256": "c" * 64}
+    resolved["staging_dir"] = "staging_dir/target-configured"
     selected = {"target": target}
     other = copy.deepcopy(resolved)
     other["sdk"]["sha256"] = "b" * 64
@@ -243,6 +246,42 @@ def main():
     ), "SDK exports lost physical compatibility checks"
     directory = Path(sys.argv[1])
     directory.mkdir(parents=True, exist_ok=True)
+    # Exercise the worker entry point: roots discover latest; dependent joins inherit receipts.
+    selected.update({"execution": "a" * 64, "attempt": "a" * 64 + ":1", "dependencies": []})
+    host = {"resolved_image": "host@sha256:" + "d" * 64}
+    with patch.object(environment, "assignment", return_value=selected), patch.object(
+        environment, "previous", return_value=None
+    ), patch.object(environment, "native", return_value=host), patch("sdk.prepare") as prepare, patch.object(
+        sys,
+        "argv",
+        [
+            "environment.py",
+            "--assignment",
+            "input",
+            "--assignment-sha256",
+            "hash",
+            "--output",
+            str(directory / "resolved.json"),
+        ],
+    ), patch.dict(
+        environment.os.environ,
+        {"RUNNER_TEMP": str(directory), "EXECUTION": selected["execution"], "ATTEMPT": selected["attempt"]},
+    ):
+        with patch.object(environment, "sdk", return_value=copy.deepcopy(resolved)) as latest:
+            environment.main()
+            latest.assert_called_once_with(target)
+        receipt = {"environment": copy.deepcopy(resolved), "compatibility": compatibility(selected, resolved)}
+        selected["dependencies"] = [{"receipt": copy.deepcopy(receipt)}, {"receipt": copy.deepcopy(receipt)}]
+        with patch.object(environment, "sdk", side_effect=AssertionError("dependent resolved latest SDK")):
+            environment.main()
+            recorded = json.loads((directory / "resolved.json").read_text())["environment"]
+            assert recorded == {**resolved, "host": host}
+            selected["dependencies"][1]["receipt"]["environment"]["sdk"]["sha256"] = "f" * 64
+            rejects(environment.main)
+            selected["dependencies"][1]["receipt"] = copy.deepcopy(receipt)
+            selected["dependencies"][1]["receipt"]["compatibility"]["arch"] = "other"
+            rejects(environment.main)
+        assert prepare.call_count == 2, "incompatible join reached SDK preparation"
     retry_evidence(directory)
     print("PASS worker-only image/SDK resolution fixtures; no Docker or SDK archive was executed")
 
