@@ -2,7 +2,7 @@
 
 These files are now installed in the sandbox repositories; see the verified
 [deployment status](../../docs/sandbox-deployment.md) for revisions, live setup checks and
-the signing-identity conflict blocking package publication. They implement source-owned examples,
+the signing-identity correction that preserves existing feed keys. They implement source-owned examples,
 not controller policy. No production SNodeC repository, credential, tag or feed is a target.
 
 ## Source-owned files
@@ -73,8 +73,8 @@ at joins. The controller contains no row catalogue or SDK resolver.
    tunnel or public configuration-writing UI.
 
 The owner authorized this workflow deployment. Files, Pages and public variables are
-installed; existing repository-secret cleanup and feed-key replacement remain blocked by
-newly discovered signing-identity differences. No application push, PR, merge or installation
+installed; signing identities are aligned and obsolete repository-secret cleanup is complete.
+Existing feed keys and package versions were preserved. No application push, PR, merge or installation
 is included implicitly. Source tag creation and package jobs have not been performed.
 
 ## Initial execution sequence to approve

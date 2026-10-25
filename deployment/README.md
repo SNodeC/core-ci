@@ -2,8 +2,8 @@
 
 The fresh workflows/tooling are now installed in VOC-Experiments. See the
 [verified deployment status](../docs/sandbox-deployment.md) for exact commits and live
-Pages/credential checks. Package publication is blocked by a discovered signing-identity
-conflict; no graph-driven GitHub package build, client installation or operational readiness
+Pages/credential checks and resolved signing identities. Existing feed trust keys are
+preserved; no graph-driven GitHub package build, client installation or operational readiness
 is claimed. Local package/signature checks and synthetic controller integration evidence
 remain distinct from the live acceptance still required.
 

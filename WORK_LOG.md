@@ -560,3 +560,11 @@
 - Three affected local suites pass, including native real-tool signatures, provenance,
   and preservation/replay/rejection checks for the distinct APK public-key path. No
   GitHub package publication or client-installation acceptance is inferred from these checks.
+- Deployed worker b45e47c415501c8afe0d3abb9c5cfb71f4e8c71c, repinned all four source
+  workflows and updated protected controller/public worker settings. Added only the distinct
+  EC public-key file to the feed; verified every prior Git blob/mode remained unchanged.
+- Live Pages deployment passed. HTTPS retrieval confirms all four public files, including
+  the preserved RSA legacy key. Removed obsolete repository-level key secrets after retaining
+  verified owner-held backups; active signing/feed keys remain environment-only.
+- Executable production code +1/-1 (one filename), public key data +23/-22, tests +16/-0.
+  No new controller mechanism, source tags, package publication or client-installation claim.

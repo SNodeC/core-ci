@@ -74,22 +74,19 @@ environment alone prevents untrusted workflow edits. Keep builds outside this en
 
 ## Publication secrets
 
-The prepared worker uses the sandbox's existing secret names below rather than creating a
-second set of aliases. Metadata confirms these signing/App names already exist at repository
-level; repository-secret values cannot be read back. The protected
-package-publication environment was created on 2026-10-25 with a main-branch-only policy.
-PACKAGES_APP_PRIVATE_KEY was provisioned from the existing sandbox coordinator App PEM.
-Public environment variables FEED_WRITER_APP_ID and FEED_WRITER_INSTALLATION_ID identify the
-verified App and installation; a temporary Contents-write token was restricted to the sandbox
-feed and revoked after verification. The owner-authorized project-directory search located
-all three existing signing private-key files. The OpenPGP fingerprint and APK EC P-256 public
-key match the trusted worker keys; standard usign signing/verification proves the IPK match.
-The three signing secrets were provisioned into this environment via stdin, and their names
-were verified through GitHub metadata. The OpenPGP export is not passphrase-protected, so no
-passphrase secret was provisioned. No key was generated or rotated. Existing repository
-secrets were not removed or changed. Subsequent deployment found that existing feed public
-keys have different identities; see [deployment status](sandbox-deployment.md). No feed key
-was replaced. This setup is not live package pipeline acceptance.
+The worker uses the sandbox's established secret names below. The main-only
+package-publication environment contains all four required key secrets. Existing APT/IPK
+private files were recovered and verified against the feed's public identities, then
+provisioned through stdin. Their deployment identifiers match the controller/worker config.
+The unprotected OpenPGP key needs no passphrase secret.
+
+The existing feed APK key is RSA-3072 and remains unchanged for legacy feeds. New SDK-specific
+APK feeds use the already-provisioned EC P-256 key and publish keys/core-ci-apk.pem separately.
+Original and collected private/public files remain in protected owner-held local storage.
+Obsolete repository-level signing/feed-writer and source App secrets were removed; the valid
+read-only observer secret remains. No secret value was retrieved from GitHub, and no private
+key was generated or placed in Git/artifacts. See [deployment status](sandbox-deployment.md)
+for exact revisions and verified public key preservation. Full package acceptance is pending.
 See [worker setup](../deployment/README.md) for current implementation status and public inputs.
 
 | Exact GitHub environment secret | Input material |

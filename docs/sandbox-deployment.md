@@ -7,20 +7,18 @@ committed on sandbox main branches. Existing source tags and package bytes were 
 
 | Repository | Installed revision |
 | --- | --- |
-| VOC-Experiments/ci-coordinator | [eda8bb7](https://github.com/VOC-Experiments/ci-coordinator/commit/eda8bb7ca7431479666f2a99a8c7e5659912646b) |
-| VOC-Experiments/demo-core | [9421ca6](https://github.com/VOC-Experiments/demo-core/commit/9421ca65b245e56b46b08fe957dee5e155d4efdf) |
-| VOC-Experiments/demo-app | [92da783](https://github.com/VOC-Experiments/demo-app/commit/92da78300f9f27fbcc4684c05730432e73b72bc0) |
-| VOC-Experiments/demo-side | [89faa7a](https://github.com/VOC-Experiments/demo-side/commit/89faa7aa1c5734dfb181e7dd05f5ae3e2bece717) |
-| VOC-Experiments/demo-join | [2a8283f](https://github.com/VOC-Experiments/demo-join/commit/2a8283f2fa9ef870a70a5cfb1121d2fad3ae3cb8) |
-| VOC-Experiments/packages Pages workflow | [da55734](https://github.com/VOC-Experiments/packages/commit/da55734a76947186d675afd5b15367cc98738e0a) |
+| VOC-Experiments/ci-coordinator | [b45e47c](https://github.com/VOC-Experiments/ci-coordinator/commit/b45e47c415501c8afe0d3abb9c5cfb71f4e8c71c) |
+| VOC-Experiments/demo-core | [7cffc14](https://github.com/VOC-Experiments/demo-core/commit/7cffc1403a20664c8c07e49ae559e16b7089479e) |
+| VOC-Experiments/demo-app | [00f26fe](https://github.com/VOC-Experiments/demo-app/commit/00f26fe353f7014187d1be292e5cd93e93811494) |
+| VOC-Experiments/demo-side | [b92d0c0](https://github.com/VOC-Experiments/demo-side/commit/b92d0c0c301754b0be38dc778b3714cfcb5f298c) |
+| VOC-Experiments/demo-join | [0a9c3cf](https://github.com/VOC-Experiments/demo-join/commit/0a9c3cf99f7684ef8a41764466a16aa92d8525e0) |
+| VOC-Experiments/packages | [48144d1](https://github.com/VOC-Experiments/packages/commit/48144d1106b07252c5519f16df34133f9d67f496) |
 
-The worker main branch subsequently advanced only to install and remove a temporary
-read-only deployment credential check. All source reusable-workflow calls remain pinned
-to full tooling commit `eda8bb7ca7431479666f2a99a8c7e5659912646b`.
+All source calls pin the full worker commit `b45e47c415501c8afe0d3abb9c5cfb71f4e8c71c`.
 
-Approved source workflow blob: `08df317df5592f3aca7b85f0057dc38c5ec9d2c4`.
+Approved source workflow blob: `4a628a8ff400dde010378864170c2fe6f90f352d`.
 Approved publication workflow blob: `3d84013c0d7e77147b310c5647a471dc3d1d0a91`.
-The protected controller configuration was updated with these exact deployed identities.
+Protected controller configuration and worker public variables match these identities.
 
 ## Verified live deployment evidence
 
@@ -37,23 +35,37 @@ The protected controller configuration was updated with these exact deployed ide
 - package-publication remains main-only, with four configured environment key secrets.
   Public worker variables and feed-writer identifiers are configured.
 
-## Signing identity conflict — publication blocked pending owner decision
+## Signing identity alignment — resolved without replacing existing feed keys
 
-The feed already has three different public keys at the expected keys/ paths. The guard
-rejected replacement before any feed key commit or package publication. These are different
-key identities, not formatting differences. Existing repository secrets remain untouched:
-they may be the only remaining copies of the old sandbox signing keys.
+Credential-only log inspection located the original owner-held sandbox APT/IPK private
+files. Standard GnuPG/usign challenge signing and verification prove their correspondence
+to existing feed keys. Protected publication secrets, worker trusted public files and
+controller configuration now use those identities.
 
-| Identity | Existing feed | Selected/provisioned worker |
+| Identity | Active key |
 | --- | --- |
-| OpenPGP fingerprint | A4B307A9CFD583089547481DE58C165F4340EE99 | 8BBFD49E3C826FDB1416C79E60046744B15B0E05 |
-| usign fingerprint | 9bc0ca6b2dc8a9a9 | f6fd78dca70698e8 |
-| APK public key | Different EC key | Reviewed worker apk.pem |
+| APT/RPM OpenPGP fingerprint | A4B307A9CFD583089547481DE58C165F4340EE99 |
+| IPK usign fingerprint | 9bc0ca6b2dc8a9a9 |
+| New SDK-specific APK feeds | EC P-256, keys/core-ci-apk.pem |
+| Legacy APK feeds | Existing RSA-3072 keys/apk.pem, unchanged |
 
-Before publication, either explicitly authorize the sandbox transition to the selected
-keys (retaining old public keys and package versions), or provide matching owner-held
-private files for the current feed identities. Do not generate replacement keys or silently
-rotate the feed. The newly provisioned keys have not signed a package/feed publication.
+The legacy APK private/public pair was also located, verified and retained. RSA-3072 does
+not meet the new publisher's required EC P-256 contract. The already-provisioned P-256 key
+therefore uses a distinct public filename for new SDK-specific feeds. No existing trust key
+was replaced or generated. Exact Git-tree comparison proves every prior feed blob remained
+unchanged; only keys/core-ci-apk.pem was added. HTTPS retrieval verified all four public
+key files against the selected or preserved local public bytes.
+
+[Pages deployment after key alignment](https://github.com/VOC-Experiments/packages/actions/runs/40228213639)
+succeeded. Three affected local suites pass, including real native signatures and regression
+checks for preserving the old APK file, replaying the new key and rejecting an overwrite.
+Actual OpenWrt package signing/client installation remains outstanding.
+
+Obsolete signing/feed-writer repository secrets and old source App secrets were removed as
+planned. Active keys remain in main-only package-publication; the valid read-only observer
+secret remains at worker repository scope. Owner-held original and collected private/public
+files remain available in Git-ignored local storage with restrictive permissions. No secret
+value was retrieved from GitHub or exposed in logs/artifacts.
 
 ## Still outstanding
 
