@@ -623,7 +623,7 @@ namespace coreci {
         std::vector<Node> assigned;
         for (const auto& [id, node] : store.graph().nodes()) {
             const auto& attempt = node.attempts.back();
-            if (attempt.state == "building" || attempt.state == "publishing") {
+            if ((attempt.state == "building" && attempt.buildResult.is_null()) || attempt.state == "publishing") {
                 assigned.push_back(node);
             }
         }

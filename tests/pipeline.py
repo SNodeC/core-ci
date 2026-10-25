@@ -50,6 +50,7 @@ def exercise(args, directory):
     head = "a" * 40
     definitions = {}
     workflow_files = {}
+    build_status_reads = []
     trees = {}
     blobs = {}
     writes = 0
@@ -250,6 +251,8 @@ def exercise(args, directory):
                     run = runs[run_id]
                     assignment = publications[run_id - 500]["assignment"] if run_id >= 500 else dispatches[run_id - 100]
                     if len(parts) == 4:
+                        if run_id < 500:
+                            build_status_reads.append(run_id)
                         self.reply(200, run)
                     elif parts[4] == "jobs":
                         if run_id >= 500 and malformed_publication_jobs:
@@ -382,16 +385,20 @@ def exercise(args, directory):
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert current["state"] == "publishing"
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
+            runs[100].update(status="completed", conclusion="success")
+            assert report(100)[0] == 200 and len(publications) == 1, "second writer started before the assigned publication resolved"
             generation = request("/api/graph")[1]["generation"]
             assert report(102)[0] == 200 and len(dispatches) == 3
             assert request("/api/graph")[1]["generation"] == generation, "duplicate report caused a redundant mutation"
             runs[500].update(status="completed", conclusion="failure")
             assert report(500)[0] == 202, "a failed publication job without a receipt must preserve uncertainty"
             assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["state"] == "publishing"
+            verified_reads = build_status_reads.count(100)
             lifecycle.stop(application)
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             request("/api/work/reconcile", {})
+            assert build_status_reads.count(100) == verified_reads, "restart re-read an already persisted verified build"
             assert len(publications) == 1, "restart replaced uncertain publication"
             selected = publications[0]["assignment"]
             public_run = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["publication_run"]
@@ -413,13 +420,13 @@ def exercise(args, directory):
             deployed_files["/" + path] = b"modified HTTPS receipt"
             assert report(500)[0] == 202, "modified HTTPS receipt authorized publication"
             deployed_files["/" + path] = raw
-            assert report(500)[0] == 200, "verified commit and HTTPS bytes did not resolve a lost publication outcome"
+            assert report(500)[0] == 202, "verified publication did not release the next completed build"
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
-            assert current["state"] == "published" and len(publications) == 1
+            assert current["state"] == "published" and len(publications) == 2
             assert report(500)[0] == 200 and report(102)[0] == 200, "late report regressed published state"
             assert request("/api/repositories/save", {"repository": "Owner/worker", "branch": "main", "definition": definition})[0] == 422
             runs[100].update(status="completed", conclusion="success")
-            assert report(100)[0] == 202 and len(publications) == 2
+            assert report(100)[0] == 200 and len(publications) == 2, "completed build was dispatched for publication more than once"
             runs[501].update(status="completed", conclusion="failure")
             malformed_publication_jobs = True
             assert report(501)[0] == 202, "malformed job evidence authorized replacement"

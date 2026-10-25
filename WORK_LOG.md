@@ -670,3 +670,12 @@
   Checks reject unrelated keys, refresh/install the actual HTTPS feed, and verify the
   installed executable output. Local syntax/permission/no-secret checks pass; live
   installation proof remains pending publication.
+- Remove redundant GitHub build inspection during reconciliation once its immutable
+  verified result is persisted. Publication eligibility already derives from that result;
+  unknown builds and assigned publication outcomes are still inspected. Production +1/-1.
+- Expanded the real-MariaDB/synthetic-GitHub pipeline boundary to persist a completed
+  second build behind an uncertain publisher, restart, and assert zero repeat build-status
+  requests plus exactly one subsequent publisher. The previous running binary fails this
+  regression by re-reading the cached build; the rebuilt binary and graph suite pass.
+- Authenticated live startup reconciliation verified the formerly blocked feed receipt
+  and advanced publication to the next assigned job. No replacement executions dispatched.
