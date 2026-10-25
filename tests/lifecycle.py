@@ -167,6 +167,7 @@ def exercise(args):
                             time.sleep(0.1)
                             wait_http(port, application)
                             assert app_log.read_text().count("Listening on") == 1, "reconnection registered a second listener"
+                            assert app_log.read_text().count("Webhooks listening on") == 1, "reconnection registered a second TLS listener"
                         stop(application)
                         if args.case == "webhook-failure":
                             assert "Webhook listener failed" in app_log.read_text(), "no bind failure reported"

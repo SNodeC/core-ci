@@ -767,3 +767,6 @@
 - Added one test-only APK grammar check before the existing APK comparator assertions,
   using standard `apk version -c`. No production version codec change. Acceptance-only
   worker deployment is 190e97e5e491e45cfd38f5bee9e17b1dfeb3ca5a; build tooling stays pinned.
+- Extended the existing real-MariaDB lost-connection check to assert exactly one TLS
+  listener as well as one HTTP listener after lazy reconnection; the focused test passes.
+  This adds one test line and no production state or connection retry behavior.
