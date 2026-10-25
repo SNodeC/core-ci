@@ -805,3 +805,13 @@
   checked feed commit; no new scheduler, callback or signing implementation.
 - Added 67 test lines for retained versions, escaped content, real HTML links, deterministic
   replay, unchanged package bytes and rejection of unsafe paths/execution URLs.
+
+- Both focused worker package/provenance tests pass. Black checks and diff whitespace checks
+  pass. Sandbox worker tooling is 792949f2331fc7da76a70b1c5422ef55456c3ac9; all four source
+  workflows and public configuration pins updated after verifying no assigned work remains.
+- Initial presentation-only feed update a3a4427407583d440920af03b9342df5da1ec2e5 derives
+  29 publication rows. Every package/index/key/receipt and unrelated document blob is unchanged.
+  Pages run 40241209262 passed; verified HTTPS outputs and actual Chrome rendering.
+- Restarted the development controller with updated pins; all persisted execution identities
+  and states are unchanged. No application installation/push, new tag, key change or package
+  rebuild. Future publisher integration is locally verified, not claimed as a new live build.

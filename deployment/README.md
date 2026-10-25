@@ -4,8 +4,7 @@ The fresh workflows/tooling are now installed in VOC-Experiments. See the
 [verified deployment status](../docs/sandbox-deployment.md) for exact commits and live
 Pages/credential checks and resolved signing identities. Existing feed trust keys are
 preserved. Graph-driven native/IPK publication and actual apt/dnf/opkg installation are
-verified, as are APK signing and actual APK v3 client installation. Complete APK diamond
-acceptance remains pending. Local package/signature checks,
+verified, including complete diamond installation on all five targets. Local package/signature checks,
 synthetic service fixtures and actual GitHub/client acceptance remain distinct.
 
 The invariant is one immutable controller assignment across build, independent validation,
@@ -225,3 +224,17 @@ token. Real GitHub execution remains an acceptance requirement.
 
 Sandbox source recipes, explicit matrices and the external activation review are in
 [sandbox/README.md](sandbox/README.md). No sandbox workflow installation is implied by local preparation.
+
+
+## Feed publication status
+
+The trusted publisher runs `core_ci/feed_status.py` before its existing checked feed commit.
+The renderer reads retained `receipts/*/*.json` and generates root/status HTML, a Markdown
+summary and per-repository pages, and `status.json`. It preserves every recorded version;
+it does not guess a latest source or reconstruct waiting/failed graph state. Execution state
+remains in the controller UI. Package downloads, exact versions, source commits, checksums,
+assigned GitHub runs and receipt links derive from receipt evidence. No signing is repeated.
+
+The initial sandbox presentation refresh was a checked documentation-only GitHub update
+from existing receipts. Subsequent package publications commit these projections together
+with the receipt and package indexes. An identical replay produces identical page bytes.
