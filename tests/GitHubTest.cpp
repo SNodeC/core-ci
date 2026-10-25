@@ -14,6 +14,7 @@ int main(int argc, char* argv[]) {
 
     int calls = 0;
     int status = -1;
+    bool submitted = false;
     const char* expectation = std::getenv("CORE_CI_TEST_EXPECTED_STATUS");
     const int expected = expectation == nullptr ? 200 : std::atoi(expectation);
     const char* requestedRepository = std::getenv("CORE_CI_TEST_REPOSITORY");
@@ -23,6 +24,7 @@ int main(int argc, char* argv[]) {
         github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, [&](const coreci::GitHubResult& result) {
             ++calls;
             status = result.status;
+            submitted = result.submitted;
             if (result.status == 200 && result.body.value("full_name", "") != repository) {
                 status = -2;
             }
@@ -38,6 +40,11 @@ int main(int argc, char* argv[]) {
     }
 
     const int loopStatus = core::SNodeC::start();
+    const char* submittedSetting = std::getenv("CORE_CI_TEST_EXPECTED_SUBMISSION");
+    const bool expectedSubmission = submittedSetting == nullptr || std::string(submittedSetting) == "1";
+    if (submitted != expectedSubmission) {
+        status = -3;
+    }
     if (calls != 1 || status != expected) {
         std::cerr << "callback count=" << calls << " status=" << status << " expected=" << expected << '\n';
     }

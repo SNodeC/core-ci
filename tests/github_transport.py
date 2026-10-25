@@ -65,7 +65,12 @@ def exercise(args, directory):
                 run(["openssl", "dgst", "-sha256", "-verify", str(public), "-signature", str(sig)], (header + "." + payload).encode())
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 assert body == {"repository_ids": [99], "permissions": {"contents": "read"}}
-                self.send_json(201, {"token": "unit-test-only-token"})
+                if args.case == "token-rejected":
+                    self.send_json(403, {"message": "fixture rejected token"})
+                elif args.case == "token-lost-response":
+                    self.close_connection = True
+                else:
+                    self.send_json(201, {"token": "unit-test-only-token"})
             except Exception as error:
                 errors.append(type(error).__name__)
                 self.send_json(400, {"message": "fixture rejected request"})
@@ -85,12 +90,13 @@ def exercise(args, directory):
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    expected = "200" if args.case == "success" else "0"
+    expected = "200" if args.case == "success" else "403" if args.case == "token-rejected" else "0"
     command = [args.executable, "--config-file", str(config), "--log-file", str(root / "framework.log"), "github", "--app-id", "42", "--installation-id", "7", "--private-key-file", str(app_key), "--allowed-owner", "Owner", "--repository", "Owner/example=99", "github-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port)]
     if args.case != "wrong-ca":
         command += ["tls", "--ca-cert", str(certificate)]
     environment = os.environ.copy()
     environment["CORE_CI_TEST_EXPECTED_STATUS"] = expected
+    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response") else "0"
     try:
         result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -98,6 +104,8 @@ def exercise(args, directory):
         assert "unit-test-only-token" not in result.stdout + result.stderr
         if args.case in ("wrong-hostname", "wrong-ca"):
             assert seen == [], "authorization was sent before TLS identity was verified"
+        elif args.case in ("token-rejected", "token-lost-response"):
+            assert seen == ["token"], "a failed token request reached the repository operation"
         else:
             assert seen == ["token", "repository"], "request was dropped or replayed"
     finally:

@@ -32,6 +32,7 @@ add_executable(
     src/DatabaseConfig.cpp
     src/ManagedDatabase.cpp
     src/GitHub.cpp
+    src/HttpClient.cpp
     src/PrivateFile.cpp
     src/Database.cpp
     src/Enrollment.cpp
@@ -151,7 +152,8 @@ endif()
 
 if(BUILD_TESTING)
     add_executable(
-        github-test tests/GitHubTest.cpp src/GitHub.cpp src/PrivateFile.cpp
+        github-test tests/GitHubTest.cpp src/GitHub.cpp src/HttpClient.cpp
+                    src/PrivateFile.cpp
     )
     target_include_directories(github-test PRIVATE src)
     target_link_libraries(
@@ -159,7 +161,9 @@ if(BUILD_TESTING)
         PRIVATE nlohmann_json::nlohmann_json snodec::http-client
                 snodec::net-in-stream-tls OpenSSL::SSL OpenSSL::Crypto
     )
-    foreach(case success wrong-hostname wrong-ca lost-response)
+    foreach(case success wrong-hostname wrong-ca lost-response token-rejected
+                 token-lost-response
+    )
         add_test(
             NAME github-transport-${case}
             COMMAND
@@ -174,8 +178,9 @@ endif()
 
 if(BUILD_TESTING)
     add_executable(
-        source-reader-test tests/SourceReaderTest.cpp src/SourceReader.cpp
-                           src/GitHub.cpp src/PrivateFile.cpp
+        source-reader-test
+        tests/SourceReaderTest.cpp src/SourceReader.cpp src/GitHub.cpp
+        src/HttpClient.cpp src/PrivateFile.cpp
     )
     target_include_directories(source-reader-test PRIVATE src)
     target_link_libraries(

@@ -5,15 +5,11 @@
 
 #include <algorithm>
 #include <charconv>
-#include <core/SNodeC.h>
 #include <ctime>
 #include <openssl/pem.h>
-#include <openssl/ssl.h>
 #include <set>
 #include <stdexcept>
 #include <utility>
-#include <web/http/ConfigHttpParser.h>
-#include <web/http/client/ConfigHTTP.h>
 
 namespace coreci {
 
@@ -73,76 +69,7 @@ namespace coreci {
 
     GitHub::GitHub(const GitHubConfig& config)
         : config(config)
-        , client(
-              "github-http",
-              [this](const std::shared_ptr<web::http::client::MasterRequest>& request) {
-                  if (!requests.empty()) {
-                      const auto operation = requests.front();
-                      operation->master = request;
-                      request->method = operation->method;
-                      request->url = operation->path;
-                      request->set("Host", "api.github.com");
-                      request->set("User-Agent", "core-ci");
-                      request->set("Accept", "application/vnd.github+json");
-                      request->set("Authorization", "Bearer " + operation->authorization);
-                      request->set("X-GitHub-Api-Version", this->config.apiVersion);
-                      request->set("Connection", "close");
-                      request->type("application/json");
-                      const bool queued = request->send(
-                          operation->body.is_null() ? std::string{} : operation->body.dump(),
-                          [operation](const auto&, const std::shared_ptr<web::http::client::Response>& response) {
-                              try {
-                                  operation->result.status = std::stoi(response->statusCode);
-                                  if (!response->body.empty()) {
-                                      operation->result.body = nlohmann::json::parse(response->body.begin(), response->body.end());
-                                  }
-                              } catch (const std::exception&) {
-                                  operation->result.error = "GitHub response is not valid bounded JSON";
-                              }
-                          },
-                          [operation](const auto&, const std::string&) {
-                              operation->result.error = "GitHub HTTP response could not be parsed; request outcome may be unknown";
-                              if (const auto master = operation->master.lock()) {
-                                  master->disconnect();
-                              }
-                          });
-                      if (!queued) {
-                          operation->result.error = "GitHub connection ended before request submission";
-                          request->disconnect();
-                      }
-                  }
-              },
-              [this](const std::shared_ptr<web::http::client::MasterRequest>& request) {
-                  if (!requests.empty() && requests.front()->master.lock() == request) {
-                      finish();
-                  }
-              }) {
-        client.getConfig()->Remote::setHost("api.github.com")->setPort(443);
-        client.getConfig()->Tls::setSni("api.github.com");
-        client.getConfig()->Tls::setCaCertDirUseDefault();
-        client.getConfig()->Tls::setCaCertAcceptUnknown(false);
-        client.getConfig()
-            ->net::config::ConfigInstance::getSubCommand<web::http::client::ConfigHTTP>()
-            ->getParserConfig()
-            ->setMaximumBodyBytes(2 * 1024 * 1024);
-        client.setOnConnect([this](auto* connection) {
-            if (!requests.empty()) {
-                requests.front()->connectionId = connection->getConnectionId();
-            }
-            // This hook precedes SSL_new in SNode.C; configure the shared SSL context.
-            SSL_CTX* context = client.getConfig()->getSslCtx();
-            if (context != nullptr) {
-                SSL_CTX_set_verify(context, SSL_VERIFY_PEER, nullptr);
-            }
-            if (context == nullptr || X509_VERIFY_PARAM_set1_host(SSL_CTX_get0_param(context), "api.github.com", 0) != 1) {
-                connection->close();
-            }
-        });
-        client.setOnDisconnect([this](auto* connection) {
-            if (!requests.empty() && requests.front()->connectionId == connection->getConnectionId()) {
-                finish();
-            }
-        });
+        , http("github-http", "api.github.com") {
     }
 
     bool GitHub::validRepository(const std::string& repository) {
@@ -157,6 +84,7 @@ namespace coreci {
     }
 
     void GitHub::loadCredentials() {
+        http.configure();
         if (!config.privateKeyFile.empty()) {
             if (config.appId == 0 || config.installationId == 0 || config.allowedOwner.empty()) {
                 throw std::runtime_error("GitHub App requires explicit App ID, installation ID and allowed owner");
@@ -271,49 +199,29 @@ namespace coreci {
                       const std::string& authorization,
                       const nlohmann::json& body,
                       const Callback& callback) {
-        if (core::SNodeC::state() == core::State::STOPPING) {
-            callback({0, nullptr, "GitHub request was not submitted during shutdown"});
-        } else {
-            auto operation = std::make_shared<Operation>();
-            operation->method = method;
-            operation->path = path;
-            operation->authorization = authorization;
-            operation->body = body;
-            operation->callback = callback;
-            requests.push_back(operation);
-            if (requests.size() == 1) {
-                connect();
-            }
-        }
-    }
-
-    void GitHub::connect() {
-        const auto operation = requests.front();
-        client.connect([this, operation](const auto&, const core::socket::State& state) {
-            if (state != core::socket::State::OK && !requests.empty() && requests.front() == operation) {
-                operation->result.error = "GitHub HTTPS connection failed or is disabled; request outcome may be unknown";
-                finish();
-            }
-        });
-    }
-
-    void GitHub::finish() {
-        const auto operation = requests.front();
-        if (operation->result.status == 0 && operation->result.error.empty()) {
-            operation->result.error = "GitHub disconnected without a verified response; request outcome is unknown";
-        }
-        // Retain the front operation while its callback may append a follow-up request.
-        operation->callback(operation->result);
-        requests.pop_front();
-        if (core::SNodeC::state() == core::State::STOPPING) {
-            while (!requests.empty()) {
-                const auto canceled = requests.front();
-                requests.pop_front();
-                canceled->callback({0, nullptr, "GitHub request was not submitted during shutdown"});
-            }
-        } else if (!requests.empty()) {
-            connect();
-        }
+        http.request("api.github.com",
+                     443,
+                     method,
+                     path,
+                     {{"Accept", "application/vnd.github+json"},
+                      {"Authorization", "Bearer " + authorization},
+                      {"X-GitHub-Api-Version", config.apiVersion},
+                      {"Content-Type", "application/json"}},
+                     body.is_null() ? std::string{} : body.dump(),
+                     [callback](const HttpResult& response) {
+                         GitHubResult result;
+                         result.status = response.status;
+                         result.error = response.error;
+                         result.submitted = response.submitted;
+                         if (!response.body.empty()) {
+                             try {
+                                 result.body = nlohmann::json::parse(response.body);
+                             } catch (const std::exception&) {
+                                 result.error = "GitHub response is not valid bounded JSON";
+                             }
+                         }
+                         callback(result);
+                     });
     }
 
 } // namespace coreci

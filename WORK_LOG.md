@@ -201,3 +201,34 @@
   verification; JavaScript syntax/API boundary checks remain separate from browser rendering.
 - Source-event coordination and trusted worker/publication code remain ongoing work.
 - Checkpoint accounting (before this entry): {'production': [546, 94], 'docs': [24, 1], 'tests': [266, 8]}. Explicit format-check, JavaScript syntax and staged whitespace checks passed.
+
+## 2026-10-25 — approved framework URL encoder fix
+
+- Owner explicitly approved fixing SNode.C and pushing without creating a branch.
+  Used its existing canonical checkout; preserved all unrelated receiver edits.
+- Fixed unsigned-byte hexadecimal insertion and ASCII unreserved classification.
+  New regression fails against the installed library; corrected encoder and existing
+  HTTP query-parser tests both pass. Changed-file formatting and whitespace checks pass.
+- Commit 1092fda70a60dabd7ac4cf63dc109551784482bc pushed directly to SNodeC/snode.c master.
+  Existing local fix/receiver-removal-callbacks branch remains checked out. No branch,
+  tag, additional checkout or installation was created. Production +4/-3; tests/build
+  registration +32/-0. Build retained at /tmp/codex/build/snode.c/url-encoding for evidence.
+- Installed framework remains unchanged; core-ci must consume the fixed public helper
+  once the corrected framework is installed and verified.
+
+## 2026-10-25 — shared asynchronous HTTPS transport
+
+- Extracted the existing SNode.C TLS transport from GitHub authentication into one
+  reusable HTTP client for GitHub, image resolution and later HTTPS feed evidence.
+  Named instances/options are registered before init; certificate verification uses
+  the framework callback before SSL creation. Automatic reconnect/retry is rejected.
+- Added conservative request-submission evidence. A lost repository-operation response
+  remains uncertain; failed token acquisition proves the requested operation was not sent.
+  No mutation is replayed by the transport.
+- Fifteen affected TLS/source/enrollment boundary tests pass, including rejected/lost
+  token responses, lost operation responses and real-MariaDB enrollment faults.
+  These are local fixtures, not live workflow or package-publication acceptance.
+- The upstream URL encoding correction is pushed but remains uninstalled locally.
+  The application retains its single correct encoder pending framework installation.
+- Checkpoint accounting: production +263/-138; tests +17/-2; documentation +58/-0.
+  Removed the obsolete proposed patch after its upstream commit; retained the evidence guide.
