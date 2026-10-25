@@ -129,6 +129,73 @@ def main():
     finally:
         github.api = original_api
         github.download_artifact = original_download
+    # Publication views are projections of retained receipts, including older versions.
+    import feed_status
+    from html.parser import HTMLParser
+
+    feed = directory / "status-feed"
+    receipt_path = feed / "receipts" / ("a" * 64) / "1.json"
+    receipt_path.parent.mkdir(parents=True)
+    package = feed / "pool" / "project.deb"
+    package.parent.mkdir()
+    package.write_bytes(b"immutable package bytes")
+    receipt = {
+        "schema": 1,
+        "source_commit": "c" * 40,
+        "feed": {"base_url": "https://packages.example.test/"},
+        "compatibility": {"distribution": "configured", "suite": "series", "arch": "arch", "format": "deb"},
+        "build_result": {"run": {"html_url": "https://github.com/Example/source/actions/runs/100"}},
+        "run": {"html_url": "https://github.com/Example/worker/actions/runs/200"},
+        "packages": [{"name": "project<&>", "version": "1.0-1", "path": "pool/project.deb", "sha256": "d" * 64}],
+    }
+    contract.write_json(receipt_path, receipt)
+    receipt["packages"][0]["version"] = "2.0-2"
+    contract.write_json(receipt_path.with_name("2.json"), receipt)
+    paths = feed_status.render(feed)
+    assert set(paths) == {"index.html", "status/index.html", "status/README.md", "status/source.md", "status.json"}
+    data = contract.read_json(feed / "status.json")["publications"]
+    assert [row["version"] for row in data] == ["1.0-1", "2.0-2"]
+    assert all(row["repository"] == "Example/source" for row in data)
+
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.links = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                self.links.extend(value for key, value in attrs if key == "href")
+
+    page = (feed / "index.html").read_text()
+    links = Links()
+    links.feed(page)
+    assert len(links.links) == 8 and "https://packages.example.test/pool/project.deb" in links.links
+    assert "project&lt;&amp;&gt;" in page and "project<&>" not in page
+    assert "Waiting, building and failed work" in page
+    before = {str(path.relative_to(feed)): contract.file_hash(path) for path in feed.rglob("*") if path.is_file()}
+    assert feed_status.render(feed) == paths
+    assert before == {
+        str(path.relative_to(feed)): contract.file_hash(path) for path in feed.rglob("*") if path.is_file()
+    }
+    assert package.read_bytes() == b"immutable package bytes"
+    receipt["run"]["html_url"] = "javascript:alert(1)"
+    contract.write_json(receipt_path, receipt)
+    rejected = False
+    try:
+        feed_status.render(feed)
+    except ValueError:
+        rejected = True
+    assert rejected and (feed / "index.html").read_text() == page
+    receipt["run"]["html_url"] = "https://github.com/Example/worker/actions/runs/200"
+    receipt["packages"][0]["path"] = "../escape"
+    contract.write_json(receipt_path, receipt)
+    rejected = False
+    try:
+        feed_status.render(feed)
+    except ValueError:
+        rejected = True
+    assert rejected and (feed / "index.html").read_text() == page
+    print("Receipt status: retained versions, escaped HTML, links, replay and immutable package bytes verified")
     # These empty Git fixtures contain no application/source checkout or real credential.
     import publish
 

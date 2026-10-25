@@ -791,3 +791,17 @@
 - Recorded all 20 build/publication links in deployment documentation. Public webhook
   certificate/key paths and feed status renderer approval remain outstanding. No private
   material, application installation/push, or public webhook activation was performed.
+
+## 2026-10-25 — approved receipt-derived feed status
+
+- Owner approved feed rendering and public TLS activation. Actual certificate/key paths
+  still must be supplied; approval alone does not provide usable TLS files.
+- Invariant: feed presentation derives exclusively from committed publication receipts;
+  it must not invent execution state or become a graph/configuration authority. Existing
+  publisher had no presentation path to reshape. Added one renderer (105 production lines
+  including its publisher integration), within the approved 80–120 line estimate.
+- Render retained versions, package downloads and assigned build/publication/receipt links
+  into HTML, Markdown and JSON. Invoke the same renderer before the publisher's existing
+  checked feed commit; no new scheduler, callback or signing implementation.
+- Added 67 test lines for retained versions, escaped content, real HTML links, deterministic
+  replay, unchanged package bytes and rejection of unsafe paths/execution URLs.

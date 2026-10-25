@@ -11,6 +11,7 @@ import urllib.request
 
 from contract import assignment, canonical, output, read_json, require, run
 from github import api
+from feed_status import render
 from sign_native import receipt_path, retained_receipt, update
 from validate import trusted_deployment
 
@@ -240,6 +241,7 @@ def main():
             ]
             if receipt.get("development_export"):
                 paths.append(receipt["development_export"]["path"])
+            paths.extend(render(feed))
             token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
             revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, paths)
     if arguments.phase == "push":
