@@ -46,15 +46,16 @@ def main():
             query = work / "query.mk"
             query.write_text("TOPDIR:=$(CURDIR)\nSDK:=1\ninclude $(TOPDIR)/rules.mk\n")
             values = {}
-            for variable in ("TARGET_CC", "TARGET_AR"):
+            for variable in ("TARGET_CC", "TARGET_AR", "TOOLCHAIN_DIR"):
                 value = subprocess.check_output(
                     ["make", "--no-print-directory", "--silent", "-C", str(sdk), "-f", str(query), "val." + variable],
                     text=True,
                 ).strip()
                 values[variable] = shlex.split(value)
                 assert values[variable], "SDK cannot identify " + variable
-            compiler = values["TARGET_CC"]
-            archiver = values["TARGET_AR"]
+            binaries = Path(values["TOOLCHAIN_DIR"][0]) / "bin"
+            compiler = [str(binaries / values["TARGET_CC"][0])] + values["TARGET_CC"][1:]
+            archiver = [str(binaries / values["TARGET_AR"][0])] + values["TARGET_AR"][1:]
         options = ["-Wall", "-Wextra", "-Werror", "-O2"] + includes
         sources = sorted((source / "src").glob("*.c"))
         run(compiler + options + sources + ["-Wl,--start-group"] + libraries + ["-Wl,--end-group", "-o", binary])

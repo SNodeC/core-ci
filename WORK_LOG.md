@@ -627,3 +627,17 @@
   check. Added a real-make preparation fixture checking configuration ordering, child-only
   umask, SDK compiler identity and staging path without compiling any packages. Three
   affected suites pass. This fixture is local boundary proof, not an actual SDK/live build.
+- Deployed compiler lookup correction at worker 5d124fbdec05cfdfe2ac4998847c51325f6c7a98.
+  Build activation need not wait for publication activation: retained the old publisher pin
+  while its assigned job finished, then activated the matching new publisher pin. No
+  controller scheduler/flag was added. A selection rejected for concurrent startup graph
+  changes created no new work; request again against the restored stable graph.
+- Both final worker SDK preparations passed on GitHub: IPK 40231441419 and APK
+  40231443502. Configuration, target checks, toolchain identity and APK v3 inspection
+  are now exercised against actual SDKs. The APK build then reached the source-owned
+  hook and failed to locate its basename-only cross compiler. Resolve hook compiler
+  and archiver commands from that SDK's TOOLCHAIN_DIR too; no worker/controller state added.
+- A hook boundary regression reaches a compiler outside PATH through real make queries,
+  stopping deliberately before compilation. Existing eight local DEB/RPM fixture builds
+  also pass. Deploy source hook changes through new commits and a new sandbox source tag;
+  preserve v2.0.0 and its recorded failing inputs.

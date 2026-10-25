@@ -13,6 +13,49 @@ sys.path.insert(0, str(repository / "deployment/worker/core_ci"))
 from contract import package_metadata
 
 
+def sdk_compiler_selection(root):
+    # A compiler outside PATH must be reached through the SDK's own directory; no compilation here.
+    sdk = root / "sdk"
+    (sdk / "toolchain/bin").mkdir(parents=True)
+    compiler = sdk / "toolchain/bin/configured-cc"
+    compiler.write_text(
+        '#!/usr/bin/env python3\nfrom pathlib import Path\nPath(__file__).with_suffix(".called").touch()\nraise SystemExit(42)\n'
+    )
+    compiler.chmod(0o755)
+    (sdk / "rules.mk").write_text(
+        "TARGET_CC:=configured-cc\nTARGET_AR:=configured-ar\nTOOLCHAIN_DIR:=$(CURDIR)/toolchain\nval.%:\n\t@echo $($*)\n"
+    )
+    source = root / "sdk-source"
+    (source / "src").mkdir(parents=True)
+    (source / "ci").mkdir()
+    definition = json.loads((repository / "deployment/sandbox/definitions/demo-core.json").read_text())
+    (source / "ci/packages.json").write_text(json.dumps(definition))
+    target = root / "sdk-target.json"
+    target.write_text(json.dumps(next(row for row in definition["matrix"] if row["family"] == "openwrt")))
+    prerequisites = root / "sdk-prerequisites"
+    prerequisites.mkdir()
+    output = root / "sdk-output"
+    output.mkdir()
+    environment = {
+        **os.environ,
+        "SOURCE_DIR": str(source),
+        "OUTPUT_DIR": str(output),
+        "TARGET_JSON": str(target),
+        "PREREQUISITES_DIR": str(prerequisites),
+        "SDK_DIR": str(sdk),
+        "PACKAGE_VERSION": "1.0.0-r7",
+        "PACKAGE_UPSTREAM_VERSION": "1.0.0",
+        "PACKAGE_RELEASE": "7",
+    }
+    result = subprocess.run(
+        [sys.executable, str(repository / "deployment/sandbox/ci/build.py"), "openwrt"],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0 and compiler.with_suffix(".called").exists(), result.stderr
+
+
 def main():
     directory = Path(sys.argv[1])
     directory.mkdir(parents=True, exist_ok=True)
@@ -37,6 +80,7 @@ def main():
     }
     with tempfile.TemporaryDirectory(dir=directory) as temporary:
         root = Path(temporary)
+        sdk_compiler_selection(root)
         for package_format, arch in (("deb", "amd64"), ("rpm", "x86_64")):
             published = {}
             for name, files in fixtures.items():

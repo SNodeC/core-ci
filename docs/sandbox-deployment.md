@@ -9,16 +9,16 @@ preserved. A new demo-core v2.0.0 tag selects source commit
 
 | Repository | Installed revision |
 | --- | --- |
-| VOC-Experiments/ci-coordinator | [929f140](https://github.com/VOC-Experiments/ci-coordinator/commit/929f140d890fff398772949d24e30b60a18f5969) |
-| VOC-Experiments/demo-core | [6e3c974](https://github.com/VOC-Experiments/demo-core/commit/6e3c97496f8b2e9e187d2fdc6b626cbc2ef44209) |
-| VOC-Experiments/demo-app | [13fc80d](https://github.com/VOC-Experiments/demo-app/commit/13fc80d91df1e4f9b8481e9c22535b545ef6d5b3) |
-| VOC-Experiments/demo-side | [c31caeb](https://github.com/VOC-Experiments/demo-side/commit/c31caeb264394240636aed62c6ba2bcfe9161ecb) |
-| VOC-Experiments/demo-join | [15abe86](https://github.com/VOC-Experiments/demo-join/commit/15abe8651234b2c2251bac1e3eafe6c93f29e72a) |
-| VOC-Experiments/packages | [a5d5ada](https://github.com/VOC-Experiments/packages/commit/a5d5adad37fd6cfbb470f3ca6ef585cb1962eba4) |
+| VOC-Experiments/ci-coordinator | [5d124fb](https://github.com/VOC-Experiments/ci-coordinator/commit/5d124fbdec05cfdfe2ac4998847c51325f6c7a98) |
+| VOC-Experiments/demo-core | [340a658](https://github.com/VOC-Experiments/demo-core/commit/340a6586cba7bfe5b645abfc272e0c321e3648ac) |
+| VOC-Experiments/demo-app | [13616a1](https://github.com/VOC-Experiments/demo-app/commit/13616a1d0207dcd376d5970f2705e50fb36d50f4) |
+| VOC-Experiments/demo-side | [1c845d3](https://github.com/VOC-Experiments/demo-side/commit/1c845d3740058df0a4fdf4281ec6104b71dc0e7b) |
+| VOC-Experiments/demo-join | [05ba8c1](https://github.com/VOC-Experiments/demo-join/commit/05ba8c1e1554c995662950d9222b5c5bf8556e66) |
+| VOC-Experiments/packages | [46530d7](https://github.com/VOC-Experiments/packages/commit/46530d78c2b7eb1438ed2a8c8f1537d439f0650f) |
 
-All source calls pin the full worker commit `929f140d890fff398772949d24e30b60a18f5969`.
+All source calls pin the full worker commit `5d124fbdec05cfdfe2ac4998847c51325f6c7a98`.
 
-Approved source workflow blob: `808c3a838f52b9287144835ba23f027ab516534d`.
+Approved source workflow blob: `b9aad9c42f1c59994fadf607eeb283c89b3ef1d4`.
 Approved publication workflow blob: `3d84013c0d7e77147b310c5647a471dc3d1d0a91`.
 Protected controller configuration and worker public variables match these identities.
 
