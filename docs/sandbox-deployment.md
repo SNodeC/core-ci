@@ -144,3 +144,8 @@ passes prerelease/rebuild comparisons, rejects an unrelated signing key, refresh
 signed HTTPS feed and installs the join and prerequisites. Installed runtime output is
 `demo-join core 60, side 62`. The side prerequisite's cancelled rebuild 34 and explicit
 successful retry/rebuild 41 are both retained in MariaDB.
+
+The same native diamond installation/runtime check also passes on
+[ARM64 APT 40237555269](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237555269)
+and [Fedora DNF 40237553823](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40237553823).
+These are native GitHub runners for the selected architectures, not file-only checks.

@@ -770,3 +770,7 @@
 - Extended the existing real-MariaDB lost-connection check to assert exactly one TLS
   listener as well as one HTTP listener after lazy reconnection; the focused test passes.
   This adds one test line and no production state or connection retry behavior.
+- Native diamond client installation/runtime also passes on ARM64 APT (40237555269)
+  and Fedora DNF (40237553823), in addition to amd64 APT and OpenWrt opkg. All use actual
+  signed HTTPS feeds and reject unrelated keys first. Controller assigned the root APK
+  publisher 40237512801 after the preceding feed writers completed.
