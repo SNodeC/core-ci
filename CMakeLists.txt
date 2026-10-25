@@ -262,3 +262,20 @@ if(BUILD_TESTING)
     )
     set_tests_properties(pipeline-boundaries PROPERTIES TIMEOUT 75)
 endif()
+
+if(BUILD_TESTING)
+    add_test(
+        NAME worker-package-boundaries
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/worker.py
+                --directory ${PROJECT_BINARY_DIR}/tests/worker
+    )
+    set_tests_properties(worker-package-boundaries PROPERTIES TIMEOUT 120)
+    add_test(
+        NAME worker-provenance-boundaries
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/worker_provenance.py --directory
+            ${PROJECT_BINARY_DIR}/tests/worker-provenance
+    )
+    set_tests_properties(worker-provenance-boundaries PROPERTIES TIMEOUT 15)
+endif()

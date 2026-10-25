@@ -1,0 +1,416 @@
+"""Shared build/publisher contract. Assignments grant authority; manifests never do."""
+
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import stat
+import subprocess
+import resource
+import tempfile
+import tarfile
+import urllib.parse
+import urllib.request
+import zipfile
+
+MAX_FILE = 512 * 1024 * 1024
+MAX_EXPANDED = 1024 * 1024 * 1024
+MAX_ENTRIES = 20000
+NAME = re.compile(r"[a-z0-9][a-z0-9+.-]{0,127}\Z")
+SHA256 = re.compile(r"[a-f0-9]{64}\Z")
+SHA1 = re.compile(r"[a-f0-9]{40}\Z")
+SEMVER = re.compile(
+    r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z"
+)
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def canonical(value):
+    result = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return result
+
+
+def digest(value):
+    result = hashlib.sha256(canonical(value).encode()).hexdigest()
+    return result
+
+
+def file_hash(path):
+    checksum = hashlib.sha256()
+    with Path(path).open("rb") as incoming:
+        block = incoming.read(1024 * 1024)
+        while block:
+            checksum.update(block)
+            block = incoming.read(1024 * 1024)
+    result = checksum.hexdigest()
+    return result
+
+
+def read_json(path, limit=2 * 1024 * 1024):
+    require(Path(path).stat().st_size <= limit, "JSON exceeds the contract resource bound")
+    result = json.loads(Path(path).read_text())
+    return result
+
+
+def write_json(path, value):
+    Path(path).write_text(canonical(value) + "\n")
+
+
+def run(arguments, **options):
+    completed = subprocess.run(arguments, check=True, text=True, timeout=120, **options)
+    return completed
+
+
+def output(arguments):
+    # Bound tool output while it is produced, rather than after allocating it in memory.
+    limit = 2 * 1024 * 1024
+    temporary = os.environ.get("RUNNER_TEMP", os.environ.get("TMPDIR"))
+    with tempfile.TemporaryFile(dir=temporary) as stdout, tempfile.TemporaryFile(dir=temporary) as stderr:
+        subprocess.run(
+            arguments,
+            check=True,
+            stdout=stdout,
+            stderr=stderr,
+            timeout=120,
+            preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit)),
+        )
+        stdout.seek(0)
+        result = stdout.read(limit + 1).decode().strip()
+        require(len(result.encode()) <= limit, "tool metadata exceeds resource bound")
+    return result
+
+
+def relative_path(name):
+    path = PurePosixPath(name)
+    require(isinstance(name, str) and 0 < len(name) <= 512 and not path.is_absolute(), "invalid relative path")
+    require(all(part not in ("", ".", "..") for part in name.split("/")), "unsafe archive path")
+    require("\\" not in name and all(32 < ord(char) < 127 for char in name), "unsupported path characters")
+    return path
+
+
+def regular_file(root, name):
+    relative_path(name)
+    path = Path(root) / name
+    require(path.is_file() and not path.is_symlink(), "expected a regular file")
+    require(path.resolve().is_relative_to(Path(root).resolve()), "file escapes its root")
+    require(path.stat().st_size <= MAX_FILE, "file exceeds resource bound")
+    return path
+
+
+def versions(tag, revision, package_format):
+    match = SEMVER.fullmatch(tag)
+    require(match is not None and type(revision) is int and 0 < revision < 2**64, "invalid source/rebuild version")
+    require(package_format in ("deb", "rpm", "ipk", "apk"), "unsupported package format")
+    upstream = ".".join(match.group(index) for index in (1, 2, 3))
+    tokens = []
+    if match.group(4):
+        for identifier in match.group(4).split("."):
+            if identifier.isdigit():
+                require(identifier == "0" or not identifier.startswith("0"), "leading zero in prerelease identifier")
+                tokens.extend([1, len(identifier), *map(int, identifier)])
+            else:
+                tokens.extend([2, *map(ord, identifier), 0])
+        tokens.append(0)
+        if package_format == "apk":
+            upstream += "_pre0" + "".join("_p" + str(token) for token in tokens)
+        else:
+            upstream += "~" + ".".join("p" + str(token) for token in tokens)
+    release = str(revision) if package_format in ("deb", "rpm") else "r" + str(revision)
+    require(len(upstream + "-" + release) <= 240, "encoded package version exceeds supported length")
+    result = {"version": upstream, "release": release, "full": upstream + "-" + release}
+    return result
+
+
+def assignment(path, expected_hash=None):
+    selected = read_json(path, 60000)
+    require(selected["schema"] == 1, "unsupported assignment schema")
+    execution = selected["execution"]
+    require(
+        SHA256.fullmatch(execution) and selected["attempt"] == execution + ":" + str(selected["revision"]),
+        "assignment identity mismatch",
+    )
+    require(
+        re.fullmatch(r"[A-Za-z0-9_-]{1,200}", selected["artifact_name"]) is not None, "invalid assigned artifact name"
+    )
+    require(expected_hash is None or digest(selected) == expected_hash, "assignment digest mismatch")
+    source = selected["source"]
+    require(
+        SHA1.fullmatch(source["commit"]) and SHA1.fullmatch(source["definition_revision"]),
+        "source must select exact commits",
+    )
+    require(
+        SHA1.fullmatch(source["definition_blob_sha"]) and NAME.fullmatch(source["package"]),
+        "invalid source definition identity",
+    )
+    require(SHA1.fullmatch(source["deployment"]["worker"]["tooling_sha"]), "tooling must select an exact commit")
+    require(selected["environment"] == source["environment"], "assigned environment mismatch")
+    versions(source["tag"], selected["revision"], selected["target"]["build"]["format"])
+    return selected
+
+
+def extract_archive(archive, destination, kind):
+    require(Path(archive).stat().st_size <= MAX_FILE, "compressed archive exceeds resource bound")
+    destination = Path(destination)
+    require(not destination.exists(), "archive destination must be new")
+    seen = set()
+    total = 0
+    members = []
+    with zipfile.ZipFile(archive) if kind == "zip" else tarfile.open(archive, "r:*") as opened:
+        entries = opened.infolist() if kind == "zip" else opened.getmembers()
+        require(len(entries) <= MAX_ENTRIES, "too many archive entries")
+        for entry in entries:
+            name = entry.filename.rstrip("/") if kind == "zip" else entry.name.rstrip("/")
+            path = relative_path(name)
+            require(name not in seen, "duplicate archive entry")
+            seen.add(name)
+            if kind == "zip":
+                mode = entry.external_attr >> 16
+                directory = entry.is_dir()
+                require(not entry.flag_bits & 1, "encrypted archive not supported")
+                require(
+                    stat.S_IFMT(mode) in (0, stat.S_IFREG, stat.S_IFDIR), "archive links/special files are forbidden"
+                )
+                size = entry.file_size
+            else:
+                directory = entry.isdir()
+                require(entry.isfile() or directory, "export links/special files are forbidden")
+                size = entry.size
+            total += size
+            require(0 <= size <= MAX_FILE and total <= MAX_EXPANDED, "expanded archive exceeds resource bound")
+            members.append((entry, path, directory))
+        destination.mkdir(parents=True)
+        for entry, path, directory in members:
+            target = destination / path
+            if directory:
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with opened.open(entry) if kind == "zip" else opened.extractfile(entry) as incoming, target.open(
+                    "xb"
+                ) as outgoing:
+                    shutil.copyfileobj(incoming, outgoing, 1024 * 1024)
+                target.chmod(0o644)
+
+
+def package_metadata(path, package_format):
+    if package_format == "deb":
+        fields = [
+            output(["dpkg-deb", "--field", str(path), field])
+            for field in ("Package", "Version", "Architecture", "Depends", "Pre-Depends")
+        ]
+        result = {
+            "name": fields[0],
+            "version": fields[1],
+            "arch": fields[2],
+            "dependencies": [value for value in fields[3:] if value],
+        }
+    elif package_format == "rpm":
+        text = output(
+            [
+                "rpm",
+                "-qp",
+                "--nosignature",
+                "--nodigest",
+                "--queryformat",
+                "%{NAME}\n%{VERSION}-%{RELEASE}\n%{ARCH}\n%{EPOCHNUM}",
+                str(path),
+            ]
+        )
+        fields = text.splitlines()
+        require(len(fields) == 4 and fields[3] == "0", "unexpected RPM epoch/metadata")
+        dependencies = output(["rpm", "-qp", "--nosignature", "--nodigest", "--requires", str(path)]).splitlines()
+        result = {"name": fields[0], "version": fields[1], "arch": fields[2], "dependencies": dependencies}
+    else:
+        raise ValueError("OpenWrt metadata validation requires the approved matching SDK tooling")
+    return result
+
+
+def compatibility(selected):
+    target = selected["target"]
+    result = {key: target[key] for key in ("family", "distribution", "suite", "arch")}
+    result["format"] = target["build"]["format"]
+    if target["family"] == "native":
+        result["platform"] = target["build"]["platform"]
+    else:
+        result.update(
+            {
+                "release": target["build"]["release"],
+                "target": target["build"]["target"],
+                "sdk_sha256": target["build"]["sdk"]["sha256"],
+            }
+        )
+    return result
+
+
+def evidence(selected):
+    result = {
+        key: selected[key]
+        for key in (
+            "schema",
+            "execution",
+            "attempt",
+            "revision",
+            "artifact_name",
+            "source",
+            "target",
+            "environment",
+            "dependencies",
+        )
+    }
+    result["assignment_sha256"] = digest(selected)
+    return result
+
+
+def validate_outputs(selected, directory, declared):
+    directory = Path(directory)
+    require(set(declared) <= {"packages", "development_export"}, "unknown hook output fields")
+    packages = declared["packages"]
+    require(isinstance(packages, list) and 0 < len(packages) <= 128, "declare one to 128 package outputs")
+    package_format = selected["target"]["build"]["format"]
+    expected = versions(selected["source"]["tag"], selected["revision"], package_format)
+    namespace = selected["source"]["package"]
+    files = set()
+    identities = set()
+    result = evidence(selected)
+    result["package_version"] = expected
+    result["packages"] = []
+    for package in packages:
+        require(
+            set(package) == {"file", "component"} and NAME.fullmatch(package["component"]),
+            "invalid declared package component",
+        )
+        filename = package["file"]
+        require("/" not in filename and filename.endswith("." + package_format), "invalid package filename")
+        require(filename not in files, "duplicate package output")
+        files.add(filename)
+        path = regular_file(directory, filename)
+        metadata = package_metadata(path, package_format)
+        require(
+            metadata["name"] == namespace or metadata["name"].startswith(namespace + "-"),
+            "package outside assigned namespace",
+        )
+        require(metadata["name"] == package["component"], "component differs from actual package name")
+        require(
+            metadata["version"] == expected["full"] and metadata["arch"] == selected["target"]["arch"],
+            "package version/architecture differs from assignment",
+        )
+        identity = (metadata["name"], metadata["version"], metadata["arch"])
+        require(identity not in identities, "duplicate package identity")
+        identities.add(identity)
+        result["packages"].append(
+            {
+                "file": filename,
+                "component": package["component"],
+                "size": path.stat().st_size,
+                "sha256": file_hash(path),
+                **metadata,
+            }
+        )
+    result["development_export"] = None
+    if declared.get("development_export") is not None:
+        filename = declared["development_export"]
+        require(filename == "development.tar.gz", "unsupported development export filename")
+        path = regular_file(directory, filename)
+        scratch = directory.parent / ("export-check-" + selected["execution"])
+        try:
+            extract_archive(path, scratch, "tar")
+            require(
+                all(
+                    PurePosixPath(name).parts[0] in ("include", "lib", "share")
+                    for name in (str(file.relative_to(scratch)) for file in scratch.rglob("*") if file.is_file())
+                ),
+                "export must contain only project development files",
+            )
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        files.add(filename)
+        result["development_export"] = {
+            "file": filename,
+            "size": path.stat().st_size,
+            "sha256": file_hash(path),
+            "compatibility": compatibility(selected),
+        }
+    require({file.name for file in directory.iterdir()} == files | {"outputs.json"}, "undeclared files in hook output")
+    return result
+
+
+def verify_manifest(selected, directory):
+    manifest = read_json(Path(directory) / "manifest.json")
+    for key, value in evidence(selected).items():
+        require(manifest[key] == value, "manifest provenance differs from assignment: " + key)
+    declared = {"packages": [{"file": item["file"], "component": item["component"]} for item in manifest["packages"]]}
+    if manifest.get("development_export"):
+        declared["development_export"] = manifest["development_export"]["file"]
+    # Reuse the same independent standard package-tool validation, never trust claimed metadata.
+    path = Path(directory)
+    temporary = path.parent / ("manifest-check-" + selected["execution"])
+    require(not temporary.exists(), "validation workspace exists")
+    temporary.mkdir()
+    try:
+        for name in [item["file"] for item in manifest["packages"]] + (
+            [declared["development_export"]] if declared.get("development_export") else []
+        ):
+            file = regular_file(path, name)
+            os.link(file, temporary / name)
+        write_json(temporary / "outputs.json", declared)
+        actual = validate_outputs(selected, temporary, declared)
+        require(actual == manifest, "package bytes/metadata/export differ from manifest")
+        require(
+            {file.name for file in path.iterdir()}
+            == {file.name for file in temporary.iterdir()} - {"outputs.json"} | {"manifest.json"},
+            "unexpected artifact files",
+        )
+    finally:
+        shutil.rmtree(temporary)
+    return manifest
+
+
+class FeedDownload(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        require(
+            urllib.parse.urlsplit(request.full_url)[:2] == urllib.parse.urlsplit(new_url)[:2],
+            "feed redirect changes origin",
+        )
+        result = super().redirect_request(request, response, code, message, headers, new_url)
+        return result
+
+
+def download_feed(base, name, destination, expected):
+    relative_path(name)
+    parsed = urllib.parse.urlsplit(base)
+    require(
+        parsed.scheme == "https" and parsed.netloc and not parsed.username and not parsed.query and not parsed.fragment,
+        "feed requires HTTPS",
+    )
+    require(
+        type(expected["size"]) is int and 0 < expected["size"] <= MAX_FILE and SHA256.fullmatch(expected["sha256"]),
+        "invalid feed object identity",
+    )
+    destination = Path(destination)
+    opener = urllib.request.build_opener(FeedDownload())
+    try:
+        with opener.open(
+            base.rstrip("/") + "/" + urllib.parse.quote(name, safe="/"), timeout=60
+        ) as response, destination.open("xb") as outgoing:
+            received = 0
+            block = response.read(1024 * 1024)
+            while block:
+                received += len(block)
+                require(received <= expected["size"], "feed object exceeds assigned size")
+                outgoing.write(block)
+                block = response.read(1024 * 1024)
+        require(
+            destination.stat().st_size == expected["size"] and file_hash(destination) == expected["sha256"],
+            "feed object checksum/size mismatch",
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise

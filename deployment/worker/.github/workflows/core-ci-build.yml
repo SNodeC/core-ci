@@ -1,0 +1,61 @@
+name: core-ci reusable build
+on:
+  workflow_call:
+    inputs:
+      execution:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: string
+      assignment_sha256:
+        required: true
+        type: string
+      assignment:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    name: core-ci package ${{ inputs.attempt }}
+    runs-on: ${{ fromJSON(inputs.assignment).target.runner }}
+    timeout-minutes: 80
+    steps:
+      - name: Check out trusted tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ fromJSON(inputs.assignment).source.deployment.worker.repository }}
+          ref: ${{ fromJSON(inputs.assignment).source.deployment.worker.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Check out selected source, independently of workflow ref
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ fromJSON(inputs.assignment).source.commit }}
+          path: source
+          persist-credentials: false
+      - name: Build selected packages in an isolated container
+        env:
+          ASSIGNMENT: ${{ inputs.assignment }}
+          ASSIGNMENT_SHA256: ${{ inputs.assignment_sha256 }}
+          EXECUTION: ${{ inputs.execution }}
+          ATTEMPT: ${{ inputs.attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/core-ci-assignment.json"
+          python3 tooling/core_ci/build.py \
+            --assignment "$RUNNER_TEMP/core-ci-assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --source "$GITHUB_WORKSPACE/source" \
+            --output "$RUNNER_TEMP/core-ci-output"
+      - name: Upload only the validated package artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ fromJSON(inputs.assignment).artifact_name }}
+          path: ${{ runner.temp }}/core-ci-output/*
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30

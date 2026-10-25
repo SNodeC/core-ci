@@ -65,7 +65,7 @@ def exercise(args, directory):
                            "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": config_digest,
                                       "size": len(image_config)}, "layers": []}).encode()
     manifest_digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
-    definition = {"schema": 1, "title": "Example", "package": "example", "depends_on": [], "build": {"native": "ci/native.sh"},
+    definition = {"schema": 1, "title": "Example ü", "package": "example", "depends_on": [], "build": {"native": "ci/native.sh"},
                   "matrix": [{"id": "native", "family": "native", "distribution": "source-defined", "suite": "series", "arch": "amd64",
                               "runner": ["self-hosted", "selected"], "build": {"image": "sample:series", "platform": "linux/amd64", "format": "deb"}}]}
 
@@ -116,7 +116,12 @@ def exercise(args, directory):
                     # Read real durable state at the instant the fake GitHub receives dispatch.
                     durable = lifecycle.query(db_socket, "SELECT state FROM core_ci.attempts WHERE id='" + assignment["attempt"] + "'").strip()
                     assert durable == "building", "dispatch occurred before durable build authorization"
-                    assert assignment["execution"] == execution and value["inputs"]["assignment_sha256"] == hashlib.sha256(json.dumps(assignment, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    assert assignment["execution"] == execution and value["inputs"]["assignment_sha256"] == hashlib.sha256(json.dumps(assignment, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    assignment_file = root / "assigned-work.json"
+                    assignment_file.write_text(value["inputs"]["assignment"])
+                    worker_path = str(Path(__file__).resolve().parents[1] / "deployment/worker/core_ci")
+                    lifecycle.run(["python3", "-c", "import sys; sys.path.insert(0,sys.argv[1]); from contract import assignment; assignment(sys.argv[2],sys.argv[3])",
+                                   worker_path, str(assignment_file), value["inputs"]["assignment_sha256"]])
                     assert assignment["target"]["runner"] == ["self-hosted", "selected"]
                     assert assignment["environment"]["digest"] == manifest_digest
                     run_id = 100 + len(dispatches)
@@ -210,7 +215,7 @@ def exercise(args, directory):
                         self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
                                          "name": "build / core-ci package " + assignment["attempt"], "status": run["status"], "conclusion": run["conclusion"]}]})
                     elif parts[4] == "artifacts":
-                        self.reply(200, {"total_count": 1, "artifacts": [{"id": run_id + 2000, "name": "core-ci-build-" + assignment["attempt"],
+                        self.reply(200, {"total_count": 1, "artifacts": [{"id": run_id + 2000, "name": assignment["artifact_name"],
                                          "digest": "sha256:" + "e" * 64, "size_in_bytes": 1024, "expired": False, "workflow_run": {"id": run_id}}]})
                     else:
                         errors.append("unexpected run query " + suffix)

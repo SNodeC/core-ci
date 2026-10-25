@@ -1,0 +1,213 @@
+"""Trusted checked feed commit and HTTPS verification. No source code is executed."""
+
+import argparse
+import base64
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+import urllib.request
+
+from contract import assignment, canonical, output, read_json, require, run
+from github import api
+from sign_native import receipt_path, update
+from validate import trusted_deployment
+
+
+def base64url(value):
+    result = base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+    return result
+
+
+def writer_token(private_key, selected):
+    now = int(time.time())
+    unsigned = (
+        base64url(b'{"alg":"RS256","typ":"JWT"}')
+        + "."
+        + base64url(canonical({"iat": now - 60, "exp": now + 540, "iss": os.environ["FEED_WRITER_APP_ID"]}).encode())
+    )
+    signed = subprocess.run(
+        ["openssl", "dgst", "-sha256", "-sign", str(private_key)],
+        input=unsigned.encode(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+        timeout=30,
+    )
+    jwt = unsigned + "." + base64url(signed.stdout)
+    feed = selected["source"]["deployment"]["feed"]
+    response = api(
+        "/app/installations/" + str(int(os.environ["FEED_WRITER_INSTALLATION_ID"])) + "/access_tokens",
+        jwt,
+        "POST",
+        {"repository_ids": [feed["repository_id"]], "permissions": {"contents": "write"}},
+    )
+    require(
+        response["permissions"].get("contents") == "write" and response.get("repository_selection") == "selected",
+        "feed token is not repository-restricted",
+    )
+    token = response["token"]
+    metadata = api("/repos/" + feed["repository"], token)
+    require(metadata["id"] == feed["repository_id"], "feed repository identity changed")
+    return token
+
+
+def run_identity(selected):
+    token = os.environ["GITHUB_TOKEN"]
+    repository = os.environ["GITHUB_REPOSITORY"]
+    run = api("/repos/" + repository + "/actions/runs/" + str(int(os.environ["GITHUB_RUN_ID"])), token)
+    workflow = selected["source"]["deployment"]["publication_workflow"]
+    require(
+        run["actor"]["id"] == selected["source"]["deployment"]["controller_app_bot_id"] and run["run_attempt"] == 1,
+        "publication run actor/attempt mismatch",
+    )
+    require(run["path"] == workflow["path"] and run["event"] == "workflow_dispatch", "publication workflow mismatch")
+    actual = api("/repos/" + repository + "/contents/" + workflow["path"] + "?ref=" + run["head_sha"], token)
+    require(actual["sha"] == workflow["blob_sha"], "publication workflow differs from controller approval")
+    result = {
+        "id": run["id"],
+        "run_attempt": 1,
+        "repository_id": int(os.environ["GITHUB_REPOSITORY_ID"]),
+        "actor_id": run["actor"]["id"],
+        "workflow_blob_sha": actual["sha"],
+        "workflow_commit": run["head_sha"],
+        "html_url": run["html_url"],
+    }
+    return result
+
+
+def checked_push(feed, branch, token):
+    run(["git", "-C", str(feed), "add", "--all"])
+    changed = subprocess.run(["git", "-C", str(feed), "diff", "--cached", "--quiet"], check=False).returncode
+    require(changed in (0, 1), "cannot inspect feed changes")
+    if changed == 1:
+        run(
+            [
+                "git",
+                "-C",
+                str(feed),
+                "-c",
+                "user.name=core-ci publisher",
+                "-c",
+                "user.email=core-ci@users.noreply.github.com",
+                "commit",
+                "-m",
+                "Publish verified core-ci packages",
+            ],
+            stdout=subprocess.DEVNULL,
+        )
+        authorization = base64.b64encode(("x-access-token:" + token).encode()).decode()
+        environment = {
+            **os.environ,
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + authorization,
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+        # A concurrent update is rejected by this normal fast-forward-only push. No force or rebase.
+        run(
+            ["git", "-C", str(feed), "push", "origin", "HEAD:refs/heads/" + branch],
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    revision = output(["git", "-C", str(feed), "rev-parse", "HEAD"])
+    return revision
+
+
+def wait_for_https(selected, feed):
+    path = receipt_path(selected)
+    expected = (Path(feed) / path).read_bytes()
+    url = selected["source"]["deployment"]["feed"]["base_url"].rstrip("/") + "/" + path
+    verified = False
+    deadline = time.monotonic() + 600
+    while not verified and time.monotonic() < deadline:
+        try:
+            request = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                verified = (
+                    response.url.startswith(selected["source"]["deployment"]["feed"]["base_url"].rstrip("/") + "/")
+                    and response.read(2 * 1024 * 1024) == expected
+                )
+        except OSError:
+            verified = False
+        if not verified:
+            time.sleep(10)
+    require(
+        verified, "feed push may have committed; HTTPS receipt is not verified; reconcile before replacing this work"
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--assignment", required=True)
+    parser.add_argument("--assignment-sha256", required=True)
+    parser.add_argument("--build-result", required=True)
+    parser.add_argument("--artifacts", required=True)
+    parser.add_argument("--feed", required=True)
+    arguments = parser.parse_args()
+    os.umask(0o077)
+    selected = assignment(arguments.assignment, arguments.assignment_sha256)
+    trusted_deployment(selected)
+    require(
+        selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"],
+        "publication identity mismatch",
+    )
+    feed = Path(arguments.feed).resolve()
+    # GitHub Pages has a 1 GB site limit. Leave headroom; never remove retained versions implicitly.
+    require(
+        sum(
+            path.stat().st_size
+            for path in feed.rglob("*")
+            if path.is_file() and ".git" not in path.relative_to(feed).parts
+        )
+        < 900 * 1024 * 1024,
+        "feed exceeds reviewed Pages capacity",
+    )
+    identity = run_identity(selected)
+    with tempfile.TemporaryDirectory(prefix="core-ci-secrets-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+        root = Path(temporary)
+        root.chmod(0o700)
+        keys = {}
+        for name in ("APT_SIGNING_KEY", "PACKAGES_APP_PRIVATE_KEY"):
+            value = os.environ.pop(name, "")
+            require(bool(value), "missing protected publication secret: " + name)
+            path = root / name
+            path.write_text(value)
+            path.chmod(0o600)
+            keys[name] = path
+        passphrase = None
+        value = os.environ.pop("PACKAGES_GPG_PASSPHRASE", "")
+        if value:
+            passphrase = root / "passphrase"
+            passphrase.write_text(value)
+            passphrase.chmod(0o600)
+        token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
+        update(
+            selected,
+            read_json(arguments.build_result),
+            identity,
+            arguments.artifacts,
+            feed,
+            keys["APT_SIGNING_KEY"],
+            passphrase,
+            Path(__file__).resolve().parents[1] / "keys/apt.asc",
+            root,
+        )
+        require(
+            sum(
+                path.stat().st_size
+                for path in feed.rglob("*")
+                if path.is_file() and ".git" not in path.relative_to(feed).parts
+            )
+            < 900 * 1024 * 1024,
+            "new packages would exceed reviewed Pages capacity",
+        )
+        revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
+    wait_for_https(selected, feed)
+    print("Verified feed revision:", revision)
+
+
+if __name__ == "__main__":
+    main()

@@ -52,6 +52,9 @@ namespace {
     void publish(coreci::Graph& graph, const std::string& id) {
         const auto attempt = graph.node(id).attempts.back().id;
         apply(graph, graph.beginBuild(id));
+        check(graph.node(id).attempts.back().assignment.at("artifact_name") ==
+                  "core-ci-build-" + id + "-r" + std::to_string(graph.node(id).attempts.back().revision),
+              "GitHub artifact name must be assigned once without forbidden colon characters");
         apply(graph, graph.bindRun(id, attempt, false, run(graph.node(id), false)));
         const auto& building = graph.node(id).attempts.back();
         apply(graph,

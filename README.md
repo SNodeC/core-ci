@@ -8,7 +8,11 @@ unmanaged MariaDB. Local repository enrollment/editing and GitHub committed-revi
 The UI, authenticated tag events, immutable source/environment selection, graph traversal,
 committed GitHub dispatch authority and assigned-run/job/artifact reconciliation are wired
 and covered locally. Trusted worker tooling, signing/publication and live package acceptance
-remain in progress. Nothing has been installed, pushed or externally activated.
+remain in progress. Fresh native worker workflows, isolated build preparation and trusted
+DEB/RPM signing/indexing are now prepared under deployment/. Local tests build real packages,
+verify signatures, reject modified data and preserve bytes on replay. OpenWrt workers and
+controller publication integration are unfinished. Nothing has been installed, pushed or
+externally activated. See [worker setup and limitations](deployment/README.md).
 
 See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),
 [the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md). Deployment settings and credential-file ownership are
@@ -29,7 +33,9 @@ ctest --test-dir build/codex/debug --output-on-failure -j2
 
 Lifecycle tests require mariadbd, mariadb-install-db and mariadb. They create only isolated
 private test servers under the selected build directory, with networking disabled. Their
-HTTP listeners bind loopback. They never control the administrator's MariaDB service.
+HTTP listeners bind loopback. The worker package suite also requires cc, dpkg-deb, dpkg,
+rpmbuild, rpm, rpmkeys, rpmsign, gpg, gpgv, gpgconf, apt-ftparchive and createrepo_c.
+It uses isolated generated test keys, not deployment signing secrets. They never control the administrator's MariaDB service.
 
 ## Current database lifecycle
 

@@ -296,3 +296,33 @@
   JavaScript syntax, whitespace and 160-column source checks pass. Live GitHub jobs and
   package publication/installation acceptance remain unperformed.
 - Checkpoint accounting before this entry: {'production': [1179, 78], 'tests': [480, 98], 'documentation': [83, 2]}. No generic workflow engine or persisted ready queue added.
+
+## 2026-10-25 — fresh native worker and signing boundary
+
+- Confirmed existing signing/feed/observer secret names through read-only GitHub metadata;
+  values were neither retrieved nor changed. Copied only public verification files from
+  DistributionPackages at a recorded immutable commit. The sandbox has no protected
+  publication environment yet; actual private/public matches remain a job-time check.
+- Prepared fresh pinned source/reusable worker, separate validation/publication and feed
+  Pages workflows. Chose sandbox packages/main and its standard project Pages URL after
+  owner delegated the URL choice. Pages remains disabled and no GitHub file was written.
+- Added the shared assignment/version/artifact contract, bounded archive/feed downloads,
+  standard DEB/RPM metadata checks, isolated native Docker worker preparation and a working
+  C reference hook for both formats. Builds import exact prerequisite packages/exports.
+- Added native trusted signing/indexing, private/public correspondence checks, temporary
+  keyrings, immutable package identity protection, byte-preserving replay, normal checked
+  feed push and HTTPS receipt verification. Publisher code never executes source hooks.
+- Found GitHub artifact names reject the colon in attempt IDs. The graph now assigns one
+  safe artifact_name in immutable inputs, consumed directly by controller and workflows.
+  C++/Python assignment hashes are checked across the real HTTP boundary, including Unicode.
+- Real local compilation/DEB/RPM packaging, native version ordering, signatures/indexes,
+  wrong-key/modified-index/modified-package rejection and identical replay pass with isolated
+  generated test keys, cleaned after testing. Twelve synthetic provenance mismatch cases
+  reject before artifact download. No real GitHub job or package-manager install ran.
+- Five affected suites pass: real-MariaDB enrollment, graph, pipeline, native package/signing
+  and synthetic worker provenance. Canonical C++/CMake formatting, Python syntax and YAML
+  parse checks pass. Docker execution, cross-repository reader access, OpenWrt tooling,
+  controller publication/receipt integration and full live acceptance remain unfinished.
+- The fixed-origin HTTP client refactoring remains deferred at the owner's instruction.
+- Checkpoint accounting before this entry: {'production': [1887, 1], 'tests': [482, 3], 'documentation': [277, 10], 'public_key_data': [29, 0]}. Growth implements the approved
+  worker/signing boundary; one shared contract replaces duplicated metadata/version policy.

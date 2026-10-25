@@ -483,7 +483,7 @@ namespace coreci {
                                         "assigned GitHub artifacts are unavailable or exceed supported bounds");
                                 nlohmann::json artifact;
                                 for (const auto& candidate : artifacts.body.at("artifacts")) {
-                                    if (candidate.at("name") == "core-ci-build-" + attempt.id) {
+                                    if (candidate.at("name") == attempt.assignment.at("artifact_name")) {
                                         require(artifact.is_null(), "assigned build artifact is ambiguous");
                                         artifact = candidate;
                                     }

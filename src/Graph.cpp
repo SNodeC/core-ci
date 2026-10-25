@@ -351,6 +351,7 @@ namespace coreci {
                               {"execution", id},
                               {"attempt", attempt.id},
                               {"revision", attempt.revision},
+                              {"artifact_name", "core-ci-build-" + id + "-r" + std::to_string(attempt.revision)},
                               {"source", selected.source},
                               {"target", selected.target},
                               {"environment", selected.source.at("environment")},

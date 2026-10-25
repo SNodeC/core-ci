@@ -1,0 +1,27 @@
+name: core-ci source build
+run-name: core-ci build ${{ inputs.attempt }} ${{ inputs.assignment_sha256 }}
+on:
+  workflow_dispatch:
+    inputs:
+      execution:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: string
+      assignment_sha256:
+        required: true
+        type: string
+      assignment:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    uses: @WORKER@/.github/workflows/core-ci-build.yml@@TOOLING_SHA@
+    with:
+      execution: ${{ inputs.execution }}
+      attempt: ${{ inputs.attempt }}
+      assignment_sha256: ${{ inputs.assignment_sha256 }}
+      assignment: ${{ inputs.assignment }}

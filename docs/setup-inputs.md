@@ -76,24 +76,30 @@ environment alone prevents untrusted workflow edits. Keep builds outside this en
 
 ## Publication secrets
 
+The prepared worker uses the sandbox's existing secret names below rather than creating a
+second set of aliases. Metadata confirms these signing/App names already exist at repository
+level; their values and correspondence to the public keys remain unverified. The protected
+package-publication environment does not exist yet. No provisioning or rotation was performed.
+See [worker setup](../deployment/README.md) for current implementation status and public inputs.
+
 | Exact GitHub environment secret | Input material |
 | --- | --- |
-| PACKAGES_GPG_PRIVATE_KEY | Existing armored OpenPGP private key for APT/RPM |
+| APT_SIGNING_KEY | Existing armored OpenPGP private key for APT/RPM |
 | PACKAGES_GPG_PASSPHRASE | Only when that key has a passphrase |
-| OPENWRT_USIGN_PRIVATE_KEY | Existing usign key for IPK indexes |
-| OPENWRT_APK_PRIVATE_KEY | Existing PEM EC P-256 key for OpenWrt APK |
-| FEED_WRITER_APP_PRIVATE_KEY | Feed-only GitHub App key; never the controller App key |
+| OPENWRT_USIGN_KEY | Existing usign key for IPK indexes |
+| OPENWRT_APK_KEY | Existing PEM EC P-256 key for OpenWrt APK |
+| PACKAGES_APP_PRIVATE_KEY | Feed-only GitHub App key; never the controller App key |
 
 After the owner creates/protects the environment and supplies actual files, provision the
 sandbox worker using file input. These are setup commands, not commands executed here.
 The /secure paths describe owner-held files and must be replaced with their actual paths.
 
 ```sh
-gh secret set PACKAGES_GPG_PRIVATE_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/archive-private.asc
+gh secret set APT_SIGNING_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/archive-private.asc
 gh secret set PACKAGES_GPG_PASSPHRASE --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/archive-passphrase
-gh secret set OPENWRT_USIGN_PRIVATE_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/ipk-private.key
-gh secret set OPENWRT_APK_PRIVATE_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/apk-private.pem
-gh secret set FEED_WRITER_APP_PRIVATE_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/feed-writer-app.pem
+gh secret set OPENWRT_USIGN_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/ipk-private.key
+gh secret set OPENWRT_APK_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/apk-private.pem
+gh secret set PACKAGES_APP_PRIVATE_KEY --repo VOC-Experiments/ci-coordinator --env package-publication < /secure/feed-writer-app.pem
 ```
 
 Omit the passphrase command for an unprotected OpenPGP key. Never run echo, command
