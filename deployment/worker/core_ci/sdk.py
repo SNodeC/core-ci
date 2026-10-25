@@ -48,7 +48,7 @@ def prepare(target, environment, destination):
     query = destination / "query.mk"
     query.write_text("TOPDIR:=$(CURDIR)\nSDK:=1\ninclude $(TOPDIR)/rules.mk\ninclude $(TOPDIR)/include/version.mk\n")
     values = {}
-    for variable in ("ARCH_PACKAGES", "VERSION_NUMBER", "BOARD", "SUBTARGET", "STAGING_DIR", "TARGET_CROSS"):
+    for variable in "ARCH_PACKAGES VERSION_NUMBER BOARD SUBTARGET STAGING_DIR TARGET_CROSS TOOLCHAIN_DIR".split():
         values[variable] = output(
             ["make", "--no-print-directory", "--silent", "-C", str(root), "-f", str(query.resolve()), "val." + variable]
         )
@@ -59,7 +59,7 @@ def prepare(target, environment, destination):
         and values["BOARD"] + "/" + values["SUBTARGET"] == target["build"]["target"],
         "extracted SDK target identity mismatch",
     )
-    compiler = Path(values["TARGET_CROSS"] + "gcc").resolve()
+    compiler = (Path(values["TOOLCHAIN_DIR"]) / "bin" / (values["TARGET_CROSS"] + "gcc")).resolve()
     require(compiler.is_relative_to(root.resolve()) and compiler.is_file(), "SDK compiler escapes verified SDK")
     identity = {
         "triple": output([str(compiler), "-dumpmachine"]),

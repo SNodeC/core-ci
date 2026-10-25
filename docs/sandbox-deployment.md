@@ -1,22 +1,24 @@
 # Sandbox deployment status — 2026-10-25
 
 The owner authorized deployment to VOC-Experiments. The following fresh files are now
-committed on sandbox main branches. Existing source tags and package bytes were unchanged.
+committed on sandbox main branches. Existing tags and published package identities were
+preserved. A new demo-core v2.0.0 tag selects source commit
+7cffc1403a20664c8c07e49ae559e16b7089479e; selected source and workflow refs are independent.
 
 ## Installed revisions
 
 | Repository | Installed revision |
 | --- | --- |
-| VOC-Experiments/ci-coordinator | [b45e47c](https://github.com/VOC-Experiments/ci-coordinator/commit/b45e47c415501c8afe0d3abb9c5cfb71f4e8c71c) |
-| VOC-Experiments/demo-core | [7cffc14](https://github.com/VOC-Experiments/demo-core/commit/7cffc1403a20664c8c07e49ae559e16b7089479e) |
-| VOC-Experiments/demo-app | [00f26fe](https://github.com/VOC-Experiments/demo-app/commit/00f26fe353f7014187d1be292e5cd93e93811494) |
-| VOC-Experiments/demo-side | [b92d0c0](https://github.com/VOC-Experiments/demo-side/commit/b92d0c0c301754b0be38dc778b3714cfcb5f298c) |
-| VOC-Experiments/demo-join | [0a9c3cf](https://github.com/VOC-Experiments/demo-join/commit/0a9c3cf99f7684ef8a41764466a16aa92d8525e0) |
-| VOC-Experiments/packages | [48144d1](https://github.com/VOC-Experiments/packages/commit/48144d1106b07252c5519f16df34133f9d67f496) |
+| VOC-Experiments/ci-coordinator | [929f140](https://github.com/VOC-Experiments/ci-coordinator/commit/929f140d890fff398772949d24e30b60a18f5969) |
+| VOC-Experiments/demo-core | [6e3c974](https://github.com/VOC-Experiments/demo-core/commit/6e3c97496f8b2e9e187d2fdc6b626cbc2ef44209) |
+| VOC-Experiments/demo-app | [13fc80d](https://github.com/VOC-Experiments/demo-app/commit/13fc80d91df1e4f9b8481e9c22535b545ef6d5b3) |
+| VOC-Experiments/demo-side | [c31caeb](https://github.com/VOC-Experiments/demo-side/commit/c31caeb264394240636aed62c6ba2bcfe9161ecb) |
+| VOC-Experiments/demo-join | [15abe86](https://github.com/VOC-Experiments/demo-join/commit/15abe8651234b2c2251bac1e3eafe6c93f29e72a) |
+| VOC-Experiments/packages | [a5d5ada](https://github.com/VOC-Experiments/packages/commit/a5d5adad37fd6cfbb470f3ca6ef585cb1962eba4) |
 
-All source calls pin the full worker commit `b45e47c415501c8afe0d3abb9c5cfb71f4e8c71c`.
+All source calls pin the full worker commit `929f140d890fff398772949d24e30b60a18f5969`.
 
-Approved source workflow blob: `4a628a8ff400dde010378864170c2fe6f90f352d`.
+Approved source workflow blob: `808c3a838f52b9287144835ba23f027ab516534d`.
 Approved publication workflow blob: `3d84013c0d7e77147b310c5647a471dc3d1d0a91`.
 Protected controller configuration and worker public variables match these identities.
 
@@ -67,11 +69,28 @@ secret remains at worker repository scope. Owner-held original and collected pri
 files remain available in Git-ignored local storage with restrictive permissions. No secret
 value was retrieved from GitHub or exposed in logs/artifacts.
 
+## Graph-driven native acceptance
+
+The development controller is running at http://127.0.0.1:8080/ with a real isolated managed
+MariaDB. UI enrollment selected demo-core v2.0.0 and dispatched actual GitHub builds.
+
+| Target | Successful build | Successful publication |
+| --- | --- | --- |
+| Fedora 43 x86_64 | [40229812225](https://github.com/VOC-Experiments/demo-core/actions/runs/40229812225) | [40229989203](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40229989203) |
+| Debian trixie amd64 | [40229819909](https://github.com/VOC-Experiments/demo-core/actions/runs/40229819909) | [40230229221](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40230229221) |
+| Debian trixie arm64 | [40229822170](https://github.com/VOC-Experiments/demo-core/actions/runs/40229822170) | [40230358488](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40230358488) |
+
+The controller verified publication receipts and marked all three targets published.
+The feed's pre-existing status/*.md and status.json are stale and are not updated by this
+publisher. Use the controller graph, assigned GitHub runs and HTTPS receipts for these results.
+
 ## Still outstanding
 
-No graph-driven GitHub package build, signed package publication or apt/dnf/opkg/apk client
-installation acceptance is claimed. Source tags were not created. No core-ci application
-push, PR, installation or running controller was included in the workflow-file deployment.
+Actual apt/dnf/opkg/apk client installation acceptance, dependency chains/diamonds and the
+remaining full live acceptance are outstanding. OpenWrt extraction now passes for both
+official SDKs; its SDK configuration/build verification continues with corrected tooling.
+The core-ci application branch is committed locally; no application push, PR or installation
+was performed. The running executable is a development build under the temporary build root.
 The local SNode.C TLS webhook listener/certificate setup remains outstanding; selected public
 endpoint is https://gw-home.vchrist.at:8443/github/webhook. Existing port 443 stays untouched.
 No extra source checkout was created. Task scripts/evidence are under the permitted temporary

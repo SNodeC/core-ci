@@ -3,6 +3,7 @@
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -25,11 +26,64 @@ def rejects(operation):
     assert rejected, "unsafe SDK/input was accepted"
 
 
+def preparation(root):
+    # Exercise configuration, make-variable queries and subprocess ownership without compiling packages.
+    fixture = root / "sdk-fixture"
+    (fixture / "toolchain/bin").mkdir(parents=True)
+    (fixture / "include").mkdir()
+    (fixture / "staging").mkdir()
+    compiler = fixture / "toolchain/bin/configured-gcc"
+    compiler.write_text(
+        '#!/bin/sh\ncase "$1" in -dumpmachine) echo configured-linux;; -dumpfullversion) echo 1.2.3;; esac\n'
+    )
+    compiler.chmod(0o755)
+    (fixture / "Makefile").write_text('defconfig:\n\ttest "$$(umask)" = 0022\n\ttouch .config\n')
+    (fixture / "include/version.mk").write_text("VERSION_NUMBER:=3.4.5\n")
+    (fixture / "rules.mk").write_text(
+        "include $(TOPDIR)/.config\nARCH_PACKAGES:=configured\nBOARD:=board\nSUBTARGET:=subtarget\n"
+        "STAGING_DIR:=$(CURDIR)/staging\nTARGET_CROSS:=configured-\nTOOLCHAIN_DIR:=$(CURDIR)/toolchain\n"
+        "val.%:\n\t@echo $($*)\n"
+    )
+    archive = root / "sdk-fixture.tar.gz"
+    with tarfile.open(archive, "w:gz") as opened:
+        opened.add(fixture, arcname="sdk")
+    expected = {
+        "release": "3.4.5",
+        "sdk": {"url": "https://sdk.example/sdk.tar.gz", "sha256": contract.file_hash(archive)},
+    }
+    target = {"arch": "configured", "build": {"target": "board/subtarget", "format": "ipk"}}
+    original_run = subprocess.run
+
+    def commands(arguments, **options):
+        result = None
+        if arguments[0] == "curl":
+            shutil.copyfile(archive, arguments[arguments.index("--output") + 1])
+        else:
+            result = original_run(arguments, **options)
+        return result
+
+    mask = os.umask(0o077)
+    try:
+        with patch.object(environment, "sdk", return_value=expected), patch.object(
+            sdk.subprocess, "run", side_effect=commands
+        ):
+            resolved = {**expected}
+            directory, staging = sdk.prepare(target, resolved, root / "prepared")
+            assert (directory / ".config").stat().st_mode & 0o777 == 0o644
+            assert staging == Path("staging")
+            assert resolved["toolchain"]["compiler_sha256"] == contract.file_hash(compiler)
+            assert resolved["toolchain"]["triple"] == "configured-linux"
+        assert os.umask(0o077) == 0o077, "SDK configuration changed its parent's restrictive umask"
+    finally:
+        os.umask(mask)
+
+
 def main():
     directory = Path(sys.argv[1])
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=directory) as temporary:
         root = Path(temporary)
+        preparation(root)
         # A new SDK feed key must not replace the existing APK feed's trust file.
         feed = root / "feed"
         (feed / "keys").mkdir(parents=True)

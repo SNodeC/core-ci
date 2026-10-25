@@ -607,3 +607,23 @@
   which rejected the workflow umask 077. Set umask 022 only in the SDK configuration child
   through the existing bounded command helper; retain restrictive parent/secret handling.
 - Added an entry-count regression proving omitted links cannot bypass the archive limit.
+- Both OpenWrt GitHub runs now confirm safe extraction under Python 3.12; both stopped
+  at the SDK umask check, corrected in local commit 5bddcd7. Worker code/source pins
+  are deployed at 929f140d890fff398772949d24e30b60a18f5969; activation waits for already
+  assigned native publications to drain, preserving their immutable tooling identity.
+- RPM publication run 40229989203 succeeded; core-ci verified the feed result and restored
+  the node as published. Diagnostic SDK archives/extractions were removed; small checksum
+  and result records remain under /tmp/codex/build/core-ci/sdk-extraction.
+- Owner noticed the feed status pages do not reflect publication. Verified that
+  status/demo-core.md still dates from October 23; the new publisher does not update
+  those existing files. Packages, signed indexes and receipts
+  are live in new feed commits. Public status-page integration remains a separate missing
+  presentation feature, not evidence that the package writes failed.
+- After prior native publications were verified, activated worker 929f140 and requested
+  fresh unchanged-source selections. OpenWrt runs 40230575376 (IPK) and 40230566129 (APK)
+  passed extraction and defconfig, including the proper-umask check, then exposed a compiler
+  lookup error: TARGET_CROSS is a command prefix, not a path relative to the worker CWD.
+- Resolve that prefix using the SDK's own TOOLCHAIN_DIR and keep the compiler containment
+  check. Added a real-make preparation fixture checking configuration ordering, child-only
+  umask, SDK compiler identity and staging path without compiling any packages. Three
+  affected suites pass. This fixture is local boundary proof, not an actual SDK/live build.
