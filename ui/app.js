@@ -90,7 +90,7 @@ async function reload() {
         const name = document.createElement("p");
         name.textContent = repository.repository;
         const dependencies = document.createElement("p");
-        dependencies.textContent = "Depends on: " + (repository.definition.depends_on.join(" → ") || "none");
+        dependencies.textContent = "Depends on: " + (repository.definition.depends_on.join(", ") || "none");
         const revision = document.createElement("pre");
         revision.textContent = "Definition: " + repository.revision;
         const targets = document.createElement("ul");

@@ -704,3 +704,9 @@
 - Cancelled only the assigned sandbox demo-side IPK run 40234976218 to test real failure,
   join blocking and explicit retry. GitHub confirms cancellation; graph reconciliation and
   retry proof remain pending. No injected result or database record is used.
+- Completed live enrollment of all four repositories and selected five join executions.
+  Chrome UI confirms join work waits for both branches, displays immutable source/config
+  revisions and real GitHub links. Concurrent configuration reads were correctly rejected
+  when graph generations changed; a fresh read with no competing graph traversal succeeded.
+- UI invariant: direct prerequisites are siblings, not a dependency chain. Replace the
+  repository summary's arrow separators with commas; one line changed, no state added.
