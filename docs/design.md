@@ -27,6 +27,10 @@ Owner decisions received on 2026-10-25:
 - Enrollment immediately requests the highest numeric semantic-version tag, if one exists.
 - New selections supersede older waiting automatic work, preserving its history.
 - Dependency-triggered selection includes semantic-version prereleases.
+- A prerequisite target with no selected execution produces a visible work/configuration
+  error until its work is explicitly requested; no implicit upward prerequisite builds.
+- An explicit successful retry of older inputs may become the feed's newest rebuild of
+  the same source version, using its newly reserved revision.
 
 Diamond safety is mandatory, not a policy question. Assigned work and explicit requests
 for older tags are not silently superseded. Other unresolved choices are listed in section 16.
@@ -138,9 +142,12 @@ On a tag delivery, enrollment request or explicit request:
 2. Read selected definitions at those exact commits. Traverse affected dependents, selecting
    their highest SemVer sources. Use selected definitions to establish the affected closure;
    reject missing targets, unresolved prerequisites or cycles before accepting it.
-3. Collect any missing upward prerequisite selections too. Proposed policy is to create
-   that prerequisite closure, rather than strand a requested execution; owner confirmation
-   remains required. Never substitute a default branch or last-published source.
+3. Resolve prerequisite executions. Dependencies created within this affected dependent
+   closure can be linked together, as in the diamond below. If a required prerequisite
+   outside that closure has no matching execution, report a visible error until its work
+   is explicitly requested. Do not create upward work automatically. Existing waiting or
+   failed prerequisites remain explicit blocking edges. Never substitute a default branch
+   or last-published source.
 4. Gather GitHub/registry information outside the transaction. In one transaction validate
    the graph generation, create/reuse the affected logical executions, and bind prerequisite
    execution IDs. If the generation changed, discard the uncommitted selection and re-read;
@@ -401,10 +408,12 @@ version grammar is relevant; using its v3 source is not using an Alpine v2 feed.
 [apk-tools version implementation](https://github.com/alpinelinux/apk-tools/blob/master/src/version.c).
 
 Reserve revisions at selection rather than late dispatch so an older waiting selection
-cannot acquire a higher revision just because it starts late. A failed older already-assigned
-selection retried after newer work may need a fresh higher R; that remaining automatic
-feed-promotion policy requires the owner decision in section 16. Keep both package history
-and explicit exact-version installs; never silently promote obsolete dependency inputs.
+cannot acquire a higher revision just because it starts late. An explicit retry reserves
+another revision when that retry is accepted. Per the owner's decision, that successful
+retry may become the newest rebuild of the same source version, even when its pinned
+inputs are older. Retain and display those exact inputs; this does not change SemVer
+ordering against a higher upstream source version. Existing published identities remain
+immutable and available for exact-version installation.
 
 Artifact manifest schema 1 contains assignment hash, execution/attempt/repository/source/
 definition/target identities, source version, package revision, selected prerequisite receipt
@@ -661,14 +670,12 @@ claimed by this design checkpoint.
 
 ## 16. Remaining owner choices and verification gates
 
-The three received policy choices are fixed in section 1. These remaining issues are
+The five received policy choices are fixed in section 1. These remaining issues are
 explicit rather than silently implemented:
 
 | Question | Proposed handling pending owner decision |
 | --- | --- |
-| Selected prerequisite has no matching execution | Create its upward prerequisite closure transactionally; never rebuild a prerequisite just to export headers |
-| Older assigned work is explicitly retried after newer input work | Keep retry available, but decide whether it may become the feed's highest rebuild revision; automatic promotion cannot be guessed |
-| Runtime dependency constraints | Decide exact selected package-version constraints vs upstream ranges; builds always consume exact selected artifacts either way |
+| Runtime dependency constraints | Owner requested clarification; no choice inferred. Builds use exact artifacts. Packages can require an exact runtime version or a source-declared compatible range. Build-only graph edges do not automatically become runtime dependencies |
 | Permanently unmatched dispatch | Preserve unknown state; do not add 'declare lost' replacement permission without a separately approved, evidence-based protocol |
 | Missed tag deliveries during downtime | Offer GitHub redelivery/explicit selected-version request now; an explicit tag-rescan action is a proposed scope choice, not hidden startup polling |
 | Feed retention/hosting capacity | Preserve all versions initially; no automatic deletion. Owner chooses retention before a capacity limit requires removal |
@@ -694,7 +701,7 @@ limitation must be surfaced before replacing the design with a new authenticatio
 | D7 manifest authority | Authenticated assignment supplies expectations; manifest only cross-check; isolated hooks, approved publisher SDK tooling and independent package tooling, sections 4/9-11 |
 | Async transaction/COMMIT gaps | Single database operation owner and explicit uncertain-outcome readback, section 7 |
 | Prerequisites, architecture and package tools | Exact signed-feed packages, own verified exports, capability detection and SDK checks, sections 4/9 |
-| Versions and mutable feed order | Shared codec, selection-time revision allocation, supersession and explicit remaining retry policy, sections 6/10/16 |
+| Versions and mutable feed order | Shared codec, selection/retry-time revision allocation, supersession and owner-approved retry promotion, sections 6/10/16 |
 | Managed readiness | Concrete native readiness/event-receiver proposal with unproven integration gate, section 12 |
 | Estimate/early path | Increased explicit estimates and real signed DEB+dependent+apt path in checkpoint 2, section 15 |
 

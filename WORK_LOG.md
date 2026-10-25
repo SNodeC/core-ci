@@ -67,3 +67,14 @@
   approval belongs in reviewed worker trust configuration, without a controller release list.
 - Verification: git diff --check passed; local Markdown links resolve; all original A-S
   sections and Claude D1-D7 findings have explicit coverage. Only documentation changed.
+
+## 2026-10-25 — additional owner policy decisions
+
+- Owner requires a visible error when selected prerequisite work is missing; no automatic
+  upward prerequisite execution is created. Existing selected waiting/failed executions
+  remain dependency blockers, and atomic creation of the affected diamond stays intact.
+- Owner permits successful explicit retries of older inputs to become the newest rebuild
+  of the same source version. Retry reserves a new revision; prior identities stay immutable.
+- Owner requested an explanation of runtime dependency constraints. No answer was inferred;
+  this choice concerns installed package compatibility, not exact graph build inputs.
+- Clarified that build-only graph edges need not become runtime package dependencies.
