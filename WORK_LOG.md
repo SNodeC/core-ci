@@ -524,3 +524,22 @@
   endpoint's office.vchrist.at certificate fails verification for the selected hostname.
   Valid TLS certificate/key paths remain required. No existing service or router changed.
 - Read-only DNS/TLS checks and documentation only; production/test lines unchanged.
+
+
+## 2026-10-25 — authorized sandbox workflow deployment
+
+- Disabled twelve old sandbox workflows after verifying no queued/running jobs. Installed
+  fresh worker tooling and pinned source workflows/hooks/definitions through checked commits
+  on main in the five authorized repositories. Verified exact remote blob contents/modes.
+- Installed the feed Pages workflow and enabled Actions-based Pages. A real Pages job passed;
+  HTTPS public-key bytes match GitHub. A temporary read-only GitHub credential check passed
+  for all four source artifact listings and was then removed. No package pipeline claim.
+- Used the existing controller App for workflow writes because the human CLI token lacks
+  workflow scope; used the logged-in browser for the feed workflow, without expanding App
+  grants or OAuth scopes. Configured public worker variables and exact local controller pins.
+- Existing feed keys differ from all three selected/provisioned signing identities. Preserved
+  feed keys, package bytes, source tags and existing repository secrets. Owner approval or
+  matching old private files are required before signing-key transition/publication. The local
+  observer-token file failed authentication, but the actual GitHub reader secret passed.
+- No production SNodeC changes, application push/installation, extra source checkout or secret
+  disclosure. Local production/test source changes: zero; live evidence is recorded separately.

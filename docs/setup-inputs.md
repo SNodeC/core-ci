@@ -87,7 +87,9 @@ key match the trusted worker keys; standard usign signing/verification proves th
 The three signing secrets were provisioned into this environment via stdin, and their names
 were verified through GitHub metadata. The OpenPGP export is not passphrase-protected, so no
 passphrase secret was provisioned. No key was generated or rotated. Existing repository
-secrets were not removed or changed. This setup is not live package pipeline acceptance.
+secrets were not removed or changed. Subsequent deployment found that existing feed public
+keys have different identities; see [deployment status](sandbox-deployment.md). No feed key
+was replaced. This setup is not live package pipeline acceptance.
 See [worker setup](../deployment/README.md) for current implementation status and public inputs.
 
 | Exact GitHub environment secret | Input material |

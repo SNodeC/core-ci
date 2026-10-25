@@ -1,10 +1,11 @@
 # Fresh worker and feed deployment files
 
-These files are prepared locally. They have not been installed in GitHub. The native
-package build/sign/index boundary has local real-tool coverage; there is no live GitHub,
-container-isolation or package-manager installation acceptance yet. OpenWrt tooling and
-full live publication acceptance remain unfinished. Controller dispatch/receipt proof is wired with local synthetic GitHub evidence. Do not activate this
-checkpoint as a complete core-ci deployment.
+The fresh workflows/tooling are now installed in VOC-Experiments. See the
+[verified deployment status](../docs/sandbox-deployment.md) for exact commits and live
+Pages/credential checks. Package publication is blocked by a discovered signing-identity
+conflict; no graph-driven GitHub package build, client installation or operational readiness
+is claimed. Local package/signature checks and synthetic controller integration evidence
+remain distinct from the live acceptance still required.
 
 The invariant is one immutable controller assignment across build, independent validation,
 signing and feed publication. The manifest describes bytes; it never grants namespace rights.

@@ -1,7 +1,8 @@
 # VOC-Experiments sandbox activation review
 
-These files are prepared locally. They have not been committed to the sandbox repositories,
-installed as workflows, or exercised by GitHub jobs. They implement source-owned examples,
+These files are now installed in the sandbox repositories; see the verified
+[deployment status](../../docs/sandbox-deployment.md) for revisions, live setup checks and
+the signing-identity conflict blocking package publication. They implement source-owned examples,
 not controller policy. No production SNodeC repository, credential, tag or feed is a target.
 
 ## Source-owned files
@@ -31,7 +32,7 @@ IPK and OpenWrt 25.12 x86_64 APK. OpenWrt roots discover latest stable patch rel
 freeze SDK identities. Dependents inherit the selected prerequisites' SDK/toolchain, including
 at joins. The controller contains no row catalogue or SDK resolver.
 
-## External activation changes requiring owner approval
+## Authorized workflow deployment plan
 
 1. In VOC-Experiments/ci-coordinator, add the fresh `deployment/worker/` contents at repository
    root. Preserve unrelated files. Record the resulting full commit and publication workflow
@@ -71,8 +72,10 @@ at joins. The controller contains no row catalogue or SDK resolver.
    must supply the public HTTPS webhook URL/TLS deployment. There is no assumed external
    tunnel or public configuration-writing UI.
 
-This list is a review boundary, not a claim that external activation was authorized or done.
-No application push, PR, merge or installation is included implicitly.
+The owner authorized this workflow deployment. Files, Pages and public variables are
+installed; existing repository-secret cleanup and feed-key replacement remain blocked by
+newly discovered signing-identity differences. No application push, PR, merge or installation
+is included implicitly. Source tag creation and package jobs have not been performed.
 
 ## Initial execution sequence to approve
 
