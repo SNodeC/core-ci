@@ -117,7 +117,19 @@ Their subsequent source-hook compiler lookup failure is corrected in new source 
 v2.1.0 at 1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57; v2.0.0 remains unchanged.
 The core-ci application branch is committed locally; no application push, PR or installation
 was performed. The running executable is a development build under the temporary build root.
-The local SNode.C TLS webhook listener/certificate setup remains outstanding; selected public
+The separate SNode.C TLS webhook listener is implemented and locally tested, disabled by
+default. Public certificate/key configuration and activation remain outstanding; selected public
 endpoint is https://gw-home.vchrist.at:8443/github/webhook. Existing port 443 stays untouched.
 No extra source checkout was created. Task scripts/evidence are under the permitted temporary
 build directory; they contain no private key or token values.
+
+
+## Native diamond installation
+
+The controller enrolled demo-app/demo-side/demo-join at their new v2.1.0 source tags. The
+amd64 join stayed waiting without an assigned run while only demo-app was published. It
+became eligible after demo-side publication. [APT client run 40236964119](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40236964119)
+then rejected an unrelated key and installed all four signed packages from the HTTPS feed:
+core 2.1.0-21, app 2.1.0-26, side 2.1.0-31 and join 2.1.0-36. The installed join printed
+`demo-join core 60, side 62`. This is actual package-manager dependency resolution and
+execution, not a manifest/file-existence check.

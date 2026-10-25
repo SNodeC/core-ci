@@ -13,6 +13,7 @@
 #include <database/mariadb/MariaDBClient.h>
 #include <exception>
 #include <express/legacy/in/WebApp.h>
+#include <express/tls/in/WebApp.h>
 #include <memory>
 #include <utility>
 #include <utils/Config.h>
@@ -37,6 +38,15 @@ int main(int argc, char* argv[]) {
     app.getConfig()->Local::setHost("127.0.0.1")->setPort(8080);
 
     app.getConfig()
+        ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
+        ->getParserConfig()
+        ->setMaximumBodyBytes(2 * 1024 * 1024);
+
+    const express::tls::in::WebApp webhooks("webhook");
+    webhooks.getConfig()->setDisabled();
+    webhooks.getConfig()->setReuseAddress();
+    webhooks.getConfig()->Local::setHost("127.0.0.1")->setPort(8443);
+    webhooks.getConfig()
         ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
         ->getParserConfig()
         ->setMaximumBodyBytes(2 * 1024 * 1024);
@@ -84,7 +94,7 @@ int main(int argc, char* argv[]) {
                                 managed->stop();
                             }
                         } else {
-                            app.post("/github/webhook", [&] APPLICATION(req, res) {
+                            webhooks.post("/github/webhook", [&] APPLICATION(req, res) {
                                 pipeline->event(req->get("X-GitHub-Event"),
                                                 req->get("X-Hub-Signature-256"),
                                                 std::string(req->body.begin(), req->body.end()),
@@ -227,6 +237,15 @@ int main(int argc, char* argv[]) {
                             app.listen([&](const auto& address, const core::socket::State& listenerState) {
                                 if (listenerState == core::socket::State::OK) {
                                     snode::log::application().info() << "Listening on " << address.toString();
+                                    webhooks.listen([](const auto& webhookAddress, const core::socket::State& webhookState) {
+                                        if (webhookState == core::socket::State::OK) {
+                                            snode::log::application().info() << "Webhooks listening on " << webhookAddress.toString();
+                                        } else if (webhookState == core::socket::State::ERROR ||
+                                                   webhookState == core::socket::State::FATAL) {
+                                            snode::log::application().error() << "Webhook listener failed: " << webhookState.what();
+                                        }
+                                    });
+
                                     pipeline->reconcile([](const coreci::PipelineResult& result) {
                                         snode::log::application().info() << "Startup graph reconciliation: " << result.body.dump();
                                     });

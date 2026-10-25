@@ -85,6 +85,12 @@ def exercise(args):
         assert "--password-file" in root.stdout
         web = subprocess.run([args.executable, "--config-file", str(config), "web", "--help=expanded"], capture_output=True, text=True, timeout=5)
         assert "--port" in web.stdout and "127.0.0.1" in web.stdout
+        webhook = subprocess.run([args.executable, "--config-file", str(config), "webhook", "--help=expanded"], capture_output=True, text=True, timeout=5)
+        assert "--disabled" in webhook.stdout and "[true]" in webhook.stdout
+        enabled = subprocess.run([args.executable, "--config-file", str(config), "webhook", "--disabled=false", "--help=expanded"], capture_output=True, text=True, timeout=5)
+        assert "8443" in enabled.stdout and "--cert-key" in enabled.stdout
+        parser_help = subprocess.run([args.executable, "--config-file", str(config), "webhook", "--disabled=false", "http", "parser", "--help"], capture_output=True, text=True, timeout=5)
+        assert "--maximum-body-bytes" in parser_help.stdout and "2097152" in parser_help.stdout
         assert "Initial MariaDB connection established" not in root.stdout + root.stderr
     else:
         datadir = directory / "data"
@@ -92,6 +98,12 @@ def exercise(args):
         datadir.mkdir(mode=0o700)
         temporary = directory / "tmp"
         temporary.mkdir(mode=0o700)
+        certificate = directory / "webhook.pem"
+        tls_key = directory / "webhook-key.pem"
+        run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", str(tls_key),
+             "-out", str(certificate), "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1"])
+        tls_key.chmod(0o600)
+        webhook_port = free_port()
         account = pwd.getpwuid(os.geteuid()).pw_name
         run(["mariadb-install-db", "--no-defaults", "--datadir=" + str(datadir), "--auth-root-authentication-method=normal", "--skip-test-db", "--tmpdir=" + str(temporary)])
         datadir.chmod(0o700)
@@ -104,6 +116,11 @@ def exercise(args):
         application = None
         app_log = directory / "application.log"
         port = free_port()
+        occupied = None
+        if args.case == "webhook-failure":
+            occupied = socket.socket()
+            occupied.bind(("127.0.0.1", webhook_port))
+            occupied.listen()
         try:
             with (directory / "fixture.log").open("w") as fixture_log:
                 fixture = subprocess.Popen(server_command, stdout=fixture_log, stderr=subprocess.STDOUT)
@@ -121,13 +138,17 @@ def exercise(args):
                 command = [args.executable, "--config-file", str(config), "--log-file", str(directory / "framework.log"), "database", "--mode", "managed" if managed else "unmanaged", "--socket", str(db_socket), "--user", "core_ci_test", "--name", name, "--password-file", str(password)]
                 if managed:
                     command += ["--managed-executable", "/bin/false" if args.case == "startup-failure" else "/usr/sbin/mariadbd", "--managed-config-file", str(server_config), "--managed-datadir", str(datadir), "--managed-pid-file", str(pid_file)]
-                command += ["web", "local", "--port", str(port)]
+                command += ["web", "local", "--port", str(port), "webhook", "--disabled=false", "local", "--port", str(webhook_port),
+                            "tls", "--cert", str(certificate), "--cert-key", str(tls_key)]
                 with app_log.open("w") as output:
                     application = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
                     if args.case in ("initial-failure", "unmanaged-initial-failure", "startup-failure", "schema-failure"):
                         application.wait(timeout=10)
                         log = app_log.read_text()
-                        assert "Listening on" not in log, log
+                        assert "Listening on" not in log and "Webhooks listening on" not in log, log
+                        for closed_port in (port, webhook_port):
+                            with socket.socket() as probe:
+                                assert probe.connect_ex(("127.0.0.1", closed_port)) != 0, "initial failure left a listener"
                         if args.case != "schema-failure":
                             assert "Initial MariaDB connection established" not in log, log
                         if managed:
@@ -147,6 +168,8 @@ def exercise(args):
                             wait_http(port, application)
                             assert app_log.read_text().count("Listening on") == 1, "reconnection registered a second listener"
                         stop(application)
+                        if args.case == "webhook-failure":
+                            assert "Webhook listener failed" in app_log.read_text(), "no bind failure reported"
                         if managed:
                             gone = False
                             try:
@@ -158,6 +181,8 @@ def exercise(args):
                             assert fixture.poll() is None, "unmanaged controller stopped the external server"
                             assert "1" in query(db_socket, "SELECT 1")
         finally:
+            if occupied is not None:
+                occupied.close()
             stop(application)
             stop(fixture)
     print("PASS", args.case)

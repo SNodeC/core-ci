@@ -280,6 +280,9 @@ def exercise(args, directory):
     thread.start()
     port = lifecycle.free_port()
     origin = "http://127.0.0.1:" + str(port)
+    webhook_port = lifecycle.free_port()
+    webhook_origin = "https://127.0.0.1:" + str(webhook_port)
+    webhook_context = ssl.create_default_context(cafile=str(certificate))
     feed_origin = "https://127.0.0.1:" + str(github.server_port)
     settings = root / "controller.conf"
     settings.write_text('github.app-id=42\ngithub.installation-id=7\ngithub.bot-id=42\ngithub.allowed-owner="Owner"\n'
@@ -293,13 +296,15 @@ def exercise(args, directory):
     command = [args.executable, "--config-file", str(settings), "--log-file", str(root / "framework.log"), "database", "--mode", "unmanaged",
                "--socket", str(db_socket), "--user", "core_ci_test", "--name", "core_ci", "--password-file", str(password),
                "web", "local", "--port", str(port), "github-http", "remote", "--host", "127.0.0.1", "--port", str(github.server_port),
-               "tls", "--ca-cert", str(certificate), "feed-http", "tls", "--ca-cert", str(certificate)]
+               "tls", "--ca-cert", str(certificate), "feed-http", "tls", "--ca-cert", str(certificate),
+               "webhook", "--disabled=false", "local", "--port", str(webhook_port),
+               "tls", "--cert", str(certificate), "--cert-key", str(tls_key)]
 
-    def request(path, body=None, headers=None):
+    def request(path, body=None, headers=None, webhook=False):
         payload = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(origin + path, data=payload, headers=headers or {"Content-Type": "application/json", "Origin": origin})
+        req = urllib.request.Request((webhook_origin if webhook else origin) + path, data=payload, headers=headers or {"Content-Type": "application/json", "Origin": origin})
         try:
-            response = urllib.request.urlopen(req, timeout=15)
+            response = urllib.request.urlopen(req, timeout=15, context=webhook_context if webhook else None)
         except urllib.error.HTTPError as error:
             response = error
         with response:
@@ -310,7 +315,7 @@ def exercise(args, directory):
         body = {"installation": {"id": 7}, "repository": {"id": 1000 if run_id >= 500 else repository_id, "full_name": "Owner/worker" if run_id >= 500 else "Owner/example"}, "workflow_run": runs[run_id]}
         raw = json.dumps(body).encode()
         signature = signature or "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
-        return request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature})
+        return request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature}, webhook=True)
 
     database = None
     application = None
@@ -325,6 +330,23 @@ def exercise(args, directory):
                 " CREATE USER 'core_ci_test'@'localhost'; GRANT SELECT,INSERT,UPDATE,DELETE ON core_ci.* TO 'core_ci_test'@'localhost';")
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
+            # Public TLS endpoint has no administration/UI routes; HTTP endpoint has no webhook.
+            for endpoint, path, payload in ((webhook_origin, "/", None), (webhook_origin, "/api/graph", None),
+                                            (webhook_origin, "/api/repositories/save", b"{}"), (origin, "/github/webhook", b"{}")):
+                probe = urllib.request.Request(endpoint + path, data=payload,
+                    headers={"Origin": origin, "Content-Type": "application/json"})
+                try:
+                    response = urllib.request.urlopen(probe, timeout=5, context=webhook_context)
+                except urllib.error.HTTPError as error:
+                    response = error
+                with response:
+                    assert response.status == 404, "listener exposed a route owned by the other endpoint"
+            rejected_tls = False
+            try:
+                urllib.request.urlopen(webhook_origin + "/", timeout=5)
+            except urllib.error.URLError as error:
+                rejected_tls = isinstance(error.reason, ssl.SSLCertVerificationError)
+            assert rejected_tls, "TLS client accepted an untrusted test certificate"
             status, saved = request("/api/repositories/save", {"repository": "Owner/example", "branch": "main", "revision": "",
                 "blob_sha": definitions[head][1], "definition": definition})
             assert status == 200 and saved["enrolled"] and saved["work"]["status"] == 202, saved

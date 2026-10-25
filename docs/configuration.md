@@ -36,7 +36,7 @@ The agreed port allocation is:
 | Endpoint | Address/port | Router forwarding |
 | --- | --- | --- |
 | Local configuration UI | 127.0.0.1:8080 HTTP | None |
-| Planned SNode.C HTTPS webhook listener | Machine LAN address:8443 TCP | External TCP 8443 to this machine TCP 8443 |
+| SNode.C HTTPS webhook listener (disabled by default) | Machine LAN address:8443 TCP | External TCP 8443 to this machine TCP 8443 |
 | Public GitHub webhook | https://gw-home.vchrist.at:8443/github/webhook | Public HTTPS port 8443 |
 
 On 2026-10-25 the machine's active IPv4 route used LAN address 192.168.1.239; ports 443,
@@ -44,10 +44,11 @@ On 2026-10-25 the machine's active IPv4 route used LAN address 192.168.1.239; po
 settings, or use its actual stable LAN address as the forwarding destination. Do not
 forward 8080 or MariaDB. No UDP forwarding is needed for GitHub HTTPS webhooks.
 
-This allocates ports; it does not claim HTTPS is already running. The current application
-has one loopback HTTP listener on 8080. Before activation, move the existing webhook route
-to a dedicated SNode.C TLS listener on 8443, preserving its raw-body HMAC validation and
-initial-database-success lifecycle. Do not expose UI/API administration on that listener.
+The application has separate named `web` HTTP and `webhook` TLS instances. Only the TLS
+instance owns `/github/webhook`; it exposes no UI or administration API. It defaults to
+disabled and loopback:8443. Both listeners start only after initial database/schema success.
+A TLS bind failure is logged while the local UI/database remain available; `/api/status`
+reports database health, not proof that webhooks are reachable.
 No reverse proxy was found installed during this check; one is not assumed or installed.
 The owner selected gw-home.vchrist.at on public HTTPS port 8443 because public port 443
 is occupied. It resolved to 212.241.96.69 during setup. A temporary nonce-response listener
@@ -221,3 +222,34 @@ The sandbox preserves the existing feed APT/usign identities. New SDK-specific A
 publish their EC P-256 public key as keys/core-ci-apk.pem; legacy keys/apk.pem remains RSA
 and unchanged. Install the key corresponding to the chosen feed. Do not substitute the
 legacy RSA file for the new APK publisher's EC P-256 key.
+
+
+## Enabling the dedicated TLS listener
+
+After the owner supplies a trusted certificate chain and matching protected private-key
+file for `gw-home.vchrist.at`, append this CLI fragment to the configured controller command.
+Set the two shell variables to file paths, not key contents:
+
+```sh
+webhook --disabled=false local --host 192.168.1.239 --port 8443 \
+  tls --cert "${CORE_CI_TLS_CERTIFICATE:?certificate chain file required}" \
+      --cert-key "${CORE_CI_TLS_PRIVATE_KEY:?private-key file required}"
+```
+
+Use the actual stable LAN address. Port selection remains on the command line. Keep the
+`web` UI instance on `127.0.0.1:8080`; the TLS instance has no configuration-writing routes.
+If the TLS key is encrypted, supply `webhook.tls.cert-key-password` only through the
+owner-only server configuration file, never shell arguments or source JSON.
+
+Framework help suppresses descendants of disabled instances. These commands expose the
+registered TLS and parser configuration without starting a database or listener:
+
+```sh
+core-ci webhook --disabled=false --help=expanded
+core-ci webhook --disabled=false http parser --help
+```
+
+Only after a trusted external TLS connection is proved should the GitHub App webhook be
+activated at `https://gw-home.vchrist.at:8443/github/webhook`, with SSL verification enabled
+and the configured raw-body HMAC secret. Public activation is not implied by local tests
+using a generated test certificate. No public certificate/key paths have been supplied yet.

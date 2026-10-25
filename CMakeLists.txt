@@ -13,8 +13,9 @@ find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json 3.7.0 REQUIRED)
 
 find_package(
-    snodec CONFIG REQUIRED COMPONENTS db-mariadb http-server-express-legacy-in
-                                      http-client net-in-stream-tls
+    snodec CONFIG REQUIRED
+    COMPONENTS db-mariadb http-server-express-legacy-in
+               http-server-express-tls-in http-client net-in-stream-tls
 )
 
 add_library(
@@ -49,6 +50,7 @@ target_link_libraries(
     PRIVATE core-ci-domain
             snodec::db-mariadb
             snodec::http-server-express-legacy-in
+            snodec::http-server-express-tls-in
             snodec::http-client
             snodec::net-in-stream-tls
             OpenSSL::Crypto
@@ -116,6 +118,7 @@ if(BUILD_TESTING)
         unmanaged-initial-failure
         startup-failure
         schema-failure
+        webhook-failure
     )
         add_test(
             NAME lifecycle-${case}

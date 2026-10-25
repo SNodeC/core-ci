@@ -738,3 +738,24 @@
 - All three native join targets became eligible only after both branches' verified
   publications. Real ARM64 join build 40235752993 and RPM join build 40236060513 pass;
   amd64 join run 40236507555 is assigned. IPK/APK join work still waits for prerequisites.
+
+## 2026-10-25 — approved dedicated TLS webhook listener
+
+- Owner approved the remaining TLS listener. Invariant: public webhook routing must not
+  expose local configuration administration. Move the sole existing HMAC handler to a
+  named SNode.C TLS WebApp, disabled by default, loopback:8443, using installed public
+  package targets. Register configuration before the existing single init; listen only
+  after database/schema/UI startup success. No new lifecycle state, timers or schedulers.
+- TLS errors are logged without releasing resources still owned by the local UI. Examined
+  framework acceptor callbacks and MQTTSuite listener patterns. Initial database/schema
+  failures still release startup resources and leave both configured ports closed.
+- All ten affected local lifecycle, enrollment and real-MariaDB/synthetic-GitHub pipeline
+  checks pass. HTTPS HMAC reports, untrusted certificate rejection, endpoint route isolation,
+  help configuration/body limit and TLS bind failure are covered. Help assertions follow
+  native disabled-instance/resource-policy command forms; no custom help code added.
+- Production +24/-3 (net +21), tests +55/-7 (net +48), within the approved estimates;
+  documentation counted separately. Formatting/build checks pass. Public activation awaits
+  valid owner-supplied TLS certificate/key paths; no replacement certificate was generated.
+- Real APT diamond client run 40236964119 passes signed installation of core/app/side/join
+  and runtime `demo-join core 60, side 62`. Native diamond publication/installation is now
+  proved on amd64; further target publications and APK client acceptance continue.
