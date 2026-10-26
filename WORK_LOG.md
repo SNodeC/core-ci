@@ -1072,3 +1072,8 @@
   for documentation; existing build/format and UI syntax/browser checks cover the one-line
   presentation correction. Documentation changes add no production/test code or dependencies;
   Mermaid validation tools are isolated under /tmp/codex/build/core-ci/documentation.
+- Owner authorized merging to main. Verified clean canonical checkout, main ancestry and
+  absence of conflicting worktrees/open PRs. Final source has no registered GitHub checks;
+  relevant local checks and five-target live publication evidence are recorded above.
+  Sandbox UI/graph remains available with all five v2.1.3 targets published. Fast-forward
+  main preserves reviewed checkpoints; no new production/test code or production activation.
