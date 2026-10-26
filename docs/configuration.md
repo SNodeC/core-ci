@@ -53,10 +53,10 @@ No reverse proxy was found installed during this check; one is not assumed or in
 The owner selected gw-home.vchrist.at on public HTTPS port 8443 because public port 443
 is occupied. It resolved to 212.241.96.69 during setup. A temporary nonce-response listener
 verified that the public address on 8443 forwarded to this machine from inside the LAN;
-that listener was closed. This does not yet prove external GitHub delivery or valid TLS.
+that listener was closed. The later active sandbox check below proves real GitHub delivery over valid TLS.
 Configure the actual TLS listener port through SNode.C's registered command-line options.
 The existing port-443 service, which presented an office.vchrist.at certificate, stays
-untouched. Valid certificate/private-key paths for gw-home.vchrist.at remain required.
+untouched. Active sandbox certificate/private-key paths are documented below.
 Keep TLS key material in protected local configuration, never source JSON or tracked files.
 Do not disable GitHub's certificate verification to bypass missing TLS setup.
 
@@ -254,7 +254,7 @@ core-ci webhook --disabled=false http parser --help
 Only after a trusted external TLS connection is proved should the GitHub App webhook be
 activated at `https://gw-home.vchrist.at:8443/github/webhook`, with SSL verification enabled
 and the configured raw-body HMAC secret. Public activation is not implied by local tests
-using a generated test certificate. No public certificate/key paths have been supplied yet.
+using a generated test certificate. The sandbox activation below records the actual deployment.
 
 
 ## Execution evidence and supported runners
@@ -278,10 +278,10 @@ The sandbox App now delivers signed push, workflow_run and workflow_job events t
 https://gw-home.vchrist.at:8443/github/webhook with certificate verification enabled.
 Core-ci uses /home/voc/ci-test/core-ci-tls/fullchain.pem and the matching protected
 private-key.pem; its HMAC secret file is /home/voc/ci-test/core-ci-webhook.secret.
-Only the webhook route is public; administration remains on loopback port8080.
+Only the webhook route is public; administration remains on loopback port 8080.
 These are sandbox deployment paths, not compiled-in application defaults.
 
-Validated work notifications receive202 before asynchronous GitHub verification finishes.
+Validated work notifications receive 202 before asynchronous GitHub verification finishes.
 Processing outcomes are logged as GitHub webhook completed; failures do not authorize
 replacement executions. A crash before a new tag selection is persisted still needs an
 explicit rescan/redelivery. No durable delivery inbox or automatic replay was added.

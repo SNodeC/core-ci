@@ -30,8 +30,8 @@ of prerequisite packages. Client installation does prove the package manager res
 declared runtime relationships. Modified-byte rejection has local coverage; full live tamper
 coverage remains incomplete and must not be conflated with live wrong-key rejection.
 
-Official API references are recorded in WORK_LOG.md. Public webhook TLS remains approved,
-but valid certificate-chain/key paths for gw-home.vchrist.at are still missing. No SNode.C
+Official API references are recorded in WORK_LOG.md. Public sandbox webhook TLS is active
+with signed deliveries verified; see the deployment evidence. No SNode.C
 organization deployment, credential/key rotation, tag rewrite or package overwrite is authorized
 by this review correction. Deployment and live verification remain in VOC-Experiments.
 

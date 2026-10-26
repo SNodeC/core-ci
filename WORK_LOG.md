@@ -1027,3 +1027,11 @@
   defects, and no framework changes or deferred client refactoring were introduced.
   GitHub webhook response deadline reference:
   https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks
+- Webhook-driven v2.1.2 verification finished: all five builds and publishers succeeded;
+  controller verifies all five published and public status retains38 receipts. No manual
+  reconcile call drove progression. Real tag/report redeliveries and restart during assigned
+  publication were included, as disclosed. Accepted notification persistence window unchanged.
+- Owner approved readable labels across GitHub/UI:30–60 net production and40–70 test lines,
+  no new graph authority/state/scheduler. Invariant: human labels derive from immutable
+  repository/tag/target/rebuild inputs; cryptographic assignment/run/artifact checks remain.
+  Existing pinned historical executions retain their expected names; no history is rewritten.

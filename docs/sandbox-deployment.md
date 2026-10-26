@@ -103,7 +103,7 @@ no untrusted-install override is used. Client runtime output is `demo-core 60`.
 
 ## Still outstanding
 
-Public webhook activation and remaining full live acceptance are outstanding. All 20 v2.1.0
+Public webhook activation is recorded below; remaining full live acceptance is tracked separately. All 20 v2.1.0
 graph executions are published. Native/IPK diamond clients and all four root package clients
 pass, including the final APK diamond client check recorded below. Both OpenWrt builds now pass with
 corrected SDK preparation and source-owned tool lookup:
@@ -116,11 +116,11 @@ Both SDK preparation stages passed in real GitHub runs
 [APK 40231443502](https://github.com/VOC-Experiments/demo-core/actions/runs/40231443502).
 Their subsequent source-hook compiler lookup failure is corrected in new source tag
 v2.1.0 at 1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57; v2.0.0 remains unchanged.
-The core-ci application branch is committed locally; no application push, PR or installation
+The core-ci feature branch is committed and pushed; no PR, merge or system installation
 was performed. The running executable is a development build under the temporary build root.
 The separate SNode.C TLS webhook listener is implemented and locally tested, disabled by
-default. Public certificate/key configuration and activation remain outstanding; selected public
-endpoint is https://gw-home.vchrist.at:8443/github/webhook. Existing port 443 stays untouched.
+default. The sandbox listener is now active with trusted TLS and signed GitHub deliveries at
+https://gw-home.vchrist.at:8443/github/webhook. Existing port 443 stays untouched.
 No extra source checkout was created. Task scripts/evidence are under the permitted temporary
 build directory; they contain no private key or token values.
 
@@ -219,9 +219,9 @@ Worker tooling and all four source dispatch workflows now pin
 and tooling pins. The development controller restarted with updated public configuration;
 all persisted execution IDs, revisions, states and run assignments are unchanged.
 
-The owner approved public TLS activation. Actual certificate-chain and matching private-key
-paths for gw-home.vchrist.at are still required; no suitable certificate was found in the
-standard local locations. No public webhook activation or real delivery is claimed yet.
+The owner issued a Let’s Encrypt certificate using OpenWrt ACME and IONOS DNS validation.
+Core-ci now uses the verified matching certificate/key, with a separate protected HMAC secret.
+Actual public GitHub delivery and the response-timing correction are recorded below.
 
 ## Review-fix live publication — 2026-10-26
 
@@ -253,3 +253,25 @@ readable. The full build rerun removed its original package/environment artifact
 approved recording confirmed missing/expired artifacts as failed, without automatic replacement.
 Unknown/incomplete API results still preserve the assignment. Explicit retry cannot replace
 missing original environment evidence with a newly resolved environment.
+
+## Public webhook activation — 2026-10-26
+
+The App is active at https://gw-home.vchrist.at:8443/github/webhook with an HMAC
+secret and TLS verification enabled. Subscriptions are push, workflow_job and workflow_run.
+Real signed ping and ping redelivery returned 200; an unsigned request returned 401.
+The public listener exposes neither the UI nor administrative routes (GET / returned 404).
+
+New demo-join v2.1.2 selected all five targets from the actual tag-push delivery.
+All five GitHub builds succeeded. No manual work/reconcile call started or progressed them.
+The controller was restarted with an assigned publisher; state and assigned identities
+were preserved. Early notifications exceeded GitHub's 10-second response deadline while
+processing continued. Owner-approved fix 4572a54 acknowledges validated work notifications
+before asynchronous API inspection; subsequent real deliveries returned 202 in under 3 seconds.
+A completed-build report and the already-persisted tag notification were deliberately
+redelivered to check this fix. No new execution or duplicate build was created.
+
+Focused pipeline-boundaries passes with a delayed API response, prompt acknowledgement,
+final graph verification and failures in the processing log. No unrelated suite was run.
+Automatic renewal transfer from router to controller is still not configured. The accepted
+crash-before-selection limitation requires explicit rescan/redelivery; there is no new
+persistent notification queue, scheduler or blanket retry policy.
