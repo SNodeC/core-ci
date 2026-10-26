@@ -441,6 +441,18 @@ def main():
         status_update.prepare(status_feed, 1)
         page = (status_feed / "status/source.md").read_text()
         assert "<code>2.0-2</code>" in page and "2026-10-26 15:27" in page
+        # The publication contract already names each receipt by its reserved rebuild revision.
+        # A retained receipt without the optional display field must sort beside newer receipts.
+        old = {**receipt, "revision": 1, "packages": [{**receipt["packages"][0], "version": "2.0-1"}]}
+        del old["revision"]
+        old_path = status_feed / "receipts" / ("a" * 64) / "1.json"
+        contract.write_json(old_path, old)
+        old_bytes = old_path.read_bytes()
+        feed_status.render(status_feed)
+        mixed = contract.read_json(status_feed / "status.json")["publications"]
+        assert sorted(row["revision"] for row in mixed) == [1, 2]
+        assert "<code>2.0-2</code>" in (status_feed / "status/source.md").read_text()
+        assert old_path.read_bytes() == old_bytes, "rendering rewrote retained publication evidence"
         # A retained receipt can lack the optional source display fields; immutable graph facts still identify it.
         without_source = {**receipt, "source": None}
         contract.write_json(status_feed / "receipts" / ("a" * 64) / "2.json", without_source)

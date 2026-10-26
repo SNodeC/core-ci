@@ -1849,3 +1849,19 @@ proposed. Commit/push/merge remain separate authorization stages.
 - No production SNodeC workflows/credentials/feeds/tags, keys, tokens or published bytes
   were modified. .qtcreator/ and .local-credentials/ were preserved and not inspected.
   No additional checkout was created; the permitted task build is retained for review.
+
+## 2026-10-26 — owner requested activation and full session from core
+
+- Owner instructed “do this from core up” after the merge/restart/full-test prerequisites
+  were stated. Created tested controller checkpoint 2eba58b on fix/github-request-reduction.
+- Rechecked the separate renderer gate: Jinja sorts optional receipt revision fields,
+  so mixing retained receipts without that field with new integer revisions fails.
+  The publication contract already names every receipt <reserved-revision>.json.
+  The renderer now reads that existing immutable filename when the optional field is
+  absent, without rewriting evidence or inventing a revision. Production change is
+  one line replaced, net zero. Added mixed-receipt selection and unchanged-byte checks.
+- Focused tests/worker_provenance.py passed in the permitted renderer-test directory,
+  including expected local stale Git-push rejection. No full suite was run.
+- Sandbox worker main verified at 3740d2b6af186f55aa7f291bc250c4b4adac5c27.
+  No local core-ci/MariaDB process was running at activation preflight. Existing
+  runtime arguments/data and credential-file references will be reused, not printed.

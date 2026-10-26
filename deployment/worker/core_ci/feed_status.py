@@ -89,7 +89,7 @@ def render(feed, templates=None):
                     "package": package["name"],
                     "version": package["version"],
                     "source": source,
-                    "revision": receipt.get("revision"),
+                    "revision": receipt.get("revision", int(path.stem)),
                     "dependencies": receipt.get("dependencies"),
                     "source_commit": receipt["source_commit"],
                     "sha256": package["sha256"],
