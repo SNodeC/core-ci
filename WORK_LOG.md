@@ -970,3 +970,14 @@
   evidence distinguishes these live checks from synthetic local tests.
 - Final correction accounting from d300a4c: production +188/-121 (net +67), tests
   +300/-24 (net +276), within approved production and extended regression bounds.
+
+- Owner requested full sandbox deployment. Pushed feat/persistent-package-graph through
+  d7e43fc; audited every worker source blob and all four source workflow pins against the
+  reviewed local sources: exact matches, no redundant GitHub deployment commits needed.
+  CORE_CI_TOOLING_SHA matches and package-publication remains restricted to main.
+- Running updated controller PID 1264161, binary SHA256
+  73847c5885cb202c1ae6a412afcddd0804549fd58a267f6f7ef58477eb81738b.
+  Real MariaDB restored 45 executions; mutations allowed, public feed status reachable.
+  Local UI stays on 127.0.0.1:8080; public webhook listener is disabled pending actual
+  certificate-chain/key paths. Asked owner for those paths; no certificate fabricated,
+  UI exposed, port 443 changed, or production SNodeC resource activated. No full test rerun.
