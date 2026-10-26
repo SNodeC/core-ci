@@ -1303,3 +1303,20 @@
   push, merge, sandbox restart or installation performed for this step. Temporary build/logs
   retained for review; no additional checkout. No production SNodeC resources, feed bytes,
   tags, keys or credentials changed; .qtcreator/ and .local-credentials/ left uninspected.
+
+## 2026-10-26 — authorized live metadata deployment
+
+- Owner requested commit, merge and live operation. Controller/UI checkpoint d2acc67 was
+  committed, pushed and merged into main, preserving the merged UI history. No active sandbox
+  assignments before upgrade:43 published/12 historical failed, graph generation270.
+- The sandbox recipe already checks native runtime output but did not emit summaries. Added
+  actual compiler --version and one passed native test (one explicitly skipped runtime test
+  for cross-SDK builds) to its existing outputs.json. Package contents/build behavior unchanged.
+  Combined bounded metadata work is+46 net production/+53 test lines, under70/60 approval.
+  Focused sandbox_hooks.py passes eight actual local DEB/RPM package builds over synthetic
+  source fixtures; this does not claim GitHub/container/client acceptance.
+- Sandbox rollout uses GitHub Git trees based on the current tree and checked normal ref
+  updates, preserving unrelated worker/source/feed content. Official semantics verified:
+  https://docs.github.com/en/rest/git/trees#create-a-tree and
+  https://docs.github.com/en/rest/git/refs#update-a-reference . No uncertain mutation is retried.
+  Existing keys and tags are preserved; external activation is VOC-Experiments only.

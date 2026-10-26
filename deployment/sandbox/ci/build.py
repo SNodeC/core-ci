@@ -68,7 +68,18 @@ def main():
             if name == "demo-join":
                 values = list(map(int, re.findall(r"[0-9]+", result)))
                 assert values[1] == values[0] + 2, "join did not consume compatible core/side exports"
-        declared = {"packages": [{"file": name + "." + package_format, "component": name}]}
+        declared = {
+            "packages": [{"file": name + "." + package_format, "component": name}],
+            "summary": {
+                "compilers": [
+                    {
+                        "name": Path(compiler[0]).name,
+                        "version": subprocess.check_output(compiler + ["--version"], text=True).splitlines()[0],
+                    }
+                ],
+                "tests": {"passed": int(family == "native"), "failed": 0, "skipped": int(family != "native")},
+            },
+        }
         if name in {"demo-core", "demo-side"}:
             stem = name.removeprefix("demo-")
             development = work / "development"

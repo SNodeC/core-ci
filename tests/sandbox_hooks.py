@@ -131,6 +131,11 @@ def main():
                 assert all(dependency in required for dependency in definition["depends_on"])
                 declared = json.loads((output / "outputs.json").read_text())
                 assert declared["packages"] == [{"file": name + "." + package_format, "component": name}]
+                assert declared["summary"]["tests"] == {"passed": 1, "failed": 0, "skipped": 0}
+                assert (
+                    declared["summary"]["compilers"][0]["version"]
+                    == subprocess.check_output(["cc", "--version"], text=True).splitlines()[0]
+                )
                 if name in {"demo-core", "demo-side"}:
                     with tarfile.open(output / "development.tar.gz") as archive:
                         assert set(archive.getnames()) == {"include/" + name + ".h", "lib/lib" + name + ".a"}
