@@ -1321,6 +1321,71 @@
   https://docs.github.com/en/rest/git/refs#update-a-reference . No uncertain mutation is retried.
   Existing keys and tags are preserved; external activation is VOC-Experiments only.
 
+## 2026-10-26 — early verified execution evidence
+
+- Owner approved the isolated checkout checkouts/live-execution-evidence and revised bound
+  of120–180 net production/70–110 test lines, with merge requested. Branch
+  feat/live-execution-evidence is based on main58f6a72. Purpose: isolate controller/UI
+  changes from the concurrent public-status thread. Remove the worktree after safe merge.
+- Invariant: immutable assignments and run identities never change; verified attempt-1
+  progress and job timestamps may accumulate before successful artifact/publication proof.
+  Delayed observations cannot erase completion or change established facts. Reused the
+  existing graph commit/SSE path and selected job for all evidence consumers; no timer,
+  queue, scheduler, workflow changes or additional timing authority. Atomic evidence/failure
+  persistence avoids a second competing graph write for a definite failed build.
+- Added one per-attempt evidence JSON column, restored through asynchronous MariaDB.
+  Existing deployments require the documented administrative ALTER before restart; no
+  runtime DDL or fabricated historical timestamps. Deployment instructions and field
+  contract: docs/extensions/execution-evidence.md. Runtime has not yet been upgraded.
+- UI distinguishes assigned, queued, running, verification and waiting-for-publication
+  activity. Early job starts appear immediately through SSE; expected timestamps are
+  Pending. Publisher timing remains separate from verified publication. Existing five
+  states and all exact inputs, uncertainty and retry policy remain unchanged.
+- Official evidence contract checked against
+  https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt
+  and https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_job .
+  Reviewed SNode.C apps/main.cpp and MQTTSuite MqttModel.cpp streaming/lifetime patterns;
+  existing SSE ownership/lifecycle is retained.
+- Debug build in /tmp/codex/build/core-ci/live-execution-evidence uses installed public
+  SNode.C packages. Build, format-check, node --check ui/app.js,160-column and whitespace
+  checks pass. Focused graph-state-boundaries and pipeline-boundaries pass (0.11s/8.33s):
+  real isolated MariaDB, synthetic GitHub/feed. Tests cover early/late evidence, attempt2
+  rejection, restart, duplicate SSE/generation stability, failed-build timing and immutable
+  identities. No full suite or live GitHub acceptance claimed.
+- Disposable Chrome fixture verifies queued Pending, running start time, completion and
+  duration over SSE while preserving expansion. Screenshot retained in the task build
+  directory. Production:+313/-224 (net89); tests:+79/-4 (net75). Production growth is
+  below the approved upper bound; consolidating job reads reduced the required addition.
+- No sandbox database ALTER, controller restart, installation, push or external resource
+  mutation performed in this checkpoint. Concurrent canonical changes are untouched;
+  .qtcreator/ and .local-credentials/ were preserved and not inspected.
+
+## 2026-10-26 — SSE idle heartbeat
+
+- Owner requested the heartbeat fix after approving the bounded approach (15–25 production
+  lines and20–35 test lines). Reused the approved isolated worktree
+  checkouts/live-execution-evidence on fix/sse-heartbeat, based on main330b8d9, to preserve
+  the other thread's uncommitted canonical changes. Cleanup follows the authorized merge.
+- Invariant: an idle SSE connection receives transport traffic without graph/GitHub work,
+  and its timer is cancelled on disconnect. Followed SNode.C apps/main.cpp and MQTTSuite
+  mqttbroker/lib/MqttModel.cpp and mqttbridge/lib/SSEDistributor.cpp interval-timer patterns.
+  Checked core/Timer.cpp handle cancellation/destruction and HTTP responseStarted():
+  EventSource's Accept header enables the framework's SSE read-timeout handling.
+- Each stream now sends :keep-alive plus the blank SSE terminator every30 seconds.
+  Existing disconnect cleanup owns the timer handle; its callback captures a weak response.
+  No event ID, UI event, database write, GitHub read, queue or scheduling policy is added.
+- Debug build and format-check pass with installed public SNode.C targets in
+  /tmp/codex/build/core-ci/sse-heartbeat. Focused command:
+  ctest --test-dir /tmp/codex/build/core-ci/sse-heartbeat -R '^lifecycle-sse-heartbeat$'
+  --output-on-failure. Passed in91.09s using real isolated MariaDB and a real HTTP stream:
+  three comments arrive over the same idle connection beyond60s, graph generation remains
+  unchanged, the stream closes and the controller shuts down normally. No full suite run.
+- Production:+12/-1 (net11); tests including CTest wiring:+19/-2 (net17), both below
+  approved upper bounds. Architecture documentation updated. This is local runtime proof,
+  not browser/proxy or live GitHub acceptance. No sandbox restart or installation performed;
+  no credentials, tags, keys or feed bytes touched. .qtcreator/ and .local-credentials/
+  remain uninspected and unchanged.
+
 
 ## 2026-10-26 — public graph facts and deployment-owned Jinja status
 
@@ -1375,3 +1440,22 @@
   independently removed checkouts/live-execution-evidence directory. Reconfigured the same
   isolated build to rediscover current files; format-check passes. No canonical formatter or
   CMake source change, no checkout deletion or branch switch was needed.
+
+
+## 2026-10-26 — align public status with merged execution evidence and SSE heartbeat
+
+- Owner requested alignment with current main, then explicitly requested status -> main.
+  Current main is d9502fe, including execution-evidence merge330b8d9 and scoped heartbeat.
+  Preserved the reviewed status implementation in checkpoint8958c42 before integration.
+- Merged current main into the status task branch to resolve overlap before updating main.
+  The sole textual conflict was WORK_LOG; both complete records were retained. Parent SQL,
+  monotonic evidence merging, pipeline job verification, UI activity and SSE heartbeat remain.
+- Public projection now consumes the existing GraphStore evidence view for build/publication
+  job status, IDs, start/completion times and conclusions. Current verified job links no longer
+  wait for successful artifacts. Existing successful artifact job IDs enrich the same canonical
+  view when early evidence is absent; no second timing collector or persisted state was added.
+- Extended focused assertions for public/management evidence agreement; updated setup/context
+  documentation. Owner stopped checks: no build, test or format-check was run after this merge
+  and adaptation. Earlier passing checks apply only to the pre-alignment checkpoint.
+- Next authorized step is the local status -> main merge. No push, installation, database ALTER,
+  controller restart, workflow activation, feed/key/tag or credential mutation is included.

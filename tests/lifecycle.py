@@ -160,6 +160,21 @@ def exercise(args):
                     else:
                         wait_http(port, application)
                         child_pid = int(pid_file.read_text())
+                        if args.case == "sse-heartbeat":
+                            origin = "http://127.0.0.1:" + str(port)
+                            with event_stream(origin, timeout=35) as stream:
+                                assert stream.headers.get_content_type() == "text/event-stream"
+                                stream_event(stream)
+                                stream_event(stream)
+                                generation = json.load(urllib.request.urlopen(origin + "/api/graph"))["generation"]
+                                started = time.monotonic()
+                                for _ in range(3):
+                                    assert stream.readline().strip() == b":keep-alive", "idle SSE stream closed or sent a data event"
+                                    assert not stream.readline().strip(), "heartbeat was not a complete SSE comment"
+                                    assert application.poll() is None, "controller stopped during idle streaming"
+                                assert time.monotonic() - started > 60, "idle connection was not tested beyond its timeout"
+                                assert json.load(urllib.request.urlopen(origin + "/api/graph"))["generation"] == generation
+                            wait_http(port, application)
                         if args.case == "unmanaged":
                             connection_id = query(db_socket, "SELECT ID FROM information_schema.PROCESSLIST WHERE USER='core_ci_test' LIMIT 1").strip()
                             assert connection_id, "no application database connection"
@@ -190,9 +205,9 @@ def exercise(args):
 
 
 
-def event_stream(origin):
+def event_stream(origin, timeout=10):
     request = urllib.request.Request(origin + "/api/events", headers={"Accept": "text/event-stream"})
-    response = urllib.request.urlopen(request, timeout=10)
+    response = urllib.request.urlopen(request, timeout=timeout)
     assert response.headers.get_content_type() == "text/event-stream"
     return response
 

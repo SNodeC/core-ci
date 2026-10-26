@@ -26,7 +26,7 @@ namespace coreci {
         std::string attemptValues(const Attempt& attempt) {
             return Database::text(attempt.state) + "," + document(attempt.assignment) + "," + document(attempt.buildRun) + "," +
                    document(attempt.buildResult) + "," + document(attempt.publicationRun) + "," + document(attempt.receipt) + "," +
-                   Database::text(attempt.failure);
+                   document(attempt.evidence) + "," + Database::text(attempt.failure);
         }
     } // namespace
 
@@ -114,40 +114,42 @@ namespace coreci {
     }
 
     void GraphStore::readAttempts(const std::shared_ptr<Restoring>& restoring) {
-        database.query("SELECT JSON_OBJECT('id',id,'execution',execution_id,'revision',revision,'state',state,"
-                       "'assignment',JSON_EXTRACT(assignment,'$'),'build_run',JSON_EXTRACT(build_run,'$'),"
-                       "'build_result',JSON_EXTRACT(build_result,'$'),'publication_run',JSON_EXTRACT(publication_run,'$'),"
-                       "'receipt',JSON_EXTRACT(receipt,'$'),'failure',failure) FROM attempts ORDER BY revision",
-                       [this, restoring](const DatabaseResult& result) {
-                           if (!result.error.empty()) {
-                               restoring->callback(result);
-                           } else {
-                               try {
-                                   for (const auto& row : result.rows) {
-                                       Attempt attempt;
-                                       attempt.id = row.at("id").get<std::string>();
-                                       attempt.revision = row.at("revision").get<std::uint64_t>();
-                                       attempt.state = row.at("state").get<std::string>();
-                                       attempt.assignment = row.at("assignment");
-                                       attempt.buildRun = row.at("build_run");
-                                       attempt.buildResult = row.at("build_result");
-                                       attempt.publicationRun = row.at("publication_run");
-                                       attempt.receipt = row.at("receipt");
-                                       attempt.failure = row.at("failure").get<std::string>();
-                                       restoring->nodes.at(row.at("execution").get<std::string>()).attempts.push_back(std::move(attempt));
-                                   }
-                                   std::vector<Node> nodes;
-                                   for (const auto& [id, node] : restoring->nodes) {
-                                       nodes.push_back(node);
-                                   }
-                                   state.restore(nodes, restoring->nextRevision);
-                                   generation = restoring->generation;
-                                   restoring->callback({});
-                               } catch (const std::exception& error) {
-                                   restoring->callback({{}, error.what(), false});
-                               }
-                           }
-                       });
+        database.query(
+            "SELECT JSON_OBJECT('id',id,'execution',execution_id,'revision',revision,'state',state,"
+            "'assignment',JSON_EXTRACT(assignment,'$'),'build_run',JSON_EXTRACT(build_run,'$'),"
+            "'build_result',JSON_EXTRACT(build_result,'$'),'publication_run',JSON_EXTRACT(publication_run,'$'),"
+            "'receipt',JSON_EXTRACT(receipt,'$'),'evidence',JSON_EXTRACT(evidence,'$'),'failure',failure) FROM attempts ORDER BY revision",
+            [this, restoring](const DatabaseResult& result) {
+                if (!result.error.empty()) {
+                    restoring->callback(result);
+                } else {
+                    try {
+                        for (const auto& row : result.rows) {
+                            Attempt attempt;
+                            attempt.id = row.at("id").get<std::string>();
+                            attempt.revision = row.at("revision").get<std::uint64_t>();
+                            attempt.state = row.at("state").get<std::string>();
+                            attempt.assignment = row.at("assignment");
+                            attempt.buildRun = row.at("build_run");
+                            attempt.buildResult = row.at("build_result");
+                            attempt.publicationRun = row.at("publication_run");
+                            attempt.receipt = row.at("receipt");
+                            attempt.evidence = row.at("evidence");
+                            attempt.failure = row.at("failure").get<std::string>();
+                            restoring->nodes.at(row.at("execution").get<std::string>()).attempts.push_back(std::move(attempt));
+                        }
+                        std::vector<Node> nodes;
+                        for (const auto& [id, node] : restoring->nodes) {
+                            nodes.push_back(node);
+                        }
+                        state.restore(nodes, restoring->nextRevision);
+                        generation = restoring->generation;
+                        restoring->callback({});
+                    } catch (const std::exception& error) {
+                        restoring->callback({{}, error.what(), false});
+                    }
+                }
+            });
     }
 
     std::uint64_t GraphStore::getGeneration() const {
@@ -252,7 +254,7 @@ namespace coreci {
                     if (old == nullptr) {
                         statements.push_back({"INSERT INTO "
                                               "attempts(id,execution_id,revision,state,assignment,build_run,build_result,publication_run,"
-                                              "receipt,failure) VALUES (" +
+                                              "receipt,evidence,failure) VALUES (" +
                                                   Database::text(attempt.id) + "," + Database::text(node.id) + "," +
                                                   std::to_string(attempt.revision) + "," + attemptValues(attempt) + ")",
                                               1});
@@ -261,8 +263,8 @@ namespace coreci {
                             {"UPDATE attempts SET state=" + Database::text(attempt.state) + ",assignment=" + document(attempt.assignment) +
                                  ",build_run=" + document(attempt.buildRun) + ",build_result=" + document(attempt.buildResult) +
                                  ",publication_run=" + document(attempt.publicationRun) + ",receipt=" + document(attempt.receipt) +
-                                 ",failure=" + Database::text(attempt.failure) + " WHERE id=" + Database::text(attempt.id) +
-                                 " AND state=" + Database::text(old->state),
+                                 ",evidence=" + document(attempt.evidence) + ",failure=" + Database::text(attempt.failure) +
+                                 " WHERE id=" + Database::text(attempt.id) + " AND state=" + Database::text(old->state),
                              1});
                     }
                 }
@@ -284,13 +286,32 @@ namespace coreci {
         nlohmann::json nodes = nlohmann::json::array();
         for (const auto& [id, node] : state.nodes()) {
             const auto& attempt = node.attempts.back();
-            const std::string activity =
+            std::string activity =
                 !node.supersededBy.empty()                                      ? "superseded"
                 : attempt.state == "building" && !attempt.buildResult.is_null() ? "build complete; waiting for publication"
                 : attempt.state == "building" && attempt.buildRun.is_null()     ? "build assigned; awaiting GitHub run identity"
                                                                                 : attempt.state;
-            const auto buildJob =
-                attempt.buildResult.is_object() ? attempt.buildResult.value("build_job", nlohmann::json()) : nlohmann::json();
+            auto buildJob = attempt.buildResult.is_object() ? attempt.buildResult.value("build_job", nlohmann::json()) : nlohmann::json();
+            if (attempt.evidence.contains("build")) {
+                buildJob = attempt.evidence.at("build");
+            } else if (buildJob.is_object()) {
+                buildJob["status"] = "completed";
+                const auto& artifact = attempt.buildResult.at("artifacts").at(0);
+                if (artifact.contains("job_id")) {
+                    buildJob["job_id"] = artifact.at("job_id");
+                }
+            }
+            const bool publishing = attempt.state == "publishing";
+            const auto phase = attempt.evidence.value(publishing ? "publication" : "build", nlohmann::json::object());
+            if ((attempt.state == "building" && attempt.buildResult.is_null()) || publishing) {
+                const auto status = phase.value("status", "");
+                activity =
+                    std::string(publishing ? "publication " : "build ") + (status == "queued"        ? "queued on GitHub"
+                                                                           : status == "in_progress" ? "running"
+                                                                           : status == "completed"   ? "complete; verifying results"
+                                                                           : status.empty() ? "assigned; awaiting verified GitHub status"
+                                                                                            : "waiting on GitHub (" + status + ")");
+            }
             nodes.push_back({{"id", id},
                              {"label", Graph::label(node)},
                              {"repository", node.source.at("repository")},
@@ -308,6 +329,8 @@ namespace coreci {
                              {"failure", attempt.failure},
                              {"build_run", attempt.buildRun},
                              {"build_job", buildJob},
+                             {"publication_job", attempt.evidence.value("publication", nlohmann::json::object())},
+                             {"evidence", attempt.evidence},
                              {"publication_run", attempt.publicationRun},
                              {"receipt", attempt.receipt},
                              {"superseded_by", node.supersededBy},
@@ -346,12 +369,21 @@ namespace coreci {
                                    {"format", target.at("build").at("format")}};
             item["package"] = node.source.at("package");
             item["build_url"] = row.at("build_run").is_null() ? nlohmann::json() : row.at("build_run").at("html_url");
+            for (const auto* phase : {"build_job", "publication_job"}) {
+                item[phase] = nlohmann::json::object();
+                const auto& evidence = row.at(phase);
+                for (const auto* key : {"run_id", "status", "job_id", "job_status", "started_at", "completed_at", "conclusion"}) {
+                    if (evidence.is_object() && evidence.contains(key)) {
+                        item[phase][key] = evidence.at(key);
+                    }
+                }
+            }
             item["build_job_url"] = nullptr;
             const auto& attempt = node.attempts.back();
-            if (!attempt.buildResult.is_null() && !attempt.buildRun.is_null() &&
-                attempt.buildResult.at("artifacts").at(0).contains("job_id")) {
+            const auto& buildJob = item.at("build_job");
+            if (buildJob.contains("job_id") && !attempt.buildRun.is_null()) {
                 item["build_job_url"] = attempt.buildRun.at("html_url").get<std::string>() + "/job/" +
-                                        std::to_string(attempt.buildResult.at("artifacts").at(0).at("job_id").get<std::uint64_t>());
+                                        std::to_string(buildJob.at("job_id").get<std::uint64_t>());
             }
             item["publication_verified_utc"] =
                 attempt.receipt.is_object() ? attempt.receipt.value("publication_verified_utc", nlohmann::json()) : nlohmann::json();

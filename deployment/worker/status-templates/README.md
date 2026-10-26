@@ -104,6 +104,10 @@ The existing public TLS listener then serves `GET /public/status`; the local lis
 the same read-only projection for inspection. No administration route is added to TLS.
 The projection explicitly lists selected versions, target coordinates, current execution
 states/activity, prerequisite IDs/blockers, failure reasons and already verified job links.
+Each target's `executions` expose whitelisted `build_job` and `publication_job` facts from
+GraphStore's existing evidence view: run/job status and IDs, recorded start/completion times
+and conclusions. Verified running jobs can supply Build log before artifact publication;
+there is no second timing/status collector. The SSE heartbeat remains transport-only.
 It excludes assignments, build hooks, deployment configuration and credentials.
 Only accepted graph selections appear; an unreadable definition is not silently invented.
 
@@ -126,9 +130,10 @@ Pages updates are asynchronous; this is a public snapshot, not the management UI
 `published_utc` is bound by execution/attempt to the controller's recorded
 `publication_verified_utc`: the first successful verification of the public publication,
 not a claimed exact push instant. Historical unrecorded times remain null.
-The template renders UTC minutes. Successful build receipts supply verified source-job links;
-before a job URL is verified, Build log remains absent. Distinct skipped/cancelled states are
-not invented from failure text: current graph states and recorded reasons remain explicit.
+The template renders UTC minutes. Verified current job evidence and successful build receipts
+supply source-job links; before a job is verified, Build log remains absent. Templates may
+present recorded conclusions such as cancelled, while the five graph states remain unchanged.
+Unrecorded conclusions are not invented from failure text.
 Source-reported compiler/test summaries remain labelled as such. Deployment templates may
 supply navigation, artwork and alternative layouts using the same facts.
 

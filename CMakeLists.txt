@@ -119,6 +119,7 @@ if(BUILD_TESTING)
         startup-failure
         schema-failure
         webhook-failure
+        sse-heartbeat
     )
         add_test(
             NAME lifecycle-${case}
@@ -129,6 +130,7 @@ if(BUILD_TESTING)
         )
         set_tests_properties(lifecycle-${case} PROPERTIES TIMEOUT 45)
     endforeach()
+    set_tests_properties(lifecycle-sse-heartbeat PROPERTIES TIMEOUT 120)
 
     add_test(
         NAME enrollment-boundaries

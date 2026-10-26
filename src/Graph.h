@@ -20,6 +20,7 @@ namespace coreci {
         nlohmann::json buildResult;
         nlohmann::json publicationRun;
         nlohmann::json receipt;
+        nlohmann::json evidence = nlohmann::json::object();
         std::string failure;
         bool operator==(const Attempt&) const = default;
     };
@@ -67,12 +68,20 @@ namespace coreci {
         nlohmann::json dispatchInputs(const Node& selected, bool publication) const;
         std::string dispatchBlocker(const Node& selected, bool publication) const;
         Node beginBuild(const std::string& id) const;
-        Node bindRun(const std::string& id, const std::string& attemptId, bool publication, const nlohmann::json& run) const;
+        Node bindRun(const std::string& id,
+                     const std::string& attemptId,
+                     bool publication,
+                     const nlohmann::json& run,
+                     const nlohmann::json& observation = nlohmann::json::object()) const;
         Node built(const std::string& id, const std::string& attemptId, const nlohmann::json& result) const;
         bool publicationReady(const std::string& id) const;
         Node beginPublication(const std::string& id) const;
         Node published(const std::string& id, const std::string& attemptId, const nlohmann::json& receipt) const;
-        Node failed(const std::string& id, const std::string& attemptId, const std::string& reason) const;
+        Node failed(const std::string& id,
+                    const std::string& attemptId,
+                    const std::string& reason,
+                    const nlohmann::json& buildRun = nullptr,
+                    const nlohmann::json& observation = nlohmann::json::object()) const;
         Node rejectedDispatch(const std::string& id,
                               const std::string& attempt,
                               bool publication,

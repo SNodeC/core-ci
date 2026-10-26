@@ -492,6 +492,8 @@ The status job needs the existing `PACKAGES_APP_PRIVATE_KEY`, `FEED_WRITER_APP_I
 matching feed concurrency settings together, so status refresh cannot replace a pending
 publication. Templates remain pinned with the tooling SHA. The controller must be rebuilt
 and restarted for the new projection/notification code; current assignments remain pinned.
+Apply the parent implementation's documented [execution-evidence database setup](../extensions/execution-evidence.md#database-setup)
+before restarting an existing database. This integration reuses that evidence column.
 Verify HTTPS facts, a real status workflow, and the rendered `status/controller.json` generation.
 Only display paths may change during a status-only update; compare package and key bytes.
 See the [public context and template rules](../../deployment/worker/status-templates/README.md).

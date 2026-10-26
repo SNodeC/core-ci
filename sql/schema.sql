@@ -75,6 +75,7 @@ CREATE TABLE attempts (
     build_result LONGTEXT NULL CHECK (build_result IS NULL OR JSON_VALID(build_result)),
     publication_run LONGTEXT NULL CHECK (publication_run IS NULL OR JSON_VALID(publication_run)),
     receipt LONGTEXT NULL CHECK (receipt IS NULL OR JSON_VALID(receipt)),
+    evidence LONGTEXT NOT NULL DEFAULT '{}' CHECK (JSON_VALID(evidence)),
     failure TEXT NOT NULL,
     FOREIGN KEY (execution_id) REFERENCES executions(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
