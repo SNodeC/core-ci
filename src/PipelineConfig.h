@@ -12,6 +12,8 @@ namespace coreci {
         std::string sourceWorkflowContent() const;
         nlohmann::json deployment(const GitHub& github, const GitHubConfig& app, const nlohmann::json& repository) const;
 
+        std::string statusWorkflow;
+        std::string statusWorkflowBlob;
         std::string workerRepository;
         std::string toolingSha;
         std::string publicationWorkflow;

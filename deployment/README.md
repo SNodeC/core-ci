@@ -14,8 +14,10 @@ For JSON definitions and hooks, read the [extension guide](../docs/extensions/RE
 | `source/core-ci-build.yml.in` | Rendered as `.github/workflows/core-ci-build.yml` in each source repository |
 | `render-source-workflow.py` | Local reviewed renderer; prints the resulting workflow Git blob identity |
 | `worker/.github/workflows/core-ci-build.yml` | Trusted reusable build workflow |
+| `worker/.github/workflows/core-ci-status.yml` | Trusted status-only refresh using the existing feed writer |
 | `worker/.github/workflows/core-ci-publish.yml` | Separate validation/sign/publication workflow |
 | `worker/core_ci/` | Trusted worker implementation |
+| `worker/status-templates/` | Trusted Jinja2 templates, pinned dependencies and public presentation settings |
 | `worker/keys/` | Deployment-owned public verification keys only |
 | `feed/.github/workflows/pages.yml` | Pages workflow in the chosen feed repository |
 | `reference/native/` | Small working native DEB/RPM and OpenWrt hook references |
@@ -47,6 +49,6 @@ continue to be verified. Changing display names does not authorize different sou
 | `sign_native.py` | DEB/RPM publication and retained receipt/package checks |
 | `sign_openwrt.py` | SDK-matched IPK/APK v3 signatures and indexes |
 | `publish.py` | Prepared checked feed commit, restricted token, normal push and HTTPS confirmation |
-| `feed_status.py` | Deterministic publication-only HTML/Markdown/JSON derived from receipts |
+| `feed_status.py` | Deployment-owned Jinja HTML/Markdown/JSON over publications and public graph facts |
 
-[Current sandbox](sandbox/README.md) · [Public keys](worker/keys/README.md)
+[Current sandbox](sandbox/README.md) · [Status templates](worker/status-templates/README.md) · [Public keys](worker/keys/README.md)

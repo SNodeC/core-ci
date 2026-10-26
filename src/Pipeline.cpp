@@ -313,6 +313,39 @@ namespace coreci {
                        });
     }
 
+    void Pipeline::refreshStatus() {
+        if (!config.statusWorkflow.empty() && store.graph().nodes().size() > 0) {
+            static const std::regex path(R"(^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$)");
+            static const std::regex sha(R"(^[a-f0-9]{40}$)");
+            if (!std::regex_match(config.statusWorkflow, path) || !std::regex_match(config.statusWorkflowBlob, sha)) {
+                snode::log::application().error() << "Public status workflow configuration is invalid";
+            } else {
+                const auto generation = store.getGeneration();
+                workflow(config.workerRepository,
+                         {{"path", config.statusWorkflow}, {"ref", config.publicationRef}, {"blob_sha", config.statusWorkflowBlob}},
+                         [this, generation](const SourceResult& approved) {
+                             if (approved.status != 200) {
+                                 snode::log::application().error() << "Public status workflow approval could not be verified";
+                             } else {
+                                 const auto name = config.statusWorkflow.substr(std::string(".github/workflows/").size());
+                                 github.request(config.workerRepository,
+                                                "POST",
+                                                "/actions/workflows/" + name + "/dispatches",
+                                                {{"ref", config.publicationRef}, {"inputs", {{"generation", std::to_string(generation)}}}},
+                                                {{"actions", "write"}},
+                                                [](const GitHubResult& result) {
+                                                    if (!result.error.empty() || (result.status != 200 && result.status != 204)) {
+                                                        snode::log::application().error()
+                                                            << "Public status dispatch not confirmed; no retry (HTTP " << result.status
+                                                            << ")";
+                                                    }
+                                                });
+                             }
+                         });
+            }
+        }
+    }
+
     void Pipeline::dispatch(const Node& node, bool publication, const Callback& callback) {
         const auto attempt = node.attempts.back();
         const auto& deployment = node.source.at("deployment");

@@ -59,6 +59,7 @@ def exercise(args, directory):
     writes = 0
     dispatches = []
     publications = []
+    status_refreshes = []
     feed_files = {}
     deployed_files = {}
     feed_commits = {}
@@ -88,7 +89,7 @@ def exercise(args, directory):
                          {"path": ".github", "type": "tree", "mode": "040000", "sha": ids[2]}]
         trees[ids[1]] = [{"path": "packages.json", "type": "blob", "mode": "100644", "sha": blob}]
         trees[ids[2]] = [{"path": "workflows", "type": "tree", "mode": "040000", "sha": ids[3]}]
-        trees[ids[3]] = [{"path": path, "type": "blob", "mode": "100644", "sha": workflow_blob} for path in ("core-ci-build.yml", "core-ci-publish.yml")]
+        trees[ids[3]] = [{"path": path, "type": "blob", "mode": "100644", "sha": workflow_blob} for path in ("core-ci-build.yml", "core-ci-publish.yml", "core-ci-status.yml")]
         return blob
 
     register(head, definition)
@@ -149,6 +150,13 @@ def exercise(args, directory):
                 except Exception as error:
                     errors.append(str(error))
                     self.reply(422, {})
+            elif self.path == "/repos/Owner/worker/actions/workflows/core-ci-status.yml/dispatches":
+                generation = int(value["inputs"]["generation"])
+                durable = int(lifecycle.query(db_socket, "SELECT generation FROM core_ci.graph_revision").strip())
+                assert 0 < generation <= durable, "status notification preceded the committed graph"
+                assert set(value["inputs"]) == {"generation"}, "status dispatch leaked graph/configuration data"
+                status_refreshes.append(generation)
+                self.reply(204, {})
             elif self.path == "/repos/Owner/worker/actions/workflows/core-ci-publish.yml/dispatches":
                 try:
                     selected = json.loads(value["inputs"]["assignment"])
@@ -308,6 +316,8 @@ def exercise(args, directory):
         'pipeline.source-workflow-blob="' + workflow_blob + '"\npipeline.publication-ref="main"\npipeline.publication-workflow-blob="' + workflow_blob + '"\n'
         'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="' + feed_origin + '/"\n'
         'pipeline.gpg-fingerprint="' + "A" * 40 + '"\npipeline.usign-key-sha256="' + "a" * 64 + '"\npipeline.apk-key-sha256="' + "b" * 64 + '"\n')
+    settings.write_text(settings.read_text() + 'pipeline.status-workflow=".github/workflows/core-ci-status.yml"\n'
+                        + 'pipeline.status-workflow-blob="' + workflow_blob + '"\n')
     settings.chmod(0o600)
     command = [args.executable, "--config-file", str(settings), "--log-file", str(root / "framework.log"), "database", "--mode", "unmanaged",
                "--socket", str(db_socket), "--user", "core_ci_test", "--name", "core_ci", "--password-file", str(password),
@@ -341,7 +351,7 @@ def exercise(args, directory):
             completed = None
             deadline = time.monotonic() + 10
             while completed is None and time.monotonic() < deadline:
-                for line in log_path.read_text()[offset:].splitlines():
+                for line in log_path.read_bytes()[offset:].decode().splitlines():
                     if "GitHub webhook completed: " in line:
                         completed = json.loads(line.split("GitHub webhook completed: ", 1)[1])
                 if completed is None:
@@ -434,6 +444,12 @@ def exercise(args, directory):
                 event, pushed = lifecycle.stream_event(stream)
                 remaining -= 1
             assert remaining > 0, "committed build selection did not reach SSE"
+            public = request("/public/status", webhook=True)[1]
+            assert public["projects"][0]["versions"] == ["v2.0.0-rc.1", "v0.9.0+build"]
+            assert public["feed"]["repository_id"] == 1001
+            assert public["executions"] and all("assignment" not in item and "source" not in item for item in public["executions"])
+            assert all(set(item["coordinates"]) == {"distribution", "suite", "arch", "format"} for item in public["executions"])
+            assert "private-key" not in json.dumps(public) and "deployment" not in json.dumps(public)
             graph = request("/api/graph")[1]["executions"]
             assert all(row["target_row"]["id"] == row["target"] for row in graph)
             assert next(row for row in graph if row["id"] == older["execution"])["build_run"] is None
@@ -469,6 +485,7 @@ def exercise(args, directory):
             generation = request("/api/graph")[1]["generation"]
             assert report(102)[0] == 200 and len(dispatches) == 3
             assert request("/api/graph")[1]["generation"] == generation, "duplicate report caused a redundant mutation"
+            assert status_refreshes, "committed changes did not notify the trusted status workflow"
             runs[500].update(status="completed", conclusion="failure")
             assert report(500)[0] == 202, "a failed publication job without a receipt must preserve uncertainty"
             assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["state"] == "publishing"

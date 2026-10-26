@@ -194,6 +194,7 @@ def main():
     receipt = {
         "schema": 1,
         "source_commit": "c" * 40,
+        "source": {"tag": "v1.0.0"}, "revision": 1,
         "feed": {"base_url": "https://packages.example.test/"},
         "compatibility": {"distribution": "configured", "suite": "series", "arch": "arch", "format": "deb"},
         "build_result": {"run": {"html_url": "https://github.com/Example/source/actions/runs/100"}},
@@ -213,15 +214,23 @@ def main():
             "report_url": "https://reports.example.test/results",
         },
     }
+    receipt["source"] = {"tag": "v2.0.0"}
+    receipt["revision"] = 2
     receipt["packages"][0]["version"] = "2.0-2"
     contract.write_json(receipt_path.with_name("2.json"), receipt)
+    projection = {"schema": 1, "generation": 1,
+                  "feed": {"repository": "Example/feed", "repository_id": 123, "branch": "main"},
+                  "projects": [{"repository": "Example/source", "title": "project<&>", "versions": ["v2.0.0", "v1.0.0"]}],
+                  "executions": []}
+    (feed / "status").mkdir(exist_ok=True)
+    contract.write_json(feed / "status/controller.json", projection)
     paths = feed_status.render(feed)
-    assert set(paths) == {"index.html", "status/index.html", "status/README.md", "status/source.md", "status.json"}
+    assert set(paths) == {"index.html", "status/index.html", "status/README.md", "status/source.md", "status/source.html", "status.json"}
     data = contract.read_json(feed / "status.json")["publications"]
     assert [row["version"] for row in data] == ["1.0-1", "2.0-2"]
     assert all(row["repository"] == "Example/source" for row in data)
     assert data[0]["build_duration_seconds"] is None and data[1]["build_duration_seconds"] == 42
-    assert all(row["published_utc"] is None and row["work"] is None for row in data)
+    assert all(row["published_utc"] is None and "work" not in row for row in data)
     assert data[0]["dependencies"] is None and data[1]["dependencies"] == receipt["dependencies"]
     project_page = (feed / "status/source.md").read_text()
     assert "Hook-reported" in project_page and "compiler &lt;reported&gt;" in project_page
@@ -240,9 +249,9 @@ def main():
     page = (feed / "index.html").read_text()
     links = Links()
     links.feed(page)
-    assert len(links.links) == 8 and "https://packages.example.test/pool/project.deb" in links.links
+    assert "status/source.html" in links.links
     assert "project&lt;&amp;&gt;" in page and "project<&>" not in page
-    assert "Waiting, building and failed work" in page
+    assert "latest release v2.0.0" in page
     before = {str(path.relative_to(feed)): contract.file_hash(path) for path in feed.rglob("*") if path.is_file()}
     assert feed_status.render(feed) == paths
     assert before == {
@@ -348,8 +357,141 @@ def main():
         pass
     assert (protected / "logo.txt").read_text() == "protected existing key"
     (feed / "status/assets").unlink()
-    # The publisher invokes the same renderer with a clean environment.
+    # The template, rather than the controller/adapter, owns Available selection.
     import publish
+    import status_update
+    status_feed = directory / "status-update-feed"
+    status_feed.mkdir()
+    coordinates = receipt["compatibility"]
+    work = {"id": "a" * 64, "attempt": "a" * 64 + ":3", "repository": "Example/source", "tag": "v3.0.0",
+            "source_commit": "c" * 40, "definition_revision": "c" * 40,
+            "coordinates": coordinates, "state": "waiting", "activity": "waiting", "revision": 3,
+            "superseded_by": "", "failure": "", "blockers": [], "prerequisites": [], "build_job_url": None,
+            "publication_verified_utc": None}
+    projection["projects"][0]["versions"].insert(0, "v3.0.0")
+    prerequisite = {**work, "id": "b" * 64, "attempt": "b" * 64 + ":1", "repository": "Example/README",
+                    "tag": "v1.0.0", "revision": 1, "state": "failed", "activity": "failed"}
+    work["prerequisites"], work["blockers"] = [prerequisite["id"]], ["prerequisite failed"]
+    projection["projects"].append({"repository": "Example/README", "title": "Prerequisite", "versions": ["v1.0.0"]})
+    projection["executions"] = [work, prerequisite]
+    (status_feed / "receipts" / ("a" * 64)).mkdir(parents=True)
+    receipt["build_result"]["run"]["html_url"] = "https://github.com/Example/source/actions/runs/100"
+    contract.write_json(status_feed / "receipts" / ("a" * 64) / "2.json", receipt)
+    untouched = status_feed / "keys/public.asc"
+    untouched.parent.mkdir()
+    untouched.write_bytes(b"retained trusted public key")
+    contract.run(["git", "init", "-q", str(status_feed)])
+    contract.run(["git", "-C", str(status_feed), "add", "."])
+    contract.run(["git", "-C", str(status_feed), "-c", "user.name=Test", "-c", "user.email=test@example.test",
+                  "commit", "-qm", "Synthetic retained feed"])
+
+    class PublicResponse:
+        url = "https://controller.example.test:8443/public/status"
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, maximum):
+            return contract.canonical(projection).encode()
+
+    public_environment = {"CORE_CI_STATUS_URL": PublicResponse.url, "GITHUB_RUN_ATTEMPT": "1",
+                          "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_ACTOR_ID": "42", "CONTROLLER_APP_BOT_ID": "42",
+                          "FEED_REPOSITORY": "Example/feed", "FEED_REPOSITORY_ID": "123", "FEED_BRANCH": "main"}
+    with patch.dict(os.environ, public_environment), patch.object(status_update.urllib.request, "urlopen", return_value=PublicResponse()) as fetch:
+        status_update.prepare(status_feed, 1)
+        page = (status_feed / "status/source.md").read_text()
+        assert "<code>2.0-2</code>" not in page and "waiting · v3.0.0" in page
+        assert 'README/README.md#' + prerequisite["id"] in page
+        assert 'README/README.html#' + prerequisite["id"] in (status_feed / "status/source.html").read_text()
+        assert 'id="' + prerequisite["id"] + '"' in (status_feed / "status/README/README.md").read_text()
+        assert 'href="../README.md#banner"' in (status_feed / "status/README/README.md").read_text()
+        assert 'href="../index.html#banner"' in (status_feed / "status/README/README.html").read_text()
+        assert len(contract.read_json(status_feed / "status.json")["publications"]) == 1, "older publication was discarded"
+        previous_commit = contract.output(["git", "-C", str(status_feed), "rev-parse", "HEAD"])
+        status_update.prepare(status_feed, 0)  # Delayed notification reads the current generation.
+        assert contract.output(["git", "-C", str(status_feed), "rev-parse", "HEAD"]) == previous_commit
+        retained = (status_feed / "status/controller.json").read_bytes()
+        for field, value in (("generation", 0), ("feed", {**projection["feed"], "repository_id": 999})):
+            original = projection[field]
+            projection[field] = value
+            try:
+                status_update.prepare(status_feed, 0)
+                raise AssertionError("stale or wrong-feed projection accepted")
+            except ValueError:
+                pass
+            projection[field] = original
+        projection["executions"][0]["failure"] = "conflict at same generation"
+        try:
+            status_update.prepare(status_feed, 1)
+            raise AssertionError("conflicting same-generation facts accepted")
+        except ValueError:
+            pass
+        projection["executions"][0]["failure"] = ""
+        assert (status_feed / "status/controller.json").read_bytes() == retained
+        for state in ("building", "publishing", "failed"):
+            projection["generation"] += 1
+            work["state"] = work["activity"] = state
+            status_update.prepare(status_feed, 1)
+            assert state + " · v3.0.0" in (status_feed / "status/source.md").read_text()
+        projection["generation"] += 1
+        projection["projects"][0]["versions"] = ["v2.0.0", "v1.0.0"]
+        receipt["execution"], receipt["attempt"] = work["id"], work["attempt"]
+        work.update(tag="v2.0.0", state="published", publication_verified_utc="2026-10-26T15:27:38Z")
+        contract.write_json(status_feed / "receipts" / ("a" * 64) / "2.json", receipt)
+        status_update.prepare(status_feed, 1)
+        page = (status_feed / "status/source.md").read_text()
+        assert "<code>2.0-2</code>" in page and "2026-10-26 15:27" in page
+        # A retained receipt can lack the optional source display fields; immutable graph facts still identify it.
+        without_source = {**receipt, "source": None}
+        contract.write_json(status_feed / "receipts" / ("a" * 64) / "2.json", without_source)
+        feed_status.render(status_feed)
+        assert "<code>2.0-2</code>" in (status_feed / "status/source.md").read_text()
+        assert contract.read_json(status_feed / "receipts" / ("a" * 64) / "2.json")["source"] is None
+        assert untouched.read_bytes() == b"retained trusted public key"
+        before_rerun = {str(path): path.read_bytes() for path in status_feed.rglob("*") if path.is_file() and ".git" not in path.parts}
+        with patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "2"}):
+            requests = fetch.call_count
+            try:
+                status_update.prepare(status_feed, 1)
+                raise AssertionError("rerun reached status mutation")
+            except ValueError:
+                pass
+            assert fetch.call_count == requests
+        assert before_rerun == {str(path): path.read_bytes() for path in status_feed.rglob("*") if path.is_file() and ".git" not in path.parts}
+        with patch.dict(os.environ, {"GITHUB_ACTOR_ID": "999"}):
+            try:
+                status_update.prepare(status_feed, 1)
+                raise AssertionError("non-controller actor reached status mutation")
+            except ValueError:
+                pass
+        projection["generation"] += 1
+        with patch.object(status_update, "render", side_effect=ValueError("synthetic template failure")), patch.object(status_update, "checked_push") as push:
+            try:
+                status_update.prepare(status_feed, 1)
+                raise AssertionError("template failure was ignored")
+            except ValueError:
+                pass
+            push.assert_not_called()
+    # A status-only writer cannot include an unrelated package/key change.
+    retained_key = untouched.read_bytes()
+    untouched.write_bytes(b"unrelated local edit")
+    publish.prepare_commit(status_feed, ["status/controller.json"])
+    committed_key = subprocess.check_output(["git", "-C", str(status_feed), "show", "HEAD:keys/public.asc"])
+    assert committed_key == retained_key
+    contract.run(["git", "-C", str(status_feed), "add", "keys/public.asc"])
+    try:
+        publish.prepare_commit(status_feed, ["status/controller.json"])
+        raise AssertionError("unrelated staged bytes reached a prepared feed commit")
+    except ValueError:
+        pass
+    contract.run(["git", "-C", str(status_feed), "reset", "--quiet", "HEAD", "--", "keys/public.asc"])
+    untouched.write_bytes(retained_key)
+    publication_workflow = (repository / "deployment/worker/.github/workflows/core-ci-publish.yml").read_text()
+    status_workflow = (repository / "deployment/worker/.github/workflows/core-ci-status.yml").read_text()
+    assert "queue: max" in publication_workflow and "queue: max" in status_workflow
+    assert "APT_SIGNING_KEY" not in status_workflow and "OPENWRT_USIGN_KEY" not in status_workflow
+
+    # The publisher invokes the same renderer with a clean environment.
 
     with patch.dict(os.environ, {"GITHUB_TOKEN": "synthetic-must-not-reach-renderer"}):
         with patch.object(publish.subprocess, "run", wraps=publish.subprocess.run) as child:
@@ -359,7 +501,6 @@ def main():
         "Receipt templates: parameters, structured fields, missing facts, escaping, strict errors, paths and replay verified"
     )
     # These empty Git fixtures contain no application/source checkout or real credential.
-    import publish
 
     remote = directory / "remote.git"
     writer = directory / "writer"

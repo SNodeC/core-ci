@@ -10,6 +10,18 @@
 namespace coreci {
     PipelineConfig::PipelineConfig(utils::SubCommand* parent)
         : SubCommand(parent, this, "Package pipeline deployment") {
+        setConfigurable(addOptionVariable("--status-workflow",
+                                          statusWorkflow,
+                                          "Optional trusted public status workflow path",
+                                          "path",
+                                          CLI::TypeValidator<std::string>()),
+                        true);
+        setConfigurable(addOptionVariable("--status-workflow-blob",
+                                          statusWorkflowBlob,
+                                          "Approved public status workflow blob SHA",
+                                          "sha",
+                                          CLI::TypeValidator<std::string>()),
+                        true);
         setConfigurable(addOptionVariable("--worker-repository",
                                           workerRepository,
                                           "Trusted worker owner/repository",

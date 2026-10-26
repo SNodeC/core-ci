@@ -1,5 +1,7 @@
 #include "GraphStore.h"
 
+#include "Version.h"
+
 #include <algorithm>
 #include <exception>
 
@@ -178,7 +180,7 @@ namespace coreci {
                 ++generation;
             }
             if (onChanged) {
-                onChanged();
+                onChanged(result.error.empty());
             }
             callback(result);
         });
@@ -271,7 +273,7 @@ namespace coreci {
                     ++generation;
                 }
                 if (onChanged) {
-                    onChanged();
+                    onChanged(result.error.empty());
                 }
                 callback(result);
             });
@@ -312,5 +314,67 @@ namespace coreci {
                              {"automatic", node.automatic}});
         }
         return {{"generation", generation}, {"mutations_allowed", database.mutationsAllowed()}, {"executions", nodes}};
+    }
+
+    nlohmann::json GraphStore::publicView() const {
+        auto executions = nlohmann::json::array();
+        std::map<std::string, nlohmann::json> projects;
+        const auto snapshot = view();
+        for (const auto& row : snapshot.at("executions")) {
+            const auto& node = state.node(row.at("id").get<std::string>());
+            const auto& target = node.target;
+            auto item = nlohmann::json::object();
+            for (const auto* key : {"id",
+                                    "repository",
+                                    "tag",
+                                    "source_commit",
+                                    "definition_revision",
+                                    "target",
+                                    "state",
+                                    "activity",
+                                    "revision",
+                                    "attempt",
+                                    "prerequisites",
+                                    "blockers",
+                                    "failure",
+                                    "superseded_by"}) {
+                item[key] = row.at(key);
+            }
+            item["coordinates"] = {{"distribution", target.at("distribution")},
+                                   {"suite", target.at("suite")},
+                                   {"arch", target.at("arch")},
+                                   {"format", target.at("build").at("format")}};
+            item["package"] = node.source.at("package");
+            item["build_url"] = row.at("build_run").is_null() ? nlohmann::json() : row.at("build_run").at("html_url");
+            item["build_job_url"] = nullptr;
+            const auto& attempt = node.attempts.back();
+            if (!attempt.buildResult.is_null() && !attempt.buildRun.is_null() &&
+                attempt.buildResult.at("artifacts").at(0).contains("job_id")) {
+                item["build_job_url"] = attempt.buildRun.at("html_url").get<std::string>() + "/job/" +
+                                        std::to_string(attempt.buildResult.at("artifacts").at(0).at("job_id").get<std::uint64_t>());
+            }
+            item["publication_verified_utc"] =
+                attempt.receipt.is_object() ? attempt.receipt.value("publication_verified_utc", nlohmann::json()) : nlohmann::json();
+            executions.push_back(item);
+            const auto repository = item.at("repository").get<std::string>();
+            if (!projects.contains(repository)) {
+                projects[repository] = {
+                    {"repository", repository}, {"title", node.source.at("title")}, {"versions", nlohmann::json::array()}};
+            }
+            auto& versions = projects.at(repository).at("versions");
+            if (std::find(versions.begin(), versions.end(), item.at("tag")) == versions.end()) {
+                versions.push_back(item.at("tag"));
+            }
+        }
+        auto ordered = nlohmann::json::array();
+        for (auto& [repository, project] : projects) {
+            auto& versions = project.at("versions");
+            std::stable_sort(versions.begin(), versions.end(), [](const auto& left, const auto& right) {
+                const int comparison = Version(left.template get<std::string>()).compare(Version(right.template get<std::string>()));
+                return comparison != 0 ? comparison > 0 : left > right;
+            });
+            ordered.push_back(project);
+        }
+        return {{"schema", 1}, {"generation", generation}, {"projects", ordered}, {"executions", executions}};
     }
 } // namespace coreci

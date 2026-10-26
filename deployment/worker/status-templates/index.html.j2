@@ -1,4 +1,8 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><title>{{ site.title }}</title>
 <meta name="viewport" content="width=device-width"><body>
-<h1>{{ site.title }}</h1><p>Published receipts only. Waiting, building and failed work are shown in the core-ci controller.</p>
-{% include 'table.html.j2' %}</body></html>
+<h1>{{ site.title }} package status</h1>
+{% for item in projects %}<p>
+{% set link = item.status_path.removeprefix('status/').removesuffix('.md') ~ '.html' %}
+<a href="{{ 'status/' if output_path == 'index.html' else '' }}{{ link }}">{{ item.title }}</a>
+· latest release {{ item.versions|first|default('—') }}</p>{% endfor %}
+{% if site.parameters.get('show_history', false) %}{% include 'table.html.j2' %}{% endif %}</body></html>

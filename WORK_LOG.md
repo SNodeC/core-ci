@@ -1320,3 +1320,58 @@
   https://docs.github.com/en/rest/git/trees#create-a-tree and
   https://docs.github.com/en/rest/git/refs#update-a-reference . No uncertain mutation is retried.
   Existing keys and tags are preserved; external activation is VOC-Experiments only.
+
+
+## 2026-10-26 — public graph facts and deployment-owned Jinja status
+
+- Owner requested implementation and continued after the 350–500 net production / 150–230
+  test-line estimate. This is the combined controller, worker/workflow and template bound;
+  controller code is only the public projection and asynchronous notification integration.
+- Invariant: persisted graph facts remain the single execution authority. Templates own
+  Available selection, layout and display policy. They receive ordered selected source tags,
+  all retained publications and recorded work, including targets without a receipt. No new
+  persisted execution state, scheduler, queue, registry/SDK client or version codec.
+- Reused GraphStore::view for projection facts and Version::compare for source ordering.
+  The public HTTPS route excludes assignments, hook paths and deployment/credential objects.
+  Successful commits notify the approved trusted status workflow; failed/no-op commits do not.
+  Startup and explicit reconciliation can refresh projections without replaying package work.
+- Reused the renderer and restricted feed-token/checked-push helpers. Rendering has no
+  inherited credentials; key files exist only during the push phase. Expected-path staging
+  prevents a status update from including unrelated package/key edits. Current-generation
+  fetches, stale/conflicting generation rejection and shared feed serialization preserve
+  publication. Unknown dispatch/push outcomes are logged/failed without automatic retries.
+- Verified GitHub concurrency semantics against the official documentation: default pending
+  work is replaced, while queue:max retains up to100 pending jobs. Publication and status
+  writers share that group; status notifications have a separate coalescing group.
+  https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+- Automatic approval review rejected creating feat/public-status-projection, applying the
+  completed workflow-review task's no-switch instruction. No branch switch occurred. Continue
+  on docs/live-status-acceptance at58f6a72 and preserve its two existing documentation edits.
+- Focused checks use /tmp/codex/build/core-ci/public-status-projection, installed SNode.C
+  packages and the committed canonical formatter. No additional source checkout. Local
+  pipeline tests use real MariaDB with synthetic GitHub/HTTPS, not live GitHub acceptance.
+  The extra UTF-8 log volume exposed a test reader slicing decoded text with byte offsets;
+  corrected it to slice bytes before decoding, retaining all existing outcome assertions.
+- No commit, push, merge, controller restart or external status-workflow activation yet.
+  Production SNodeC resources, existing tags/keys/packages and private directories untouched.
+
+- Final local verification: Debug core-ci/graph-store-test build and format-check pass.
+  Focused enrollment-boundaries (2.96s), pipeline-boundaries (9.84s), and worker-provenance
+  boundaries (1.47s) pass; the last renderer/link cases pass in1.99s. No unrelated full suite.
+  Python AST syntax, YAML parsing,160-column and git diff whitespace checks pass. Canonical
+  formatting files/modules remain byte-identical to the shared baseline. No actionlint binary.
+- Public-boundary cases cover pre-commit exclusion, committed notification identity, UTF-8
+  reports, numeric selected-source ordering, waiting/building/publishing/failed display,
+  highest-selected-version Available semantics, retained history, unknown/source-bound facts,
+  UTC verification time, prerequisite anchors, nested README pages, identical render replay,
+  stale/conflicting/wrong-feed facts, re-run/actor refusal, render failure before push,
+  staging isolation and the existing normal-push concurrent-writer rejection.
+- Accounting: controller +139/-4 (net135); worker/workflow/templates +231/-49
+  (net182); tests +172/-8 (net164); documentation +168/-21
+  (net147), including the preserved pre-task documentation edits (+10/-3).
+  Total net production 317, below the approved500 ceiling. No new live status acceptance
+  or deployment is claimed; the running sandbox still uses the earlier installed revision.
+- A final format-check initially found a stale generated CMake file list referencing the
+  independently removed checkouts/live-execution-evidence directory. Reconfigured the same
+  isolated build to rediscover current files; format-check passes. No canonical formatter or
+  CMake source change, no checkout deletion or branch switch was needed.

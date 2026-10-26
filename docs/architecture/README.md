@@ -425,8 +425,42 @@ Missing facts show **Not recorded**. The browser uses text nodes for reported co
 opens HTTPS report links separately with `noopener noreferrer`. Existing graph/SSE delivery
 carries this information without another API, state, database column or GitHub request.
 
-The feed's status pages are publication projections from receipts; they do not
-mirror waiting/failed controller state or imply that an artifact upload is a publication.
+The feed's status pages combine retained publication receipts with an explicitly public
+projection of the existing graph. `GET /public/status` supplies accepted selected versions
+in existing SemVer order, work states, prerequisites, blockers and recorded verification times.
+It excludes execution assignments and deployment credentials. The public TLS listener still
+has no administration routes. The projection is derived data, never another graph authority.
+
+A successful commit dispatches the trusted status workflow with a generation number. After
+acquiring the shared feed lock, GitHub fetches current facts and renders the deployment-owned
+Jinja templates. Publication uses the same renderer and retains the latest public projection.
+The template owns Available: select the highest selected source version, find its publication
+for the target, otherwise show `—`. Older publications remain available to custom history views.
+No controller or worker adapter computes a competing Available field.
+
+```mermaid
+sequenceDiagram
+    participant DB as MariaDB
+    participant Controller as core-ci
+    participant GitHub
+    participant Jinja
+    participant Feed
+    DB-->>Controller: Successful graph commit
+    Controller->>GitHub: Dispatch status workflow with generation
+    GitHub->>GitHub: Acquire shared feed write lock
+    GitHub->>Controller: GET public status over HTTPS
+    Controller-->>GitHub: Current whitelisted graph facts
+    GitHub->>Jinja: Facts, retained receipts, trusted presentation
+    Jinja-->>GitHub: Status pages and JSON
+    GitHub->>Feed: Checked status-only update
+```
+
+A delayed notification fetches current facts rather than carrying an old snapshot. The
+writer rejects older/conflicting generations and normal Git conflicts. It never signs packages
+or retries an uncertain mutation. Startup or explicit reconciliation can request a fresh status
+render. Public pages have workflow/hosting latency; the local management UI uses live SSE.
+Unknown historical timestamps and unverified job links remain absent. Publication timestamps
+are first controller verification observations, not an invented exact push time.
 
 The controller remains deliberately small: no distribution/runner catalogue, registry/SDK
 client, application thread pool, persistent ready queue or generic workflow engine. The HTTP
@@ -441,6 +475,7 @@ are operator tooling, not the controller's HTTP transport.
 
 | Interface | Purpose and main input |
 | --- | --- |
+| `GET /public/status` | Read-only public graph facts for the configured trusted status workflow |
 | `GET /api/repositories` | Enrollments and committed editing definitions |
 | `POST /api/repositories/refresh` | Read/enroll a committed definition using `repository` and `branch` |
 | `POST /api/repositories/save` | Validate/commit `definition` with repository, branch and expected `revision`/`blob_sha` |

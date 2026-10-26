@@ -226,9 +226,15 @@ Inspect the complete framework configuration with:
 ### Worker repository
 
 Commit the contents of [deployment/worker](../../deployment/worker) at the trusted repository
-root: `core_ci/`, `.github/workflows/` and reviewed `keys/`. Preserve unrelated repository
-content. Record the resulting full tooling commit SHA. Set `CORE_CI_TOOLING_SHA` to that
+root: `core_ci/`, `status-templates/`, `.github/workflows/` and reviewed `keys/`.
+Preserve unrelated repository content. Record the resulting full tooling commit SHA. Set `CORE_CI_TOOLING_SHA` to that
 reviewed commit. Tooling is checked out independently of the selected source.
+
+The publication workflow installs the pinned Jinja2 dependencies before the signing step.
+Review the deployment-owned templates, public `presentation.json` parameters and any declared
+assets together with that tooling revision. Source hooks cannot provide templates. Rendering
+runs after temporary signing files are removed and before the checked feed push. See the
+[template setup and context](../../deployment/worker/status-templates/README.md).
 
 The worker's public variables are:
 
@@ -473,7 +479,26 @@ Older records and outcomes without captured timing show Not recorded; no histori
 are inferred. Timing is retained with successful verified build results and sent over SSE.
 Full identities remain available in technical details and API evidence. Inspection of assigned
 GitHub work remains a separate explicit action, not a side effect of opening the UI.
-The public feed status only lists verified retained publications.
+The public feed status combines verified retained publications with a read-only projection
+of accepted graph selections and current work. Enable it by configuring
+`pipeline.status-workflow=".github/workflows/core-ci-status.yml"` and
+`pipeline.status-workflow-blob="<reviewed workflow Git blob SHA>"`. Set the trusted worker's
+public variable `CORE_CI_STATUS_URL` to the HTTPS `/public/status` endpoint, for example
+`https://gw-home.vchrist.at:8443/public/status`. Leave port 443 unchanged. Include the status
+workflow in tooling rollout and calculate its approved blob alongside the other workflows.
+
+The status job needs the existing `PACKAGES_APP_PRIVATE_KEY`, `FEED_WRITER_APP_ID` and
+`FEED_WRITER_INSTALLATION_ID`; it references no signing secret. Install both workflows'
+matching feed concurrency settings together, so status refresh cannot replace a pending
+publication. Templates remain pinned with the tooling SHA. The controller must be rebuilt
+and restarted for the new projection/notification code; current assignments remain pinned.
+Verify HTTPS facts, a real status workflow, and the rendered `status/controller.json` generation.
+Only display paths may change during a status-only update; compare package and key bytes.
+See the [public context and template rules](../../deployment/worker/status-templates/README.md).
+Missing historical timestamps and unverified running-job URLs stay unknown. Failed or lost
+dispatches are logged by the controller; template/push failures appear in the status workflow logs.
+Use the local Reconcile action for a fresh render. This public snapshot
+has GitHub/Pages latency; the management UI continues to use SSE.
 
 For an explicit rescan, request the repository with an empty tag through the UI/API; core-ci
 selects its highest SemVer. To recover a particular older notification, request that exact tag

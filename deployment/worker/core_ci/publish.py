@@ -40,7 +40,7 @@ def base64url(value):
     return result
 
 
-def writer_token(private_key, selected):
+def writer_token(private_key, feed):
     now = int(time.time())
     unsigned = (
         base64url(b'{"alg":"RS256","typ":"JWT"}')
@@ -56,7 +56,6 @@ def writer_token(private_key, selected):
         timeout=30,
     )
     jwt = unsigned + "." + base64url(signed.stdout)
-    feed = selected["source"]["deployment"]["feed"]
     response = api(
         "/app/installations/" + str(int(os.environ["FEED_WRITER_INSTALLATION_ID"])) + "/access_tokens",
         jwt,
@@ -97,8 +96,10 @@ def run_identity(selected):
     return result
 
 
-def prepare_commit(feed, expected_paths):
-    run(["git", "-C", str(feed), "add", "--all"])
+def prepare_commit(feed, expected_paths, message="Publish verified core-ci packages"):
+    run(["git", "-C", str(feed), "add", "--all", "--", *expected_paths])
+    staged_paths = output(["git", "-C", str(feed), "diff", "--cached", "--name-only", "--no-renames"]).splitlines()
+    require(set(staged_paths) <= set(expected_paths), "feed index contains changes outside the prepared update")
     for path in expected_paths:
         raw = output(["git", "-C", str(feed), "hash-object", "--no-filters", str(feed / path)])
         staged = output(["git", "-C", str(feed), "rev-parse", ":" + path])
@@ -117,7 +118,7 @@ def prepare_commit(feed, expected_paths):
                 "user.email=core-ci@users.noreply.github.com",
                 "commit",
                 "-m",
-                "Publish verified core-ci packages",
+                message,
             ],
             stdout=subprocess.DEVNULL,
         )
@@ -243,7 +244,7 @@ def main():
             if receipt.get("development_export"):
                 paths.append(receipt["development_export"]["path"])
         else:
-            token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
+            token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected["source"]["deployment"]["feed"])
             revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
     if arguments.phase == "push":
         wait_for_https(selected, feed)

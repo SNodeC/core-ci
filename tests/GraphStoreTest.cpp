@@ -35,6 +35,12 @@ int main(int argc, char* argv[]) {
                     const auto change = store->graph().select("example", {{"example", graph_fixture::source("example", 99, {})}}, false);
                     store->commit(change, [&](const coreci::DatabaseResult& selected) {
                         require(selected.error.empty() && store->graph().nodes().size() == 2, "atomic selection was not persisted");
+                        const auto publicFacts = store->publicView();
+                        require(publicFacts.at("executions").size() == 2 && publicFacts.at("projects").size() == 1,
+                                "public projection lost selected waiting targets");
+                        require(!publicFacts.at("executions").at(0).contains("assignment") &&
+                                    !publicFacts.at("executions").at(0).contains("target_row"),
+                                "public projection exposed internal inputs");
                         const auto previousSource = graph_fixture::source("example", 99, {});
                         store->enroll(
                             "example",

@@ -30,6 +30,7 @@ namespace coreci {
         void retry(const std::string& execution, const Callback& callback);
         void advance(const Callback& callback);
         void reconcile(const Callback& callback);
+        void refreshStatus();
         void
         inspect(const std::string& execution, const std::string& attempt, bool publication, std::uint64_t runId, const Callback& callback);
 

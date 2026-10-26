@@ -24,6 +24,7 @@ permissions:
 concurrency:
   group: core-ci-feed-${{ vars.FEED_REPOSITORY }}-${{ vars.FEED_BRANCH }}
   cancel-in-progress: false
+  queue: max
 env:
   CORE_CI_TOOLING_SHA: ${{ vars.CORE_CI_TOOLING_SHA }}
   CONTROLLER_APP_BOT_ID: ${{ vars.CONTROLLER_APP_BOT_ID }}

@@ -114,6 +114,23 @@ int main(int argc, char* argv[]) {
                                                 });
                             });
 
+                            const auto publicStatus = [&] APPLICATION(req, res) {
+                                res->set("Cache-Control", "no-store").type("application/json");
+                                if (pipelineConfig->statusWorkflow.empty()) {
+                                    res->status(404).send(R"({"error":"public status is disabled"})");
+                                } else if (!store->mutationsAllowed()) {
+                                    res->status(503).send(R"({"error":"graph authority is unavailable"})");
+                                } else {
+                                    auto facts = graphStore->publicView();
+                                    facts["feed"] = {{"repository", pipelineConfig->feedRepository},
+                                                     {"repository_id", pipelineConfig->feedId},
+                                                     {"branch", pipelineConfig->feedBranch}};
+                                    res->send(facts.dump());
+                                }
+                            };
+                            webhooks.get("/public/status", publicStatus);
+                            app.get("/public/status", publicStatus);
+
                             app.use([&] MIDDLEWARE(req, res, next) {
                                 res->set("Cache-Control", "no-store");
                                 res->set("X-Content-Type-Options", "nosniff");
@@ -143,7 +160,10 @@ int main(int argc, char* argv[]) {
                                 res->type("application/json").send(graphStore->view().dump());
                             });
 
-                            graphStore->onChanged = [&]() {
+                            graphStore->onChanged = [&](bool committed) {
+                                if (committed) {
+                                    pipeline->refreshStatus();
+                                }
                                 const auto receivers = eventReceivers;
                                 const auto graph = graphStore->view();
                                 for (const auto& response : receivers) {
@@ -257,6 +277,7 @@ int main(int argc, char* argv[]) {
                                 }
                             });
                             app.post("/api/work/reconcile", [&] APPLICATION(req, res) {
+                                pipeline->refreshStatus();
                                 pipeline->reconcile([res](const coreci::PipelineResult& result) {
                                     res->status(result.status).type("application/json").send(result.body.dump());
                                 });
@@ -286,6 +307,7 @@ int main(int argc, char* argv[]) {
                                         }
                                     });
 
+                                    pipeline->refreshStatus();
                                     pipeline->reconcile([](const coreci::PipelineResult& result) {
                                         snode::log::application().info() << "Startup graph reconciliation: " << result.body.dump();
                                     });

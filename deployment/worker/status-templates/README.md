@@ -15,7 +15,7 @@ an already-started push failed. No template/rendering dependency is added to the
 - `presentation.json`: schema 1, `title`, public `parameters`, optional `projects` and `assets`.
 - `index.html.j2`: HTTPS root and status index HTML.
 - `index.md.j2`: GitHub status index Markdown.
-- `project.md.j2`: project-specific Markdown, with safe HTML tables.
+- `project.md.j2`: project-specific GitHub Markdown and HTTPS HTML, with safe HTML tables.
 - `table.html.j2`: shared include; templates can use includes/macros in this bundle.
 - `requirements.txt`: pinned GitHub-side Jinja2/MarkupSafe dependencies.
 
@@ -52,13 +52,18 @@ an invitation to execute arbitrary hostile templates in a privileged workflow.
 `publications` retains the existing repository/target/package/version, source commit,
 checksum and package/receipt/build/publication URL fields. It adds structured `coordinates`,
 selected `target_row`, selected `source`, `revision`, `dependencies`, `environment`, `summary`, `build_job`,
-`build_duration_seconds`, `published_utc` and `work`.
+`build_duration_seconds` and `published_utc`.
 
 `projects` groups these rows by repository. A project contains `repository`, display `title`,
 owner `parameters`, all its `publications`, and coordinate-grouped `targets`. Each target
-contains `coordinates`, retained `publications` and optional `work`. No template decides
-which source to build or invents another version comparator. Default pages show all retained
-versions; they do not claim that lexical ordering identifies the newest available package.
+contains `coordinates`, retained `publications` and recorded `executions` in descending rebuild
+revision order. `project.versions` contains accepted selected source tags in the controller's
+existing numeric SemVer order (including prereleases). The template chooses which version
+and work to display; it does not decide which source to build or implement a version comparator.
+The default template selects the first source version and shows only a matching publication
+for each target. When that version has not published, Available is `—`, even if older packages
+are retained. Set `site.parameters.show_history` to true to include retained publication tables.
+`project.parameters.navigation` maps public navigation labels to trusted deployment URLs.
 The context is also written to `status.json`; the existing `publications` array stays present.
 
 New receipts retain compact selected-prerequisite references: execution/attempt and assignment
@@ -92,15 +97,40 @@ Summary keys cannot replace source, target, assignment, run or publication state
 reference hook reports the compiler it invoked and its one actual successful runtime test.
 Old receipts remain untouched; facts not recorded in them stay null.
 
-## Current GitHub-side boundary
+## Public graph facts and refreshes
 
-This phase is publication-only. `work` is null: a worker cannot infer waiting/failed controller
-state from retained receipts. `published_utc` stays null unless supplied by recorded verified
-publication evidence; no render/prepare time is substituted. The controller records its first successful
-verification time separately as `publication_verified_utc` in its persisted receipt and displays
-it in management execution details. Exporting that fact to public templates and supplying a
-minimal current-work projection still require the status-update integration. Therefore the
-full information content of the SNode.C reference pages is not yet reproduced by this phase.
+Configure `pipeline.status-workflow` and `pipeline.status-workflow-blob` on the controller.
+The existing public TLS listener then serves `GET /public/status`; the local listener exposes
+the same read-only projection for inspection. No administration route is added to TLS.
+The projection explicitly lists selected versions, target coordinates, current execution
+states/activity, prerequisite IDs/blockers, failure reasons and already verified job links.
+It excludes assignments, build hooks, deployment configuration and credentials.
+Only accepted graph selections appear; an unreadable definition is not silently invented.
+
+After a successful graph commit, startup, or explicit local reconciliation request, the
+controller dispatches `core-ci-status.yml` with the committed generation only. Configure
+worker variable `CORE_CI_STATUS_URL`, for example
+`https://gw-home.vchrist.at:8443/public/status`. The workflow fetches current facts after
+acquiring the feed write lock. Delayed notifications therefore render current facts.
+`status/controller.json` and `status.json` are public projections, never execution authority.
+Older generations and conflicting content at the same generation are rejected.
+
+The status-only workflow uses the existing feed-writer secret, not signing secrets. It and
+publication share a feed concurrency group with `queue: max`; a separate status concurrency
+group coalesces pending refreshes without cancelling a package publication. GitHub's bounded
+pending capacity still applies. All writers use normal checked pushes; conflicts and uncertain
+push results are not automatically retried. An explicit controller reconciliation requests a
+fresh status render. A crash before notification needs such a refresh or the next graph change.
+Pages updates are asynchronous; this is a public snapshot, not the management UI's live SSE.
+
+`published_utc` is bound by execution/attempt to the controller's recorded
+`publication_verified_utc`: the first successful verification of the public publication,
+not a claimed exact push instant. Historical unrecorded times remain null.
+The template renders UTC minutes. Successful build receipts supply verified source-job links;
+before a job URL is verified, Build log remains absent. Distinct skipped/cancelled states are
+not invented from failure text: current graph states and recorded reasons remain explicit.
+Source-reported compiler/test summaries remain labelled as such. Deployment templates may
+supply navigation, artwork and alternative layouts using the same facts.
 
 Run locally with the pinned dependencies installed:
 

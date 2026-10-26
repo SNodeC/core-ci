@@ -21,7 +21,8 @@ namespace coreci {
         std::uint64_t getGeneration() const;
         const Graph& graph() const;
         nlohmann::json view() const;
-        std::function<void()> onChanged;
+        nlohmann::json publicView() const;
+        std::function<void(bool)> onChanged;
 
     private:
         struct Restoring {

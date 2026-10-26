@@ -33,6 +33,8 @@ def render(feed, templates=None):
         "invalid presentation parameters",
     )
     require(isinstance(site.get("projects", {}), dict), "invalid project presentation settings")
+    controller_path = feed / "status/controller.json"
+    controller = read_json(regular_file(feed, "status/controller.json"), 8 * 1024 * 1024) if controller_path.exists() else None
     rows = []
     for path in sorted((feed / "receipts").glob("*/*.json")):
         require(
@@ -61,6 +63,9 @@ def render(feed, templates=None):
             "status feed requires HTTPS",
         )
         coordinates = receipt["compatibility"]
+        recorded = next((item for item in controller["executions"] if item["id"] == receipt.get("execution")), None) if controller else None
+        source = receipt.get("source") or ({"tag": recorded["tag"], "commit": recorded["source_commit"],
+                                           "definition_revision": recorded["definition_revision"]} if recorded else None)
         job = receipt.get("build_job")
         duration = None
         if job and job.get("started_at") and job.get("completed_at"):
@@ -75,13 +80,15 @@ def render(feed, templates=None):
             relative_path(package["path"])
             rows.append(
                 {
+                    "execution": receipt.get("execution"),
+                    "attempt": receipt.get("attempt"),
                     "repository": repository,
                     "target": "/".join(coordinates[key] for key in ("distribution", "suite", "arch", "format")),
                     "coordinates": coordinates,
                     "target_row": receipt.get("target"),
                     "package": package["name"],
                     "version": package["version"],
-                    "source": receipt.get("source"),
+                    "source": source,
                     "revision": receipt.get("revision"),
                     "dependencies": receipt.get("dependencies"),
                     "source_commit": receipt["source_commit"],
@@ -94,13 +101,17 @@ def render(feed, templates=None):
                     "build_duration_seconds": duration,
                     "environment": receipt.get("environment"),
                     "summary": receipt.get("summary"),
-                    "published_utc": receipt.get("published_utc"),
-                    "work": None,
+                    "published_utc": recorded["publication_verified_utc"] if recorded and recorded["attempt"] == receipt.get("attempt")
+                                     else receipt.get("published_utc"),
                 }
             )
     rows.sort(key=lambda row: (row["repository"], row["target"], row["package"], row["version"], row["receipt_url"]))
     projects = []
-    for repository in sorted({row["repository"] for row in rows}):
+    selected_projects = {item["repository"]: item for item in controller["projects"]} if controller else {}
+    executions = controller["executions"] if controller else []
+    for repository in sorted({row["repository"] for row in rows} | set(selected_projects)):
+        selected = selected_projects.get(repository, {})
+        work = [item for item in executions if item["repository"] == repository]
         publications = [row for row in rows if row["repository"] == repository]
         settings = site.get("projects", {}).get(repository, {})
         require(isinstance(settings, dict), "project presentation must be an object")
@@ -111,20 +122,27 @@ def render(feed, templates=None):
         )
         status_path = "status/" + ("README/" if name == "README" else "") + name + ".md"
         targets = []
-        for identity in sorted({row["target"] for row in publications}):
+        coordinates = {row["target"]: row["coordinates"] for row in publications}
+        for item in work:
+            coordinates["/".join(item["coordinates"][key] for key in ("distribution", "suite", "arch", "format"))] = item["coordinates"]
+        for identity in sorted(coordinates):
             items = [row for row in publications if row["target"] == identity]
-            targets.append({"coordinates": items[0]["coordinates"], "publications": items, "work": None})
+            target_work = sorted([item for item in work if item["coordinates"] == coordinates[identity]],
+                                 key=lambda item: item["revision"], reverse=True)
+            targets.append({"coordinates": coordinates[identity], "publications": items, "executions": target_work})
         projects.append(
             {
                 "repository": repository,
-                "title": settings.get("title", repository),
+                "title": settings.get("title", selected.get("title", repository)),
+                "versions": selected.get("versions", []),
+                "executions": work,
                 "parameters": settings,
                 "status_path": status_path,
                 "targets": targets,
                 "publications": publications,
             }
         )
-    context = {"schema": 1, "site": site, "projects": projects, "publications": rows}
+    context = {"schema": 1, "site": site, "projects": projects, "publications": rows, "controller": controller}
     environment = ImmutableSandboxedEnvironment(
         loader=FileSystemLoader(templates), undefined=StrictUndefined, autoescape=True
     )
@@ -141,10 +159,11 @@ def render(feed, templates=None):
             "colliding project status pages",
         )
         pages.append((project["status_path"], "project.md.j2", project))
+        pages.append((project["status_path"].removesuffix(".md") + ".html", "project.md.j2", project))
     for path, template, project in pages:
         chunks = []
         size = 0
-        for chunk in environment.get_template(template).generate(**context, project=project):
+        for chunk in environment.get_template(template).generate(**context, project=project, output_path=path):
             size += len(chunk.encode())
             require(size <= 4 * 1024 * 1024, "rendered status page exceeds resource bound")
             chunks.append(chunk)
