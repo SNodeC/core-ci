@@ -113,8 +113,7 @@ function renderExecution(execution, panel, open) {
     for (const [label, run] of [["Build logs", execution.build_run], ["Publication logs", execution.publication_run]]) {
         if (run && typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/")) {
             const link = node("a", label + " ↗");
-            link.href = run.html_url;
-            link.rel = "noopener noreferrer";
+            Object.assign(link, {href: run.html_url, target: "_blank", rel: "noopener noreferrer"});
             actions.append(link);
         }
     }

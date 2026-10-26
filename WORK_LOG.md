@@ -1158,3 +1158,13 @@
   excluded from this UI checkpoint. No workflow/feed/key/tag or production SNodeC change.
   .qtcreator/ and .local-credentials/ were not inspected. Preview/logs remain under
   /tmp/codex/build/core-ci/ui-proposal; canonical branch is feat/desktop-management-sse.
+
+## 2026-10-26 — external execution logs preserve the management view
+
+- Owner agreed that Build logs and Publication logs should open in separate tabs.
+  Use the existing external-link boundary and noopener/noreferrer; add no navigation
+  persistence or duplicate UI state. Production +1/-2 (net -1); no test-code changes.
+- JavaScript syntax and focused application build pass. Chrome clicked both actual sandbox
+  links and verified separate GitHub tabs, the same expanded execution/search and Live SSE.
+  Restart preserved all55 execution states and assigned runs. No GitHub jobs were triggered.
+  Parallel worker/template edits remain untouched; no unrelated suite was run.
