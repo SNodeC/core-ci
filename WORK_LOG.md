@@ -815,3 +815,19 @@
 - Restarted the development controller with updated pins; all persisted execution identities
   and states are unchanged. No application installation/push, new tag, key change or package
   rebuild. Future publisher integration is locally verified, not claimed as a new live build.
+
+
+## 2026-10-26 — owner-requested full Claude workflow review
+
+- Sent the installed Claude CLI all nine active deployed workflows, all 14 worker modules,
+  controller code, source-owned hooks/JSON and current acceptance evidence. Confirmed worker
+  modules match deployed tooling. Included live Pages/status URLs, 20 published diamond
+  executions, real client proof and explicit remaining webhook/renderer acceptance gaps.
+- Review used text input only: tools/MCP/browser access/session persistence disabled, no
+  private key/token values supplied. No application or deployment changes authorized by review.
+- Saved advisory verdict "Request changes" in docs/claude-workflow-review.md. Claude emitted
+  textual tool invocations; none ran. Its search/line-verification claims are unsupported.
+  Our subsequent source reads confirm the structural concerns F1–F4, not all proposed fixes
+  or live scenarios. Remaining findings need triage; no implementation changes made.
+- Production/test changes: zero. Documentation only; no package build, dispatch, publication,
+  public webhook activation or application installation performed during review.
