@@ -60,7 +60,7 @@ namespace coreci {
         void buildArtifacts(const Node& node, const Callback& callback);
         void publicationResult(const Node& node, const nlohmann::json& run, const Callback& callback);
         void change(const Node& node, const Callback& callback);
-        static std::string title(const Attempt& attempt, bool publication);
+        static std::string title(const Attempt& attempt, bool publication, bool job = false);
 
         const PipelineConfig& config;
         const GitHubConfig& app;

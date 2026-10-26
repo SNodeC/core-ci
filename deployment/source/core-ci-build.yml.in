@@ -1,5 +1,5 @@
 name: core-ci source build
-run-name: core-ci build ${{ inputs.attempt }} ${{ inputs.assignment_sha256 }}
+run-name: Build ${{ fromJSON(inputs.assignment).label }}
 on:
   workflow_dispatch:
     inputs:

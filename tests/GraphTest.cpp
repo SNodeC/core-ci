@@ -55,6 +55,8 @@ namespace {
         check(graph.node(id).attempts.back().assignment.at("artifact_name") ==
                   "core-ci-build-" + id + "-r" + std::to_string(graph.node(id).attempts.back().revision),
               "GitHub artifact name must be assigned once without forbidden colon characters");
+        check(graph.node(id).attempts.back().assignment.at("label") == coreci::Graph::label(graph.node(id)),
+              "assigned human label differs from the graph display label");
         apply(graph, graph.bindRun(id, attempt, false, run(graph.node(id), false)));
         const auto& building = graph.node(id).attempts.back();
         apply(graph,
@@ -199,6 +201,9 @@ int main() {
         check(retryBuild.at("environment_from").size() == 1 && retryBuild.at("environment_from").front().at("run") == priorBuild.buildRun &&
                   retryBuild.at("environment_from").front().at("assignment_sha256") == coreci::Graph::digest(priorBuild.assignment),
               "retry lost its assigned environment evidence reference");
+        check(retryBuild.at("label") != priorBuild.assignment.at("label") &&
+                  retryBuild.at("environment_from").front().at("label") == priorBuild.assignment.at("label"),
+              "retry must distinguish its rebuild while retaining earlier immutable display evidence");
         check(retryBuild.at("dependencies") == priorBuild.assignment.at("dependencies"), "retry changed prerequisite artifact identities");
         publish(graph, b);
         check(graph.blockers(join).empty(), "retried prerequisite did not unblock the same logical join");

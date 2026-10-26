@@ -82,6 +82,7 @@ namespace coreci {
         void validate(const GraphChange& change) const;
         void apply(const GraphChange& change);
         static void verifyDefinition(const Node& node, const nlohmann::json& document, const std::string& blobSha);
+        static std::string label(const Node& selected);
         static std::string digest(const nlohmann::json& value);
 
     private:

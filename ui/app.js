@@ -7,6 +7,9 @@ let repositories = [];
 function feedback(value, failed = false) {
     element("feedback").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     element("feedback").className = failed ? "error" : "";
+    const message = typeof value === "string" ? value : failed ? "Operation failed — technical details" : "Operation completed — technical details";
+    element("feedback-summary").textContent = message.replace(/[a-f0-9]{40,64}/g, (hash) => hash.slice(0, 12));
+    element("feedback-details").open = failed;
 }
 
 async function api(path, body) {
@@ -28,7 +31,8 @@ function select(repository) {
     workflowPreview = null;
     element("repository").value = repository.repository;
     element("branch").value = repository.branch;
-    element("revision").textContent = "Committed revision: " + repository.revision;
+    element("revision").textContent = "Committed configuration: " + repository.branch + " · " + repository.revision.slice(0, 12);
+    element("revision").title = repository.revision;
     element("definition").value = JSON.stringify(repository.definition, null, 2);
 }
 
@@ -39,22 +43,30 @@ async function reload() {
     if (graph.executions.length === 0) {
         element("graph").textContent = "No source executions selected yet.";
     }
+    const names = new Map(graph.executions.map((execution) => [execution.id, execution.label]));
+    const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 4};
+    graph.executions.sort((left, right) =>
+        (left.superseded_by ? 5 : order[left.state]) - (right.superseded_by ? 5 : order[right.state]) || right.revision - left.revision);
     for (const execution of graph.executions) {
         const card = document.createElement("article");
         card.id = "execution-" + execution.id;
         const title = document.createElement("h3");
-        title.textContent = execution.repository + " · " + execution.target;
+        title.textContent = execution.label;
         const state = document.createElement("p");
         state.textContent = execution.activity + " · " + execution.tag + " · rebuild " + execution.revision;
         const source = document.createElement("pre");
-        source.textContent = "Source: " + execution.source_commit + "\nDefinition: " + execution.definition_revision;
+        const technical = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Technical details";
+        source.textContent = "Execution: " + execution.id + "\nSource: " + execution.source_commit + "\nDefinition: " + execution.definition_revision;
         const reasons = document.createElement("p");
         reasons.textContent = execution.failure || execution.blockers.join("; ");
-        card.append(title, state, source, reasons);
+        technical.append(summary, source);
+        card.append(title, state, reasons, technical);
         for (const prerequisite of execution.prerequisites) {
             const link = document.createElement("a");
             link.href = "#execution-" + prerequisite;
-            link.textContent = "Prerequisite " + prerequisite.slice(0, 12) + " ";
+            link.textContent = "Prerequisite: " + names.get(prerequisite) + " ";
             card.append(link);
         }
         for (const run of [execution.build_run, execution.publication_run]) {
@@ -91,8 +103,12 @@ async function reload() {
         name.textContent = repository.repository;
         const dependencies = document.createElement("p");
         dependencies.textContent = "Depends on: " + (repository.definition.depends_on.join(", ") || "none");
-        const revision = document.createElement("pre");
-        revision.textContent = "Definition: " + repository.revision;
+        const revision = document.createElement("details");
+        const revisionTitle = document.createElement("summary");
+        revisionTitle.textContent = "Definition revision";
+        const revisionHash = document.createElement("code");
+        revisionHash.textContent = repository.revision;
+        revision.append(revisionTitle, revisionHash);
         const targets = document.createElement("ul");
         for (const row of repository.definition.matrix) {
             const target = document.createElement("li");

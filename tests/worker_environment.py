@@ -125,6 +125,13 @@ def retry_evidence(directory):
             environment, "native", side_effect=AssertionError("retry resolved a mutable image")
         ):
             assert environment.previous(selected) == environment_identity
+            # Retry references preserve both historical and human-readable assigned names.
+            earlier["label"] = "Example/source v1.2.3 | debian trixie | arm64 | deb | r1"
+            fixtures[prefix + "/actions/runs/100/attempts/1"]["display_title"] = "Build " + earlier["label"]
+            fixtures[prefix + "/actions/runs/100/attempts/1/jobs?per_page=100"]["jobs"][0]["name"] = (
+                "build / Build " + earlier["label"]
+            )
+            assert environment.previous(selected) == environment_identity
             wrapped = root / "next-environment.json"
             with patch.object(environment, "assignment", return_value=selected), patch.object(
                 sys,

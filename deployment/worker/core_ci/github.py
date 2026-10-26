@@ -37,7 +37,17 @@ def api(path, token, method="GET", value=None):
     return result
 
 
-def assigned_run(selected, identity, attempt, assignment_hash, token):
+def work_name(selected, stage, assignment_hash=None):
+    if selected.get("label"):
+        result = ("Publish " if stage == "publish" else "Build ") + selected["label"]
+    else:
+        result = "core-ci " + stage + " " + selected["attempt"]
+        if stage != "package":
+            result += " " + (assignment_hash or digest(selected))
+    return result
+
+
+def assigned_run(selected, identity, attempt, assignment_hash, token, label=""):
     source = selected["source"]
     deployment = source["deployment"]
     repository = source["repository"]
@@ -61,7 +71,7 @@ def assigned_run(selected, identity, attempt, assignment_hash, token):
     )
     require(run["head_sha"] == identity["workflow_commit"], "assigned workflow commit mismatch")
     require(
-        run["display_title"] == "core-ci build " + attempt + " " + assignment_hash,
+        run["display_title"] == work_name({"attempt": attempt, "label": label}, "build", assignment_hash),
         "build run title mismatch",
     )
     workflow = deployment["source_workflow"]
@@ -79,7 +89,9 @@ def artifact(selected, build_result, token, destination):
         build_result["assignment_sha256"] == digest(selected) and len(build_result["artifacts"]) == 1,
         "build assignment/artifact mismatch",
     )
-    run = assigned_run(selected, build_result["run"], selected["attempt"], digest(selected), token)
+    run = assigned_run(
+        selected, build_result["run"], selected["attempt"], digest(selected), token, selected.get("label", "")
+    )
     require(run["conclusion"] == "success", "assigned build did not succeed")
     prefix = "/repos/" + selected["source"]["repository"]
     assigned = build_result["artifacts"][0]
@@ -89,7 +101,7 @@ def artifact(selected, build_result, token, destination):
         "assigned job identity mismatch",
     )
     require(job["status"] == "completed" and job["conclusion"] == "success", "assigned job did not succeed")
-    name = "core-ci package " + selected["attempt"]
+    name = work_name(selected, "package")
     require(job["name"] == name or job["name"].endswith(" / " + name), "assigned job name mismatch")
     actual = api(prefix + "/actions/artifacts/" + str(assigned["id"]), token)
     require(

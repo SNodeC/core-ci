@@ -110,6 +110,31 @@ def main():
         github.download_artifact = download
         github.artifact(selected, build_result, "synthetic-scoped-reader", directory / "valid")
         assert (directory / "valid/manifest.json").read_text() == "{}" and len(downloads) == 1
+        # Human labels do not replace immutable assignment/run/artifact verification.
+        readable = copy.deepcopy(selected)
+        readable["label"] = "Example/source v1.2.3 | debian trixie | arm64 | deb | r1"
+        readable_result = copy.deepcopy(build_result)
+        readable_result["assignment_sha256"] = contract.digest(readable)
+        current = copy.deepcopy(fixtures)
+        current[prefix + "/actions/runs/100/attempts/1"]["display_title"] = "Build " + readable["label"]
+        current[prefix + "/actions/jobs/102"]["name"] = "build / Build " + readable["label"]
+        github.artifact(readable, readable_result, "synthetic-scoped-reader", directory / "readable")
+        assert (directory / "readable/manifest.json").read_text() == "{}"
+        wrong_label = copy.deepcopy(readable)
+        wrong_label["label"] = readable["label"].replace("arm64", "amd64")
+        for expected_hash in (readable_result["assignment_sha256"], contract.digest(wrong_label)):
+            rejected_label = False
+            try:
+                github.artifact(
+                    wrong_label,
+                    {**readable_result, "assignment_sha256": expected_hash},
+                    "synthetic-scoped-reader",
+                    directory / "wrong-label",
+                )
+            except ValueError:
+                rejected_label = True
+            assert rejected_label, "changing the label bypassed the assignment/run identity checks"
+        current = copy.deepcopy(fixtures)
         for path, field, value in (
             (prefix, "id", 12),
             (prefix + "/actions/runs/100/attempts/1", "actor", {"id": 999}),
@@ -131,7 +156,7 @@ def main():
                 github.artifact(selected, build_result, "synthetic-scoped-reader", directory / "invalid")
             except ValueError:
                 rejected = True
-            assert rejected and len(downloads) == 1, (path, field, "invalid provenance reached artifact download")
+            assert rejected and len(downloads) == 2, (path, field, "invalid provenance reached artifact download")
     finally:
         github.api = original_api
         github.download_artifact = original_download

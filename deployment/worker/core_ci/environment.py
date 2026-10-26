@@ -8,7 +8,7 @@ import re
 import subprocess
 
 from contract import assignment, compatibility, digest, extract_archive, output, read_json, require, write_json
-from github import api, assigned_run, download_artifact
+from github import work_name, api, assigned_run, download_artifact
 
 
 def native(target):
@@ -93,7 +93,9 @@ def previous(selected):
     prefix = "/repos/" + selected["source"]["repository"]
     while index < len(attempts) and result is None:
         earlier = attempts[index]
-        run = assigned_run(selected, earlier["run"], earlier["attempt"], earlier["assignment_sha256"], token)
+        run = assigned_run(
+            selected, earlier["run"], earlier["attempt"], earlier["assignment_sha256"], token, earlier.get("label", "")
+        )
         run_path = prefix + "/actions/runs/" + str(run["id"])
         listing = api(run_path + "/artifacts?per_page=100", token)
         require(listing["total_count"] <= 100, "previous artifact list exceeds supported bounds")
@@ -127,7 +129,7 @@ def previous(selected):
         else:
             jobs = api(run_path + "/attempts/1/jobs?per_page=100", token)
             require(jobs["total_count"] <= 100, "previous job list exceeds supported bounds")
-            name = "core-ci package " + earlier["attempt"]
+            name = work_name(earlier, "package")
             matches = [job for job in jobs["jobs"] if job["name"] == name or job["name"].endswith(" / " + name)]
             require(
                 len(matches) == 1 and matches[0]["run_id"] == run["id"] and matches[0]["run_attempt"] == 1,

@@ -282,6 +282,7 @@ namespace coreci {
                 : attempt.state == "building" && attempt.buildRun.is_null()     ? "build assigned; awaiting GitHub run identity"
                                                                                 : attempt.state;
             nodes.push_back({{"id", id},
+                             {"label", Graph::label(node)},
                              {"repository", node.source.at("repository")},
                              {"tag", node.source.at("tag")},
                              {"source_commit", node.source.at("commit")},

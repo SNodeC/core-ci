@@ -337,6 +337,13 @@ namespace coreci {
         return {{selected}, nextRevision + 1, {}};
     }
 
+    std::string Graph::label(const Node& selected) {
+        return selected.source.at("repository").get<std::string>() + " " + selected.source.at("tag").get<std::string>() + " | " +
+               selected.target.at("distribution").get<std::string>() + " " + selected.target.at("suite").get<std::string>() + " | " +
+               selected.target.at("arch").get<std::string>() + " | " + selected.target.at("build").at("format").get<std::string>() +
+               " | r" + std::to_string(selected.attempts.back().revision);
+    }
+
     nlohmann::json Graph::buildAssignment(const Node& selected) const {
         const auto& attempt = selected.attempts.back();
         const auto& id = selected.id;
@@ -351,6 +358,7 @@ namespace coreci {
             }
         }
         nlohmann::json result = {{"schema", 1},
+                                 {"label", label(selected)},
                                  {"execution", id},
                                  {"attempt", attempt.id},
                                  {"revision", attempt.revision},
@@ -364,6 +372,7 @@ namespace coreci {
                 previous.push_back({{"run", earlier.buildRun},
                                     {"attempt", earlier.id},
                                     {"assignment_sha256", digest(earlier.assignment)},
+                                    {"label", earlier.assignment.value("label", std::string{})},
                                     {"artifact_name", earlier.assignment.at("artifact_name").get<std::string>() + "-environment"}});
             }
         }

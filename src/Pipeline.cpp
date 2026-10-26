@@ -176,8 +176,7 @@ namespace coreci {
                                                                             ? node.source.at("deployment").at("worker").at("repository")
                                                                             : node.source.at("repository");
                                         const auto& assigned = publishing ? attempt.publicationRun : attempt.buildRun;
-                                        const auto expectedJob =
-                                            std::string("core-ci ") + (publishing ? "publish " : "package ") + attempt.id;
+                                        const auto expectedJob = title(attempt, publishing, true);
                                         const auto jobName = type == "workflow_job" ? report.value("name", std::string{}) : "";
                                         const bool matches =
                                             (!assigned.is_null() && assigned.at("id") == runId) ||
@@ -224,8 +223,17 @@ namespace coreci {
         }
     }
 
-    std::string Pipeline::title(const Attempt& attempt, bool publication) {
-        return std::string("core-ci ") + (publication ? "publish " : "build ") + attempt.id + " " + Graph::digest(attempt.assignment);
+    std::string Pipeline::title(const Attempt& attempt, bool publication, bool job) {
+        std::string result;
+        if (attempt.assignment.contains("label")) {
+            result = std::string(publication ? "Publish " : "Build ") + attempt.assignment.at("label").get<std::string>();
+        } else {
+            result = std::string("core-ci ") + (publication ? "publish " : job ? "package " : "build ") + attempt.id;
+            if (!job) {
+                result += " " + Graph::digest(attempt.assignment);
+            }
+        }
+        return result;
     }
 
     void Pipeline::advance(const Callback& callback) {
@@ -459,7 +467,7 @@ namespace coreci {
                     require(jobs.status == 200 && jobs.error.empty() && jobs.body.at("total_count").get<unsigned int>() <= 100,
                             "assigned GitHub jobs are unavailable or exceed supported bounds");
                     nlohmann::json job;
-                    const auto expected = "core-ci package " + attempt.id;
+                    const auto expected = title(attempt, false, true);
                     for (const auto& candidate : jobs.body.at("jobs")) {
                         const auto name = candidate.at("name").get<std::string>();
                         if (name == expected || name.ends_with(" / " + expected)) {
@@ -550,7 +558,7 @@ namespace coreci {
                                 jobs.body.value("total_count", 101) <= 100 && jobs.body.at("jobs").is_array() &&
                                 jobs.body.at("jobs").size() == jobs.body.at("total_count") &&
                                 run.value("conclusion", std::string{}) != "success") {
-                                const auto name = "core-ci publish " + node.attempts.back().id;
+                                const auto name = title(node.attempts.back(), true, true);
                                 std::size_t matches = 0;
                                 for (const auto& job : jobs.body.at("jobs")) {
                                     if (job.value("name", "") == name && job.value("run_id", std::uint64_t{}) == run.at("id") &&

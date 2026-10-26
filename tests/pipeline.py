@@ -130,11 +130,12 @@ def exercise(args, directory):
                     worker_path = str(Path(__file__).resolve().parents[1] / "deployment/worker/core_ci")
                     lifecycle.run(["python3", "-c", "import sys; sys.path.insert(0,sys.argv[1]); from contract import assignment; assignment(sys.argv[2],sys.argv[3])",
                                    worker_path, str(assignment_file), value["inputs"]["assignment_sha256"]])
+                    assert assignment["label"] == "Owner/example " + assignment["source"]["tag"] + " | source-defined series | amd64 | deb | r" + str(assignment["revision"])
                     assert assignment["target"]["runner"] == ["self-hosted", "selected"]
                     assert "environment" not in assignment and "environment" not in assignment["source"]
                     run_id = 100 + len(dispatches)
                     run = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 99}, "head_repository": {"id": 99},
-                           "actor": {"id": 42}, "display_title": "core-ci build " + assignment["attempt"] + " " + value["inputs"]["assignment_sha256"],
+                           "actor": {"id": 42}, "display_title": "Build " + assignment["label"],
                            "path": ".github/workflows/core-ci-build.yml", "head_sha": head,
                            "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id) + ("x" * 65536 if run_id == 103 else ""), "status": "in_progress", "conclusion": None}
                     runs[run_id] = run
@@ -155,7 +156,7 @@ def exercise(args, directory):
                     assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts WHERE state='publishing'").strip() == "1"
                     run_id = 500 + len(publications)
                     runs[run_id] = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 1000}, "head_repository": {"id": 1000},
-                                    "actor": {"id": 42}, "display_title": "core-ci publish " + selected["attempt"] + " " + value["inputs"]["assignment_sha256"],
+                                    "actor": {"id": 42}, "display_title": "Publish " + selected["label"],
                                     "path": ".github/workflows/core-ci-publish.yml", "head_sha": head, "html_url": "https://github.com/Owner/worker/actions/runs/" + str(run_id),
                                     "status": "in_progress", "conclusion": None}
                     publications.append({"assignment": selected, "build_result": json.loads(value["inputs"]["build_result"])})
@@ -268,7 +269,7 @@ def exercise(args, directory):
                             self.reply(200, {"total_count": 1, "jobs": "not a job array"})
                         else:
                             self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
-                                "name": ("core-ci publish " if run_id >= 500 else "build / core-ci package ") + assignment["attempt"],
+                                "name": ("Publish " if run_id >= 500 else "build / Build ") + assignment["label"],
                                 "status": run["status"], "conclusion": run["conclusion"],
                                 "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}]})
                     elif parts[4] == "artifacts" and unavailable_artifacts:

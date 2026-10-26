@@ -19,7 +19,7 @@ permissions:
   actions: read
 jobs:
   package:
-    name: core-ci package ${{ inputs.attempt }}
+    name: Build ${{ fromJSON(inputs.assignment).label }}
     runs-on: ${{ fromJSON(inputs.assignment).target.runner }}
     timeout-minutes: 80
     steps:

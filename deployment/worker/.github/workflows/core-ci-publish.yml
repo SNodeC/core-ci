@@ -1,5 +1,5 @@
 name: core-ci trusted publication
-run-name: core-ci publish ${{ inputs.attempt }} ${{ inputs.assignment_sha256 }}
+run-name: Publish ${{ fromJSON(inputs.assignment).label }}
 on:
   workflow_dispatch:
     inputs:
@@ -75,7 +75,7 @@ jobs:
           overwrite: false
           retention-days: 7
   publish:
-    name: core-ci publish ${{ inputs.attempt }}
+    name: Publish ${{ fromJSON(inputs.assignment).label }}
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 25
