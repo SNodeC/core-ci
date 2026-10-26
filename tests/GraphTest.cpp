@@ -307,6 +307,52 @@ int main() {
             }
         }
 
+        coreci::Graph observations;
+        observations.apply(observations.select("r", {{"r", sources.at("r")}}, false));
+        const auto observedId = observations.nodes().begin()->first;
+        apply(observations, observations.beginBuild(observedId));
+        const auto observedAttempt = observations.node(observedId).attempts.back().id;
+        const auto observedRun = run(observations.node(observedId), false);
+        json progress{{"run_id", observedRun.at("id")},
+                      {"status", "in_progress"},
+                      {"job_id", 123},
+                      {"job_status", "in_progress"},
+                      {"started_at", "2026-10-26T10:00:00Z"}};
+        apply(observations, observations.bindRun(observedId, observedAttempt, false, observedRun, progress));
+        const auto originalAssignment = observations.node(observedId).attempts.back().assignment;
+        apply(observations, observations.failed(observedId, observedAttempt, "verified failure"));
+        progress["status"] = "completed";
+        progress["job_status"] = "completed";
+        progress["completed_at"] = "2026-10-26T10:01:00Z";
+        progress["conclusion"] = "failure";
+        apply(observations, observations.bindRun(observedId, observedAttempt, false, observedRun, progress));
+        const auto complete = observations.node(observedId);
+        const json stale{{"run_id", observedRun.at("id")}, {"status", "queued"}, {"job_status", "queued"}, {"completed_at", nullptr}};
+        apply(observations, observations.bindRun(observedId, observedAttempt, false, observedRun, stale));
+        check(observations.node(observedId) == complete, "late progress regressed completion evidence or terminal state");
+        auto rerunIdentity = observedRun;
+        rerunIdentity["run_attempt"] = 2;
+        rejects([&]() {
+            observations.bindRun(observedId, observedAttempt, false, rerunIdentity, progress);
+        });
+        auto conflict = progress;
+        conflict["started_at"] = "2026-10-26T09:00:00Z";
+        rejects([&]() {
+            observations.bindRun(observedId, observedAttempt, false, observedRun, conflict);
+        });
+        conflict = progress;
+        conflict["job_id"] = 999;
+        rejects([&]() {
+            observations.bindRun(observedId, observedAttempt, false, observedRun, conflict);
+        });
+        auto erased = complete;
+        erased.attempts.back().evidence.clear();
+        rejects([&]() {
+            apply(observations, erased);
+        });
+        check(complete.attempts.back().buildRun == observedRun && complete.attempts.back().assignment == originalAssignment,
+              "progress metadata changed immutable identities or inputs");
+
         std::cout << "PASS local graph/state boundaries: diamond, independent targets, pinned inputs, failures/retry, delayed reports and "
                      "supersession\n";
     } catch (const std::exception& error) {

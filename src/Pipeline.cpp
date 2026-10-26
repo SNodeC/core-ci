@@ -398,47 +398,98 @@ namespace coreci {
                             repository,
                             run.at("head_sha").get<std::string>(),
                             workflow.at("path").get<std::string>(),
-                            [this, execution, attemptId, publication, node, run, workflow, callback](const SourceResult& file) {
+                            [this, execution, attemptId, publication, run, runId, repository, attempt, workflow, callback](
+                                const SourceResult& file) {
                                 try {
                                     require(file.status == 200 && file.blobSha == workflow.at("blob_sha").get<std::string>(),
                                             "GitHub executed a workflow outside the approved blob identity");
-                                    const auto& current = store.graph().node(execution);
-                                    if (current.attempts.back().id != attemptId || current.attempts.back().state == "published" ||
-                                        current.attempts.back().state == "failed" ||
-                                        (!publication && current.attempts.back().state == "publishing")) {
-                                        callback({200, {{"execution", execution}, {"report", "late or terminal; history retained"}}});
-                                    } else {
-                                        const nlohmann::json identity{{"id", run.at("id")},
-                                                                      {"run_attempt", run.at("run_attempt")},
-                                                                      {"repository_id", run.at("repository").at("id")},
-                                                                      {"actor_id", run.at("actor").at("id")},
-                                                                      {"workflow_blob_sha", file.blobSha},
-                                                                      {"workflow_commit", run.at("head_sha")},
-                                                                      {"html_url", run.at("html_url")}};
-                                        const auto bound = store.graph().bindRun(execution, attemptId, publication, identity);
-                                        change(bound,
-                                               [this, execution, attemptId, publication, run, callback](const PipelineResult& stored) {
-                                                   if (stored.status != 200) {
-                                                       callback(stored);
-                                                   } else if (run.at("status") != "completed") {
-                                                       callback(stored);
-                                                   } else if (publication) {
-                                                       publicationResult(store.graph().node(execution), run, callback);
-                                                   } else if (run.at("conclusion") != "success") {
-                                                       try {
-                                                           change(store.graph().failed(execution,
-                                                                                       attemptId,
-                                                                                       "GitHub execution completed: " +
-                                                                                           run.at("conclusion").get<std::string>()),
-                                                                  callback);
-                                                       } catch (const std::exception& error) {
-                                                           callback({409, {{"error", error.what()}}});
-                                                       }
-                                                   } else {
-                                                       buildArtifacts(store.graph().node(execution), callback);
-                                                   }
-                                               });
-                                    }
+                                    github.request(
+                                        repository,
+                                        "GET",
+                                        "/actions/runs/" + std::to_string(runId) + "/attempts/1/jobs?per_page=100",
+                                        nullptr,
+                                        {{"actions", "read"}},
+                                        [this,
+                                         execution,
+                                         attemptId,
+                                         publication,
+                                         run,
+                                         workflow,
+                                         workflowBlob = file.blobSha,
+                                         attempt,
+                                         callback](const GitHubResult& jobs) {
+                                            try {
+                                                nlohmann::json selectedJob;
+                                                nlohmann::json observation{{"run_id", run.at("id")}, {"status", run.at("status")}};
+                                                if (jobs.status == 200 && jobs.error.empty() && jobs.body.is_object() &&
+                                                    jobs.body.value("total_count", 101) <= 100 && jobs.body.at("jobs").is_array() &&
+                                                    jobs.body.at("jobs").size() == jobs.body.at("total_count")) {
+                                                    for (const auto& job : jobs.body.at("jobs")) {
+                                                        const auto name = job.at("name").get<std::string>(),
+                                                                   expected = title(attempt, publication, true);
+                                                        if (name == expected || name.ends_with(" / " + expected)) {
+                                                            require(!observation.contains("job_id") && job.at("run_id") == run.at("id") &&
+                                                                        job.at("run_attempt") == 1 && job.at("id").get<std::uint64_t>() > 0,
+                                                                    "ambiguous or mismatched execution job");
+                                                            selectedJob = job;
+                                                            observation["job_id"] = job.at("id");
+                                                            observation["job_status"] = job.at("status");
+                                                            if (job.at("status") == "in_progress" || job.at("status") == "completed") {
+                                                                observation["started_at"] = job.value("started_at", nlohmann::json());
+                                                            }
+                                                            if (job.at("status") == "completed") {
+                                                                observation["completed_at"] = job.value("completed_at", nlohmann::json());
+                                                                observation["conclusion"] = job.value("conclusion", nlohmann::json());
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                const auto& current = store.graph().node(execution);
+                                                const bool late = current.attempts.back().id != attemptId ||
+                                                                  current.attempts.back().state == "published" ||
+                                                                  current.attempts.back().state == "failed" ||
+                                                                  (!publication && current.attempts.back().state == "publishing");
+                                                const nlohmann::json identity{{"id", run.at("id")},
+                                                                              {"run_attempt", run.at("run_attempt")},
+                                                                              {"repository_id", run.at("repository").at("id")},
+                                                                              {"actor_id", run.at("actor").at("id")},
+                                                                              {"workflow_blob_sha", workflowBlob},
+                                                                              {"workflow_commit", run.at("head_sha")},
+                                                                              {"html_url", run.at("html_url")}};
+                                                const bool buildFailed = !late && !publication && run.at("status") == "completed" &&
+                                                                         run.at("conclusion") != "success";
+                                                const auto bound =
+                                                    buildFailed
+                                                        ? store.graph().failed(execution,
+                                                                               attemptId,
+                                                                               "GitHub execution completed: " +
+                                                                                   run.at("conclusion").get<std::string>(),
+                                                                               identity,
+                                                                               observation)
+                                                        : store.graph().bindRun(execution, attemptId, publication, identity, observation);
+                                                change(bound,
+                                                       [this, execution, attemptId, publication, run, selectedJob, late, callback](
+                                                           const PipelineResult& stored) {
+                                                           if (stored.status != 200) {
+                                                               callback(stored);
+                                                           } else if (late) {
+                                                               callback({200,
+                                                                         {{"execution", execution},
+                                                                          {"report", "late or terminal; history retained"}}});
+                                                           } else if (run.at("status") != "completed") {
+                                                               callback(stored);
+                                                           } else if (publication) {
+                                                               publicationResult(store.graph().node(execution), run, selectedJob, callback);
+                                                           } else if (run.at("conclusion") != "success") {
+                                                               callback(stored);
+                                                           } else {
+                                                               buildArtifacts(store.graph().node(execution), selectedJob, callback);
+                                                           }
+                                                       });
+                                            } catch (const std::exception& error) {
+                                                callback({409, {{"error", error.what()}, {"assignment_preserved", true}}});
+                                            }
+                                        });
                                 } catch (const std::exception& error) {
                                     callback({409, {{"error", error.what()}}});
                                 }
@@ -452,94 +503,74 @@ namespace coreci {
         }
     }
 
-    void Pipeline::buildArtifacts(const Node& node, const Callback& callback) {
+    void Pipeline::buildArtifacts(const Node& node, const nlohmann::json& job, const Callback& callback) {
         const auto attempt = node.attempts.back();
         const auto repository = node.source.at("repository").get<std::string>();
         const auto runId = attempt.buildRun.at("id").get<std::uint64_t>();
-        github.request(
-            repository,
-            "GET",
-            "/actions/runs/" + std::to_string(runId) + "/attempts/1/jobs?per_page=100",
-            nullptr,
-            {{"actions", "read"}},
-            [this, node, attempt, repository, runId, callback](const GitHubResult& jobs) {
-                try {
-                    require(jobs.status == 200 && jobs.error.empty() && jobs.body.at("total_count").get<unsigned int>() <= 100,
-                            "assigned GitHub jobs are unavailable or exceed supported bounds");
-                    nlohmann::json job;
-                    const auto expected = title(attempt, false, true);
-                    for (const auto& candidate : jobs.body.at("jobs")) {
-                        const auto name = candidate.at("name").get<std::string>();
-                        if (name == expected || name.ends_with(" / " + expected)) {
-                            require(job.is_null(), "assigned package job is ambiguous");
-                            job = candidate;
-                        }
-                    }
-                    require(!job.is_null() && job.at("run_id") == runId && job.at("run_attempt") == 1 && job.at("status") == "completed" &&
-                                job.at("conclusion") == "success",
-                            "assigned package job did not complete successfully");
-                    github.request(
-                        repository,
-                        "GET",
-                        "/actions/runs/" + std::to_string(runId) + "/artifacts?per_page=100",
-                        nullptr,
-                        {{"actions", "read"}},
-                        [this, node, attempt, job, runId, callback](const GitHubResult& artifacts) {
-                            try {
-                                require(artifacts.status == 200 && artifacts.error.empty() &&
-                                            artifacts.body.at("total_count").get<unsigned int>() <= 100 &&
-                                            artifacts.body.at("artifacts").is_array() &&
-                                            artifacts.body.at("artifacts").size() == artifacts.body.at("total_count"),
-                                        "assigned GitHub artifacts are unavailable or exceed supported bounds");
-                                nlohmann::json artifact;
-                                for (const auto& candidate : artifacts.body.at("artifacts")) {
-                                    if (candidate.at("name") == attempt.assignment.at("artifact_name")) {
-                                        require(artifact.is_null(), "assigned build artifact is ambiguous");
-                                        artifact = candidate;
-                                    }
-                                }
-                                if (artifact.is_null() || artifact.at("expired").get<bool>()) {
-                                    change(store.graph().failed(node.id, attempt.id, "required artifacts missing/expired"), callback);
-                                } else {
-                                    static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
-                                    require(artifact.at("id").get<std::uint64_t>() > 0 && artifact.at("workflow_run").at("id") == runId &&
-                                                artifact.at("size_in_bytes").get<std::uint64_t>() <= 1024ULL * 1024 * 1024 &&
-                                                std::regex_match(artifact.at("digest").get<std::string>(), digest),
-                                            "assigned artifact lacks a bounded immutable GitHub identity");
-                                    const nlohmann::json selected{{"id", artifact.at("id")},
-                                                                  {"name", artifact.at("name")},
-                                                                  {"digest", artifact.at("digest")},
-                                                                  {"size_bytes", artifact.at("size_in_bytes")},
-                                                                  {"run_id", runId},
-                                                                  {"job_id", job.at("id")},
-                                                                  {"run_attempt", 1}};
-                                    const auto result = nlohmann::json{{"run", attempt.buildRun},
-                                                                       {"assignment_sha256", Graph::digest(attempt.assignment)},
-                                                                       {"artifacts", {selected}},
-                                                                       {"build_job",
-                                                                        {{"started_at", job.value("started_at", nlohmann::json())},
-                                                                         {"completed_at", job.value("completed_at", nlohmann::json())}}}};
-                                    change(store.graph().built(node.id, attempt.id, result),
-                                           [this, callback](const PipelineResult& stored) {
-                                               if (stored.status == 200) {
-                                                   advance(callback);
-                                               } else {
-                                                   callback(stored);
-                                               }
-                                           });
-                                }
-                            } catch (const std::exception& error) {
-                                callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
+        try {
+            require(!job.is_null() && job.at("run_id") == runId && job.at("run_attempt") == 1 && job.at("status") == "completed" &&
+                        job.at("conclusion") == "success",
+                    "assigned package job did not complete successfully");
+            github.request(
+                repository,
+                "GET",
+                "/actions/runs/" + std::to_string(runId) + "/artifacts?per_page=100",
+                nullptr,
+                {{"actions", "read"}},
+                [this, node, attempt, job, runId, callback](const GitHubResult& artifacts) {
+                    try {
+                        require(artifacts.status == 200 && artifacts.error.empty() &&
+                                    artifacts.body.at("total_count").get<unsigned int>() <= 100 &&
+                                    artifacts.body.at("artifacts").is_array() &&
+                                    artifacts.body.at("artifacts").size() == artifacts.body.at("total_count"),
+                                "assigned GitHub artifacts are unavailable or exceed supported bounds");
+                        nlohmann::json artifact;
+                        for (const auto& candidate : artifacts.body.at("artifacts")) {
+                            if (candidate.at("name") == attempt.assignment.at("artifact_name")) {
+                                require(artifact.is_null(), "assigned build artifact is ambiguous");
+                                artifact = candidate;
                             }
-                        });
-                } catch (const std::exception& error) {
-                    callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
-                }
-            });
+                        }
+                        if (artifact.is_null() || artifact.at("expired").get<bool>()) {
+                            change(store.graph().failed(node.id, attempt.id, "required artifacts missing/expired"), callback);
+                        } else {
+                            static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
+                            require(artifact.at("id").get<std::uint64_t>() > 0 && artifact.at("workflow_run").at("id") == runId &&
+                                        artifact.at("size_in_bytes").get<std::uint64_t>() <= 1024ULL * 1024 * 1024 &&
+                                        std::regex_match(artifact.at("digest").get<std::string>(), digest),
+                                    "assigned artifact lacks a bounded immutable GitHub identity");
+                            const nlohmann::json selected{{"id", artifact.at("id")},
+                                                          {"name", artifact.at("name")},
+                                                          {"digest", artifact.at("digest")},
+                                                          {"size_bytes", artifact.at("size_in_bytes")},
+                                                          {"run_id", runId},
+                                                          {"job_id", job.at("id")},
+                                                          {"run_attempt", 1}};
+                            const auto result = nlohmann::json{{"run", attempt.buildRun},
+                                                               {"assignment_sha256", Graph::digest(attempt.assignment)},
+                                                               {"artifacts", {selected}},
+                                                               {"build_job",
+                                                                {{"started_at", job.value("started_at", nlohmann::json())},
+                                                                 {"completed_at", job.value("completed_at", nlohmann::json())}}}};
+                            change(store.graph().built(node.id, attempt.id, result), [this, callback](const PipelineResult& stored) {
+                                if (stored.status == 200) {
+                                    advance(callback);
+                                } else {
+                                    callback(stored);
+                                }
+                            });
+                        }
+                    } catch (const std::exception& error) {
+                        callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
+                    }
+                });
+        } catch (const std::exception& error) {
+            callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
+        }
     }
 
-    void Pipeline::publicationResult(const Node& node, const nlohmann::json& run, const Callback& callback) {
-        feeds.verify(node, [this, node, run, callback](const FeedResult& result) {
+    void Pipeline::publicationResult(const Node& node, const nlohmann::json& run, const nlohmann::json& job, const Callback& callback) {
+        feeds.verify(node, [this, node, run, job, callback](const FeedResult& result) {
             if (result.error.empty()) {
                 try {
                     change(store.graph().published(node.id, node.attempts.back().id, result.receipt), callback);
@@ -547,54 +578,33 @@ namespace coreci {
                     callback({409, {{"error", error.what()}}});
                 }
             } else {
-                github.request(
-                    node.source.at("deployment").at("worker").at("repository").get<std::string>(),
-                    "GET",
-                    "/actions/runs/" + std::to_string(node.attempts.back().publicationRun.at("id").get<std::uint64_t>()) +
-                        "/attempts/1/jobs?per_page=100",
-                    nullptr,
-                    {{"actions", "read"}},
-                    [this, node, run, result, callback](const GitHubResult& jobs) {
-                        bool beforePush = false;
-                        try {
-                            if (jobs.status == 200 && jobs.error.empty() && jobs.body.is_object() &&
-                                jobs.body.value("total_count", 101) <= 100 && jobs.body.at("jobs").is_array() &&
-                                jobs.body.at("jobs").size() == jobs.body.at("total_count") &&
-                                run.value("conclusion", std::string{}) != "success") {
-                                const auto name = title(node.attempts.back(), true, true);
-                                std::size_t matches = 0;
-                                for (const auto& job : jobs.body.at("jobs")) {
-                                    if (job.value("name", "") == name && job.value("run_id", std::uint64_t{}) == run.at("id") &&
-                                        job.value("run_attempt", 0) == 1 && job.value("status", "") == "completed") {
-                                        ++matches;
-                                        beforePush = job.value("conclusion", "") == "skipped";
-                                        for (const auto& step : job.value("steps", nlohmann::json::array())) {
-                                            if (step.value("name", "") == "Publish checked feed update") {
-                                                beforePush = step.value("conclusion", "") == "skipped";
-                                            }
-                                        }
-                                    }
-                                }
-                                beforePush = beforePush && matches == 1;
+                bool beforePush = false;
+                try {
+                    if (!job.is_null() && job.value("status", "") == "completed" && run.value("conclusion", "") != "success") {
+                        beforePush = job.value("conclusion", "") == "skipped";
+                        for (const auto& step : job.value("steps", nlohmann::json::array())) {
+                            if (step.value("name", "") == "Publish checked feed update") {
+                                beforePush = step.value("conclusion", "") == "skipped";
                             }
-                        } catch (const std::exception&) {
-                            beforePush = false;
                         }
-                        if (beforePush) {
-                            change(store.graph().failed(
-                                       node.id,
-                                       node.attempts.back().id,
-                                       "Verified GitHub publication failure before the feed-update step; explicit retry is available"),
-                                   callback);
-                        } else {
-                            callback({202,
-                                      {{"execution", node.id},
-                                       {"state", "publishing"},
-                                       {"assignment_preserved", true},
-                                       {"github_conclusion", run.at("conclusion")},
-                                       {"error", result.error}}});
-                        }
-                    });
+                    }
+                } catch (const std::exception&) {
+                    beforePush = false;
+                }
+                if (beforePush) {
+                    change(store.graph().failed(
+                               node.id,
+                               node.attempts.back().id,
+                               "Verified GitHub publication failure before the feed-update step; explicit retry is available"),
+                           callback);
+                } else {
+                    callback({202,
+                              {{"execution", node.id},
+                               {"state", "publishing"},
+                               {"assignment_preserved", true},
+                               {"github_conclusion", run.at("conclusion")},
+                               {"error", result.error}}});
+                }
             }
         });
     }
