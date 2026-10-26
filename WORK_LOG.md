@@ -844,3 +844,29 @@
   findings and proposed fixes need validation, and AGENTS approval rules remain binding.
 - Prompt generation only. No production/test changes, deployment, dispatch, publication or
   application installation. Original request/outputs remain under the permitted temp root.
+
+
+## 2026-10-26 — workflow review corrections, focused verification
+
+- Working tree began clean on feat/persistent-package-graph at d300a4c; only the requested
+  prompt documentation followed ec29760. No branch switch, reset or new checkout.
+- F1 invariant: controller reads assigned attempt-one evidence even after a UI rerun;
+  a rerun process itself must never gain authority. Use attempt-specific run/jobs endpoints
+  in controller/provenance/environment readers. Reject reruns before environment discovery;
+  existing native build and protected publisher guards remain. Consolidated existing run
+  validation; production lines neutral. No extra state, scheduler or replay policy.
+- Official references: https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt
+  and https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt
+  document immutable-attempt readers; ordinary jobs defaults to latest. Job identity remains
+  explicitly checked, and artifacts remain bound by assigned ID/digest/job evidence.
+  https://docs.github.com/en/actions/reference/workflows-and-actions/variables documents
+  GITHUB_RUN_ATTEMPT. Dispatch inputs currently allow 25 properties / 65,535 characters:
+  https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
+  Empty job lists are not documented proof that no push occurred; F9 remains uncertain.
+- Studied SNode.C testmariadb/verysimpleserver and MQTTSuite named listeners; no lifecycle
+  changes. MariaDBClient destruction detaches its separately owned connection via unmanaged();
+  callbacks remain owned by the connection/command. F12 is not established by the review.
+- Focused pipeline, worker-environment and worker-provenance checks pass. Updated fixtures
+  expose contradictory latest attempt-two evidence and require attempt-one queries. No full
+  suite run. Two initial test-fixture issues (an HTML link substitution and missing runner
+  attempt in a second environment fixture) were corrected; both affected tests then passed.

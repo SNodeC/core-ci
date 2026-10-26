@@ -251,10 +251,12 @@ def exercise(args, directory):
                     run = runs[run_id]
                     assignment = publications[run_id - 500]["assignment"] if run_id >= 500 else dispatches[run_id - 100]
                     if len(parts) == 4:
+                        self.reply(200, {**run, "run_attempt": 2, "status": "completed", "conclusion": "failure"})
+                    elif parts[4:6] == ["attempts", "1"] and len(parts) == 6:
                         if run_id < 500:
                             build_status_reads.append(run_id)
                         self.reply(200, run)
-                    elif parts[4] == "jobs":
+                    elif parts[4:] == ["attempts", "1", "jobs"]:
                         if run_id >= 500 and malformed_publication_jobs:
                             self.reply(200, {"total_count": 1, "jobs": "not a job array"})
                         else:

@@ -45,7 +45,7 @@ def assigned_run(selected, identity, attempt, assignment_hash, token):
     prefix = "/repos/" + repository
     metadata = api(prefix, token)
     require(metadata["id"] == source["repository_id"], "source repository ID changed")
-    run = api(prefix + "/actions/runs/" + str(identity["id"]), token)
+    run = api(prefix + "/actions/runs/" + str(identity["id"]) + "/attempts/1", token)
     require(
         run["id"] == identity["id"]
         and run["repository"]["id"] == source["repository_id"]
@@ -53,12 +53,11 @@ def assigned_run(selected, identity, attempt, assignment_hash, token):
         "build run repository mismatch",
     )
     require(
-        run["actor"]["id"] == deployment["controller_app_bot_id"] and run["event"] == "workflow_dispatch",
-        "build run actor/event mismatch",
-    )
-    require(
-        run["run_attempt"] == 1 and run["status"] == "completed",
-        "assigned build has not completed",
+        run["actor"]["id"] == deployment["controller_app_bot_id"]
+        and run["event"] == "workflow_dispatch"
+        and run["run_attempt"] == 1
+        and run["status"] == "completed",
+        "assigned build actor/event/attempt/completion mismatch",
     )
     require(run["head_sha"] == identity["workflow_commit"], "assigned workflow commit mismatch")
     require(

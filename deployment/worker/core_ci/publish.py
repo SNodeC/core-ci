@@ -57,7 +57,7 @@ def writer_token(private_key, selected):
 def run_identity(selected):
     token = os.environ["GITHUB_TOKEN"]
     repository = os.environ["GITHUB_REPOSITORY"]
-    run = api("/repos/" + repository + "/actions/runs/" + str(int(os.environ["GITHUB_RUN_ID"])), token)
+    run = api("/repos/" + repository + "/actions/runs/" + str(int(os.environ["GITHUB_RUN_ID"])) + "/attempts/1", token)
     workflow = selected["source"]["deployment"]["publication_workflow"]
     require(
         run["actor"]["id"] == selected["source"]["deployment"]["controller_app_bot_id"] and run["run_attempt"] == 1,

@@ -361,7 +361,7 @@ namespace coreci {
             github.request(
                 repository,
                 "GET",
-                "/actions/runs/" + std::to_string(runId),
+                "/actions/runs/" + std::to_string(runId) + "/attempts/1",
                 nullptr,
                 {{"actions", "read"}},
                 [this, execution, attemptId, publication, runId, node, attempt, repository, expectedRepository, workflow, callback](
@@ -441,7 +441,7 @@ namespace coreci {
         github.request(
             repository,
             "GET",
-            "/actions/runs/" + std::to_string(runId) + "/jobs?per_page=100",
+            "/actions/runs/" + std::to_string(runId) + "/attempts/1/jobs?per_page=100",
             nullptr,
             {{"actions", "read"}},
             [this, node, attempt, repository, runId, callback](const GitHubResult& jobs) {
@@ -524,7 +524,7 @@ namespace coreci {
                     node.source.at("deployment").at("worker").at("repository").get<std::string>(),
                     "GET",
                     "/actions/runs/" + std::to_string(node.attempts.back().publicationRun.at("id").get<std::uint64_t>()) +
-                        "/jobs?per_page=100",
+                        "/attempts/1/jobs?per_page=100",
                     nullptr,
                     {{"actions", "read"}},
                     [this, node, run, result, callback](const GitHubResult& jobs) {

@@ -8,6 +8,7 @@ import sys
 import subprocess
 import os
 import zipfile
+from unittest.mock import patch
 
 
 def main():
@@ -50,7 +51,7 @@ def main():
     fixtures = {
         prefix: {"id": 11},
         prefix
-        + "/actions/runs/100": {
+        + "/actions/runs/100/attempts/1": {
             "id": 100,
             "repository": {"id": 11},
             "head_repository": {"id": 11},
@@ -83,6 +84,11 @@ def main():
             "size_in_bytes": archive.stat().st_size,
         },
     }
+    fixtures[prefix + "/actions/runs/100"] = {
+        **fixtures[prefix + "/actions/runs/100/attempts/1"],
+        "run_attempt": 2,
+        "conclusion": "failure",
+    }
     original_api = github.api
     original_download = github.download_artifact
     downloads = []
@@ -106,11 +112,11 @@ def main():
         assert (directory / "valid/manifest.json").read_text() == "{}" and len(downloads) == 1
         for path, field, value in (
             (prefix, "id", 12),
-            (prefix + "/actions/runs/100", "actor", {"id": 999}),
-            (prefix + "/actions/runs/100", "run_attempt", 2),
-            (prefix + "/actions/runs/100", "head_sha", "d" * 40),
-            (prefix + "/actions/runs/100", "head_repository", {"id": 999}),
-            (prefix + "/actions/runs/100", "display_title", "unassigned work"),
+            (prefix + "/actions/runs/100/attempts/1", "actor", {"id": 999}),
+            (prefix + "/actions/runs/100/attempts/1", "run_attempt", 2),
+            (prefix + "/actions/runs/100/attempts/1", "head_sha", "d" * 40),
+            (prefix + "/actions/runs/100/attempts/1", "head_repository", {"id": 999}),
+            (prefix + "/actions/runs/100/attempts/1", "display_title", "unassigned work"),
             (prefix + "/actions/jobs/102", "run_id", 999),
             (prefix + "/actions/jobs/102", "conclusion", "failure"),
             (prefix + "/actions/artifacts/101", "workflow_run", {"id": 999}),
@@ -129,6 +135,23 @@ def main():
     finally:
         github.api = original_api
         github.download_artifact = original_download
+    import validate
+
+    with patch.dict(
+        os.environ,
+        {
+            "CONTROLLER_APP_BOT_ID": "42",
+            "GITHUB_ACTOR_ID": "42",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_RUN_ATTEMPT": "2",
+        },
+    ):
+        rejected = False
+        try:
+            validate.trusted_deployment(selected)
+        except ValueError:
+            rejected = True
+        assert rejected, "publication rerun reached protected deployment work"
     # Publication views are projections of retained receipts, including older versions.
     import feed_status
     from html.parser import HTMLParser

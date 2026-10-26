@@ -72,7 +72,7 @@ def retry_evidence(directory):
         fixtures = {
             prefix: {"id": 11},
             prefix
-            + "/actions/runs/100": {
+            + "/actions/runs/100/attempts/1": {
                 "id": 100,
                 "repository": {"id": 11},
                 "head_repository": {"id": 11},
@@ -88,7 +88,7 @@ def retry_evidence(directory):
             prefix + "/contents/.github/workflows/core-ci-build.yml?ref=" + "c" * 40: {"sha": "b" * 40},
             prefix + "/actions/runs/100/artifacts?per_page=100": {"total_count": 1, "artifacts": [item]},
             prefix
-            + "/actions/runs/100/jobs?per_page=100": {
+            + "/actions/runs/100/attempts/1/jobs?per_page=100": {
                 "total_count": 1,
                 "jobs": [
                     {
@@ -114,7 +114,8 @@ def retry_evidence(directory):
             shutil.copyfile(archive, destination)
 
         with patch.dict(
-            environment.os.environ, {"RUNNER_TEMP": str(root), "GITHUB_TOKEN": "synthetic-read-only-token"}
+            environment.os.environ,
+            {"RUNNER_TEMP": str(root), "GITHUB_TOKEN": "synthetic-read-only-token", "GITHUB_RUN_ATTEMPT": "1"},
         ), patch.object(environment, "api", side_effect=read), patch.object(
             github, "api", side_effect=read
         ), patch.object(
@@ -137,6 +138,9 @@ def retry_evidence(directory):
                     str(wrapped),
                 ],
             ), patch.dict(environment.os.environ, {"EXECUTION": selected["execution"], "ATTEMPT": selected["attempt"]}):
+                with patch.dict(environment.os.environ, {"GITHUB_RUN_ATTEMPT": "2"}):
+                    rejects(environment.main)
+                assert not wrapped.exists()
                 environment.main()
             assert json.loads(wrapped.read_text()) == {
                 "assignment_sha256": digest(selected),
@@ -144,12 +148,15 @@ def retry_evidence(directory):
             }
             # A retry that failed before resolving anything still refers back to older usable evidence.
             selected["environment_from"].append({**earlier, "run": {**earlier["run"], "id": 102}})
-            fixtures[prefix + "/actions/runs/102"] = {**fixtures[prefix + "/actions/runs/100"], "id": 102}
+            fixtures[prefix + "/actions/runs/102/attempts/1"] = {
+                **fixtures[prefix + "/actions/runs/100/attempts/1"],
+                "id": 102,
+            }
             fixtures[prefix + "/actions/runs/102/artifacts?per_page=100"] = {"total_count": 0, "artifacts": []}
-            fixtures[prefix + "/actions/runs/102/jobs?per_page=100"] = copy.deepcopy(
-                fixtures[prefix + "/actions/runs/100/jobs?per_page=100"]
+            fixtures[prefix + "/actions/runs/102/attempts/1/jobs?per_page=100"] = copy.deepcopy(
+                fixtures[prefix + "/actions/runs/100/attempts/1/jobs?per_page=100"]
             )
-            fixtures[prefix + "/actions/runs/102/jobs?per_page=100"]["jobs"][0]["run_id"] = 102
+            fixtures[prefix + "/actions/runs/102/attempts/1/jobs?per_page=100"]["jobs"][0]["run_id"] = 102
             assert environment.previous(selected) == environment_identity
             selected["environment_from"].pop()
             original = archive.read_bytes()
@@ -165,13 +172,13 @@ def retry_evidence(directory):
             item["expired"] = True
             rejects(lambda: environment.previous(selected))
             item["expired"] = False
-            fixtures[prefix + "/actions/runs/100"]["actor"]["id"] = 999
+            fixtures[prefix + "/actions/runs/100/attempts/1"]["actor"]["id"] = 999
             rejects(lambda: environment.previous(selected))
-            fixtures[prefix + "/actions/runs/100"]["actor"]["id"] = 42
+            fixtures[prefix + "/actions/runs/100/attempts/1"]["actor"]["id"] = 42
             listing = fixtures[prefix + "/actions/runs/100/artifacts?per_page=100"]
             listing.update(total_count=0, artifacts=[])
             assert environment.previous(selected) is None, "pre-build failure must permit first resolution"
-            steps = fixtures[prefix + "/actions/runs/100/jobs?per_page=100"]["jobs"][0]["steps"]
+            steps = fixtures[prefix + "/actions/runs/100/attempts/1/jobs?per_page=100"]["jobs"][0]["steps"]
             steps[0]["conclusion"] = "failure"
             rejects(lambda: environment.previous(selected))
             steps[0]["conclusion"] = "skipped"
@@ -265,7 +272,12 @@ def main():
         ],
     ), patch.dict(
         environment.os.environ,
-        {"RUNNER_TEMP": str(directory), "EXECUTION": selected["execution"], "ATTEMPT": selected["attempt"]},
+        {
+            "RUNNER_TEMP": str(directory),
+            "EXECUTION": selected["execution"],
+            "ATTEMPT": selected["attempt"],
+            "GITHUB_RUN_ATTEMPT": "1",
+        },
     ):
         with patch.object(environment, "sdk", return_value=copy.deepcopy(resolved)) as latest:
             environment.main()

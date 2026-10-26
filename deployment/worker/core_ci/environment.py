@@ -125,7 +125,7 @@ def previous(selected):
                 )
                 result = document["environment"]
         else:
-            jobs = api(run_path + "/jobs?per_page=100", token)
+            jobs = api(run_path + "/attempts/1/jobs?per_page=100", token)
             require(jobs["total_count"] <= 100, "previous job list exceeds supported bounds")
             name = "core-ci package " + earlier["attempt"]
             matches = [job for job in jobs["jobs"] if job["name"] == name or job["name"].endswith(" / " + name)]
@@ -152,6 +152,7 @@ def main():
     parser.add_argument("--assignment-sha256", required=True)
     parser.add_argument("--output", required=True)
     arguments = parser.parse_args()
+    require(os.environ["GITHUB_RUN_ATTEMPT"] == "1", "reruns require an explicit controller retry")
     selected = assignment(arguments.assignment, arguments.assignment_sha256)
     require(
         selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"],
