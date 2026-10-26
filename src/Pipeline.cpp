@@ -183,13 +183,11 @@ namespace coreci {
                                                                             ? node.source.at("deployment").at("worker").at("repository")
                                                                             : node.source.at("repository");
                                         const auto& assigned = publishing ? attempt.publicationRun : attempt.buildRun;
-                                        const auto expectedJob = title(attempt, publishing, true);
-                                        const auto jobName = type == "workflow_job" ? report.value("name", std::string{}) : "";
                                         const bool matches =
                                             type == "workflow_run"
                                                 ? ((!assigned.is_null() && assigned.at("id") == runId) ||
                                                    report.value("display_title", std::string{}) == title(attempt, publishing))
-                                                : (jobName == expectedJob || jobName.ends_with(" / " + expectedJob));
+                                                : matchesJob(attempt, publishing, report);
                                         if (expectedRepository == repository && matches) {
                                             require(selected.empty(), "webhook matches multiple assignments");
                                             selected = id;
@@ -233,6 +231,15 @@ namespace coreci {
         } catch (const std::exception& error) {
             callback({409, {{"error", error.what()}}});
         }
+    }
+
+    bool Pipeline::matchesJob(const Attempt& attempt, bool publication, const nlohmann::json& job) {
+        const auto name = job.value("name", std::string{}), expected = title(attempt, publication, true);
+        const bool skipped = publication && job.value("status", "") == "completed" && job.value("conclusion", "") == "skipped";
+        const auto& run = publication ? attempt.publicationRun : attempt.buildRun;
+        return (run.is_null() || run.at("id") == job.at("run_id")) &&
+               (name == expected || name.ends_with(" / " + expected) ||
+                (skipped && !run.is_null() && name == "Publish ${{ fromJSON(inputs.assignment).label }}"));
     }
 
     std::string Pipeline::title(const Attempt& attempt, bool publication, bool job) {
@@ -556,9 +563,7 @@ namespace coreci {
                                     std::find_if(assigned.attempts.begin(), assigned.attempts.end(), [&](const auto& value) {
                                         return value.id == attemptId;
                                     });
-                                const auto expected = title(*attempt, publication, true), name = selected.at("name").get<std::string>();
-                                require((name == expected || name.ends_with(" / " + expected)) &&
-                                            selected.at("run_id") == identity.at("id") &&
+                                require(matchesJob(*attempt, publication, selected) && selected.at("run_id") == identity.at("id") &&
                                             selected.at("head_sha") == identity.at("workflow_commit") && selected.at("run_attempt") == 1 &&
                                             selected.at("id").get<std::uint64_t>() > 0,
                                         "ambiguous or mismatched execution job");
@@ -685,10 +690,8 @@ namespace coreci {
                                         jobs.body.at("jobs").size() == jobs.body.at("total_count"),
                                     "assigned jobs are inaccessible or unbounded");
                             nlohmann::json selected;
-                            const auto expected = title(attempt, publication, true);
                             for (const auto& candidate : jobs.body.at("jobs")) {
-                                const auto name = candidate.at("name").get<std::string>();
-                                if (name == expected || name.ends_with(" / " + expected)) {
+                                if (matchesJob(attempt, publication, candidate)) {
                                     require(selected.is_null(), "ambiguous execution job");
                                     selected = candidate;
                                 }

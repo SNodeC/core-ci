@@ -353,7 +353,7 @@ def exercise(args, directory):
             result = (response.status, json.load(response))
         return result
 
-    def report(run_id, signature=None, repository_id=99, job=False, job_name=None):
+    def report(run_id, signature=None, repository_id=99, job=False, job_name=None, job_conclusion=None):
         body = {"installation": {"id": 7}, "repository": {"id": 1000 if run_id >= 500 else repository_id, "full_name": "Owner/worker" if run_id >= 500 else "Owner/example"}, "action": "completed" if runs[run_id]["status"] == "completed" else "in_progress" if runs[run_id]["status"] == "in_progress" else "requested",
                 "workflow_run": runs[run_id]}
         if job:
@@ -361,7 +361,7 @@ def exercise(args, directory):
             body["action"] = runs[run_id]["status"]
             body["workflow_job"] = {"id": run_id + 1000, "run_id": run_id, "run_attempt": job_attempt, "head_sha": runs[run_id]["head_sha"],
                 "name": job_name or ("Publish " if run_id >= 500 else "build / Build ") + assignment["label"],
-                "status": runs[run_id]["status"], "conclusion": runs[run_id]["conclusion"],
+                "status": runs[run_id]["status"], "conclusion": job_conclusion or runs[run_id]["conclusion"],
                 "started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z",
                 "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}
             del body["workflow_run"]
@@ -712,7 +712,9 @@ def exercise(args, directory):
             assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])["state"] == "publishing", "malformed job evidence authorized replacement"
             malformed_publication_jobs = False
             offset = len(request_trace)
-            assert report(501, job=True)[0] == 200, "proven pre-push failure was left uncertain"
+            literal = "Publish ${{ fromJSON(inputs.assignment).label }}"
+            assert report(501, job=True, job_name=literal, job_conclusion="success")[0] == 202, "unevaluated job name authorized running work"
+            assert report(501, job=True, job_name=literal, job_conclusion="skipped")[0] == 200, "proven skipped publication was left uncertain"
             assert not any("/repos/Owner/feed" in entry[2] for entry in request_trace[offset:]), "skipped push searched the feed"
             initial = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])
             assert initial["state"] == "failed" and "before the feed-update step" in initial["failure"]

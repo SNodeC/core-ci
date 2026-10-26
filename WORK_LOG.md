@@ -1865,3 +1865,44 @@ proposed. Commit/push/merge remain separate authorization stages.
 - Sandbox worker main verified at 3740d2b6af186f55aa7f291bc250c4b4adac5c27.
   No local core-ci/MariaDB process was running at activation preflight. Existing
   runtime arguments/data and credential-file references will be reused, not printed.
+
+## 2026-10-26 — live session exposed skipped-job matching defect
+
+- Activated f85c167 using the existing managed database and TLS settings. The earlier
+  restricted-namespace process check was misleading: host PID1407899 was still running.
+  Verified its executable, recorded graph generation340/all80 records, gracefully stopped
+  only that controller and its owned database, and verified exact restoration with the
+  replacement PID1475799. The unrelated MariaDB server was not touched.
+- Deployed the one-line renderer correction to sandbox worker commit
+  60ff1107f7192c42c2e3e5243984b8049bd864d8, and updated CORE_CI_TOOLING_SHA. Updated
+  all four thin workflows through core-ci's existing App route to blob
+  1c846209d3a10bf01ffe9eddf65858dcb8b78192. The CLI token lacked workflow scope;
+  its unsuccessful workflow write was not repeated through that credential. Source tags,
+  definitions, existing keys and packages were unchanged by this setup.
+- Made exactly one core-up request for demo-core v2.1.0, selecting20 new graph nodes.
+  Automatic publication released Debian and APK dependents. Four publications verified
+  before demo-side/APK publication40395761204 failed validation: the artifact storage
+  download returned HTTP503, “Egress is over the account limit.” The privileged job
+  was skipped; it performed no signing/feed mutation. This matches Azure Storage's
+  ServerBusy error wording, not proof of exhausted organisation billing quota:
+  https://learn.microsoft.com/en-us/rest/api/storageservices/common-rest-api-error-codes
+- Live attempt-one jobs show the skipped privileged job name literally as
+  `Publish ${{ fromJSON(inputs.assignment).label }}`. The old matcher required the
+  expanded label, so it retained the assignment rather than recording a definite
+  pre-push failure. Invariant: the already approved run's definitively skipped privileged
+  job must release the feed writer without interpreting another run's job as evidence.
+- Consolidated the three existing name checks into matchesJob. The literal-name case
+  requires publication, terminal skipped conclusion and an already bound matching run;
+  observe still checks job ID, attempt one and exact workflow commit. It cannot identify
+  arbitrary unbound work or authorize a running/successful job. No persisted state,
+  retry policy, callback protocol or worker change. Production +13/-9 = +4; tests +5/-3
+  = +2. Total remains within the approved350/260 ceilings.
+- Focused pipeline-boundaries and format-check passed. No failed execution was retried.
+  Deployment/restart reconciliation will classify the existing skipped publication;
+  this is read-only evidence reconciliation, not replaying a feed mutation.
+- Read-only SSE/feed observer records progress and lag under the permitted task live/
+  directory. Three real build completions reached SSE within0.16s of GitHub delivery
+  timestamps (including negative offsets because response completion timestamps can be
+  later than the observed SSE commit). Public pages sometimes wait behind the active
+  publisher's shared feed-writer slot. Also noted an empty Waiting-for label on roots;
+  no unrelated page redesign was made. No blanket automatic retry has been added.
