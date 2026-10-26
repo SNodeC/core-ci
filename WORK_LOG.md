@@ -958,7 +958,7 @@
 - Owner approved missing/expired artifact failure and the bounded regression extension.
   Reuse existing graph failure transition only after verified attempt-one success and a
   complete, bounded artifact listing. Denied/incomplete listings preserve assignment.
-  Production delta for this change: +6 net lines; focused HTTP regression +18 net lines.
+  Production delta for this change: +6 net lines; focused HTTP regression +17 net lines.
 - Relevant pipeline-boundaries passes (7.34 s), C++ build and format-check pass. No full
   suite run. Restart preserved every existing execution/state before reconciliation.
   Live reconciliation then marked AMD64 v2.1.1 failed: required artifacts missing/expired.
@@ -968,3 +968,5 @@
   299 prior immutable package/key/receipt/export blobs and unrelated paths. Only assigned
   additions, affected indexes and deterministic status views changed. Updated deployment
   evidence distinguishes these live checks from synthetic local tests.
+- Final correction accounting from d300a4c: production +188/-121 (net +67), tests
+  +300/-24 (net +276), within approved production and extended regression bounds.

@@ -14,7 +14,7 @@ preserved. A new demo-core v2.0.0 tag selects source commit
 | VOC-Experiments/demo-app | [1c77544](https://github.com/VOC-Experiments/demo-app/commit/1c775444774efbac7d57cd8c1628a47bed85259a) |
 | VOC-Experiments/demo-side | [ee959b5](https://github.com/VOC-Experiments/demo-side/commit/ee959b58f5ce34e01d799b4fc779bd257e52cd7b) |
 | VOC-Experiments/demo-join | [f542f5e](https://github.com/VOC-Experiments/demo-join/commit/f542f5e594edc66932519714a01a57a012fe9f69) |
-| VOC-Experiments/packages | [a3a4427](https://github.com/VOC-Experiments/packages/commit/a3a4427407583d440920af03b9342df5da1ec2e5) |
+| VOC-Experiments/packages | [3a1b752](https://github.com/VOC-Experiments/packages/commit/3a1b7522c25a9cf968b4e2785d547c74fc1230a7) |
 
 All source calls pin the full worker commit `d210b36e46b4d5041828bf7b32f67d5638570142`.
 
