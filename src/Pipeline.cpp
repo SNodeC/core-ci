@@ -471,7 +471,9 @@ namespace coreci {
                         [this, node, attempt, job, runId, callback](const GitHubResult& artifacts) {
                             try {
                                 require(artifacts.status == 200 && artifacts.error.empty() &&
-                                            artifacts.body.at("total_count").get<unsigned int>() <= 100,
+                                            artifacts.body.at("total_count").get<unsigned int>() <= 100 &&
+                                            artifacts.body.at("artifacts").is_array() &&
+                                            artifacts.body.at("artifacts").size() == artifacts.body.at("total_count"),
                                         "assigned GitHub artifacts are unavailable or exceed supported bounds");
                                 nlohmann::json artifact;
                                 for (const auto& candidate : artifacts.body.at("artifacts")) {
@@ -480,29 +482,33 @@ namespace coreci {
                                         artifact = candidate;
                                     }
                                 }
-                                static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
-                                require(!artifact.is_null() && artifact.at("id").get<std::uint64_t>() > 0 &&
-                                            !artifact.at("expired").get<bool>() && artifact.at("workflow_run").at("id") == runId &&
-                                            artifact.at("size_in_bytes").get<std::uint64_t>() <= 1024ULL * 1024 * 1024 &&
-                                            std::regex_match(artifact.at("digest").get<std::string>(), digest),
-                                        "assigned artifact lacks a bounded immutable GitHub identity");
-                                const nlohmann::json selected{{"id", artifact.at("id")},
-                                                              {"name", artifact.at("name")},
-                                                              {"digest", artifact.at("digest")},
-                                                              {"size_bytes", artifact.at("size_in_bytes")},
-                                                              {"run_id", runId},
-                                                              {"job_id", job.at("id")},
-                                                              {"run_attempt", 1}};
-                                const auto result = nlohmann::json{{"run", attempt.buildRun},
-                                                                   {"assignment_sha256", Graph::digest(attempt.assignment)},
-                                                                   {"artifacts", {selected}}};
-                                change(store.graph().built(node.id, attempt.id, result), [this, callback](const PipelineResult& stored) {
-                                    if (stored.status == 200) {
-                                        advance(callback);
-                                    } else {
-                                        callback(stored);
-                                    }
-                                });
+                                if (artifact.is_null() || artifact.at("expired").get<bool>()) {
+                                    change(store.graph().failed(node.id, attempt.id, "required artifacts missing/expired"), callback);
+                                } else {
+                                    static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
+                                    require(artifact.at("id").get<std::uint64_t>() > 0 && artifact.at("workflow_run").at("id") == runId &&
+                                                artifact.at("size_in_bytes").get<std::uint64_t>() <= 1024ULL * 1024 * 1024 &&
+                                                std::regex_match(artifact.at("digest").get<std::string>(), digest),
+                                            "assigned artifact lacks a bounded immutable GitHub identity");
+                                    const nlohmann::json selected{{"id", artifact.at("id")},
+                                                                  {"name", artifact.at("name")},
+                                                                  {"digest", artifact.at("digest")},
+                                                                  {"size_bytes", artifact.at("size_in_bytes")},
+                                                                  {"run_id", runId},
+                                                                  {"job_id", job.at("id")},
+                                                                  {"run_attempt", 1}};
+                                    const auto result = nlohmann::json{{"run", attempt.buildRun},
+                                                                       {"assignment_sha256", Graph::digest(attempt.assignment)},
+                                                                       {"artifacts", {selected}}};
+                                    change(store.graph().built(node.id, attempt.id, result),
+                                           [this, callback](const PipelineResult& stored) {
+                                               if (stored.status == 200) {
+                                                   advance(callback);
+                                               } else {
+                                                   callback(stored);
+                                               }
+                                           });
+                                }
                             } catch (const std::exception& error) {
                                 callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
                             }

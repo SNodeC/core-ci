@@ -941,3 +941,30 @@
   integrated publication. Five targets assigned revisions 42–46, consuming existing verified
   prerequisite receipts. Existing tags/keys/packages unchanged. Initial HTTP request response
   expired while asynchronous work continued; assignment inspected, never resubmitted blindly.
+
+- Live new builds passed all five selected targets. AMD64 40296998946, ARM64 40297006247,
+  RPM 40297014470, IPK 40297002536 and APK 40297010660 (demo-join Actions).
+- Real ARM64 publication 40297258519 and IPK publication 40297837480 pass with the new
+  preparation/rendering path; controller/HTTPS receipts verified. New ARM64 apt client
+  40298188386 rejects the wrong key, installs demo-join 2.1.1-43 and runs the expected program.
+- Deliberate REST-initiated GitHub reruns: source AMD64 latest attempt2 fails before environment
+  resolution, attempt1 remains success. Publisher ARM64 latest attempt2 fails validation and
+  privileged publication is skipped; attempt1 remains success and graph remains published.
+- Live source full-rerun removed the original AMD64 environment/package artifacts (run-scoped
+  listing now empty). This prevents publication despite preserved attempt1 success. No
+  replacement dispatched. Requested owner policy for authoritative missing/expired artifacts
+  versus inaccessible evidence, plus a test-cap increase to 280; independent rows continue.
+
+- Owner approved missing/expired artifact failure and the bounded regression extension.
+  Reuse existing graph failure transition only after verified attempt-one success and a
+  complete, bounded artifact listing. Denied/incomplete listings preserve assignment.
+  Production delta for this change: +6 net lines; focused HTTP regression +18 net lines.
+- Relevant pipeline-boundaries passes (7.34 s), C++ build and format-check pass. No full
+  suite run. Restart preserved every existing execution/state before reconciliation.
+  Live reconciliation then marked AMD64 v2.1.1 failed: required artifacts missing/expired.
+  No replacement dispatched; ARM64, RPM, IPK and APK remain published.
+- APK 40298324889 and RPM 40298857335 publication pass. Four new HTTPS receipts and
+  controller published states agree; feed now retains 33 rows. Tree audit preserves all
+  299 prior immutable package/key/receipt/export blobs and unrelated paths. Only assigned
+  additions, affected indexes and deterministic status views changed. Updated deployment
+  evidence distinguishes these live checks from synthetic local tests.

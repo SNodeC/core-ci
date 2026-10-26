@@ -64,6 +64,8 @@ def exercise(args, directory):
     errors = []
     lose_next = False
     reject_workflow = False
+    unavailable_artifacts = False
+    missing_artifacts = False
     malformed_publication_jobs = False
     workflow = (Path(__file__).resolve().parents[1] / "deployment/source/core-ci-build.yml.in").read_text().replace("@WORKER@", "Owner/worker").replace("@TOOLING_SHA@", "f" * 40).encode()
     workflow_blob = hashlib.sha1(b"blob " + str(len(workflow)).encode() + b"\0" + workflow).hexdigest()
@@ -265,6 +267,10 @@ def exercise(args, directory):
                                 "name": ("core-ci publish " if run_id >= 500 else "build / core-ci package ") + assignment["attempt"],
                                 "status": run["status"], "conclusion": run["conclusion"],
                                 "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}]})
+                    elif parts[4] == "artifacts" and unavailable_artifacts:
+                        self.reply(unavailable_artifacts, {"total_count": 1, "artifacts": []})
+                    elif parts[4] == "artifacts" and missing_artifacts:
+                        self.reply(200, {"total_count": 0, "artifacts": []})
                     elif parts[4] == "artifacts":
                         self.reply(200, {"total_count": 2, "artifacts": [{"id": run_id + 3000, "name": assignment["artifact_name"] + "-environment"}, {"id": run_id + 2000, "name": assignment["artifact_name"],
                                          "digest": "sha256:" + "e" * 64, "size_in_bytes": 1024, "expired": False, "workflow_run": {"id": run_id}}]})
@@ -490,13 +496,24 @@ def exercise(args, directory):
             assert all(result[0] == 200 for result in outcomes), outcomes
             current = {row["id"]: row for row in request("/api/graph")[1]["executions"]}
             assert all(current[dispatches[index]["execution"]]["state"] == "failed" for index in (5, 6))
+            runs[106].update(conclusion="success")
+            assert request("/api/work/retry", {"execution": dispatches[6]["execution"]})[0] == 202
+            runs[107].update(status="completed", conclusion="success")
+            for unavailable_artifacts in (403, 200):
+                assert report(107)[0] == 503
+                assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[7]["execution"])["state"] == "building"
+            unavailable_artifacts = False
+            missing_artifacts = True
+            assert report(107)[0] == 200
+            current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[7]["execution"])
+            assert current["state"] == "failed" and current["failure"] == "required artifacts missing/expired"
             original_settings = settings.read_text()
             lifecycle.stop(application)
             settings.write_text(original_settings.replace('pipeline.tooling-sha="' + "f" * 40 + '"', 'pipeline.tooling-sha="' + "e" * 40 + '"'))
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             status, mismatch = request("/api/work/request", {"repository": "Owner/example", "tag": "v2.0.0-rc.1"})
-            assert status == 422 and "approved blob" in mismatch["error"] and len(dispatches) == 7
+            assert status == 422 and "approved blob" in mismatch["error"] and len(dispatches) == 8
             lifecycle.stop(application)
             settings.write_text(original_settings)
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
