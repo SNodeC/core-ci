@@ -25,13 +25,16 @@ namespace coreci {
                   const std::string& commit,
                   const std::string& path,
                   const Callback& callback,
-                  bool publicRepository = false);
+                  bool publicRepository = false,
+                  const std::string& rootTree = "",
+                  bool contents = true);
         static std::string blobSha(const std::string& content);
 
     private:
         struct Reading {
             std::string repository;
             bool publicRepository = false;
+            bool contents = true;
             nlohmann::json source;
             std::string tag;
             std::vector<std::string> path;

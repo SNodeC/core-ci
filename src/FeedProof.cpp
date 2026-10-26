@@ -52,7 +52,11 @@ namespace coreci {
                                               const auto revision = result.body.front().at("sha").get<std::string>();
                                               static const std::regex sha("^[a-f0-9]{40}$");
                                               require(std::regex_match(revision, sha), "invalid feed commit identity");
-                                              read(node, revision, path, callback);
+                                              read(node,
+                                                   revision,
+                                                   result.body.front().at("commit").at("tree").at("sha").get<std::string>(),
+                                                   path,
+                                                   callback);
                                           } catch (const std::exception& error) {
                                               callback({nullptr, error.what()});
                                           }
@@ -64,7 +68,8 @@ namespace coreci {
         }
     }
 
-    void FeedProof::read(const Node& node, const std::string& revision, const std::string& path, const Callback& callback) {
+    void FeedProof::read(
+        const Node& node, const std::string& revision, const std::string& rootTree, const std::string& path, const Callback& callback) {
         const auto feed = node.source.at("deployment").at("feed");
         const auto repository = feed.at("repository").get<std::string>();
         sources.file(
@@ -103,6 +108,7 @@ namespace coreci {
                     callback({nullptr, error.what()});
                 }
             },
-            true);
+            true,
+            rootTree);
     }
 } // namespace coreci

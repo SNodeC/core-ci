@@ -189,7 +189,9 @@ namespace coreci {
                             const std::string& commit,
                             const std::string& path,
                             const Callback& callback,
-                            bool publicRepository) {
+                            bool publicRepository,
+                            const std::string& rootTree,
+                            bool contents) {
         try {
             static const std::regex pathSyntax(R"(^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$)");
             if (!validSha(commit) || path.size() > 512 || !std::regex_match(path, pathSyntax)) {
@@ -198,6 +200,7 @@ namespace coreci {
                 const auto reading = std::make_shared<Reading>();
                 reading->repository = repository;
                 reading->publicRepository = publicRepository;
+                reading->contents = contents;
                 reading->source = {{"commit", commit}};
                 reading->callback = callback;
                 std::size_t offset = 0;
@@ -213,18 +216,23 @@ namespace coreci {
                 if (!safe) {
                     throw std::invalid_argument("selected file must remain inside its checkout");
                 }
-                request(reading, "/git/commits/" + commit, [this, reading, commit](const GitHubResult& result) {
-                    if (result.status != 200 || !result.error.empty()) {
-                        reading->callback({result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
-                    } else {
-                        try {
-                            require(result.body.at("sha") == commit, "definition commit differs from selected source");
-                            tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
-                        } catch (const std::exception& error) {
-                            reading->callback({422, nullptr, "", "", error.what()});
+                if (!rootTree.empty()) {
+                    tree(reading, rootTree, 0);
+                } else {
+                    request(reading, "/git/commits/" + commit, [this, reading, commit](const GitHubResult& result) {
+                        if (result.status != 200 || !result.error.empty()) {
+                            reading->callback(
+                                {result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
+                        } else {
+                            try {
+                                require(result.body.at("sha") == commit, "definition commit differs from selected source");
+                                tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
+                            } catch (const std::exception& error) {
+                                reading->callback({422, nullptr, "", "", error.what()});
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
         } catch (const std::exception& error) {
             callback({422, nullptr, "", "", error.what()});
@@ -263,7 +271,12 @@ namespace coreci {
                         } else {
                             require(selected.at("type") == "blob" && (selected.at("mode") == "100644" || selected.at("mode") == "100755"),
                                     "selected file must be regular, not a symlink or submodule");
-                            blob(reading, selected.at("sha").get<std::string>());
+                            require(validSha(selected.at("sha").get<std::string>()), "selected file has invalid blob identity");
+                            if (reading->contents) {
+                                blob(reading, selected.at("sha").get<std::string>());
+                            } else {
+                                reading->callback({200, reading->source, "", selected.at("sha").get<std::string>(), ""});
+                            }
                         }
                     } catch (const std::exception& error) {
                         reading->callback({422, nullptr, "", "", error.what()});

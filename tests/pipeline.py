@@ -54,6 +54,8 @@ def exercise(args, directory):
     definitions = {}
     workflow_files = {}
     build_status_reads = []
+    request_trace = []
+    probe_delay = 0
     trees = {}
     blobs = {}
     writes = 0
@@ -68,6 +70,7 @@ def exercise(args, directory):
     lose_next = False
     reject_workflow = False
     delayed_run = False
+    inaccessible_run = False
     unavailable_artifacts = False
     missing_artifacts = False
     malformed_publication_jobs = False
@@ -95,6 +98,7 @@ def exercise(args, directory):
 
     register(head, definition)
     register(source_sha, definition)
+    register("b" * 40, definition)
     older_definition = json.loads(json.dumps(definition))
     older_definition["build"]["native"] = "ci/native-older.sh"
     register(older_sha, older_definition)
@@ -104,6 +108,7 @@ def exercise(args, directory):
             pass
 
         def reply(self, status, body):
+            time.sleep(probe_delay)
             content = json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Length", str(len(content)))
@@ -114,12 +119,13 @@ def exercise(args, directory):
             self.close_connection = True
 
         def do_POST(self):
+            request_trace.append((time.monotonic(), self.command, self.path))
             nonlocal lose_next
             value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/app/installations/7/access_tokens":
                 if value["repository_ids"] not in ([99], [1000]) or value["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}, {"contents": "write", "workflows": "write"}):
                     errors.append("unexpected installation token scope")
-                self.reply(201, {"token": "synthetic-pipeline-token"})
+                self.reply(201, {"token": "synthetic-pipeline-token", "expires_at": "2099-01-01T00:00:00Z"})
             elif self.path == "/repos/Owner/example/actions/workflows/core-ci-build.yml/dispatches":
                 try:
                     assignment = json.loads(value["inputs"]["assignment"])
@@ -140,7 +146,11 @@ def exercise(args, directory):
                     run = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 99}, "head_repository": {"id": 99},
                            "actor": {"id": 42}, "display_title": "Build " + assignment["label"],
                            "path": ".github/workflows/core-ci-build.yml", "head_sha": head,
+                           "head_commit": {"id": head, "tree_id": hashlib.sha1(("root" + head).encode()).hexdigest()},
                            "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id) + ("x" * 65536 if run_id == 103 else ""), "status": "queued" if run_id == 100 else "in_progress", "conclusion": None}
+                    if run_id == 103:
+                        run["head_sha"] = "b" * 40
+                        run["head_commit"] = {"id": run["head_sha"], "tree_id": hashlib.sha1(("root" + run["head_sha"]).encode()).hexdigest()}
                     runs[run_id] = run
                     dispatches.append(assignment)
                     if lose_next:
@@ -167,7 +177,8 @@ def exercise(args, directory):
                     run_id = 500 + len(publications)
                     runs[run_id] = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 1000}, "head_repository": {"id": 1000},
                                     "actor": {"id": 42}, "display_title": "Publish " + selected["label"],
-                                    "path": ".github/workflows/core-ci-publish.yml", "head_sha": head, "html_url": "https://github.com/Owner/worker/actions/runs/" + str(run_id),
+                                    "path": ".github/workflows/core-ci-publish.yml", "head_sha": head,
+                                    "head_commit": {"id": head, "tree_id": hashlib.sha1(("root" + head).encode()).hexdigest()}, "html_url": "https://github.com/Owner/worker/actions/runs/" + str(run_id),
                                     "status": "in_progress", "conclusion": None}
                     publications.append({"assignment": selected, "build_result": json.loads(value["inputs"]["build_result"])})
                     self.reply(200, {"workflow_run_id": run_id})
@@ -179,6 +190,7 @@ def exercise(args, directory):
                 self.reply(404, {})
 
         def do_PUT(self):
+            request_trace.append((time.monotonic(), self.command, self.path))
             nonlocal head, writes
             value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             try:
@@ -217,6 +229,7 @@ def exercise(args, directory):
                 self.reply(422, {})
 
         def do_GET(self):
+            request_trace.append((time.monotonic(), self.command, self.path))
             parsed = urllib.parse.urlsplit(self.path)
             path = parsed.path
             if path.startswith("/receipts/"):
@@ -238,7 +251,7 @@ def exercise(args, directory):
                 elif suffix == "/git/ref/heads/main":
                     self.reply(200, {"object": {"sha": head}})
                 elif suffix == "/commits/main":
-                    self.reply(200, {"sha": head})
+                    self.reply(200, {"sha": head, "commit": {"tree": {"sha": hashlib.sha1(("root" + head).encode()).hexdigest()}}})
                 elif suffix == "/tags":
                     self.reply(200, [{"name": "v0.9.0+build"}, {"name": "v2.0.0-rc.1"}])
                 elif suffix in ("/git/ref/tags/v0.9.0%2Bbuild", "/git/ref/tags/v2.0.0-rc.1"):
@@ -247,7 +260,7 @@ def exercise(args, directory):
                                      "object": {"type": "commit", "sha": older_sha if older else source_sha}})
                 elif public and suffix == "/commits":
                     selected_path = urllib.parse.parse_qs(parsed.query)["path"][0]
-                    self.reply(200, [{"sha": "e" * 40}] if selected_path in feed_files else [])
+                    self.reply(200, [{"sha": "e" * 40, "commit": {"tree": {"sha": feed_commits["e" * 40]}}}] if selected_path in feed_files else [])
                 elif public and suffix.startswith("/git/commits/") and suffix[13:] in feed_commits:
                     self.reply(200, {"sha": suffix[13:], "tree": {"sha": feed_commits[suffix[13:]]}})
                 elif suffix.startswith("/git/commits/") and suffix[13:] in definitions:
@@ -269,18 +282,20 @@ def exercise(args, directory):
                     if len(parts) == 4:
                         self.reply(200, {**run, "run_attempt": 2, "status": "completed", "conclusion": "failure"})
                     elif parts[4:6] == ["attempts", "1"] and len(parts) == 6:
+                        snapshot = json.loads(json.dumps(run))
                         if delayed_run:
                             time.sleep(1)
                         if run_id < 500:
                             build_status_reads.append(run_id)
-                        self.reply(200, run)
+                        self.reply(200 if inaccessible_run == "malformed" or not inaccessible_run else 403,
+                                   {"id": "invalid-run-id"} if inaccessible_run == "malformed" else {} if inaccessible_run else snapshot)
                     elif parts[4:] == ["attempts", "1", "jobs"]:
-                        if run_id >= 500 and malformed_publication_jobs:
+                        if run_id >= 500 and malformed_publication_jobs is True:
                             self.reply(200, {"total_count": 1, "jobs": "not a job array"})
                         else:
-                            self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": job_attempt,
+                            self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": job_attempt, "head_sha": run["head_sha"],
                                 "name": ("Publish " if run_id >= 500 else "build / Build ") + assignment["label"],
-                                "status": run["status"], "conclusion": run["conclusion"],
+                                "status": "in_progress" if malformed_publication_jobs == "running" else run["status"], "conclusion": run["conclusion"],
                                 "started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z",
                                 "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}]})
                     elif parts[4] == "artifacts" and unavailable_artifacts:
@@ -338,14 +353,24 @@ def exercise(args, directory):
             result = (response.status, json.load(response))
         return result
 
-    def report(run_id, signature=None, repository_id=99):
-        body = {"installation": {"id": 7}, "repository": {"id": 1000 if run_id >= 500 else repository_id, "full_name": "Owner/worker" if run_id >= 500 else "Owner/example"}, "workflow_run": runs[run_id]}
+    def report(run_id, signature=None, repository_id=99, job=False, job_name=None):
+        body = {"installation": {"id": 7}, "repository": {"id": 1000 if run_id >= 500 else repository_id, "full_name": "Owner/worker" if run_id >= 500 else "Owner/example"}, "action": "completed" if runs[run_id]["status"] == "completed" else "in_progress" if runs[run_id]["status"] == "in_progress" else "requested",
+                "workflow_run": runs[run_id]}
+        if job:
+            assignment = publications[run_id - 500]["assignment"] if run_id >= 500 else dispatches[run_id - 100]
+            body["action"] = runs[run_id]["status"]
+            body["workflow_job"] = {"id": run_id + 1000, "run_id": run_id, "run_attempt": job_attempt, "head_sha": runs[run_id]["head_sha"],
+                "name": job_name or ("Publish " if run_id >= 500 else "build / Build ") + assignment["label"],
+                "status": runs[run_id]["status"], "conclusion": runs[run_id]["conclusion"],
+                "started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z",
+                "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}
+            del body["workflow_run"]
         raw = json.dumps(body).encode()
         signature = signature or "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
         log_path = root / "app.log"
         offset = log_path.stat().st_size
         started = time.monotonic()
-        result = request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature}, webhook=True)
+        result = request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_job" if job else "workflow_run", "X-Hub-Signature-256": signature}, webhook=True)
         if delayed_run:
             assert time.monotonic() - started < 0.8, "webhook waited for delayed GitHub evidence"
         if result[0] == 202 and "accepted" in result[1].get("event", ""):
@@ -361,6 +386,16 @@ def exercise(args, directory):
             result = (completed["status"], completed["result"])
         return result
 
+    def start():
+        offset = (root / "app.log").stat().st_size
+        process = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+        lifecycle.wait_http(port, process)
+        deadline = time.monotonic() + 5
+        while "Startup graph reconciliation: " not in (root / "app.log").read_bytes()[offset:].decode() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert "Startup graph reconciliation: " in (root / "app.log").read_bytes()[offset:].decode(), "restart reconciliation did not finish"
+        return process
+
     database = None
     application = None
     try:
@@ -372,8 +407,7 @@ def exercise(args, directory):
             schema = (Path(__file__).resolve().parents[1] / "sql/schema.sql").read_text()
             lifecycle.query(db_socket, "CREATE DATABASE core_ci; USE core_ci; " + schema +
                 " CREATE USER 'core_ci_test'@'localhost'; GRANT SELECT,INSERT,UPDATE,DELETE ON core_ci.* TO 'core_ci_test'@'localhost';")
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
+            application = start()
             # Public TLS endpoint has no administration/UI routes; HTTP endpoint has no webhook.
             for endpoint, path, payload in ((webhook_origin, "/", None), (webhook_origin, "/api/graph", None), (webhook_origin, "/api/events", None),
                                             (webhook_origin, "/api/repositories/save", b"{}"), (origin, "/github/webhook", b"{}")):
@@ -404,23 +438,78 @@ def exercise(args, directory):
             lifecycle.stream_event(evidence_stream)
             lifecycle.stream_event(evidence_stream)
             job_attempt = 2
-            assert report(100)[0] == 409, "attempt-2 job evidence was accepted"
+            assert report(100, job=True)[0] == 422, "attempt-2 job evidence was accepted"
             job_attempt = 1
             runs[100]["status"] = "in_progress"
+            offset = len(request_trace)
+            progress_started = time.monotonic()
+            probe_delay = 0.3
             assert report(100)[0] == 200
+            assert report(100, job=True)[0] == 200
             event, early = lifecycle.stream_event(evidence_stream)
             assert event == "graph"
+            while event != "graph" or next(row for row in early["executions"] if row["id"] == first_id)["build_job"].get("job_status") != "in_progress":
+                event, early = lifecycle.stream_event(evidence_stream)
             early = next(row for row in early["executions"] if row["id"] == first_id)
             assert early["activity"] == "build running" and early["build_job"]["started_at"] == "2026-10-26T10:00:00Z"
             assert "completed_at" not in early["build_job"] and early["state"] == "building"
+            progress_seconds = time.monotonic() - progress_started
+            assert progress_seconds < 0.3, "graph/SSE progress waited for derivative GitHub work"
+            assert not any("/actions/runs/" in item[2] for item in request_trace[offset:]), "bound progress still read execution evidence"
+            probe_delay = 0
+            (Path(args.directory) / "progress-latency.json").write_text(json.dumps({"seconds": progress_seconds, "api_delay_seconds": 0.3}) + "\n")
             public_early = next(row for row in request("/public/status", webhook=True)[1]["executions"] if row["id"] == first_id)
             assert public_early["activity"] == early["activity"] and public_early["build_job"] == early["build_job"]
             assert public_early["build_job_url"] == early["build_run"]["html_url"] + "/job/" + str(early["build_job"]["job_id"])
             evidence_stream.close()
+            offset = len(request_trace)
+            for field, wrong in (("actor", {"id": 999}), ("path", ".github/workflows/wrong.yml"), ("run_attempt", 2)):
+                previous = runs[100][field]
+                runs[100][field] = wrong
+                assert report(100)[0] in (409, 422), "untrusted run identity advanced work"
+                runs[100][field] = previous
+            assert not any("/actions/runs/" in item[2] or "/git/" in item[2] for item in request_trace[offset:])
+            # A delayed queued report cannot erase the authenticated running evidence.
+            runs[100]["status"] = "queued"
+            assert report(100)[0] == 200
+            runs[100]["status"] = "in_progress"
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == first_id)["activity"] == "build running"
+            offset = len(request_trace)
+            assert report(100, job=True, job_name="unrelated helper") == (202, {"event": "unassigned execution ignored"})
+            assert len(request_trace) == offset, "helper job repeated assigned-run inspection"
             immutable_run = early["build_run"]
             generation = request("/api/graph")[1]["generation"]
             assert report(100)[0] == 200
             assert request("/api/graph")[1]["generation"] == generation, "duplicate progress report mutated the graph"
+            # A burst of valid notifications must not multiply immutable workflow reads.
+            probe_delay = 0.03
+            trace_offset = len(request_trace)
+            log_offset = (root / "app.log").stat().st_size
+            burst = {"installation": {"id": 7}, "repository": {"id": 99, "full_name": "Owner/example"},
+                     "action": "in_progress", "workflow_run": runs[100]}
+            signature = "sha256=" + hmac.new(secret, json.dumps(burst).encode(), hashlib.sha256).hexdigest()
+            started = time.monotonic()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                responses = list(pool.map(lambda _: request("/github/webhook", burst,
+                    {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature},
+                    webhook=True), range(8)))
+            assert all(result[0] == 202 for result in responses), responses
+            deadline = started + 20
+            complete = False
+            while not complete and time.monotonic() < deadline:
+                complete = (root / "app.log").read_bytes()[log_offset:].decode().count("GitHub webhook completed: ") == 8
+                if not complete:
+                    time.sleep(0.02)
+            assert complete, "notification burst did not drain"
+            burst_requests = request_trace[trace_offset:]
+            measurement = {"notifications": 8, "api_delay_seconds": probe_delay, "seconds": time.monotonic() - started,
+                           "http_requests": len(burst_requests),
+                           "workflow_reads": sum("/git/" in item[2] for item in burst_requests)}
+            (Path(args.directory) / "notification-burst.json").write_text(json.dumps(measurement, indent=2) + "\n")
+            print("Synthetic notification burst:", json.dumps(measurement), flush=True)
+            assert not burst_requests, measurement
+            probe_delay = 0
+            assert request("/api/graph")[1]["generation"] == generation, "notification burst changed unchanged evidence"
             status, preview = request("/api/repositories/workflow", {"repository": "Owner/example"})
             assert status == 200 and preview["proposed"].encode() == workflow and preview["blob_sha"] == workflow_blob, preview
             status, unchanged = request("/api/repositories/workflow", {"repository": "Owner/example", "head": head, "blob_sha": workflow_blob, "write": True})
@@ -452,8 +541,15 @@ def exercise(args, directory):
             assert report(100)[0] == 200 and len(dispatches) == 1
             delayed_run = False
             lifecycle.stop(application)
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
+            inaccessible_run = True
+            offset = len(request_trace)
+            application = start()
+            assert sum("/runs/100/attempts/1" in item[2] for item in request_trace[offset:]) == 1, "restart repeated inaccessible evidence"
+            assert len(dispatches) == 1 and next(row for row in request("/api/graph")[1]["executions"] if row["id"] == first_id)["state"] == "building"
+            inaccessible_run = "malformed"
+            malformed = request("/api/work/reconcile", {})[1]
+            assert any("inaccessible" in item.get("error", "") for item in malformed["reconciled"]), "malformed run identity escaped recovery validation"
+            inaccessible_run = False
             assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 1, "restart dispatched a replacement"
             restored_early = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == first_id)
             assert restored_early["build_job"] == early["build_job"] and restored_early["build_run"] == immutable_run
@@ -481,6 +577,23 @@ def exercise(args, directory):
             graph = request("/api/graph")[1]["executions"]
             assert all(row["target_row"]["id"] == row["target"] for row in graph)
             assert next(row for row in graph if row["id"] == older["execution"])["build_run"] is None
+            offset = len(request_trace)
+            probe_delay = 0.03
+            delayed_run = True
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as reports:
+                pending = [reports.submit(report, 101, job=True) for _ in range(8)]
+                deadline = time.monotonic() + 5
+                while not any("/runs/101/attempts/1" in item[2] for item in request_trace[offset:]) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert time.monotonic() < deadline, "missing run proof was not requested"
+                runs[101].update(status="completed", conclusion="failure")
+                assert report(101)[0] == 200
+                outcomes = [future.result() for future in pending]
+            delayed_run = False
+            probe_delay = 0
+            assert all(outcome[0] == 200 for outcome in outcomes), outcomes
+            assert sum(item[2] == "/repos/Owner/example/actions/runs/101/attempts/1" for item in request_trace[offset:]) == 1, "job-first reports multiplied run proof"
+            assert not any("/git/" in item[2] for item in request_trace[offset:]), "job-first binding repeated preflight workflow proof"
             assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 2, "lost dispatch response caused replay"
             runs[101].update(status="completed", conclusion="failure")
             assert report(101)[0] == 200
@@ -493,7 +606,19 @@ def exercise(args, directory):
             assert reference[0]["assignment_sha256"] == hashlib.sha256(json.dumps(older, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             assert report(101)[0] == 200, "late report was not idempotent"
             runs[102].update(status="completed", conclusion="success")
-            assert report(102)[0] == 202 and len(publications) == 1
+            assert report(102, job=True)[0] == 200, "job completion without run conclusion advanced work"
+            offset = len(request_trace)
+            probe_delay = 0.03
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as reports:
+                outcomes = list(reports.map(lambda _: report(102), range(8)))
+            probe_delay = 0
+            deadline = time.monotonic() + 5
+            while len(publications) != 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert all(outcome[0] in (200, 202) for outcome in outcomes) and len(publications) == 1, outcomes
+            assert sum("/runs/102/artifacts?" in item[2] for item in request_trace[offset:]) == 1, "overlapping completion multiplied artifact reads"
+            assert not any("/runs/102/attempts/1/jobs" in item[2] for item in request_trace[offset:]), "complete job webhook still caused a job listing"
+            assert report(500, job=True)[0] == 200
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert current["state"] == "publishing"
             assert current["activity"] == "publication running"
@@ -509,12 +634,12 @@ def exercise(args, directory):
             runs[100].update(status="completed", conclusion="success")
             assert report(100)[0] == 200 and len(publications) == 1, "second writer started before the assigned publication resolved"
             event, pushed = lifecycle.stream_event(stream)
-            remaining = 20
-            while remaining > 0 and (event != "graph" or not any(row["id"] == older["execution"] and row["revision"] == current["revision"]
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and (event != "graph" or not any(row["id"] == older["execution"] and row["revision"] == current["revision"]
                     and row["state"] == "building" for row in pushed["executions"])):
                 event, pushed = lifecycle.stream_event(stream)
-                remaining -= 1
-            assert remaining > 0, "explicit retry did not update SSE"
+            assert event == "graph" and any(row["id"] == older["execution"] and row["revision"] == current["revision"]
+                and row["state"] == "building" for row in pushed["executions"]), "explicit retry did not update SSE"
             stream.close()
             generation = request("/api/graph")[1]["generation"]
             assert report(102)[0] == 200 and len(dispatches) == 3
@@ -525,8 +650,7 @@ def exercise(args, directory):
             assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["state"] == "publishing"
             verified_reads = build_status_reads.count(100)
             lifecycle.stop(application)
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
+            application = start()
             request("/api/work/reconcile", {})
             assert build_status_reads.count(100) == verified_reads, "restart re-read an already persisted verified build"
             assert len(publications) == 1, "restart replaced uncertain publication"
@@ -553,12 +677,19 @@ def exercise(args, directory):
             trees[ids[1]] = [{"path": selected["execution"], "type": "tree", "mode": "040000", "sha": ids[2]}]
             trees[ids[2]] = [{"path": str(selected["revision"]) + ".json", "type": "blob", "mode": "100644", "sha": sha}]
             deployed_files["/" + path] = b"modified HTTPS receipt"
-            assert report(500)[0] == 202, "modified HTTPS receipt authorized publication"
+            offset = len(request_trace)
+            assert report(500)[0] == 200
+            assert not any("/repos/Owner/feed" in item[2] for item in request_trace[offset:]), request_trace[offset:]
+            assert request("/api/work/reconcile", {})[0] == 200
             unverified = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert unverified["state"] == "publishing" and unverified["receipt"] is None
             deployed_files["/" + path] = raw
             verified_after = time.time()
-            assert report(500)[0] == 202, "verified publication did not release the next completed build"
+            offset = len(request_trace)
+            assert request("/api/work/reconcile", {})[0] == 200, "verified publication did not release the next completed build"
+            verification = [item for item in request_trace[offset:] if "/repos/Owner/feed" in item[2] or item[2] == "/" + path]
+            assert len(verification) == 7, verification
+            assert not any("/git/commits/" in item[2] for item in verification), "receipt proof repeated the known commit-tree read"
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert current["state"] == "published" and len(publications) == 2
             recorded_receipt = current["receipt"]
@@ -572,13 +703,24 @@ def exercise(args, directory):
             runs[100].update(status="completed", conclusion="success")
             assert report(100)[0] == 200 and len(publications) == 2, "completed build was dispatched for publication more than once"
             runs[501].update(status="completed", conclusion="failure")
+            malformed_publication_jobs = "running"
+            offset = len(request_trace)
+            assert report(501)[0] == 202, "running publication job was considered definitive"
+            assert sum("/runs/501/attempts/1/jobs" in item[2] for item in request_trace[offset:]) == 1, "incomplete job fallback started polling"
             malformed_publication_jobs = True
-            assert report(501)[0] == 202, "malformed job evidence authorized replacement"
+            assert request("/api/work/reconcile", {})[0] == 200
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])["state"] == "publishing", "malformed job evidence authorized replacement"
             malformed_publication_jobs = False
-            assert report(501)[0] == 200, "proven pre-push failure was left uncertain"
+            offset = len(request_trace)
+            assert report(501, job=True)[0] == 200, "proven pre-push failure was left uncertain"
+            assert not any("/repos/Owner/feed" in entry[2] for entry in request_trace[offset:]), "skipped push searched the feed"
             initial = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])
             assert initial["state"] == "failed" and "before the feed-update step" in initial["failure"]
+            offset = len(request_trace)
             assert request("/api/work/retry", {"execution": initial["id"]})[0] == 202 and len(dispatches) == 4
+            changed_trees = {hashlib.sha1((kind + "b" * 40).encode()).hexdigest() for kind in ("root", "github", "workflows")}
+            assert sum(item[2].split("/")[-1] in changed_trees for item in request_trace[offset:]) == 3, request_trace[offset:]
+            assert not any("/git/commits/" in item[2] or "/git/blobs/" in item[2] for item in request_trace[offset:]), request_trace[offset:]
             assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts").strip() == "4"
             runs[103].update(status="completed", conclusion="success")
             status, blocked = report(103)
@@ -618,28 +760,48 @@ def exercise(args, directory):
             assert request("/api/work/retry", {"execution": dispatches[6]["execution"]})[0] == 202
             runs[107].update(status="completed", conclusion="success")
             for unavailable_artifacts in (403, 200):
-                assert report(107)[0] == 503
+                if unavailable_artifacts == 403:
+                    assert report(107)[0] == 503
+                else:
+                    reconciled = request("/api/work/reconcile", {})[1]
+                    assert any(item.get("assignment_preserved") and "artifacts" in item.get("error", "") for item in reconciled["reconciled"])
                 assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[7]["execution"])["state"] == "building"
             unavailable_artifacts = False
             missing_artifacts = True
-            assert report(107)[0] == 200
+            assert request("/api/work/reconcile", {})[0] == 200
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[7]["execution"])
             assert current["state"] == "failed" and current["failure"] == "required artifacts missing/expired"
             assert current["build_job"]["completed_at"] == "2026-10-26T10:03:25Z", "failure lost verified completion timing"
             original_settings = settings.read_text()
             lifecycle.stop(application)
             settings.write_text(original_settings.replace('pipeline.tooling-sha="' + "f" * 40 + '"', 'pipeline.tooling-sha="' + "e" * 40 + '"'))
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
+            application = start()
             status, mismatch = request("/api/work/request", {"repository": "Owner/example", "tag": "v2.0.0-rc.1"})
             assert status == 422 and "approved blob" in mismatch["error"] and len(dispatches) == 8
             lifecycle.stop(application)
             settings.write_text(original_settings)
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
+            application = start()
             historical = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert historical["receipt"] == recorded_receipt, "restart changed publication timing or summary"
             assert not errors, errors
+            deadline = time.monotonic() + 5
+            while status_refreshes[-1] != request("/api/graph")[1]["generation"] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert status_refreshes[-1] == request("/api/graph")[1]["generation"], "latest generation never reached status dispatch"
+            counts = {"token_mint": 0, "evidence": 0, "source_read_or_edit": 0, "worker_approval": 0,
+                      "build_dispatch": 0, "publication_dispatch": 0, "status_dispatch": 0, "feed_github": 0, "feed_https": 0}
+            for _, method, path in request_trace:
+                category = ("token_mint" if "/access_tokens" in path else "status_dispatch" if "/core-ci-status.yml/dispatches" in path
+                    else "build_dispatch" if "/core-ci-build.yml/dispatches" in path else "publication_dispatch" if "/dispatches" in path
+                    else "evidence" if "/actions/" in path else "feed_github" if path.startswith("/repos/Owner/feed")
+                    else "feed_https" if path.startswith("/receipts/") else "worker_approval" if path.startswith("/repos/Owner/worker")
+                    else "source_read_or_edit")
+                counts[category] += 1
+            assert sum(counts.values()) == len(request_trace)
+            counts["total"] = len(request_trace)
+            (Path(args.directory) / "request-counts.json").write_text(json.dumps(counts, indent=2) + "\n")
+            print("Synthetic session requests:", json.dumps(counts), flush=True)
+            assert status_refreshes[-1] == request("/api/graph")[1]["generation"], "latest generation never reached status dispatch"
             print("PASS local pipeline: enrollment/highest tag, committed dispatch, raw HMAC, exact older source, lost response, restart, failure/retry, late reports and assigned artifact identities")
     finally:
         lifecycle.stop(application)

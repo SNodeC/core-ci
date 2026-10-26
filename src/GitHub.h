@@ -4,6 +4,7 @@
 #include "HttpClient.h"
 
 #include <cstdint>
+#include <ctime>
 #include <functional>
 #include <map>
 #include <memory>
@@ -57,6 +58,13 @@ namespace coreci {
                      bool publicRepository = false);
 
     private:
+        struct Token {
+            GitHubResult result;
+            std::time_t expires = 0;
+            std::vector<Callback> waiting;
+        };
+        std::map<std::string, Token> tokens;
+        void authorize(const nlohmann::json& grant, const Callback& callback);
         std::string jwt() const;
         std::map<std::string, std::uint64_t> repositoryIds;
         void send(const std::string& method,

@@ -19,7 +19,8 @@ namespace coreci {
         void verify(const Node& node, const Callback& callback);
 
     private:
-        void read(const Node& node, const std::string& revision, const std::string& path, const Callback& callback);
+        void
+        read(const Node& node, const std::string& revision, const std::string& rootTree, const std::string& path, const Callback& callback);
         const PipelineConfig& config;
         GitHub& github;
         SourceReader& sources;

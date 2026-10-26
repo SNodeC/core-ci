@@ -5,6 +5,8 @@
 #include "FeedProof.h"
 #include "PipelineConfig.h"
 
+#include <set>
+
 namespace coreci {
     struct PipelineResult {
         int status = 200;
@@ -50,7 +52,31 @@ namespace coreci {
 
         void readSources(const std::shared_ptr<Selecting>& selection);
         void commitSelection(const std::shared_ptr<Selecting>& selection);
+        void
+        read(const std::string& repository, const std::string& suffix, const nlohmann::json& permissions, const GitHub::Callback& callback);
         void workflow(const std::string& repository, const nlohmann::json& definition, const SourceReader::Callback& callback);
+        void proof(const std::string& repository,
+                   const nlohmann::json& definition,
+                   const std::string& commit,
+                   const std::string& rootTree,
+                   const SourceReader::Callback& callback);
+        void observe(const std::string& execution,
+                     const std::string& attempt,
+                     bool publication,
+                     const nlohmann::json& run,
+                     const nlohmann::json& job,
+                     const Callback& callback,
+                     bool recovery = false);
+        void record(const std::string& execution,
+                    const std::string& attempt,
+                    bool publication,
+                    const nlohmann::json& identity,
+                    const nlohmann::json& observation,
+                    const Callback& callback,
+                    bool recovery,
+                    bool readJobs);
+        void complete(
+            const std::string& execution, const std::string& attempt, bool publication, const Callback& callback, bool readJobs = false);
         void dispatch(const Node& node, bool publication, const Callback& callback);
         void search(const std::string& execution,
                     const std::string& attempt,
@@ -59,10 +85,15 @@ namespace coreci {
                     const std::shared_ptr<std::vector<std::uint64_t>>& matches,
                     const Callback& callback);
         void buildArtifacts(const Node& node, const nlohmann::json& job, const Callback& callback);
-        void publicationResult(const Node& node, const nlohmann::json& run, const nlohmann::json& job, const Callback& callback);
+        void publicationResult(const Node& node, const nlohmann::json& evidence, const Callback& callback);
         void change(const Node& node, const Callback& callback);
         static std::string title(const Attempt& attempt, bool publication, bool job = false);
 
+        std::map<std::string, std::vector<GitHub::Callback>> reads;
+        std::map<std::string, SourceResult> proofs;
+        std::map<std::string, std::vector<SourceReader::Callback>> proofReads;
+        std::set<std::string> completionReads;
+        bool refreshing = false;
         const PipelineConfig& config;
         const GitHubConfig& app;
         GitHub& github;

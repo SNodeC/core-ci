@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import datetime
 import http.server
 import json
 import os
@@ -53,25 +54,34 @@ def exercise(args, directory):
 
         def do_POST(self):
             try:
-                seen.append("token")
-                assert self.path == "/app/installations/7/access_tokens"
-                value = self.headers["Authorization"].removeprefix("Bearer ")
-                header, payload, signature = value.split(".")
-                claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-                assert claims["iss"] == "42"
-                assert abs(claims["iat"] - (time.time() - 60)) < 30
-                assert time.time() < claims["exp"] <= time.time() + 600
-                sig = root / "signature"
-                sig.write_bytes(base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)))
-                run(["openssl", "dgst", "-sha256", "-verify", str(public), "-signature", str(sig)], (header + "." + payload).encode())
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                assert body == {"repository_ids": [99], "permissions": {"contents": "read"}}
-                if args.case == "token-rejected":
-                    self.send_json(403, {"message": "fixture rejected token"})
-                elif args.case == "token-lost-response":
+                if args.case == "mutation-lost-response" and self.path == "/repos/Owner/example":
+                    seen.append("repository")
+                    assert self.headers.get("Authorization") == "Bearer unit-test-only-token"
                     self.close_connection = True
                 else:
-                    self.send_json(201, {"token": "unit-test-only-token"})
+                    seen.append("token")
+                    assert self.path == "/app/installations/7/access_tokens"
+                    value = self.headers["Authorization"].removeprefix("Bearer ")
+                    header, payload, signature = value.split(".")
+                    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                    assert claims["iss"] == "42"
+                    assert abs(claims["iat"] - (time.time() - 60)) < 30
+                    assert time.time() < claims["exp"] <= time.time() + 600
+                    sig = root / "signature"
+                    sig.write_bytes(base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)))
+                    run(["openssl", "dgst", "-sha256", "-verify", str(public), "-signature", str(sig)], (header + "." + payload).encode())
+                    body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    assert body["repository_ids"] == [99]
+                    assert body["permissions"] in ({"contents": "read"}, {"actions": "read"}) if args.case == "token-reuse" else body["permissions"] == {"contents": "read"}
+                    if args.case == "token-rejected":
+                        self.send_json(403, {"message": "fixture rejected token"})
+                    elif args.case == "token-lost-response":
+                        self.close_connection = True
+                    else:
+                        expiry = "2000-01-01T00:00:00Z" if args.case == "expired-token" else "2099-01-01T00:00:00Z"
+                        if args.case == "token-reuse" and seen.count("token") == 1:
+                            expiry = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        self.send_json(201, {"token": "unit-test-only-token", "expires_at": expiry})
             except Exception as error:
                 errors.append(type(error).__name__)
                 self.send_json(400, {"message": "fixture rejected request"})
@@ -81,6 +91,8 @@ def exercise(args, directory):
             selected = "Other/feed" if public_mode else "Owner/example"
             if self.path != "/repos/" + selected or self.headers.get("Authorization") != "Bearer unit-test-only-token":
                 errors.append("unexpected repository request")
+            if args.case == "token-reuse" and seen.count("repository") == 2:
+                time.sleep(2.1)
             if args.case == "lost-response":
                 self.close_connection = True
             else:
@@ -92,13 +104,17 @@ def exercise(args, directory):
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    expected = "200" if args.case == "success" else "403" if args.case == "token-rejected" else "0"
+    expected = "200" if args.case in ("success", "token-reuse") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
     command = [args.executable, "--config-file", str(config), "--log-file", str(root / "framework.log"), "github", "--app-id", "42", "--installation-id", "7", "--private-key-file", str(app_key), "--allowed-owner", "Owner", "--repository", "Owner/example=99", "github-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port)]
     if args.case != "wrong-ca":
         command += ["tls", "--ca-cert", str(certificate)]
     environment = os.environ.copy()
     environment["CORE_CI_TEST_EXPECTED_STATUS"] = expected
-    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response") else "0"
+    if args.case == "mutation-lost-response":
+        environment["CORE_CI_TEST_METHOD"] = "POST"
+    if args.case == "token-reuse":
+        environment["CORE_CI_TEST_REUSE"] = "1"
+    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse") else "0"
     try:
         result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -106,8 +122,11 @@ def exercise(args, directory):
         assert "unit-test-only-token" not in result.stdout + result.stderr
         if args.case in ("wrong-hostname", "wrong-ca"):
             assert seen == [], "authorization was sent before TLS identity was verified"
-        elif args.case in ("token-rejected", "token-lost-response"):
+        elif args.case in ("token-rejected", "token-lost-response", "expired-token"):
             assert seen == ["token"], "a failed token request reached the repository operation"
+        elif args.case == "token-reuse":
+            assert seen.count("token") == 3 and seen.count("repository") == 4, seen
+            assert seen[:3] == ["token", "repository", "repository"], "cold concurrent reads minted twice"
         else:
             assert seen == ["token", "repository"], "request was dropped or replayed"
         if args.case == "success":

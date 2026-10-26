@@ -175,8 +175,17 @@ if(BUILD_TESTING)
         PRIVATE nlohmann_json::nlohmann_json snodec::http-client
                 snodec::net-in-stream-tls OpenSSL::SSL OpenSSL::Crypto
     )
-    foreach(case success wrong-hostname wrong-ca lost-response token-rejected
-                 token-lost-response
+    foreach(
+        case
+        success
+        wrong-hostname
+        wrong-ca
+        lost-response
+        token-rejected
+        token-lost-response
+        token-reuse
+        expired-token
+        mutation-lost-response
     )
         add_test(
             NAME github-transport-${case}

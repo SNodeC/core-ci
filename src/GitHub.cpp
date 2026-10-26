@@ -7,9 +7,11 @@
 #include <array>
 #include <charconv>
 #include <ctime>
+#include <iomanip>
 #include <openssl/hmac.h>
 #include <openssl/pem.h>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -220,32 +222,75 @@ namespace coreci {
             if (grant == repositoryIds.end() && !publicRead) {
                 throw std::invalid_argument("repository is not in the deployment-owned name/ID grants");
             }
-            const auto authorization = jwt();
-            send("POST",
-                 "/app/installations/" + std::to_string(config.installationId) + "/access_tokens",
-                 authorization,
-                 {{"repository_ids", {grant == repositoryIds.end() ? repositoryIds.begin()->second : grant->second}},
-                  {"permissions", permissions}},
-                 [this, repository, method, suffix, body, callback](const GitHubResult& token) {
-                     if (token.status == 201 && token.error.empty() && token.body.contains("token") && token.body.at("token").is_string()) {
-                         send(method,
-                              "/repos/" + repository + suffix,
-                              token.body.at("token").get<std::string>(),
-                              body,
-                              [this, repository, method, suffix, callback](const GitHubResult& result) {
-                                  if (method == "GET" && suffix.empty() && result.status == 200 && repositoryIds.contains(repository) &&
-                                      (!result.body.contains("id") || result.body.at("id") != repositoryIds.at(repository))) {
-                                      callback({502, nullptr, "GitHub repository ID differs from the configured grant"});
-                                  } else {
-                                      callback(result);
-                                  }
-                              });
-                     } else {
-                         callback({token.status, nullptr, "GitHub installation token request failed; verify explicit repository grants"});
-                     }
-                 });
+            authorize(
+                {{"repository_ids", {grant == repositoryIds.end() ? repositoryIds.begin()->second : grant->second}},
+                 {"permissions", permissions}},
+                [this, repository, method, suffix, body, callback](const GitHubResult& token) {
+                    if (token.status == 201 && token.error.empty() && token.body.contains("token") && token.body.at("token").is_string()) {
+                        send(method,
+                             "/repos/" + repository + suffix,
+                             token.body.at("token").get<std::string>(),
+                             body,
+                             [this, repository, method, suffix, callback](const GitHubResult& result) {
+                                 if (method == "GET" && suffix.empty() && result.status == 200 && repositoryIds.contains(repository) &&
+                                     (!result.body.contains("id") || result.body.at("id") != repositoryIds.at(repository))) {
+                                     callback({502, nullptr, "GitHub repository ID differs from the configured grant"});
+                                 } else {
+                                     callback(result);
+                                 }
+                             });
+                    } else {
+                        callback({token.status, nullptr, "GitHub installation token request failed; verify explicit repository grants"});
+                    }
+                });
         } catch (const std::exception& error) {
             callback({0, nullptr, error.what()});
+        }
+    }
+
+    void GitHub::authorize(const nlohmann::json& grant, const Callback& callback) {
+        const auto scope = grant.dump();
+        auto& cached = tokens[scope];
+        if (cached.expires > std::time(nullptr)) {
+            callback(cached.result);
+        } else {
+            const auto authorization = cached.waiting.empty() ? jwt() : std::string{};
+            cached.waiting.push_back(callback);
+            if (cached.waiting.size() == 1) {
+                send("POST",
+                     "/app/installations/" + std::to_string(config.installationId) + "/access_tokens",
+                     authorization,
+                     grant,
+                     [this, scope](const GitHubResult& response) {
+                         auto& entry = tokens.at(scope);
+                         auto result = response;
+                         entry.expires = 0;
+                         try {
+                             if (result.status == 201 && result.error.empty()) {
+                                 const auto expiry = result.body.at("expires_at").get<std::string>();
+                                 std::tm utc{};
+                                 std::istringstream input(expiry);
+                                 input >> std::get_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+                                 const auto expires = ::timegm(&utc);
+                                 std::ostringstream verified;
+                                 verified << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+                                 if (input.fail() || verified.str() != expiry || expires <= std::time(nullptr) ||
+                                     !result.body.at("token").is_string() || result.body.at("token").get<std::string>().empty()) {
+                                     throw std::invalid_argument("invalid installation token expiry/identity");
+                                 }
+                                 entry.result = result;
+                                 entry.expires = expires;
+                             }
+                         } catch (const std::exception&) {
+                             result = {502, nullptr, "GitHub installation token has invalid expiry/identity"};
+                         }
+                         const auto waiting = std::move(entry.waiting);
+                         entry.waiting.clear();
+                         for (const auto& complete : waiting) {
+                             complete(result);
+                         }
+                     });
+            }
         }
     }
 

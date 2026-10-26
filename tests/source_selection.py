@@ -68,7 +68,7 @@ def exercise(args, root):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path != "/app/installations/7/access_tokens" or body != {"repository_ids": [99], "permissions": {"contents": "read"}}:
                 errors.append("unexpected App scope")
-            self.send_json(201, {"token": "synthetic-source-token"})
+            self.send_json(201, {"token": "synthetic-source-token", "expires_at": "2099-01-01T00:00:00Z"})
 
         def do_GET(self):
             nonlocal selections

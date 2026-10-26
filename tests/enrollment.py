@@ -115,7 +115,7 @@ def exercise(args, root):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path != "/app/installations/7/access_tokens" or body["repository_ids"] != [99] or body["permissions"] not in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}):
                 errors.append("unexpected App scope")
-            self.send_json(201, {"token": "synthetic-token"})
+            self.send_json(201, {"token": "synthetic-token", "expires_at": "2099-01-01T00:00:00Z"})
 
         def do_GET(self):
             if self.headers.get("Authorization") != "Bearer synthetic-token":
@@ -125,7 +125,7 @@ def exercise(args, root):
             elif self.path == "/repos/Owner/example/actions/runs/123/attempts/1":
                 self.send_json(404, {})
             elif self.path == "/repos/Owner/example/commits/main":
-                self.send_json(200, {"sha": head})
+                self.send_json(200, {"sha": head, "commit": {"tree": {"sha": "c" * 40}}})
             elif self.path == "/repos/Owner/example/git/ref/heads/main":
                 self.send_json(200, {"object": {"sha": head}})
             elif self.path == "/repos/Owner/example/git/commits/" + head:

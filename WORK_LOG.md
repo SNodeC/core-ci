@@ -1525,3 +1525,327 @@
 
 - Task accounting against merged parent main d9502fe: production +383/-54 (net329); tests +178/-8 (net170); documentation +305/-40 (net265).
   Production growth remains within the approved500-line bound; no new production change for403.
+
+
+## 2026-10-26 — webhook verification latency investigation (not yet fixed)
+
+- Owner requested a detailed investigation and correction of delayed controller/public
+  progress. Later steering explicitly keeps this task on delay; the independent publisher
+  rendering defect is deferred. Canonical checkout is unchanged; delay work uses
+  `fix/webhook-verification-latency` from main23f881f. The local cleanup documentation
+  checkpoint1a64901 remains safe on `chore/sandbox-cleanup`; it is not mixed into this task.
+  No open core-ci PR was present. No production source has been changed for this task.
+- The automatic root request selected20 executions (core/app/side/join, five targets).
+  All five core builds succeeded. Each publication failed in preparation, before the
+  checked feed-update step. The renderer sorts a mixture of absent and integer receipt
+  revisions. Five failed roots and15 waiting dependents are retained; no retry, manual
+  advancement or mutation replay was performed. This is not a completed graph acceptance.
+- Live example: Fedora build40374669998 completed at18:06:21Z; GitHub delivered its
+  completed workflow_run at18:06:22.818Z and received202 in0.76s. The sampled controller
+  graph still showed assigned work at18:07:17.568Z, running at18:09:22.739Z and completed
+  evidence at18:09:47.779Z. Observations are approximately25s apart and do not establish
+  exact commit times. Debian amd64/arm64 show the same delayed progression. IPK completed
+  reports arrived18:07:45Z; completed graph evidence was observed18:10:37Z. APK completed
+  reports arrived18:10:10Z; its built result was observed18:12:43Z.
+- The controller opened1,914 GitHub HTTP connections from18:04:14 through18:30Z. The
+  sampled same-App token mint and completed-run read took0.414s and0.402s respectively;
+  that API response had4,782 of5,000 core requests remaining. This disproves quota
+  exhaustion for that sample, not every possible future request. Three local graph
+  requests took0.031/0.026/0.025s. No evidence supports blaming a blocked event loop or
+  GitHub webhook delivery for the multi-minute delay in these samples.
+- A short read-only debugger trace captured only method, public API path, queue length
+  and elapsed time; no headers, bodies or credential files. Eighteen completed requests
+  were observed in11.95s at the end of the burst, mostly token minting and repeated Git
+  objects for public-status approval. Queue length was1–2 after the earlier burst had
+  drained; this is not a measurement of the earlier maximum backlog. The debugger was
+  detached without signalling/restarting the controller. The controller remains running.
+- Traced path: Pipeline::event acknowledges validated notifications, then every matching
+  event invokes inspect. HttpClient serializes requests and opens a fresh TLS connection
+  for each. GitHub::request mints an installation token for each API call. inspect reads
+  attempt1, walks five Git objects for the workflow, then reads attempt1 jobs, even when
+  that exact immutable workflow identity is already persisted. Eight unchanged reports
+  therefore produce112 HTTP requests. GraphStore correctly suppresses identical commits;
+  it does not suppress the reads preceding them. Every real committed graph change also
+  runs workflow approval and status dispatch (14 HTTP requests per refresh). These
+  derivative reads share the serial client with evidence verification. Matching an
+  assigned run ID also lets unrelated helper-job notifications enter the full inspection.
+- Focused synthetic reproduction added to tests/pipeline.py: real isolated MariaDB and
+  controller TLS routes, synthetic GitHub, eight concurrent signed notifications,30ms
+  response delay. Baseline:112 HTTP requests,40 Git-object reads,4.515s to drain; unchanged
+  graph generation. Full existing pipeline-boundaries exercise also passed. This is local
+  synthetic proof, not GitHub acceptance. Command:
+  `python3 tests/pipeline.py --executable /tmp/codex/build/core-ci/public-status-projection/core-ci --directory /tmp/codex/build/core-ci/webhook-latency/baseline-tests`.
+  Baseline binary is the running3aa775d implementation (later main changes are docs).
+- Architectural invariant: notifications request fresh verification of assigned work;
+  duplicates must not multiply concurrent verification of the same run or make derivative
+  status rendering starve that verification. The graph remains the sole execution/state
+  authority. Attempt1, actor/repository/workflow binding, signed publication, monotonic
+  evidence and uncertainty must remain unchanged. Graph validation already rejects stale
+  state/evidence regression; one concurrent duplicate artifact callback logged503 after
+  another callback advanced the attempt. No graph regression was observed.
+- Reduction/change considered first: discard irrelevant helper-job/terminal-phase
+  notifications and reuse the graph's already verified immutable workflow tuple when
+  repository/run/commit/blob match exactly; still fetch fresh attempt1 status/jobs.
+  Those reductions alone leave concurrent duplicate chains and one approval chain per
+  graph change. Proposed bounded addition (requires owner approval): transient in-flight
+  notification tracking with one dirty bit per exact assigned run, and one in-flight
+  status-refresh flag using the existing graph generation to catch up to the newest state.
+  A notification received during verification causes one subsequent fresh read; it must
+  not be dropped when it could signal completion. Obsolete status generations need not
+  dispatch workflows; the latest committed generation must eventually dispatch. No timer,
+  credential cache, new queue, scheduler, persisted state or HTTP-client refactor.
+- Estimated combined correction:55–85 net production lines and100–160 test lines
+  (including the33-line baseline probe already added). Approval is required by AGENTS.md
+  before this production growth/transient tracking is implemented. Focused verification
+  must prove completion arriving during an inspection is retained, wrong identities remain
+  rejected, immutable evidence reuse is exact, refresh catches the newest generation,
+  and the measured burst reduces to bounded reads. Live verification remains outstanding.
+- Official interfaces checked:
+  https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt
+  documents attempt-specific evidence; the fix must continue using attempt1.
+  https://docs.github.com/en/rest/git/trees#get-a-tree and
+  https://docs.github.com/en/rest/git/blobs#get-a-blob document immutable Git objects and
+  tree modes; the proposal reuses previously verified graph evidence, not a new contents
+  shortcut that could weaken path/symlink checks.
+  https://docs.github.com/en/rest/apps/webhooks#list-deliveries-for-an-app-webhook
+  documents delivery timestamps/durations and cursor pagination used for this inspection.
+- Evidence is under /tmp/codex/build/core-ci/webhook-latency and the full-graph-session
+  timestamp directory20261026T180414Z. No production SNodeC resource, signing key, tag,
+  credential or previously published package byte was changed. Private user directories
+  were preserved without inspection. Current task changes are tests/documentation only,
+  uncommitted and not deployed; git diff --check passes.
+
+
+## 2026-10-26 — minimum-request investigation after owner correction
+
+- Owner rejected the request amplification and asked to investigate using only genuinely
+  necessary calls, normally fewer than ten per operation. This is investigation only;
+  the preceding55–85-line proposal has not been implemented or approved. Its focus on
+  combining REST inspections retained too much unnecessary verification work.
+- Inspected two real Fedora completion deliveries through the App delivery API, recording
+  field names and public identity/status values only. workflow_run includes run_attempt,
+  actor, repository/head_repository IDs, event, path, head_sha, title, status and conclusion.
+  workflow_job includes run_attempt, run_id, job ID/name, head_sha, status, timing and steps.
+  Twelve offline identity/timing comparisons against the persisted real run40374669998
+  all match. This confirms field availability in these real deliveries; it is not a
+  production-path test and not proof that every possible delivery contains every field.
+- GitHub's raw-body HMAC authenticates these facts as GitHub reports. Re-fetching the same
+  facts by REST is not inherently stronger authentication. Recommended responsibility:
+  normalize authenticated webhook facts and REST reconciliation facts into one validation
+  and graph-application path. Keep run/attempt/actor/repository/workflow binding and
+  monotonic graph evidence. Do not create competing webhook and REST state machines.
+- Known assigned-run progress can therefore require zero evidence REST calls. Duplicate,
+  late and irrelevant reports should require zero calls and no status refresh when the
+  graph does not change. A job report alone cannot establish the controller actor or the
+  approved workflow blob: require an already bound run or obtain those missing proofs once.
+  Never trust a source hook's status or accept attempt2 evidence. Missing/out-of-order
+  facts require only the absent proof, not unconditional repetition of the full chain.
+- Build completion still needs the assigned artifact metadata, because the webhook does
+  not provide the artifact's immutable ID/digest/size. Normally this is one REST read
+  after run/job identity is known. Feed completion still requires independent committed
+  receipt and public HTTPS-byte verification; workflow success alone is insufficient.
+- Fresh installation tokens per API call are also unnecessary. Official GitHub docs
+  specify an expiry and one-hour lifetime. Reuse must retain the exact repository and
+  permission scope, stay server-memory only, use the returned expiry and never replay a
+  failed/uncertain mutation. This would be an explicit authentication-boundary change,
+  not an execution scheduler. No token reuse/cache has been implemented in this task.
+- Current FeedProof has seven GitHub reads plus one public HTTPS receipt read. Fresh
+  token minting doubles those seven GitHub calls, giving15 HTTP requests. Reusing one
+  correctly scoped Contents-read token gives eight warm requests, nine with one mint.
+  This count excludes first run binding and a missing-job fallback; it is not a claimed
+  hard ceiling for recovery. Initial workflow proof and restart reconciliation must be
+  counted separately and reduced only where the identical proof is already available.
+- Public status refresh is separate work: a genuine graph change needs a dispatch;
+  duplicate unchanged evidence needs none. Approval of the same immutable workflow must
+  not be recomputed from Git objects for every generation. Any retained approval must be
+  bound to the exact ref-resolved commit/blob and invalidated by a changed ref. Its
+  implementation and line estimate remain to be designed before production changes.
+- Request budgets must include token minting, fallback reads and derivative refresh work,
+  rather than hiding those costs in a helper. A whole graph necessarily has multiple
+  build/publication dispatches; fewer than ten is not a promise for an entire20-node graph.
+  Normal progress, completion, refresh and cold/recovery cases need separate measured
+  budgets in the focused harness before claiming the correction.
+- Official authentication/payload references:
+  https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries
+  https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run
+  https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_job
+  https://docs.github.com/en/rest/actions/artifacts#list-workflow-run-artifacts
+  https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
+- Safe evidence files: webhook-field-inventory.json and webhook-reuse-check.json in the
+  existing temporary webhook-latency directory. No production edit, live graph mutation,
+  secret inspection, controller restart, workflow change or deployment was performed.
+
+
+## 2026-10-26 — detailed reduction map, accepted artifact boundary
+
+- Owner accepted standard GitHub webhooks plus one artifact-list request after successful
+  build completion, then requested continued detailed investigation. No custom callback is
+  proposed and no production implementation was made in this investigation checkpoint.
+- Added docs/proposals/webhook-request-reduction.md with the traced request inventory,
+  shared report/reconciliation boundary, proof reuse, ordering constraints, failure certainty,
+  token scope/expiry, status refresh and proposed normal/cold-case budgets. It explicitly
+  distinguishes proposed changes from the currently deployed implementation.
+- Further source findings: publicationResult checks FeedProof before its existing skipped-push
+  classifier; an absent receipt normally costs four HTTP requests, not the15-request successful
+  proof chain. Workflow preflight rereads a commit whose root tree was already returned;
+  dispatch then discards that preflight proof and walks the actual workflow again, even when
+  its executed commit matches. Approval readers download workflow bytes only to use their hash.
+  Unrelated helper jobs match solely by assigned run ID. These are reduction opportunities.
+- New ordering constraint identified: direct reports need a recorded run conclusion distinct
+  from job conclusion, and a recorded terminal publisher push-step result. The existing
+  evidence JSON can hold these facts without a schema change or new execution state. Both
+  paths must use shared validation and the canonical merged graph, not a second state machine.
+- The standard dispatch API for configured2026-03-10 returns200 with workflow_run_id/URLs;
+  this is documented. That response does not contain all actor/workflow/job proof, so it
+  cannot alone replace initial binding. No speculative return_run_details parameter is used.
+- Existing source-selection/F3 policy is unchanged: do not omit unreadable newly selected
+  repositories or silently substitute old definitions. Initial selection/recovery requests
+  are not ordinary progress and must be accounted for separately.
+- Stopped only the settled-session read-only comparison observer1435482, verifying its exact
+  script identity. Controller1407899 remains running unchanged. Controller/public projection
+  both report generation340. No graph mutation, retry, new build or deployment was made.
+- Existing synthetic burst baseline remains112 requests/40 Git-object reads/4.515s; no
+  passing test was needlessly repeated. No production code changed. Diff whitespace passes.
+
+
+## 2026-10-26 — implementation prompt prepared
+
+- Owner asked how to implement the correction and whether to prepare a prompt first.
+  Created docs/proposals/webhook-request-reduction-task.md as a reviewable implementation
+  task grounded in the investigation and accepted reporting/artifact boundary.
+- Prompt requires shared report/reconciliation validation, exact proof/actor/attempt binding,
+  reduction before added mechanisms, honest full request accounting, focused tests, and
+  separate normal/cold/recovery budgets. It preserves uncertainty, source-selection policies,
+  deployment boundaries and the deferred HTTP-client and renderer work.
+- It grants no production growth or new blanket activation authority. A concrete bounded
+  estimate is required before implementation under AGENTS.md. Existing sandbox stage
+  authorization is retained where applicable; commit/push/merge remain distinct.
+- Production remains unchanged and the prompt is uncommitted. No tests were rerun for this
+  documentation-only addition. git diff --check passes.
+
+
+## 2026-10-26 — new implementation branch and bounded design checkpoint
+
+- Owner explicitly requested a new branch and the implementation task's design-first
+  checkpoint. Created fix/github-request-reduction from main23f881f, preserving all prior
+  investigation/test edits without committing, resetting or adding a checkout. No open PR.
+  Cleanup checkpoint1a64901 remains separate. Controller1407899 was verified running core-ci;
+  no restart/deployment or graph mutation occurred.
+- Re-traced current Pipeline event/inspect/completion/refresh/dispatch, GitHub auth, SourceReader,
+  Graph evidence merge/GraphStore commits and pipeline fixtures. Read SNode.C HTTP application
+  callbacks/lifecycle and MQTTSuite HTTP client ownership. The proposed change leaves main,
+  transport and database lifecycle untouched.
+- Verified one further real delivery fact: workflow_run.head_commit.id equals head_sha and
+  supplies tree_id (Fedora40374669998). Official workflow-run REST examples contain the same
+  fields. This supports shared known-root file verification without another commit fetch.
+  Only identity fields were saved in webhook-tree-proof.json; no headers, bodies or secrets.
+- Added docs/proposals/github-request-reduction-design.md: one shared observation/completion
+  path, two additional facts in existing evidence JSON, exact immutable proof reuse, scoped
+  token lifetime/mint sharing, completion-read exclusion, latest-generation refresh and batch
+  preflight sharing. Each transient item identifies the redundant mechanism it replaces.
+- Design estimate: production+420/-330 (net90), tests+280/-60 (net220, includes existing33-line
+  probe). Approval requested before implementation: ceilings120 net production/260 net tests
+  for the exact listed scope. No approval inferred from the earlier55–85-line discussion.
+- Budgets distinguish normal0/1 evidence reads,7–8-request feed verification with known root,
+  cold approval/token costs, derivative dispatches and roughly14–15-request combined cold
+  recovery. No false ten-request ceiling or measured full-graph claim. The old baseline
+  remains112 requests/40 Git-object reads/4.515s; no passing test needlessly repeated.
+- Production remains unchanged. Documentation whitespace check passes. No keys/tokens,
+  private directories, source tags, production SNodeC resources or published bytes touched.
+
+### Request reduction implementation checkpoint — approval ceiling exceeded
+
+The owner approved the shared webhook/REST observation design with ceilings of
+120 net production lines and 260 net test lines. Implementation is on
+`fix/github-request-reduction`, based on `23f881f4419f243403ccaa9ef3cad890fdf8c383`.
+No commit, push, merge, installation or controller restart was performed.
+
+The initial draft reshapes Pipeline's unconditional inspection into shared
+observation/application/completion functions, adds exact-scope installation-token
+reuse and immutable workflow-proof reuse, coordinates derivative status refresh,
+and lets the existing SourceReader walker use a known root tree and identity-only
+reads. Feed proof receives the root tree already supplied by commit history.
+
+The estimate was incorrect. A read-only canonical-format projection of the draft
+counts production +421/-186, net +235. The unformatted working diff counts
++320/-170, net +150. These are draft counts, not final implementation accounting.
+Production editing stopped when the overrun was identified. This exceeded the
+approved ceiling and should have been detected earlier.
+
+The draft is incomplete and unverified. In particular, remaining work includes
+coalescing missing run/job evidence reads, preserving concurrent completion facts,
+checking current attempts before applying asynchronous results, moving the existing
+skipped-push classification ahead of feed proof, handling token-mint exceptions
+without leaving waiters, and updating realistic public-boundary test fixtures.
+No claim is made that this draft is ready to build, deploy or accept live reports.
+The baseline burst remains 112 HTTP requests / 40 Git-object reads / 4.515 seconds;
+no improved measurement has been obtained yet. Existing sandbox assignments and
+failed/waiting work remain untouched.
+
+A revised ceiling of 350 net production lines (260 net test lines unchanged) is
+proposed to finish the same approved design, including the outstanding guards and
+canonical formatting. This is a revised estimate, not authorization. No additional
+queue, persisted state, scheduler, reporting protocol or transport refactor is
+proposed. Commit/push/merge remain separate authorization stages.
+
+
+## 2026-10-26 — approved request reduction implemented and locally verified
+
+- Owner approved the revised ceiling of 350 net production lines; the test ceiling
+  remains 260. Continued the same design, without a scheduler, queue, persisted state,
+  reporting protocol, controller thread, timer or HTTP-client/per-origin refactor.
+- Pipeline webhooks now supply authenticated run/job facts directly to the same
+  observe/record/completion path used by attempt-one REST recovery. Actor, workflow,
+  installation/repository, assignment, attempt and job identities remain checked.
+  Unrelated helper jobs are ignored even when their run ID is assigned.
+- Existing graph evidence gains run_conclusion and terminal push_step_conclusion.
+  Run/job conclusions remain distinct. Generation-conflict rollback recomputes the
+  evidence merge against the current graph. Unknown mutations are never replayed.
+  Missing job evidence can be read once per relevant run observation/reconciliation;
+  an incomplete response cannot recurse into polling. Completion-read exclusion and
+  current-attempt checks protect overlapping artifact/feed verification.
+- Reuse immutable approved workflow proof, coalesce simultaneous exact GET questions,
+  and use SourceReader's existing regular-file walker with known root trees and an
+  identity-only mode. Definitions/previews/receipts still read and verify contents.
+  Changed run commits obtain new proof. FeedProof reuses the commit-list root tree.
+- GitHub installation tokens remain memory-only, exact repository/permission scoped,
+  with returned-expiry checks and one shared simultaneous mint. Signing happens before
+  enqueuing the first waiter, so a signing exception cannot strand callbacks. The lost
+  mutation-response test verifies no automatic replay. Secrets are not logged.
+- Status refresh combines obsolete in-flight generations and dispatches the newest.
+  Trusted skipped-push evidence is applied before feed reads. A possible push still
+  needs committed receipt plus matching public HTTPS bytes. Failures remain visible;
+  explicit reconciliation/retry policies are preserved.
+- Local measurements: unchanged eight-report burst fell from 112 HTTP / 40 Git-object
+  reads / 4.515s to 0 / 0 / 0.063s. Graph/SSE progress took 96ms with 300ms synthetic API
+  latency, without evidence reads. Eight overlapping job-first reports shared one run
+  read; overlapping completions shared one artifact read. Warm receipt verification
+  used six GitHub reads plus one HTTPS read. These are synthetic GitHub observations
+  with real isolated MariaDB, not live GitHub acceptance.
+- Final synthetic session: 329 HTTP total, including 25 token mints, 40 evidence reads,
+  104 source reads/edits, 84 worker approvals, eight build dispatches, three publication
+  dispatches, 45 status dispatches, 18 feed GitHub reads and two feed HTTPS reads.
+  Shared worker approval reads cannot be honestly attributed solely to status or
+  publication. Counters include every fixture GET/POST/PUT and lost-response requests.
+  This eight-assignment scenario is not comparable as equal work to the old live
+  five-root failure session, and does not prove a complete 20-node live graph.
+- Validation: isolated Debug core-ci build; graph-state-boundaries; all nine affected
+  github-transport cases; eight source-selection cases; pipeline-boundaries; and
+  enrollment-boundaries. All 20 relevant checks passed after realistic fixture updates.
+  Initial combined run exposed enrollment's missing commit.tree fixture field; only
+  that affected test was rerun after correction. The final Pipeline identity guard
+  was rebuilt and pipeline-boundaries rerun. format-check, cmake-format --check and
+  git diff --check passed. Logs and measurements: /tmp/codex/build/core-ci/webhook-latency/.
+- Production +514/-238 = +276; build/test wiring +11/-2 = +9 (combined +285,
+  below approved +350); tests +250/-59 = +191 (below approved +260). Documentation
+  includes the preserved investigation/prompt and updated design/results, separately.
+- Checkout /home/voc/projects/snodec/core-ci, branch fix/github-request-reduction,
+  base/HEAD 23f881f4419f243403ccaa9ef3cad890fdf8c383. All task changes remain uncommitted.
+  No push, PR, merge, installation, live restart, retry or new live build was performed.
+  The previously recorded live PID1407899 was not present when checked; no replacement
+  was started. No new live run URLs or Pages latency claim. Sandbox activation needs
+  runtime identity/configuration revalidation. Full publication remains gated by the
+  separately deferred renderer defect. Existing sandbox graph history was not mutated.
+- No production SNodeC workflows/credentials/feeds/tags, keys, tokens or published bytes
+  were modified. .qtcreator/ and .local-credentials/ were preserved and not inspected.
+  No additional checkout was created; the permitted task build is retained for review.
