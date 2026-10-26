@@ -456,6 +456,11 @@ The controller UI shows active work first, readable repository/version/target/re
 prerequisites, stage, blockers, failure reason and GitHub links. The local SSE stream updates
 the view automatically; there is no Refresh view button. The connection indicator shows Live,
 Reconnecting or Disconnected. Reconnection receives current state and preserves unsaved edits.
+All work is the default filter. Use each row's chevron for inline details, prerequisites,
+logs and explicit retry. Recorded build start, completion and elapsed time refer to the assigned
+attempt-1 package job, not publication. Times use the browser's local timezone, shown explicitly.
+Older records and outcomes without captured timing show Not recorded; no historical timestamps
+are inferred. Timing is retained with successful verified build results and sent over SSE.
 Full identities remain available in technical details and API evidence. Inspection of assigned
 GitHub work remains a separate explicit action, not a side effect of opening the UI.
 The public feed status only lists verified retained publications.

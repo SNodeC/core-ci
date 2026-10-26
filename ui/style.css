@@ -29,7 +29,8 @@ tr[aria-selected="true"] { background: var(--soft); } .secondary { display: bloc
 .state { font-size: 12px; white-space: nowrap; } .state::before { content: '●'; font-size: 9px; padding-right: 6px; }
 .state.building, .state.publishing { color: var(--accent); } .state.waiting { color: light-dark(#875719,#e6bf80); }
 .state.published { color: light-dark(#236445,#90d6b0); } .state.failed, .error { color: light-dark(#a43135,#ffacaf); }
-#execution, .editor-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin-top: 16px; }
+.editor-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin-top: 16px; }
+.chevron { font-size: 18px; min-width: 24px; } .execution-details { padding: 16px; } .build-time { font-size: 12px; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; } dl { display: grid; grid-template-columns: 90px 1fr; gap: 5px 12px; }
 dt { color: var(--sub); } dd { margin: 0; overflow-wrap: anywhere; } .dependencies { list-style: none; padding: 0; }
 .dependencies li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }

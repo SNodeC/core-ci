@@ -515,7 +515,10 @@ namespace coreci {
                                                                   {"run_attempt", 1}};
                                     const auto result = nlohmann::json{{"run", attempt.buildRun},
                                                                        {"assignment_sha256", Graph::digest(attempt.assignment)},
-                                                                       {"artifacts", {selected}}};
+                                                                       {"artifacts", {selected}},
+                                                                       {"build_job",
+                                                                        {{"started_at", job.value("started_at", nlohmann::json())},
+                                                                         {"completed_at", job.value("completed_at", nlohmann::json())}}}};
                                     change(store.graph().built(node.id, attempt.id, result),
                                            [this, callback](const PipelineResult& stored) {
                                                if (stored.status == 200) {

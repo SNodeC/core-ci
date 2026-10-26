@@ -287,6 +287,8 @@ namespace coreci {
                 : attempt.state == "building" && !attempt.buildResult.is_null() ? "build complete; waiting for publication"
                 : attempt.state == "building" && attempt.buildRun.is_null()     ? "build assigned; awaiting GitHub run identity"
                                                                                 : attempt.state;
+            const auto buildJob =
+                attempt.buildResult.is_object() ? attempt.buildResult.value("build_job", nlohmann::json()) : nlohmann::json();
             nodes.push_back({{"id", id},
                              {"label", Graph::label(node)},
                              {"repository", node.source.at("repository")},
@@ -303,6 +305,7 @@ namespace coreci {
                              {"blockers", state.blockers(id)},
                              {"failure", attempt.failure},
                              {"build_run", attempt.buildRun},
+                             {"build_job", buildJob},
                              {"publication_run", attempt.publicationRun},
                              {"receipt", attempt.receipt},
                              {"superseded_by", node.supersededBy},

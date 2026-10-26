@@ -271,6 +271,7 @@ def exercise(args, directory):
                             self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
                                 "name": ("Publish " if run_id >= 500 else "build / Build ") + assignment["label"],
                                 "status": run["status"], "conclusion": run["conclusion"],
+                                "started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z",
                                 "steps": [{"name": "Publish checked feed update", "conclusion": "skipped" if run_id == 501 else "failure"}]}]})
                     elif parts[4] == "artifacts" and unavailable_artifacts:
                         self.reply(unavailable_artifacts, {"total_count": 1, "artifacts": []})
@@ -450,6 +451,9 @@ def exercise(args, directory):
             assert report(102)[0] == 202 and len(publications) == 1
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert current["state"] == "publishing"
+            timing = {"started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z"}
+            assert current["build_job"] == timing, "UI timing is not the assigned attempt-1 package job evidence"
+            assert publications[0]["build_result"]["build_job"] == timing
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
             runs[100].update(status="completed", conclusion="success")
             assert report(100)[0] == 200 and len(publications) == 1, "second writer started before the assigned publication resolved"
@@ -474,6 +478,8 @@ def exercise(args, directory):
             request("/api/work/reconcile", {})
             assert build_status_reads.count(100) == verified_reads, "restart re-read an already persisted verified build"
             assert len(publications) == 1, "restart replaced uncertain publication"
+            restored = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
+            assert restored["build_job"] == timing, "recorded build timing was lost on restart"
             selected = publications[0]["assignment"]
             public_run = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["publication_run"]
             receipt = {"schema": 1, "execution": selected["execution"], "attempt": selected["attempt"],
@@ -538,6 +544,11 @@ def exercise(args, directory):
             assert lock.wait(timeout=5) == 0
             assert all(result[0] == 200 for result in outcomes), outcomes
             current = {row["id"]: row for row in request("/api/graph")[1]["executions"]}
+            deadline = time.monotonic() + 5
+            # Webhook acknowledgements precede persistence; another report's log is not completion evidence.
+            while not all(current[dispatches[index]["execution"]]["state"] == "failed" for index in (5, 6)) and time.monotonic() < deadline:
+                time.sleep(0.01)
+                current = {row["id"]: row for row in request("/api/graph")[1]["executions"]}
             assert all(current[dispatches[index]["execution"]]["state"] == "failed" for index in (5, 6))
             runs[106].update(conclusion="success")
             assert request("/api/work/retry", {"execution": dispatches[6]["execution"]})[0] == 202

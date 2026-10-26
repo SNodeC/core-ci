@@ -1128,3 +1128,33 @@
   install, production SNodeC resources, package bytes, keys or workflow/feed activation changed.
   Concurrent worker/template changes belong to other work and are preserved/excluded from
   this checkpoint. Temporary UI fault servers stopped; no additional checkout created.
+
+## 2026-10-26 — inline execution details and recorded build timing
+
+- Owner approved chevrons beneath individual build rows, All work by default, local times
+  with explicit timezone, elapsed build duration and Not recorded for absent evidence.
+  Replace the detached selection panel; preserve the same graph, retry, prerequisites and
+  SSE channels. Active work precedes completed work; completed work uses newest rebuild first.
+- Trace: assigned attempt-1 package job -> existing immutable build result -> MariaDB ->
+  GraphStore view/SSE -> row details. Optional timing is presentation evidence, not a changed
+  run identity or state. No new requests, scheduler, persisted state or historical backfill.
+  Timing is captured after successful artifact verification; older/failed records can lack it.
+- Changes add 23 net production lines and 11 test lines (production +88/-65; tests +11/-0).
+  Reduction removed the detached panel and repeated heading; inline expansion and optional
+  timing require the small net addition. Combined desktop UI/SSE implementation remains
+  within its earlier 220–300 production /70–90 test estimate (244 production,77 test net).
+- Focused local pipeline boundaries pass8.72s: real isolated MariaDB, synthetic GitHub/feed,
+  exact attempt-1 timing, publication inputs and restart persistence. Fixed the concurrent
+  webhook test's premature assertion by waiting for both persisted graph outcomes; it must
+  not use another notification's completion log as its own evidence. Build, format-check,
+  JavaScript syntax,160-column changed production lines and diff whitespace checks pass.
+- Chrome local fixture verified 3min25s duration/local timezone, missing timings, collapse,
+  and an SSE update to4min26s with row and technical disclosure preserved. These are synthetic
+  UI checks, not new live GitHub jobs. Temporary fixture stopped after verification.
+- Restarted the authorized sandbox controller; all55 states/assigned runs preserved,43
+  published/12 historical failures and five published v2.1.3 targets unchanged. Chrome verified
+  All work, newest rows first and inline prerequisites/logs. No retry/build was triggered.
+- Parallel GitHub worker/template changes and their WORK_LOG entries were preserved and
+  excluded from this UI checkpoint. No workflow/feed/key/tag or production SNodeC change.
+  .qtcreator/ and .local-credentials/ were not inspected. Preview/logs remain under
+  /tmp/codex/build/core-ci/ui-proposal; canonical branch is feat/desktop-management-sse.

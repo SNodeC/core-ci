@@ -14,11 +14,11 @@
 <div class="heading"><div><h1 id="work-heading">Package work</h1><p id="counts"></p></div>
 <button id="reconcile">Inspect assigned GitHub work</button></div>
 <div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
-<label>Show<select id="state-filter"><option value="active">Active and failed</option><option value="all">All work</option>
+<label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
 <option value="failed">Failed</option><option value="published">Published</option></select></label></div>
-<div class="table-wrap"><table><thead><tr><th>Repository / version</th><th>Distribution / series</th><th>Architecture</th>
-<th>Format</th><th>Rebuild</th><th>State</th></tr></thead><tbody id="graph"></tbody></table></div>
-<p id="visible-count"></p><section id="execution" aria-label="Selected execution" hidden></section>
+<div class="table-wrap"><table><thead><tr><th aria-label="Build details"></th><th>Repository / version</th><th>Distribution / series</th><th>Architecture</th>
+<th>Format</th><th>Rebuild</th><th>State</th><th>Build started</th></tr></thead><tbody id="graph"></tbody></table></div>
+<p id="visible-count"></p>
 </section>
 <section id="repositories-panel" aria-labelledby="repositories-heading" hidden>
 <div class="heading"><div><h1 id="repositories-heading">Repositories</h1><p>Definitions are committed to GitHub</p></div>

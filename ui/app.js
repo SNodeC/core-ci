@@ -74,65 +74,66 @@ function showExecution(id) {
     tab("work");
     renderWork();
 }
-function renderExecution(execution) {
-    const panel = element("execution"), open = panel.querySelector("details")?.open || false;
-    panel.replaceChildren();
-    panel.hidden = !execution;
-    if (execution) {
-        const target = execution.target_row;
-        const heading = node("div", "", "heading"), title = node("div");
-        title.append(node("h2", execution.repository + " " + execution.tag),
-            node("p", target.distribution + " " + target.suite + " · " + target.arch + " · " + target.build.format +
-                " · rebuild " + execution.revision, "secondary"));
-        heading.append(title, state(execution));
-        const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl");
-        for (const [label, value] of [["Source", execution.tag], ["Target", execution.target], ["Activity", execution.activity],
-            ["Selection", execution.automatic ? "Automatic" : "Explicit request"]]) {
-            values.append(node("dt", label), node("dd", value));
-        }
-        facts.append(node("h2", "Selected execution"), values,
-            node("p", execution.failure || execution.blockers.join("; ") || "No current blockers", execution.failure ? "error" : "secondary"));
-        const dependencies = node("div"), list = node("ul", "", "dependencies");
-        for (const id of execution.prerequisites) {
-            const prerequisite = graph.executions.find((row) => row.id === id);
-            const item = node("li");
-            item.append(button(prerequisite ? prerequisite.repository + " " + prerequisite.tag : id,
-                () => showExecution(id), "row-select"));
-            if (prerequisite) {
-                item.append(state(prerequisite));
-            }
-            list.append(item);
-        }
-        dependencies.append(node("h2", "Prerequisite executions — current state"), list);
-        if (list.children.length === 0) {
-            dependencies.append(node("p", "No prerequisites", "secondary"));
-        }
-        columns.append(facts, dependencies);
-        const actions = node("div", "", "actions");
-        for (const [label, run] of [["Build logs", execution.build_run], ["Publication logs", execution.publication_run]]) {
-            if (run && typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/")) {
-                const link = node("a", label + " ↗");
-                link.href = run.html_url;
-                link.rel = "noopener noreferrer";
-                actions.append(link);
-            }
-        }
-        if (execution.state === "failed" && !execution.superseded_by && graph.mutations_allowed) {
-            const retry = button("Retry with a new rebuild revision", () => operation(async () => {
-                feedback(await api("/api/work/retry", {execution: execution.id}));
-            }), "primary");
-            retry.disabled = busy;
-            actions.append(retry);
-        }
-        const technical = node("details");
-        technical.open = open;
-        technical.append(node("summary", "Source, configuration and execution identities"), node("pre", JSON.stringify(execution, null, 2)));
-        panel.append(heading, columns, actions, technical);
+function timestamp(value) {
+    const date = new Date(value || "");
+    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, {
+        dateStyle: "short", timeStyle: "long"
+    }).format(date) : "Not recorded";
+}
+function duration(job) {
+    const seconds = (Date.parse(job?.completed_at) - Date.parse(job?.started_at)) / 1000;
+    return Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds / 60) + " min " + Math.floor(seconds % 60) + " s" : "Not recorded";
+}
+function renderExecution(execution, panel, open) {
+    const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl");
+    for (const [label, value] of [["Activity", execution.activity], ["Selection", execution.automatic ? "Automatic" : "Explicit request"],
+        ["Build started", timestamp(execution.build_job?.started_at)], ["Build finished", timestamp(execution.build_job?.completed_at)],
+        ["Build duration", duration(execution.build_job)]]) {
+        values.append(node("dt", label), node("dd", value));
     }
+    facts.append(values,
+        node("p", execution.failure || execution.blockers.join("; ") || "No current blockers", execution.failure ? "error" : "secondary"));
+    const dependencies = node("div"), list = node("ul", "", "dependencies");
+    for (const id of execution.prerequisites) {
+        const prerequisite = graph.executions.find((row) => row.id === id);
+        const item = node("li");
+        item.append(button(prerequisite ? prerequisite.repository + " " + prerequisite.tag : id,
+            () => showExecution(id), "row-select"));
+        if (prerequisite) {
+            item.append(state(prerequisite));
+        }
+        list.append(item);
+    }
+    dependencies.append(node("h2", "Prerequisite executions — current state"), list);
+    if (list.children.length === 0) {
+        dependencies.append(node("p", "No prerequisites", "secondary"));
+    }
+    columns.append(facts, dependencies);
+    const actions = node("div", "", "actions");
+    for (const [label, run] of [["Build logs", execution.build_run], ["Publication logs", execution.publication_run]]) {
+        if (run && typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/")) {
+            const link = node("a", label + " ↗");
+            link.href = run.html_url;
+            link.rel = "noopener noreferrer";
+            actions.append(link);
+        }
+    }
+    if (execution.state === "failed" && !execution.superseded_by && graph.mutations_allowed) {
+        const retry = button("Retry with a new rebuild revision", () => operation(async () => {
+            feedback(await api("/api/work/retry", {execution: execution.id}));
+        }), "primary");
+        retry.disabled = busy;
+        actions.append(retry);
+    }
+    const technical = node("details");
+    technical.open = open;
+    technical.append(node("summary", "Source, configuration and execution identities"), node("pre", JSON.stringify(execution, null, 2)));
+    panel.append(columns, actions, technical);
 }
 function renderWork() {
     const query = element("search").value.toLowerCase(), filter = element("state-filter").value;
-    const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 4};
+    const technicalOpen = document.querySelector(".execution-details details")?.open || false;
+    const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 3};
     const visible = graph.executions.filter((row) => {
         const target = row.target_row;
         const matches = filter === "all" || (filter === "active" && row.state !== "published" && !row.superseded_by) || row.state === filter;
@@ -140,25 +141,40 @@ function renderWork() {
             .join(" ").toLowerCase().includes(query);
     }).sort((a, b) => (a.superseded_by ? 5 : order[a.state]) - (b.superseded_by ? 5 : order[b.state]) || b.revision - a.revision);
     if (!visible.some((row) => row.id === executionId)) {
-        executionId = visible[0]?.id || null;
+        executionId = null;
     }
     element("graph").replaceChildren();
     for (const execution of visible) {
         const target = execution.target_row, row = node("tr"), repository = node("td"), distribution = node("td");
         row.setAttribute("aria-selected", String(execution.id === executionId));
-        repository.append(button(execution.repository, () => { executionId = execution.id; renderWork(); }, "row-select"),
-            node("span", execution.tag, "secondary"));
+        const toggle = button(execution.id === executionId ? "▾" : "▸", () => {
+            executionId = executionId === execution.id ? null : execution.id;
+            renderWork();
+        }, "row-select chevron");
+        toggle.setAttribute("aria-expanded", String(execution.id === executionId));
+        toggle.setAttribute("aria-label", "Build details for " + execution.label);
+        toggle.setAttribute("aria-controls", "execution-" + execution.id);
+        const control = node("td");
+        control.append(toggle);
+        repository.append(node("span", execution.repository), node("span", execution.tag, "secondary"));
         distribution.append(node("span", target.distribution), node("span", target.suite, "secondary"));
         const status = node("td");
         status.append(state(execution));
-        row.append(repository, distribution, node("td", target.arch), node("td", target.build.format),
-            node("td", "r" + execution.revision, "revision"), status);
+        row.append(control, repository, distribution, node("td", target.arch), node("td", target.build.format),
+            node("td", "r" + execution.revision, "revision"), status, node("td", timestamp(execution.build_job?.started_at), "build-time"));
         element("graph").append(row);
+        if (execution.id === executionId) {
+            const details = node("tr"), panel = node("td", "", "execution-details");
+            panel.colSpan = 8;
+            panel.id = "execution-" + execution.id;
+            renderExecution(execution, panel, technicalOpen);
+            details.append(panel);
+            element("graph").append(details);
+        }
     }
     element("visible-count").textContent = visible.length + " of " + graph.executions.length + " executions";
     element("counts").textContent = ["building", "publishing", "waiting", "failed"].map((value) =>
         graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + value).join(" · ");
-    renderExecution(visible.find((row) => row.id === executionId));
 }
 function fields() {
     const definition = JSON.parse(element("definition").value);
