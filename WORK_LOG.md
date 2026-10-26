@@ -831,3 +831,16 @@
   or live scenarios. Remaining findings need triage; no implementation changes made.
 - Production/test changes: zero. Documentation only; no package build, dispatch, publication,
   public webhook activation or application installation performed during review.
+
+
+## 2026-10-26 — owner-requested Claude implementation prompt
+
+- Asked Claude for a copy-ready fix prompt using its review, relevant current source,
+  owner policies and live-result limits. Tools/MCP/browser access disabled; no secrets sent.
+- Requested a revision to remove invented F3 omission policy, distinguish new-publication
+  allowed changes from status-only refresh, preserve existing sandbox authorization, and
+  keep rerun-process authorization separate from reading attempt-one evidence.
+- Saved Claude's revised output verbatim in docs/claude-fix-prompt.md. It remains advisory:
+  findings and proposed fixes need validation, and AGENTS approval rules remain binding.
+- Prompt generation only. No production/test changes, deployment, dispatch, publication or
+  application installation. Original request/outputs remain under the permitted temp root.
