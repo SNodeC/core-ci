@@ -82,7 +82,8 @@ def render(feed):
                 )
         table += "</tbody></table>\n"
         name = repository.split("/")[1] if repository else "README"
-        path = status / (name + ".md")
+        path = status / (("README/" if repository and name == "README" else "") + name + ".md")
+        path.parent.mkdir(exist_ok=True)
         path.write_text('<a id="banner"></a>\n\n# ' + title + "\n\n" + note + "\n\n" + table)
         paths.append(path.relative_to(feed).as_posix())
         if repository is None:

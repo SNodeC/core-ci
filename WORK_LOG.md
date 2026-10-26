@@ -912,3 +912,8 @@
   both failures successfully. Residual second conflicts remain visible, never blindly replayed.
 - Focused pipeline and graph-state tests pass. Production growth remains below the approved
   110-line cap; test growth is 259 lines, within the approved 260-line cap. No full suite run.
+
+- F13 verified README collision: retain existing ordinary repository page paths; a repository
+  literally named README gets status/README/README.md, separate from the aggregate page.
+  Existing renderer HTML/JSON/retained-version test now verifies both pages remain intact.
+  Lexical all-version ordering is presentation only; no new version codec or sorting policy.

@@ -218,6 +218,14 @@ def main():
     except ValueError:
         rejected = True
     assert rejected and (feed / "index.html").read_text() == page
+    receipt["packages"][0]["path"] = "pool/project.deb"
+    receipt["build_result"]["run"]["html_url"] = "https://github.com/Example/README/actions/runs/100"
+    contract.write_json(receipt_path, receipt)
+    feed_status.render(feed)
+    assert "Example/README" in (feed / "status/README.md").read_text()
+    assert "Example/source" in (feed / "status/README.md").read_text()
+    assert "Example/README" in (feed / "status/README/README.md").read_text()
+    assert "Example/source" not in (feed / "status/README/README.md").read_text()
     print("Receipt status: retained versions, escaped HTML, links, replay and immutable package bytes verified")
     # These empty Git fixtures contain no application/source checkout or real credential.
     import publish
