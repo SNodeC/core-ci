@@ -73,6 +73,9 @@ def main():
             "status": "completed",
             "conclusion": "success",
             "name": "build / core-ci package " + selected["attempt"],
+            "html_url": "https://github.com/Example/source/actions/runs/100/job/102",
+            "started_at": "2026-10-26T10:00:00Z",
+            "completed_at": "2026-10-26T10:00:42Z",
         },
         prefix
         + "/actions/artifacts/101": {
@@ -108,7 +111,8 @@ def main():
     try:
         github.api = api
         github.download_artifact = download
-        github.artifact(selected, build_result, "synthetic-scoped-reader", directory / "valid")
+        observed = github.artifact(selected, build_result, "synthetic-scoped-reader", directory / "valid")
+        assert observed["id"] == 102 and observed["started_at"] == "2026-10-26T10:00:00Z"
         assert (directory / "valid/manifest.json").read_text() == "{}" and len(downloads) == 1
         # Human labels do not replace immutable assignment/run/artifact verification.
         readable = copy.deepcopy(selected)
@@ -197,6 +201,18 @@ def main():
         "packages": [{"name": "project<&>", "version": "1.0-1", "path": "pool/project.deb", "sha256": "d" * 64}],
     }
     contract.write_json(receipt_path, receipt)
+    receipt["dependencies"] = [{"execution": "e" * 64, "attempt": "e" * 64 + ":1", "packages": []}]
+    receipt["build_job"] = observed
+    receipt["summary"] = {
+        "compilers": [{"name": "cc", "version": "compiler <reported>"}],
+        "tests": {
+            "passed": 3,
+            "failed": 0,
+            "skipped": 1,
+            "coverage_percent": 0,
+            "report_url": "https://reports.example.test/results",
+        },
+    }
     receipt["packages"][0]["version"] = "2.0-2"
     contract.write_json(receipt_path.with_name("2.json"), receipt)
     paths = feed_status.render(feed)
@@ -204,6 +220,13 @@ def main():
     data = contract.read_json(feed / "status.json")["publications"]
     assert [row["version"] for row in data] == ["1.0-1", "2.0-2"]
     assert all(row["repository"] == "Example/source" for row in data)
+    assert data[0]["build_duration_seconds"] is None and data[1]["build_duration_seconds"] == 42
+    assert all(row["published_utc"] is None and row["work"] is None for row in data)
+    assert data[0]["dependencies"] is None and data[1]["dependencies"] == receipt["dependencies"]
+    project_page = (feed / "status/source.md").read_text()
+    assert "Hook-reported" in project_page and "compiler &lt;reported&gt;" in project_page
+    assert "Published (UTC)" in project_page and "Available" in project_page
+    assert "coverage 0%" in project_page and 'href="https://reports.example.test/results"' in project_page
 
     class Links(HTMLParser):
         def __init__(self):
@@ -251,7 +274,90 @@ def main():
     assert "Example/source" in (feed / "status/README.md").read_text()
     assert "Example/README" in (feed / "status/README/README.md").read_text()
     assert "Example/source" not in (feed / "status/README/README.md").read_text()
-    print("Receipt status: retained versions, escaped HTML, links, replay and immutable package bytes verified")
+    # Deployment templates get public parameters and structured coordinates, not job credentials.
+    from jinja2 import UndefinedError
+
+    templates = directory / "templates"
+    shutil.copytree(repository / "deployment/worker/status-templates", templates)
+    contract.write_json(
+        templates / "presentation.json",
+        {
+            "schema": 1,
+            "title": "Public <title>",
+            "parameters": {"support": "Owner-defined <support>"},
+            "projects": {"Example/source": {"page": "source-packages"}},
+            "assets": ["assets/logo.txt"],
+        },
+    )
+    (templates / "assets").mkdir()
+    (templates / "assets/logo.txt").write_text("public artwork")
+    (templates / "index.html.j2").write_text(
+        "{{ site.parameters.support }} {{ projects[0].targets[0].coordinates.arch }}"
+    )
+    custom_paths = feed_status.render(feed, templates)
+    assert (feed / "index.html").read_text() == "Owner-defined &lt;support&gt; arch"
+    assert {"status/assets/logo.txt", "status/source-packages.md"} <= set(custom_paths)
+    assert package.read_bytes() == b"immutable package bytes"
+    retained = {str(path.relative_to(feed)): path.read_bytes() for path in feed.rglob("*") if path.is_file()}
+    (templates / "index.html.j2").write_text("{{ missing_required_value }}")
+    try:
+        feed_status.render(feed, templates)
+        raise AssertionError("undefined required template parameter accepted")
+    except UndefinedError:
+        pass
+    assert retained == {str(path.relative_to(feed)): path.read_bytes() for path in feed.rglob("*") if path.is_file()}
+    (templates / "index.html.j2").write_text("public template")
+    settings = contract.read_json(templates / "presentation.json")
+    settings["projects"]["Example/README"] = {"page": "source-packages"}
+    contract.write_json(templates / "presentation.json", settings)
+    try:
+        feed_status.render(feed, templates)
+        raise AssertionError("colliding project pages accepted")
+    except ValueError:
+        pass
+    assert retained == {str(path.relative_to(feed)): path.read_bytes() for path in feed.rglob("*") if path.is_file()}
+    del settings["projects"]["Example/README"]
+    contract.write_json(templates / "presentation.json", settings)
+    (templates / "index.html.j2").write_text("public template")
+    (templates / "escape.j2").symlink_to(directory / "not-public")
+    try:
+        feed_status.render(feed, templates)
+        raise AssertionError("linked template input accepted")
+    except ValueError:
+        pass
+    (templates / "escape.j2").unlink()
+    settings = contract.read_json(templates / "presentation.json")
+    settings["assets"] = ["../keys/apt.asc"]
+    contract.write_json(templates / "presentation.json", settings)
+    try:
+        feed_status.render(feed, templates)
+        raise AssertionError("template asset escaped its output authority")
+    except ValueError:
+        pass
+    settings["assets"] = ["assets/logo.txt"]
+    contract.write_json(templates / "presentation.json", settings)
+    shutil.rmtree(feed / "status/assets")
+    protected = feed / "keys"
+    protected.mkdir()
+    (protected / "logo.txt").write_text("protected existing key")
+    (feed / "status/assets").symlink_to(protected, target_is_directory=True)
+    try:
+        feed_status.render(feed, templates)
+        raise AssertionError("status parent symlink redirected output to protected paths")
+    except ValueError:
+        pass
+    assert (protected / "logo.txt").read_text() == "protected existing key"
+    (feed / "status/assets").unlink()
+    # The publisher invokes the same renderer with a clean environment.
+    import publish
+
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "synthetic-must-not-reach-renderer"}):
+        with patch.object(publish.subprocess, "run", wraps=publish.subprocess.run) as child:
+            publish.render(feed)
+            assert "GITHUB_TOKEN" not in child.call_args.kwargs["env"]
+    print(
+        "Receipt templates: parameters, structured fields, missing facts, escaping, strict errors, paths and replay verified"
+    )
     # These empty Git fixtures contain no application/source checkout or real credential.
     import publish
 
@@ -328,6 +434,11 @@ def main():
         "--feed",
         str(writer),
     ]
+
+    def failed_render(feed):
+        assert not list(directory.glob("core-ci-secrets-*")), "rendering saw temporary signing files"
+        raise ValueError("invalid status receipt")
+
     with patch.object(sys, "argv", argv), patch.dict(
         os.environ,
         {
@@ -347,7 +458,7 @@ def main():
     ), patch.object(
         publish, "retained_receipt", return_value=empty_receipt
     ), patch.object(
-        publish, "render", side_effect=ValueError("invalid status receipt")
+        publish, "render", side_effect=failed_render
     ), patch.object(
         publish, "prepare_commit"
     ) as commit, patch.object(

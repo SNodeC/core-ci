@@ -27,7 +27,7 @@ def update(selected, build_result, publication_run, artifacts, feed, private_key
         # The source artifact supplies no executable or key authority. Re-read official metadata and verify the SDK again.
         environment = read_json(Path(artifacts) / "manifest.json")["environment"]
         sdk, staging = prepare(selected["target"], environment, Path(temporary_root) / "sdk")
-        manifest = verify_manifest(selected, artifacts)
+        manifest = verify_manifest(selected, artifacts, build_result)
         target = selected["target"]
         package_format = target["build"]["format"]
         require(package_format in ("ipk", "apk"), "unsupported OpenWrt package format")

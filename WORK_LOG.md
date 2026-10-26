@@ -1077,3 +1077,48 @@
   relevant local checks and five-target live publication evidence are recorded above.
   Sandbox UI/graph remains available with all five v2.1.3 targets published. Fast-forward
   main preserves reviewed checkpoints; no new production/test code or production activation.
+
+## 2026-10-26 — GitHub publication templates and recorded build details
+
+- Owner accepted deployment-owned Jinja2 templates and richer public presentation/build
+  details, then explicitly kept this thread on GitHub work while another thread owns the
+  controller/UI/SSE. GitHub publication-only checkpoint uses the proposed220–360 net
+  production/100–170 test bounds: actual338 added/86 removed (+252) production and151
+  added/3 removed (+148) tests, including the template bundle. No controller changes.
+- Invariant: templates project retained verified publication evidence and explicitly recorded
+  build facts; they cannot authorize execution/publication or invent unavailable facts.
+  Replaced hard-coded HTML/Markdown assembly with one Jinja context and deployment bundle,
+  public parameters, project page names and bounded assets. Added strict missing-variable,
+  escaping, path/link/output-size checks; status output cannot overwrite packages/keys/receipts.
+- Source-owned outputs may report bounded compiler/test counts, coverage and public report
+  links, labelled hook-reported rather than independent test attestation. The trusted validator
+  rejects source-supplied job facts, then attaches timing from the already verified assigned
+  GitHub job; publication rechecks its run/job/attempt binding. No extra API request. Receipts
+  retain source/definition/target/rebuild and compact consumed-prerequisite identities; no
+  recursive receipt copy, full graph snapshot, new graph authority, state or scheduler.
+- Templates execute after temporary signing files are removed, in a bounded subprocess with
+  no inherited GitHub/signing credentials. All rendering remains in prepare before the sole
+  push step; push-step uncertainty and explicit retry policies are unchanged. The existing
+  feed capacity check now includes rendered outputs/assets. Worker dependencies are pinned.
+- Focused local checks pass: tests/worker.py (real DEB/RPM build/sign/index/replay and hostile
+  artifacts/signatures), tests/worker_provenance.py (synthetic assigned GitHub evidence,
+  summary/timing/context, strict rendering failures, collisions, links/traversal, clean child
+  environment, pre-push failure and real local checked Git pushes), tests/openwrt.py (actual
+  IPK controls and SDK archive/checksum boundaries, no SDK/APK execution). Black check on
+  nine changed Python files, AST/YAML/JSON/shell syntax,160-column production and diff checks
+  pass. No unrelated C++/UI suite run; CMake format-check covers unchanged C++/CMake only.
+- Locally rendered five target coordinates from real public sandbox receipts; receipt bytes
+  stayed unchanged. This is read-only public-data rendering, not new live pipeline acceptance.
+  Missing publication timestamps and current work remain null; build duration is whole assigned
+  job elapsed time. Minimal controller projection/verification timestamps remain coordinated
+  follow-up work, not a claimed full SNode.C status-page data reproduction.
+- Added worker/status-templates/README.md with context, configuration, hook summary and trust
+  boundaries. No commit/push/workflow activation, controller restart or installation by this
+  thread; shared checkout remains on the UI thread's feat/desktop-management-sse branch.
+  Review patch/logs retained in /tmp/codex/build/core-ci/status-templates until integration.
+  No production SNodeC resources, signing keys, existing tags or published package bytes
+  changed. .qtcreator/ and .local-credentials/ preserved without inspection.
+- Owner subsequently authorized commit and merge. This GitHub-only checkpoint is committed
+  independently on feat/publication-status-templates based on main and merged by fast-forward;
+  the shared UI branch, its HEAD and its index remain unchanged. No sandbox activation is
+  part of this merge. The UI thread can integrate main when its own work is ready.

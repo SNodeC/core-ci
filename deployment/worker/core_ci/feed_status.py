@@ -1,104 +1,181 @@
-"""Publication-only views derived from retained receipts, never execution state."""
+"""Bounded deployment-owned templates over verified publication evidence."""
 
 import argparse
-from html import escape
+from datetime import datetime
+import json
 from pathlib import Path
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
-from contract import read_json, relative_path, require, write_json
+from jinja2 import FileSystemLoader, StrictUndefined
+from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+from contract import canonical, read_json, regular_file, relative_path, require
 
 
-def render(feed):
+def render(feed, templates=None):
     feed = Path(feed)
+    templates = Path(templates) if templates is not None else Path(__file__).resolve().parents[1] / "status-templates"
+    require(not templates.is_symlink() and templates.is_dir(), "templates require a trusted regular directory")
+    size = 0
+    for file in templates.rglob("*"):
+        require(not file.is_symlink(), "template bundle cannot contain links")
+        if file.is_file():
+            size += file.stat().st_size
+    require(size <= 4 * 1024 * 1024, "template bundle exceeds resource bound")
+    site = read_json(regular_file(templates, "presentation.json"), 65536)
+    require(
+        site.get("schema") == 1 and set(site) <= {"schema", "title", "parameters", "projects", "assets"},
+        "invalid presentation settings",
+    )
+    require(
+        isinstance(site.get("title"), str) and isinstance(site.get("parameters", {}), dict),
+        "invalid presentation parameters",
+    )
+    require(isinstance(site.get("projects", {}), dict), "invalid project presentation settings")
     rows = []
     for path in sorted((feed / "receipts").glob("*/*.json")):
-        require(not path.is_symlink(), "status receipt must be a regular file")
+        require(
+            not path.is_symlink() and not path.parent.is_symlink() and not (feed / "receipts").is_symlink(),
+            "status receipts cannot contain links",
+        )
         receipt = read_json(path)
         require(receipt["schema"] == 1, "unsupported status receipt schema")
         build = receipt["build_result"]["run"]["html_url"]
         publication = receipt["run"]["html_url"]
-        require(
-            re.fullmatch(r"https://github.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/actions/runs/[0-9]+", build),
-            "invalid status build URL",
-        )
+        for url in (build, publication):
+            require(
+                re.fullmatch(r"https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+", url),
+                "invalid status execution URL",
+            )
         repository = build.split("/actions/runs/")[0].removeprefix("https://github.com/")
-        require(
-            re.fullmatch(r"https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+", publication),
-            "invalid status publication URL",
-        )
         base = receipt["feed"]["base_url"].rstrip("/") + "/"
-        require(base.startswith("https://"), "status feed requires HTTPS")
-        target = receipt["compatibility"]
+        address = urlsplit(base)
+        require(
+            address.scheme == "https"
+            and address.hostname
+            and not address.username
+            and not address.password
+            and not address.query
+            and not address.fragment,
+            "status feed requires HTTPS",
+        )
+        coordinates = receipt["compatibility"]
+        job = receipt.get("build_job")
+        duration = None
+        if job and job.get("started_at") and job.get("completed_at"):
+            start = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
+            finish = datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+            require(
+                start.utcoffset() is not None and finish.utcoffset() is not None and finish >= start,
+                "invalid assigned job timing",
+            )
+            duration = (finish - start).total_seconds()
         for package in receipt["packages"]:
             relative_path(package["path"])
             rows.append(
                 {
                     "repository": repository,
-                    "target": "/".join(target[key] for key in ("distribution", "suite", "arch", "format")),
+                    "target": "/".join(coordinates[key] for key in ("distribution", "suite", "arch", "format")),
+                    "coordinates": coordinates,
+                    "target_row": receipt.get("target"),
                     "package": package["name"],
                     "version": package["version"],
+                    "source": receipt.get("source"),
+                    "revision": receipt.get("revision"),
+                    "dependencies": receipt.get("dependencies"),
                     "source_commit": receipt["source_commit"],
                     "sha256": package["sha256"],
                     "package_url": base + quote(package["path"]),
                     "receipt_url": base + quote(path.relative_to(feed).as_posix()),
                     "build_url": build,
                     "publication_url": publication,
+                    "build_job": job,
+                    "build_duration_seconds": duration,
+                    "environment": receipt.get("environment"),
+                    "summary": receipt.get("summary"),
+                    "published_utc": receipt.get("published_utc"),
+                    "work": None,
                 }
             )
     rows.sort(key=lambda row: (row["repository"], row["target"], row["package"], row["version"], row["receipt_url"]))
-    status = feed / "status"
-    status.mkdir(exist_ok=True)
-    note = "Published receipts only. Waiting, building and failed work are shown in the core-ci controller."
-    paths = []
-    for repository in [None] + sorted({row["repository"] for row in rows}):
-        title = (repository or "Package feed") + " publications"
-        table = (
-            "<table><thead><tr>"
-            + "".join(
-                "<th>" + heading + "</th>" for heading in ("Repository", "Target", "Package", "Version", "Evidence")
-            )
-            + "</tr></thead><tbody>\n"
+    projects = []
+    for repository in sorted({row["repository"] for row in rows}):
+        publications = [row for row in rows if row["repository"] == repository]
+        settings = site.get("projects", {}).get(repository, {})
+        require(isinstance(settings, dict), "project presentation must be an object")
+        name = settings.get("page", repository.split("/")[1])
+        require(
+            isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", name),
+            "invalid project status page name",
         )
-        for row in rows:
-            if repository is None or row["repository"] == repository:
-                links = " · ".join(
-                    '<a href="' + escape(row[key + "_url"], quote=True) + '">' + label + "</a>"
-                    for key, label in (
-                        ("package", "Package"),
-                        ("build", "Build"),
-                        ("publication", "Publication"),
-                        ("receipt", "Receipt"),
-                    )
-                )
-                table += (
-                    "<tr>"
-                    + "".join(
-                        "<td>" + escape(row[key]) + "</td>" for key in ("repository", "target", "package", "version")
-                    )
-                    + "<td>"
-                    + links
-                    + "</td></tr>\n"
-                )
-        table += "</tbody></table>\n"
-        name = repository.split("/")[1] if repository else "README"
-        path = status / (("README/" if repository and name == "README" else "") + name + ".md")
-        path.parent.mkdir(exist_ok=True)
-        path.write_text('<a id="banner"></a>\n\n# ' + title + "\n\n" + note + "\n\n" + table)
-        paths.append(path.relative_to(feed).as_posix())
-        if repository is None:
-            page = '<!doctype html><html lang="en"><meta charset="utf-8"><title>' + escape(title) + "</title>"
-            page += '<meta name="viewport" content="width=device-width"><body><h1>' + escape(title) + "</h1>"
-            page += "<p>" + note + "</p>" + table + "</body></html>\n"
-            for path in (feed / "index.html", status / "index.html"):
-                path.write_text(page)
-                paths.append(path.relative_to(feed).as_posix())
-    write_json(feed / "status.json", {"schema": 1, "publications": rows})
-    paths.append("status.json")
-    return paths
+        status_path = "status/" + ("README/" if name == "README" else "") + name + ".md"
+        targets = []
+        for identity in sorted({row["target"] for row in publications}):
+            items = [row for row in publications if row["target"] == identity]
+            targets.append({"coordinates": items[0]["coordinates"], "publications": items, "work": None})
+        projects.append(
+            {
+                "repository": repository,
+                "title": settings.get("title", repository),
+                "parameters": settings,
+                "status_path": status_path,
+                "targets": targets,
+                "publications": publications,
+            }
+        )
+    context = {"schema": 1, "site": site, "projects": projects, "publications": rows}
+    environment = ImmutableSandboxedEnvironment(
+        loader=FileSystemLoader(templates), undefined=StrictUndefined, autoescape=True
+    )
+    environment.globals.clear()
+    outputs = {"status.json": (canonical(context) + "\n").encode()}
+    pages = [
+        ("index.html", "index.html.j2", None),
+        ("status/index.html", "index.html.j2", None),
+        ("status/README.md", "index.md.j2", None),
+    ]
+    for project in projects:
+        require(
+            all(path != project["status_path"] for path, template, page_project in pages),
+            "colliding project status pages",
+        )
+        pages.append((project["status_path"], "project.md.j2", project))
+    for path, template, project in pages:
+        chunks = []
+        size = 0
+        for chunk in environment.get_template(template).generate(**context, project=project):
+            size += len(chunk.encode())
+            require(size <= 4 * 1024 * 1024, "rendered status page exceeds resource bound")
+            chunks.append(chunk)
+        outputs[path] = "".join(chunks).encode()
+    assets = site.get("assets", [])
+    require(isinstance(assets, list) and len(assets) <= 64, "invalid status assets")
+    for name in assets:
+        relative_path(name)
+        require(name.startswith("assets/"), "status assets must be inside the bundle's assets directory")
+        outputs["status/" + name] = regular_file(templates, name).read_bytes()
+    require(sum(len(data) for data in outputs.values()) <= 32 * 1024 * 1024, "status output exceeds resource bound")
+    # Validate/render everything before changing status files. Packages/keys/receipts are never outputs.
+    for path in outputs:
+        require(
+            all(not (feed / parent).is_symlink() for parent in Path(path).parents), "linked status parent directory"
+        )
+        destination = feed / path
+        require(
+            not destination.is_symlink() and destination.resolve().is_relative_to(feed.resolve()),
+            "unsafe status destination",
+        )
+    for path, data in outputs.items():
+        destination = feed / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+    return list(outputs)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--feed", required=True)
-    render(parser.parse_args().feed)
+    parser.add_argument("--templates")
+    arguments = parser.parse_args()
+    print(json.dumps(render(arguments.feed, arguments.templates)))

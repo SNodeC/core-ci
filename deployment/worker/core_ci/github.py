@@ -123,6 +123,7 @@ def artifact(selected, build_result, token, destination):
         extract_archive(archive, destination, "zip")
     finally:
         archive.unlink(missing_ok=True)
+    return {key: job.get(key) for key in ("id", "run_id", "run_attempt", "html_url", "started_at", "completed_at")}
 
 
 def download_artifact(path, token, destination, expected):

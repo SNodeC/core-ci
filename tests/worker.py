@@ -176,6 +176,35 @@ def main():
             (root / "outputs.json").unlink()
             contract.write_json(root / "manifest.json", manifest)
             assert contract.verify_manifest(request, root) == manifest
+            assert manifest["summary"]["tests"] == {"passed": 1, "failed": 0, "skipped": 0}
+            assert manifest["summary"]["compilers"][0]["name"] == "cc"
+            extra_tests = {
+                "passed": 3,
+                "failed": 0,
+                "skipped": 1,
+                "coverage_percent": 0,
+                "report_url": "https://reports.example.test/results",
+            }
+            assert contract.build_summary({"tests": extra_tests})["tests"] == extra_tests
+            for invalid in (
+                {"tests": {"passed": True, "failed": 0, "skipped": 0}},
+                {"tests": {"passed": -1, "failed": 0, "skipped": 0}},
+                {"compilers": [{"name": "cc", "version": "bad\ntext"}]},
+                {"state": "published"},
+                {"tests": {**extra_tests, "coverage_percent": float("nan")}},
+                {"tests": {**extra_tests, "report_url": "javascript:alert(1)"}},
+            ):
+                rejected(lambda: contract.build_summary(invalid), "invalid/authoritative summary accepted")
+            spoofed = {**manifest, "build_job": {"id": 44, "run_id": 11, "run_attempt": 1}}
+            contract.write_json(root / "manifest.json", spoofed)
+            rejected(lambda: contract.verify_manifest(request, root), "source supplied verified job facts")
+            facts = {"run": {"id": 11}, "artifacts": [{"job_id": 44}]}
+            assert contract.verify_manifest(request, root, facts) == spoofed
+            rejected(
+                lambda: contract.verify_manifest(request, root, {"run": {"id": 99}, "artifacts": [{"job_id": 44}]}),
+                "job timing from another execution accepted",
+            )
+            contract.write_json(root / "manifest.json", manifest)
             changed = copy.deepcopy(manifest)
             changed["environment"]["image"] = "another:image"
             contract.write_json(root / "manifest.json", changed)
@@ -208,6 +237,14 @@ def main():
             receipt = sign_native.update(
                 request, build_result, publication_run, root, feed, private, passphrase, public, directory
             )
+            assert receipt["summary"] == manifest["summary"] and receipt["source"]["tag"] == request["source"]["tag"]
+            linked = {
+                **request,
+                "dependencies": [{"receipt": {**receipt, "dependencies": [{"private": "not copied"}]}}],
+            }
+            public_receipt = contract.publication_receipt(linked, {}, {}, manifest)
+            assert public_receipt["dependencies"][0]["packages"] == receipt["packages"]
+            assert "dependencies" not in public_receipt["dependencies"][0]
             before = {
                 str(file.relative_to(feed)): contract.file_hash(file) for file in feed.rglob("*") if file.is_file()
             }

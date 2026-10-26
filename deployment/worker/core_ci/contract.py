@@ -312,6 +312,32 @@ def publication_receipt(selected, build_result, publication_run, manifest):
         "attempt": selected["attempt"],
         "assignment_sha256": digest(selected),
         "source_commit": selected["source"]["commit"],
+        "source": {
+            key: selected["source"].get(key)
+            for key in ("repository", "title", "package", "tag", "definition_revision", "definition_blob_sha")
+        },
+        "revision": selected["revision"],
+        "target": selected["target"],
+        "dependencies": [
+            {
+                key: dependency["receipt"].get(key)
+                for key in (
+                    "execution",
+                    "attempt",
+                    "assignment_sha256",
+                    "source_commit",
+                    "source",
+                    "revision",
+                    "compatibility",
+                    "packages",
+                    "development_export",
+                    "feed",
+                )
+            }
+            for dependency in selected["dependencies"]
+        ],
+        "summary": manifest.get("summary"),
+        "build_job": manifest.get("build_job"),
         "run": publication_run,
         "build_result": build_result,
         "feed": selected["source"]["deployment"]["feed"],
@@ -322,6 +348,52 @@ def publication_receipt(selected, build_result, publication_run, manifest):
         "indexes": [],
     }
     return result
+
+
+def build_summary(value):
+    require(isinstance(value, dict) and set(value) <= {"compilers", "tests"}, "unsupported build summary")
+    require(len(canonical(value).encode()) <= 8192, "build summary exceeds resource bound")
+    compilers = value.get("compilers", [])
+    require(isinstance(compilers, list) and len(compilers) <= 16, "invalid compiler summary")
+    for compiler in compilers:
+        require(isinstance(compiler, dict) and set(compiler) == {"name", "version"}, "invalid compiler fields")
+        require(
+            all(
+                isinstance(text, str) and 0 < len(text) <= 512 and all(ord(c) >= 32 for c in text)
+                for text in compiler.values()
+            ),
+            "invalid compiler text",
+        )
+    if "tests" in value:
+        tests = value["tests"]
+        require(
+            isinstance(tests, dict)
+            and {"passed", "failed", "skipped"}
+            <= set(tests)
+            <= {"passed", "failed", "skipped", "coverage_percent", "report_url"},
+            "invalid test summary fields",
+        )
+        require(
+            all(type(tests[key]) is int and 0 <= tests[key] <= 10000000 for key in ("passed", "failed", "skipped")),
+            "invalid test counts",
+        )
+        if "coverage_percent" in tests:
+            coverage = tests["coverage_percent"]
+            require(type(coverage) in (int, float) and 0 <= coverage <= 100, "invalid reported coverage")
+        if "report_url" in tests:
+            require(
+                isinstance(tests["report_url"], str) and len(tests["report_url"]) <= 2048, "invalid test report URL"
+            )
+            url = urllib.parse.urlsplit(tests["report_url"])
+            require(
+                url.scheme == "https"
+                and url.hostname
+                and not url.username
+                and not url.password
+                and all(ord(char) >= 32 for char in tests["report_url"]),
+                "test report requires a public HTTPS URL",
+            )
+    return value
 
 
 def validate_outputs(selected, directory, declared, environment):
@@ -345,7 +417,7 @@ def validate_outputs(selected, directory, declared, environment):
             "invalid resolved SDK identity",
         )
     directory = Path(directory)
-    require(set(declared) <= {"packages", "development_export"}, "unknown hook output fields")
+    require(set(declared) <= {"packages", "development_export", "summary"}, "unknown hook output fields")
     packages = declared["packages"]
     require(isinstance(packages, list) and 0 < len(packages) <= 128, "declare one to 128 package outputs")
     package_format = selected["target"]["build"]["format"]
@@ -356,6 +428,8 @@ def validate_outputs(selected, directory, declared, environment):
     result = evidence(selected)
     result["environment"] = environment
     result["package_version"] = expected
+    if "summary" in declared:
+        result["summary"] = build_summary(declared["summary"])
     result["packages"] = []
     for package in packages:
         require(
@@ -417,13 +491,25 @@ def validate_outputs(selected, directory, declared, environment):
     return result
 
 
-def verify_manifest(selected, directory):
+def verify_manifest(selected, directory, build_result=None):
     manifest = read_json(Path(directory) / "manifest.json")
     for key, value in evidence(selected).items():
         require(manifest[key] == value, "manifest provenance differs from assignment: " + key)
     declared = {"packages": [{"file": item["file"], "component": item["component"]} for item in manifest["packages"]]}
     if manifest.get("development_export"):
         declared["development_export"] = manifest["development_export"]["file"]
+    if "summary" in manifest:
+        declared["summary"] = build_summary(manifest["summary"])
+    # Job facts are added only by the trusted validator after inspecting GitHub's assigned job.
+    if "build_job" in manifest:
+        require(build_result is not None, "source artifact cannot declare verified GitHub job facts")
+        job = manifest["build_job"]
+        require(
+            job["id"] == build_result["artifacts"][0]["job_id"]
+            and job["run_id"] == build_result["run"]["id"]
+            and job["run_attempt"] == 1,
+            "build timing/job differs from assigned evidence",
+        )
     # Reuse the same independent standard package-tool validation, never trust claimed metadata.
     path = Path(directory)
     temporary = path.parent / ("manifest-check-" + selected["execution"])
@@ -437,6 +523,8 @@ def verify_manifest(selected, directory):
             os.link(file, temporary / name)
         write_json(temporary / "outputs.json", declared)
         actual = validate_outputs(selected, temporary, declared, manifest["environment"])
+        if "build_job" in manifest:
+            actual["build_job"] = manifest["build_job"]
         require(actual == manifest, "package bytes/metadata/export differ from manifest")
         require(
             {file.name for file in path.iterdir()}
