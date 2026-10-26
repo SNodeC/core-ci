@@ -882,3 +882,14 @@
   Reduced production by seven lines. Focused provenance test proves render failure cannot
   reach writer token/commit/push and cleans temporary material; real local Git proves normal
   update, byte-identical replay, ignored-file rejection and stale-push rejection.
+
+- F4: the graph now constructs dispatch inputs once, shared with the REST dispatcher.
+  Eligibility checks conservative serialized UTF-8 byte bounds (60,000 assignment; 65,535
+  entire inputs object), including publication build_result and JSON escaping. Blocked nodes
+  retain their state and expose reasons through existing graph/UI and advancement responses.
+  No writer slot or rebuild revision is allocated for blocked work. No persisted size flag.
+- Focused graph-state and real-MariaDB/synthetic-GitHub pipeline tests pass. Cases cover a
+  raw assignment below 60,000 whose escaped payload exceeds 65,535, oversized publication,
+  visible HTTP blockers, and independent build/publication dispatch while blocked. The first
+  HTTP fixture attempted to change an already pinned run URL and was correctly rejected;
+  corrected it to assign its oversized synthetic evidence before binding. No weakened check.

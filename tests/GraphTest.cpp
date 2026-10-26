@@ -121,6 +121,41 @@ int main() {
         const auto join = find(graph, "j", "target-first", sha);
         const auto otherJoin = find(graph, "j", "target-second", sha);
         check(graph.node(join).prerequisites.size() == 2 && !graph.blockers(join).empty(), "join did not bind both prerequisites");
+        auto largeSources = sources;
+        largeSources["r"]["deployment"]["fixture_padding"] = std::string(18000, '"');
+        largeSources["small"] = graph_fixture::source("small", 10, {});
+        coreci::Graph bounded;
+        bounded.apply(bounded.select("r", largeSources, false));
+        bounded.apply(bounded.select("small", largeSources, false));
+        const auto tooLarge = find(bounded, "r", "target-first", sha);
+        const auto small = find(bounded, "small", "target-first", sha);
+        const auto inputs = bounded.dispatchInputs(bounded.node(tooLarge), false);
+        check(inputs.at("assignment").get<std::string>().size() < 60000 && inputs.dump().size() > 65535,
+              "fixture must exceed full input payload only");
+        check(!bounded.blockers(tooLarge).empty() && bounded.blockers(small).empty(),
+              "oversized input blocked unrelated work or remained invisible");
+        rejects([&]() {
+            bounded.beginBuild(tooLarge);
+        });
+        apply(bounded, bounded.beginBuild(small));
+        check(bounded.node(tooLarge).attempts.back().state == "waiting", "oversized work mutated state");
+
+        auto publicationBound = graph;
+        apply(publicationBound, publicationBound.beginBuild(root));
+        const auto boundedAttempt = publicationBound.node(root).attempts.back();
+        const auto boundedRun = run(publicationBound.node(root), false);
+        apply(publicationBound, publicationBound.bindRun(root, boundedAttempt.id, false, boundedRun));
+        apply(publicationBound,
+              publicationBound.built(root,
+                                     boundedAttempt.id,
+                                     {{"run", boundedRun},
+                                      {"assignment_sha256", coreci::Graph::digest(boundedAttempt.assignment)},
+                                      {"artifacts", {{{"id", 1}, {"fixture_padding", std::string(65536, 'p')}}}}}));
+        check(!publicationBound.publicationReady(root) && !publicationBound.dispatchBlocker(publicationBound.node(root), true).empty(),
+              "oversized publication input acquired a writer slot");
+        completeBuild(publicationBound, find(publicationBound, "r", "target-second", sha));
+        check(publicationBound.publicationReady(find(publicationBound, "r", "target-second", sha)),
+              "oversized publication blocked an independent writer");
         auto serialized = graph;
         const auto secondRoot = find(serialized, "r", "target-second", sha);
         completeBuild(serialized, root);

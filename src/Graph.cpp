@@ -188,6 +188,12 @@ namespace coreci {
                                   other.attempts.back().state);
             }
         }
+        if (reasons.empty() || (selected.attempts.back().state == "building" && !selected.attempts.back().buildResult.is_null())) {
+            const auto reason = dispatchBlocker(selected, selected.attempts.back().state == "building");
+            if (!reason.empty()) {
+                reasons.push_back(reason);
+            }
+        }
         return reasons;
     }
 
@@ -331,10 +337,9 @@ namespace coreci {
         return {{selected}, nextRevision + 1, {}};
     }
 
-    Node Graph::beginBuild(const std::string& id) const {
-        require(blockers(id).empty(), "execution is not eligible");
-        auto selected = records.at(id);
-        auto& attempt = selected.attempts.back();
+    nlohmann::json Graph::buildAssignment(const Node& selected) const {
+        const auto& attempt = selected.attempts.back();
+        const auto& id = selected.id;
         nlohmann::json dependencies = nlohmann::json::array();
         if (selected.attempts.size() > 1) {
             dependencies = selected.attempts.front().assignment.at("dependencies");
@@ -345,14 +350,14 @@ namespace coreci {
                     {{"execution", other.id}, {"attempt", other.attempts.back().id}, {"receipt", other.attempts.back().receipt}});
             }
         }
-        attempt.assignment = {{"schema", 1},
-                              {"execution", id},
-                              {"attempt", attempt.id},
-                              {"revision", attempt.revision},
-                              {"artifact_name", "core-ci-build-" + id + "-r" + std::to_string(attempt.revision)},
-                              {"source", selected.source},
-                              {"target", selected.target},
-                              {"dependencies", dependencies}};
+        nlohmann::json result = {{"schema", 1},
+                                 {"execution", id},
+                                 {"attempt", attempt.id},
+                                 {"revision", attempt.revision},
+                                 {"artifact_name", "core-ci-build-" + id + "-r" + std::to_string(attempt.revision)},
+                                 {"source", selected.source},
+                                 {"target", selected.target},
+                                 {"dependencies", dependencies}};
         nlohmann::json previous = nlohmann::json::array();
         for (const auto& earlier : selected.attempts) {
             if (earlier.id != attempt.id && !earlier.buildRun.is_null()) {
@@ -363,9 +368,38 @@ namespace coreci {
             }
         }
         if (!previous.empty()) {
-            attempt.assignment["environment_from"] = previous;
+            result["environment_from"] = previous;
         }
-        attempt.state = "building";
+        return result;
+    }
+
+    nlohmann::json Graph::dispatchInputs(const Node& selected, bool publication) const {
+        const auto& attempt = selected.attempts.back();
+        const auto assignment = attempt.assignment.is_null() ? buildAssignment(selected) : attempt.assignment;
+        nlohmann::json result{{"execution", selected.id},
+                              {"attempt", attempt.id},
+                              {"assignment_sha256", digest(assignment)},
+                              {"assignment", assignment.dump()}};
+        if (publication) {
+            result["build_result"] = attempt.buildResult.dump();
+        }
+        return result;
+    }
+
+    std::string Graph::dispatchBlocker(const Node& selected, bool publication) const {
+        const auto inputs = dispatchInputs(selected, publication);
+        std::string reason;
+        if (inputs.at("assignment").get_ref<const std::string&>().size() > 60000 || inputs.dump().size() > 65535) {
+            reason = "GitHub dispatch payload exceeds supported input bounds";
+        }
+        return reason;
+    }
+
+    Node Graph::beginBuild(const std::string& id) const {
+        require(blockers(id).empty(), "execution is not eligible");
+        auto selected = records.at(id);
+        selected.attempts.back().assignment = buildAssignment(selected);
+        selected.attempts.back().state = "building";
         return selected;
     }
 
@@ -405,7 +439,7 @@ namespace coreci {
     bool Graph::publicationReady(const std::string& id) const {
         const auto& selected = records.at(id);
         const auto& attempt = selected.attempts.back();
-        bool ready = attempt.state == "building" && !attempt.buildResult.is_null();
+        bool ready = attempt.state == "building" && !attempt.buildResult.is_null() && dispatchBlocker(selected, true).empty();
         if (ready) {
             const auto feed = publicationFeed(selected);
             for (const auto& [otherId, other] : records) {

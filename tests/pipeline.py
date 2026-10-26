@@ -131,7 +131,7 @@ def exercise(args, directory):
                     run = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 99}, "head_repository": {"id": 99},
                            "actor": {"id": 42}, "display_title": "core-ci build " + assignment["attempt"] + " " + value["inputs"]["assignment_sha256"],
                            "path": ".github/workflows/core-ci-build.yml", "head_sha": head,
-                           "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id), "status": "in_progress", "conclusion": None}
+                           "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id) + ("x" * 65536 if run_id == 103 else ""), "status": "in_progress", "conclusion": None}
                     runs[run_id] = run
                     dispatches.append(assignment)
                     if lose_next:
@@ -459,8 +459,20 @@ def exercise(args, directory):
             initial = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])
             assert initial["state"] == "failed" and "before the feed-update step" in initial["failure"]
             assert request("/api/work/retry", {"execution": initial["id"]})[0] == 202 and len(dispatches) == 4
-            assert not errors, errors
             assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts").strip() == "4"
+            runs[103].update(status="completed", conclusion="success")
+            status, blocked = report(103)
+            assert status == 200 and initial["id"] in blocked["blocked"] and len(publications) == 2, (status, blocked, len(publications))
+            oversized = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == initial["id"])
+            assert oversized["state"] == "building" and any("payload" in reason for reason in oversized["blockers"])
+            source_sha = "9" * 40
+            register(source_sha, definition)
+            assert request("/api/work/request", {"repository": "Owner/example", "tag": "v2.0.0-rc.1"})[0] == 202
+            assert len(dispatches) == 5 and dispatches[4]["source"]["commit"] == source_sha
+            runs[104].update(status="completed", conclusion="success")
+            assert report(104)[0] == 202 and len(publications) == 3, "oversized publication prevented independent dispatch"
+            assert publications[-1]["assignment"]["execution"] != initial["id"]
+            assert not errors, errors
             print("PASS local pipeline: enrollment/highest tag, committed dispatch, raw HMAC, exact older source, lost response, restart, failure/retry, late reports and assigned artifact identities")
     finally:
         lifecycle.stop(application)

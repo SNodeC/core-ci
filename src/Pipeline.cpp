@@ -225,22 +225,30 @@ namespace coreci {
             GraphChange change;
             change.nextRevision = store.graph().nextRebuildRevision();
             bool publicationSelected = false;
+            nlohmann::json blocked = nlohmann::json::object();
             for (const auto& [id, node] : store.graph().nodes()) {
                 if (!publicationSelected && store.graph().publicationReady(id)) {
                     change.nodes.push_back(store.graph().beginPublication(id));
                     publicationSelected = true;
                 }
-                if (store.graph().blockers(id).empty()) {
-                    const auto assigned = store.graph().beginBuild(id);
-                    require(assigned.attempts.back().assignment.dump().size() <= 60000,
-                            "immutable assignment exceeds the supported GitHub dispatch input bound");
-                    change.nodes.push_back(assigned);
+                if (node.attempts.back().state == "waiting") {
+                    const auto reasons = store.graph().blockers(id);
+                    if (reasons.empty()) {
+                        change.nodes.push_back(store.graph().beginBuild(id));
+                    } else {
+                        blocked[id] = reasons;
+                    }
+                } else if (node.attempts.back().state == "building" && !node.attempts.back().buildResult.is_null()) {
+                    const auto reason = store.graph().dispatchBlocker(node, true);
+                    if (!reason.empty()) {
+                        blocked[id] = nlohmann::json::array({reason});
+                    }
                 }
             }
             if (change.nodes.empty()) {
-                callback({200, {{"assigned", 0}}});
+                callback({200, {{"assigned", 0}, {"blocked", blocked}}});
             } else {
-                store.commit(change, [this, nodes = change.nodes, callback](const DatabaseResult& result) {
+                store.commit(change, [this, nodes = change.nodes, blocked, callback](const DatabaseResult& result) {
                     if (!result.error.empty()) {
                         callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
                     } else {
@@ -248,10 +256,10 @@ namespace coreci {
                         for (const auto& node : nodes) {
                             dispatch(node,
                                      node.attempts.back().state == "publishing",
-                                     [responses, count = nodes.size(), callback](const PipelineResult& dispatched) {
+                                     [responses, count = nodes.size(), blocked, callback](const PipelineResult& dispatched) {
                                          responses->push_back(dispatched.body);
                                          if (responses->size() == count) {
-                                             callback({202, {{"assigned", count}, {"dispatches", *responses}}});
+                                             callback({202, {{"assigned", count}, {"dispatches", *responses}, {"blocked", blocked}}});
                                          }
                                      });
                         }
@@ -304,13 +312,7 @@ namespace coreci {
                         callback({409, {{"error", error.what()}}});
                     }
                 } else {
-                    nlohmann::json inputs{{"execution", node.id},
-                                          {"attempt", attempt.id},
-                                          {"assignment_sha256", Graph::digest(attempt.assignment)},
-                                          {"assignment", attempt.assignment.dump()}};
-                    if (publication) {
-                        inputs["build_result"] = attempt.buildResult.dump();
-                    }
+                    const auto inputs = store.graph().dispatchInputs(node, publication);
                     const auto filename = definition.at("path").get<std::string>().substr(std::string(".github/workflows/").size());
                     github.request(
                         repository,

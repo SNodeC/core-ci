@@ -64,6 +64,8 @@ namespace coreci {
         static SourceTraversal traverseSources(const std::string& root, const std::map<std::string, nlohmann::json>& sources);
         GraphChange select(const std::string& root, const std::map<std::string, nlohmann::json>& sources, bool explicitRequest) const;
         GraphChange retry(const std::string& id) const;
+        nlohmann::json dispatchInputs(const Node& selected, bool publication) const;
+        std::string dispatchBlocker(const Node& selected, bool publication) const;
         Node beginBuild(const std::string& id) const;
         Node bindRun(const std::string& id, const std::string& attemptId, bool publication, const nlohmann::json& run) const;
         Node built(const std::string& id, const std::string& attemptId, const nlohmann::json& result) const;
@@ -83,6 +85,7 @@ namespace coreci {
         static std::string digest(const nlohmann::json& value);
 
     private:
+        nlohmann::json buildAssignment(const Node& selected) const;
         std::map<std::string, Node> records;
         std::uint64_t nextRevision = 1;
     };
