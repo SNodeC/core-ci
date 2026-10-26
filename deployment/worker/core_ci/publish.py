@@ -185,7 +185,7 @@ def main():
             keys[name] = path
         passphrase = None
         value = os.environ.pop("PACKAGES_GPG_PASSPHRASE", "")
-        if value:
+        if value and arguments.phase == "prepare" and package_format in ("deb", "rpm"):
             passphrase = root / "passphrase"
             passphrase.write_text(value)
             passphrase.chmod(0o600)

@@ -917,3 +917,9 @@
   literally named README gets status/README/README.md, separate from the aggregate page.
   Existing renderer HTML/JSON/retained-version test now verifies both pages remain intact.
   Lexical all-version ordering is presentation only; no new version codec or sorting policy.
+
+- F13 least-privilege correction: publication workflow exposes the optional OpenPGP passphrase
+  only for DEB/RPM preparation. Publisher writes it only for that phase/format. No secret
+  values inspected or changed. Workflow YAML parses; focused provenance preparation-failure
+  and temporary-material cleanup tests pass. SDK checksums currently trust the configured
+  HTTPS metadata origin; signed checksum-list verification was not added or claimed.
