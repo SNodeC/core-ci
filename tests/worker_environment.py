@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 import shutil
 from unittest.mock import patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deployment/worker/core_ci"))
 import environment
@@ -186,6 +187,77 @@ def retry_evidence(directory):
             rejects(lambda: environment.previous(selected))
 
 
+def host_manifest(directory):
+    import native
+    import worker
+    from contract import evidence, write_json
+
+    selected = worker.selected("deb")
+    source = directory / "source-fixture"
+    (source / "ci").mkdir(parents=True)
+    (source / "ci/native.sh").write_text("#!/bin/sh\nexit 0\n")
+    selected["source"].update(title="Fixture", depends_on=[], build={"native": "ci/native.sh"})
+    write_json(
+        source / "ci/packages.json",
+        {
+            **{key: selected["source"][key] for key in ("title", "package", "depends_on", "build")},
+            "schema": 1,
+            "matrix": [selected["target"]],
+        },
+    )
+    identity = {"resolved_image": "configured@sha256:" + "e" * 64, "platform": "linux/amd64", "config_digest": "f" * 64}
+    document = {"assignment_sha256": digest(selected), "environment": identity}
+    write_json(directory / "environment.json", document)
+    manifest = {**evidence(selected), "environment": identity}
+    for field in (None, "environment", "source"):
+        supplied = copy.deepcopy(manifest)
+        if field is not None:
+            supplied[field] = (
+                {"config_digest": "forged"} if field == "environment" else {**supplied[field], "commit": "0" * 40}
+            )
+        arguments = SimpleNamespace(
+            assignment="fixture",
+            assignment_sha256=digest(selected),
+            source=str(source),
+            environment=str(directory / "environment.json"),
+            output=str(directory / (field or "valid")),
+        )
+
+        def container(command, **options):
+            if command[:2] == ["docker", "run"] and "--network=none" not in command:
+                write_json(Path(arguments.output) / "outputs.json", {"packages": []})
+            return SimpleNamespace(stdout=json.dumps(supplied))
+
+        with patch.dict(
+            native.os.environ,
+            {
+                "GITHUB_REPOSITORY": selected["source"]["repository"],
+                "GITHUB_REPOSITORY_ID": str(selected["source"]["repository_id"]),
+                "GITHUB_RUN_ATTEMPT": "1",
+                "RUNNER_TEMP": str(directory),
+            },
+        ), patch.object(native, "assignment", return_value=selected), patch.object(
+            native, "prepare_dependencies"
+        ), patch.object(
+            native.subprocess, "run", side_effect=container
+        ), patch.object(
+            native,
+            "output",
+            side_effect=[
+                selected["source"]["commit"],
+                selected["source"]["deployment"]["worker"]["tooling_sha"],
+                selected["source"]["definition_blob_sha"],
+                json.dumps([{"Id": identity["config_digest"]}]),
+            ],
+        ):
+            if field is None:
+                native.build(arguments)
+                assert json.loads((Path(arguments.output) / "manifest.json").read_text()) == manifest
+            else:
+                rejects(lambda: native.build(arguments))
+                assert not (Path(arguments.output) / "manifest.json").exists()
+
+
 def main():
     target = {"family": "native", "build": {"image": "configured:tag", "platform": "linux/amd64"}}
     metadata = [
@@ -295,6 +367,8 @@ def main():
             rejects(environment.main)
         assert prepare.call_count == 2, "incompatible join reached SDK preparation"
     retry_evidence(directory)
+    with tempfile.TemporaryDirectory(dir=directory) as fixture:
+        host_manifest(Path(fixture))
     print("PASS worker-only image/SDK resolution fixtures; no Docker or SDK archive was executed")
 
 

@@ -893,3 +893,9 @@
   visible HTTP blockers, and independent build/publication dispatch while blocked. The first
   HTTP fixture attempted to change an already pinned run URL and was correctly rejected;
   corrected it to assign its oversized synthetic evidence before binding. No weakened check.
+
+- F5 verified: a source-controlled image's validator stdout could replace trusted environment
+  evidence. Host now compares the returned environment and all existing assignment evidence
+  before writing a manifest. Publisher remains the package metadata/signing trust boundary.
+  Focused worker-environment test exercises the host wrapper with synthetic container results:
+  honest evidence accepted, altered environment/source rejected. No local Docker build executed.

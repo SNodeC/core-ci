@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 
+from contract import evidence
 from contract import assignment, compatibility, download_feed, extract_archive, output, read_json, require, write_json
 
 
@@ -216,6 +217,11 @@ def build(arguments):
                 timeout=300,
             )
             manifest = json.loads(result.stdout)
+            require(
+                manifest["environment"] == environment
+                and all(manifest[key] == value for key, value in evidence(selected).items()),
+                "container changed trusted environment or assignment evidence",
+            )
             (destination / "outputs.json").unlink()
             write_json(destination / "manifest.json", manifest)
         finally:
