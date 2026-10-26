@@ -24,18 +24,25 @@
 <div class="heading"><div><h1 id="repositories-heading">Repositories</h1><p>Definitions are committed to GitHub</p></div>
 <button id="enroll">Enroll repository</button></div>
 <div class="repository-layout"><div id="repositories" aria-label="Enrolled repositories"></div><section class="editor-panel">
-<form id="editor"><h2>Enroll or edit a repository</h2><div class="fields">
+<form id="editor" autocomplete="off"><h2>Enroll or edit a repository</h2><div class="fields">
 <label>GitHub repository<input id="repository" required placeholder="owner/repository" autocomplete="off"></label>
 <label>Configuration branch<input id="branch" required autocomplete="off"></label></div>
 <p id="revision">No committed revision selected</p><p id="remote-revision" role="status"></p>
 <button type="button" id="import">Read committed definition from GitHub</button>
-<div class="fields"><label>Display title<input id="title"></label><label>Package namespace<input id="package"></label>
-<label class="wide">Dependencies<input id="dependencies" placeholder="Enrolled repository names, separated by commas"></label></div>
-<h2>Target matrix</h2><div class="table-wrap"><table><thead><tr><th>Row</th><th>Distribution / series</th><th>Architecture</th>
-<th>Runner</th></tr></thead><tbody id="targets"></tbody></table></div>
-<details id="definition-details"><summary>Edit definition JSON — target rows and build hooks</summary>
-<label>Package definition<textarea id="definition" rows="14" spellcheck="false" required></textarea></label></details>
-<button type="submit" class="primary">Commit definition to GitHub</button></form>
+<button type="button" id="new-definition">Start new definition</button>
+<fieldset id="definition-controls"><legend>Package definition</legend>
+<div class="fields"><label>Display title<input id="title" required maxlength="1024"></label>
+<label>Package namespace<input id="package" required maxlength="128" pattern="[a-z0-9][a-z0-9+.\-]*"></label></div>
+<fieldset><legend>Dependencies</legend><div id="dependencies" class="dependency-choices"></div></fieldset>
+<div class="fields"><label>Native build hook<input id="native-hook" placeholder="Repository-relative hook path"></label>
+<label>OpenWrt build hook<input id="openwrt-hook" placeholder="Repository-relative hook path"></label></div>
+<div class="heading"><h2>Target matrix</h2><button type="button" id="add-target">Add target</button></div>
+<p id="matrix-message" class="secondary"></p><div class="table-wrap"><table><thead><tr><th>Row</th>
+<th>Distribution / series</th><th>Architecture</th><th>Runner</th><th>Actions</th></tr></thead><tbody id="targets"></tbody></table></div>
+<button type="submit" class="primary">Commit definition to GitHub</button></fieldset>
+<details id="definition-details"><summary>Definition JSON preview — read only</summary>
+<label>Package definition<textarea id="definition" rows="14" spellcheck="false" readonly></textarea></label></details>
+</form>
 <div class="heading"><h2>Source selection</h2></div><label>Exact version tag<input id="tag" placeholder="Empty selects highest SemVer"></label>
 <button id="request-build">Request build</button>
 <details><summary>Source build workflow</summary><button id="workflow-preview" type="button">Preview configured workflow</button>
@@ -43,6 +50,23 @@
 <label>Proposed pinned workflow<textarea id="workflow-proposed" rows="8" readonly></textarea></label>
 <button id="workflow-write" type="button">Commit previewed workflow to GitHub</button></details>
 </section></div></section>
+<dialog id="target-editor" aria-labelledby="target-heading"><form id="target-form" autocomplete="off">
+<h2 id="target-heading">Target</h2><div class="fields">
+<label>Target ID<input id="target-id" required maxlength="256" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+<label>Family<select id="target-family"><option value="native">Native Linux</option><option value="openwrt">OpenWrt</option></select></label>
+<label>Distribution<input id="target-distribution" required maxlength="256" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+<label>Suite / feed series<input id="target-suite" required maxlength="256" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+<label>Architecture<input id="target-arch" required maxlength="256" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+<label>Package format<select id="target-format"></select></label>
+<label>Runner selector<select id="target-runner-kind"><option value="name">Single name</option><option value="labels">Label array</option></select></label>
+<label>Runner name or labels (one per line)<textarea id="target-runner" rows="2" required></textarea></label></div>
+<fieldset id="native-fields"><legend>Native build</legend><div class="fields">
+<label>Distribution image<input id="build-image" required></label><label>Image platform<input id="build-platform" required></label></div></fieldset>
+<fieldset id="openwrt-fields"><legend>OpenWrt build</legend>
+<label>SDK target<input id="build-target" required placeholder="SDK target/subtarget"></label>
+<p class="secondary">The worker resolves the SDK; dependent builds reuse their prerequisites' pinned SDK.</p></fieldset>
+<p id="target-error" class="error" role="alert"></p><div class="actions"><button type="submit" class="primary">Apply target</button>
+<button type="button" id="cancel-target">Cancel</button></div></form></dialog>
 <details id="feedback-details"><summary id="feedback-summary" role="status" aria-live="polite">Operation details</summary>
 <pre id="feedback"></pre></details>
 </main></body></html>

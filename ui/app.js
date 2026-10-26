@@ -1,7 +1,7 @@
 "use strict";
 const element = (id) => document.getElementById(id);
 let repositories = [], graph = {executions: [], mutations_allowed: false};
-let selected = null, executionId = null, workflowPreview = null, events = null, dirty = false, busy = false;
+let selected = null, executionId = null, workflowPreview = null, events = null, dirty = false, busy = false, targetIndex = null;
 
 function node(tag, text = "", className = "") {
     const result = document.createElement(tag);
@@ -48,7 +48,8 @@ async function api(path, body) {
 async function operation(action) {
     if (!busy) {
         busy = true;
-        document.querySelectorAll("form button, form input, form textarea, #repositories button, .actions button, #enroll, #reconcile, #request-build")
+        document.querySelectorAll("form button, form input, form textarea, form select, #repositories button, " +
+            ".actions button, #enroll, #reconcile, #request-build")
             .forEach((control) => { control.disabled = true; });
         try {
             await action();
@@ -56,7 +57,7 @@ async function operation(action) {
             feedback(error.result || error.message, true);
         } finally {
             busy = false;
-            document.querySelectorAll("button, form input, form textarea").forEach((control) => { control.disabled = false; });
+            document.querySelectorAll("button, form input, form textarea, form select").forEach((control) => { control.disabled = false; });
             renderWork();
         }
     }
@@ -181,18 +182,117 @@ function renderWork() {
     element("counts").textContent = ["building", "publishing", "waiting", "failed"].map((value) =>
         graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + value).join(" · ");
 }
+function preview(definition) {
+    element("definition").value = JSON.stringify(definition, null, 2);
+    dirty = true;
+    workflowPreview = null;
+}
+function dependencyChoices() {
+    const definition = JSON.parse(element("definition").value), self = element("repository").value.split("/").pop();
+    const enrolled = repositories.map((row) => row.repository.split("/").pop());
+    const names = new Set([...definition.depends_on, ...enrolled.filter((name) => name !== self)]);
+    element("dependencies").replaceChildren();
+    for (const name of names) {
+        const label = node("label"), checkbox = node("input");
+        Object.assign(checkbox, {type: "checkbox", value: name, checked: definition.depends_on.includes(name), disabled: busy});
+        label.append(checkbox, node("span", name + (name === self ? " (invalid: self dependency)" : enrolled.includes(name) ? "" : " (not enrolled)")));
+        element("dependencies").append(label);
+    }
+    if (names.size === 0) {
+        element("dependencies").append(node("p", "No other repositories enrolled", "secondary"));
+    }
+}
 function fields() {
     const definition = JSON.parse(element("definition").value);
-    element("title").value = definition.title;
-    element("package").value = definition.package;
-    element("dependencies").value = definition.depends_on.join(", ");
+    element("definition-controls").disabled = false;
+    for (const id of ["title", "package"]) {
+        element(id).value = definition[id];
+    }
+    for (const family of ["native", "openwrt"]) {
+        element(family + "-hook").value = definition.build[family] || "";
+        element(family + "-hook").required = definition.matrix.some((row) => row.family === family);
+    }
+    dependencyChoices();
     element("targets").replaceChildren();
-    for (const target of definition.matrix) {
-        const row = node("tr");
+    definition.matrix.forEach((target, index) => {
+        const row = node("tr"), actions = node("td", "", "row-actions");
         for (const value of [target.id, target.distribution + " " + target.suite, target.arch, JSON.stringify(target.runner)]) {
             row.append(node("td", value));
         }
+        actions.append(button("Edit", () => editTarget(index)), button("Duplicate", () => editTarget(index, true)), button("Remove", () => {
+            definition.matrix.splice(index, 1);
+            preview(definition);
+            fields();
+        }));
+        row.append(actions);
         element("targets").append(row);
+    });
+    element("matrix-message").textContent = definition.matrix.length ? "" : "Add at least one target before saving.";
+}
+function freshDefinition() {
+    preview({schema: 1, title: "", package: "", depends_on: [], build: {}, matrix: []});
+    fields();
+}
+function targetFamily() {
+    const native = element("target-family").value === "native", previous = element("target-format").value;
+    element("native-fields").disabled = !native;
+    element("native-fields").hidden = !native;
+    element("openwrt-fields").disabled = native;
+    element("openwrt-fields").hidden = native;
+    element("target-format").replaceChildren();
+    for (const format of native ? ["deb", "rpm"] : ["ipk", "apk"]) {
+        const option = node("option", format);
+        option.value = format;
+        element("target-format").append(option);
+    }
+    if (Array.from(element("target-format").options).some((option) => option.value === previous)) {
+        element("target-format").value = previous;
+    }
+}
+function editTarget(index = null, duplicate = false) {
+    const matrix = JSON.parse(element("definition").value).matrix;
+    const target = index === null ? {id: "", family: "native", distribution: "", suite: "", arch: "", runner: "", build: {format: "deb"}} : matrix[index];
+    targetIndex = duplicate ? null : index;
+    element("target-heading").textContent = duplicate ? "Duplicate target" : index === null ? "Add target" : "Edit target";
+    for (const key of ["id", "family", "distribution", "suite", "arch"]) {
+        element("target-" + key).value = key === "id" && duplicate ? "" : target[key];
+    }
+    element("target-runner-kind").value = Array.isArray(target.runner) ? "labels" : "name";
+    element("target-runner").value = Array.isArray(target.runner) ? target.runner.join("\n") : target.runner;
+    for (const key of ["image", "platform", "target"]) {
+        element("build-" + key).value = target.build[key] || "";
+    }
+    targetFamily();
+    element("target-format").value = target.build.format;
+    element("target-error").textContent = "";
+    element("target-editor").showModal();
+}
+function applyTarget(event) {
+    event.preventDefault();
+    const definition = JSON.parse(element("definition").value), target = {};
+    for (const key of ["id", "family", "distribution", "suite", "arch"]) {
+        target[key] = element("target-" + key).value;
+    }
+    target.runner = element("target-runner-kind").value === "labels" ? element("target-runner").value.split("\n") : element("target-runner").value;
+    target.build = {format: element("target-format").value};
+    for (const key of target.family === "native" ? ["image", "platform"] : ["target"]) {
+        target.build[key] = element("build-" + key).value;
+    }
+    const duplicate = definition.matrix.some((row, index) => index !== targetIndex && row.id === target.id);
+    const runners = Array.isArray(target.runner) ? target.runner : [target.runner];
+    if (duplicate || runners.length > 32 || runners.some((label) => !label || label.length > 256) ||
+        (!Array.isArray(target.runner) && target.runner.includes("\n"))) {
+        element("target-error").textContent = duplicate ? "Target ID already exists; choose a unique ID." :
+            "Use one runner name, or up to 32 nonempty labels (one per line, at most 256 characters each).";
+    } else {
+        if (targetIndex === null) {
+            definition.matrix.push(target);
+        } else {
+            definition.matrix[targetIndex] = target;
+        }
+        preview(definition);
+        fields();
+        element("target-editor").close();
     }
 }
 function selectRepository(repository = null) {
@@ -202,15 +302,17 @@ function selectRepository(repository = null) {
         workflowPreview = null;
         element("repository").value = repository?.repository || "";
         element("branch").value = repository?.branch || "";
-        element("definition").value = repository ? JSON.stringify(repository.definition, null, 2) : "";
+        if (repository) {
+            element("definition").value = JSON.stringify(repository.definition, null, 2);
+            fields();
+        } else {
+            freshDefinition();
+            dirty = false;
+        }
         element("revision").textContent = repository ? "Committed configuration: " + repository.branch + " · " + repository.revision.slice(0, 12) :
             "No committed revision selected";
-        for (const id of ["title", "package", "dependencies", "workflow-current", "workflow-proposed", "tag"]) {
+        for (const id of ["workflow-current", "workflow-proposed", "tag"]) {
             element(id).value = "";
-        }
-        element("targets").replaceChildren();
-        if (repository) {
-            fields();
         }
         renderRepositories();
     }
@@ -246,6 +348,9 @@ function connect() {
     events.addEventListener("repositories", (event) => {
         repositories = JSON.parse(event.data).repositories;
         renderRepositories();
+        if (!element("definition-controls").disabled) {
+            dependencyChoices();
+        }
     });
     events.addEventListener("unavailable", (event) => { feedback(JSON.parse(event.data), true); });
     events.onerror = () => {
@@ -261,33 +366,41 @@ element("search").addEventListener("input", renderWork);
 element("state-filter").addEventListener("change", renderWork);
 element("enroll").addEventListener("click", () => selectRepository());
 element("reconcile").addEventListener("click", () => operation(async () => { feedback(await api("/api/work/reconcile", {})); }));
-for (const id of ["repository", "branch", "definition", "title", "package", "dependencies"]) {
-    element(id).addEventListener("input", () => {
-        dirty = true;
-        workflowPreview = null;
-        if (id === "repository" || id === "branch") {
-            selected = null;
-            element("revision").textContent = "Read the committed definition before updating this repository/ref";
+element("editor").addEventListener("input", (event) => {
+    const id = event.target.id;
+    dirty = true;
+    workflowPreview = null;
+    if (id === "repository" || id === "branch") {
+        selected = null;
+        element("revision").textContent = "Read the committed definition before updating this repository/ref";
+    }
+    if (id !== "repository" && id !== "branch") {
+        const definition = JSON.parse(element("definition").value);
+        definition.title = element("title").value;
+        definition.package = element("package").value;
+        definition.depends_on = Array.from(element("dependencies").querySelectorAll("input:checked"), (input) => input.value);
+        for (const family of ["native", "openwrt"]) {
+            if (element(family + "-hook").value) {
+                definition.build[family] = element(family + "-hook").value;
+            } else {
+                delete definition.build[family];
+            }
         }
-    });
-}
-for (const id of ["title", "package", "dependencies"]) {
-    element(id).addEventListener("change", () => {
-        try {
-            const definition = JSON.parse(element("definition").value);
-            definition.title = element("title").value;
-            definition.package = element("package").value;
-            definition.depends_on = element("dependencies").value.split(",").map((value) => value.trim()).filter(Boolean);
-            element("definition").value = JSON.stringify(definition, null, 2);
-            fields();
-        } catch (error) {
-            feedback("Repair the definition JSON before editing its fields: " + error.message, true);
-        }
-    });
-}
-element("definition").addEventListener("change", () => {
-    try { fields(); } catch (error) { feedback(error.message, true); }
+        preview(definition);
+    }
+    if (!element("definition-controls").disabled && (id === "repository" || event.target.type === "checkbox")) {
+        dependencyChoices();
+    }
 });
+element("new-definition").addEventListener("click", () => {
+    if (window.confirm("Replace the definition draft with an empty form? GitHub is unchanged until you commit.")) {
+        freshDefinition();
+    }
+});
+element("add-target").addEventListener("click", () => editTarget());
+element("target-family").addEventListener("change", targetFamily);
+element("target-form").addEventListener("submit", applyTarget);
+element("cancel-target").addEventListener("click", () => element("target-editor").close());
 async function adoptCommitted(result) {
     feedback(result);
     try {
@@ -311,9 +424,11 @@ element("import").addEventListener("click", () => operation(async () => {
             const effective = repositories.find((row) => row.repository === element("repository").value);
             selected = {revision: effective?.revision || "", blob_sha: error.result.blob_sha};
             element("definition").value = error.result.content;
+            element("definition-controls").disabled = true;
             dirty = true;
             element("definition-details").open = true;
-            element("revision").textContent = "Read GitHub revision: " + error.result.github_revision + " · repair invalid JSON before saving";
+            element("revision").textContent = "Read GitHub revision: " + error.result.github_revision +
+                " · use Start new definition to replace the unsupported document";
         }
         throw error;
     }
@@ -321,6 +436,9 @@ element("import").addEventListener("click", () => operation(async () => {
 element("editor").addEventListener("submit", (event) => {
     event.preventDefault();
     operation(async () => {
+        if (JSON.parse(element("definition").value).matrix.length === 0) {
+            throw new Error("Add at least one target before committing the definition.");
+        }
         const result = await api("/api/repositories/save", {
             repository: element("repository").value, branch: element("branch").value,
             revision: selected?.revision || "", blob_sha: selected?.blob_sha || "", definition: JSON.parse(element("definition").value)
@@ -347,4 +465,5 @@ element("workflow-write").addEventListener("click", () => operation(async () => 
     workflowPreview = null;
     feedback(result);
 }));
+selectRepository();
 connect();

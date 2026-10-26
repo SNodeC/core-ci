@@ -1183,3 +1183,33 @@
   and SSE remained Live. Closed only our two verification popups; existing user tabs preserved.
 - Restart preserved all55 execution states and GitHub assignments. No builds/publications
   triggered. Parallel worker/template source and WORK_LOG changes excluded from this checkpoint.
+
+## 2026-10-26 — structured enrollment and target matrix editor
+
+- Owner approved180–260 net production/80–140 test lines, including dependency controls.
+  Replaced comma-separated dependencies and JSON editing with self-excluding checkboxes,
+  source-hook inputs, Add/Edit/Duplicate/Remove target actions and a read-only JSON preview.
+  Existing dependency order, runner string/label-array types and free distribution/runner
+  values are preserved. Native DEB/RPM image/platform and OpenWrt IPK/APK target fields cover
+  the current definition contract; SDK resolution stays on GitHub. No new catalogue.
+- One definition draft drives preview and controls. Row edits apply explicitly or cancel;
+  unsupported imports remain visible with form editing disabled until an explicit fresh draft
+  replaces them. Preserve the imported blob/revision guard. Existing server validation and
+  GitHub write-feedback/uncertainty policies remain authoritative. SSE updates dependency
+  choices without replacing form/row drafts; newly rendered choices respect operation locking.
+- Focused enrollment-boundaries passes3.11s with real isolated MariaDB and synthetic GitHub.
+  Build, format-check, JavaScript/Python syntax,160-column changed-production and diff checks
+  pass. New127-line interactive browser fixture tests the public save payload, not live GitHub.
+  Chrome exercised all four formats, exact runner selectors, duplicate IDs, duplicate/remove,
+  canceled rows, empty-matrix rejection, rejected/successful writes and retained drafts over SSE.
+  Unsupported-import replacement retained the original revision and newly read blob guard;
+  that disposable fixture uses a deterministic affirmative native-confirm substitute.
+- Actual sandbox controller restarted; all55 execution states/assigned runs remain unchanged.
+  Chrome verified existing five-row demo configuration, correct dependency order, no self
+  choice, read-only preview, target editing/cancel and Live SSE. No sandbox definition commit,
+  build, publication, credential, feed, key or tag change. Production SNodeC untouched.
+- Accounting: production +201/-48 (net153), tests +127/-0; deployment documentation +11/-1.
+  Below the approved production ceiling. Parallel worker/template files still match15ad8d6
+  byte-for-byte; preserve their WORK_LOG insertion and exclude them from this checkpoint.
+  Canonical branch feat/desktop-management-sse; no extra source checkout. Verification assets
+  remain under /tmp/codex/build/core-ci/ui-proposal; disposable fixture server stopped.

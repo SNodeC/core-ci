@@ -447,7 +447,17 @@ notification. This accepted limitation has no durable inbox or automatic retry p
 
 ## 9. Enroll projects and follow a first publication
 
-Commit the definition/hooks, install the thin workflow and enroll using the local UI. Follow
+Commit the source-owned hook files, then use the local UI to create or edit the definition.
+Select enrolled dependencies with checkboxes; the repository itself is excluded. Add, edit,
+duplicate or remove matrix rows through the target form. Enter distribution, suite, architecture,
+runner name/labels and family-specific build parameters without editing JSON. Native rows need
+an image/platform and DEB or RPM; OpenWrt rows need an SDK target and IPK or APK. Distribution
+and runner values are deployment inputs, not a support catalogue. Supply repository-relative
+hook paths for the families used. Review the expandable read-only JSON preview, then commit.
+The original revision/blob guards still apply. Server validation rejects invalid configuration
+before the GitHub write; failures preserve the draft. If an imported document cannot be edited
+by the supported form, its original content remains visible; Start new definition explicitly
+replaces the draft using the retained GitHub write guard. Install the thin workflow. Follow
 the [extension guide](../extensions/README.md) for the exact schema and hook environment.
 An existing highest SemVer is selected immediately; dependencies must have explicitly selected
 work and compatible rows. New tags and explicit older requests follow the same graph rules.
