@@ -923,3 +923,21 @@
   values inspected or changed. Workflow YAML parses; focused provenance preparation-failure
   and temporary-material cleanup tests pass. SDK checksums currently trust the configured
   HTTPS metadata origin; signed checksum-list verification was not added or claimed.
+
+- F7/F8/F9 deployment triage: observer secret's exact token type/scope remains unknown and
+  no value was queried. Authorized feed metadata shows no rulesets and unprotected main;
+  no access controls changed. Empty jobs/absent receipts remain insufficient pre-push proof.
+- F14: corrected active secret names, implemented feed/receipt/export paths and obsolete
+  SDK/client acceptance wording. Documented hosted-runner trust limits, HTTPS checksum trust,
+  compatible client dependency resolution and static-export runtime evidence. Added per-finding
+  classification and remaining gates in docs/workflow-review-fixes.md. Documentation only.
+- Relevant format-check target and targeted Python formatting checks pass. Final correction
+  delta is 61 net production lines, 259 test lines, below approved caps. No full suite run.
+- Deployed reviewed worker d210b36e46b4d5041828bf7b32f67d5638570142 and source workflow
+  pins in VOC-Experiments only. Publication blob 6582e15feea5f4d3785b4dfc0a157bc955175c65;
+  source blob c6f037a87eda6991586d6157dda7b341c7d0370c. Protected public config values updated.
+  Restarted development controller; previous 40 execution IDs/revisions/states unchanged.
+- Created new demo-join v2.1.1 at f542f5e594edc66932519714a01a57a012fe9f69 for focused
+  integrated publication. Five targets assigned revisions 42–46, consuming existing verified
+  prerequisite receipts. Existing tags/keys/packages unchanged. Initial HTTP request response
+  expired while asynchronous work continued; assignment inspected, never resubmitted blindly.

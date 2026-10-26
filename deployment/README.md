@@ -200,7 +200,9 @@ Client acceptance must use scoped trusted keys, gpgcheck=1/repo_gpgcheck=1 for R
 matching OpenWrt client tooling. APT base is FEED_BASE_URL/apt/DISTRIBUTION/SUITE with suite
 SUITE and component main, using a dedicated Signed-By=/usr/share/keyrings/core-ci.asc file.
 No --allow-untrusted, file-existence substitute or global trusted-key installation is accepted.
-Actual apt/dnf/opkg/apk refresh/install/runtime acceptance remains undone.
+Actual apt/dnf/opkg/apk refresh/install/runtime checks pass on the five sandbox targets;
+see [recorded evidence](../docs/sandbox-deployment.md). Wrong-key rejection passes; live
+modified-index/package rejection is not yet established for every format.
 
 ## Latest OpenWrt SDK policy
 
@@ -214,8 +216,8 @@ Roots choose the latest stable SDK; dependent work reuses the exact SDK/toolchai
 in all selected prerequisite receipts, failing on disagreement. The prepared GitHub worker
 verifies the SDK archive, imports only selected dependencies/own development exports and
 runs the source OpenWrt hook. The publisher uses independently verified SDK host tools for
-IPK/usign and APKv3/EC signing and indexing. Real SDK/build/sign/install execution has not
-been accepted yet. The trusted build workflow stores
+IPK/usign and APKv3/EC signing and indexing. Real SDK/build/sign/install execution and
+diamond clients pass in the sandbox. The trusted build workflow stores
 resolved environment evidence before hooks, separate from package artifacts. Retries use
 read-only Actions access to earlier assigned runs and retain their resolved environment.
 Evidence requests 90-day retention; repository limits and artifact expiry can prevent a
@@ -223,7 +225,8 @@ retry, which then fails clearly instead of changing inputs. Source hooks receive
 token. Real GitHub execution remains an acceptance requirement.
 
 Sandbox source recipes, explicit matrices and the external activation review are in
-[sandbox/README.md](sandbox/README.md). No sandbox workflow installation is implied by local preparation.
+[sandbox/README.md](sandbox/README.md). The authorized sandbox workflows are installed; the current revision and remaining limits
+are recorded separately in the deployment evidence.
 
 
 ## Feed publication status
@@ -238,3 +241,12 @@ assigned GitHub runs and receipt links derive from receipt evidence. No signing 
 The initial sandbox presentation refresh was a checked documentation-only GitHub update
 from existing receipts. Subsequent package publications commit these projections together
 with the receipt and package indexes. An identical replay produces identical page bytes.
+
+
+Preparation now renders status, checks the staged expected bytes and creates the local Git
+commit before the existing push step. Only that later step acquires the feed writer token
+and pushes; a preparation failure leaves it skipped. A failed push step still means an
+uncertain outcome until reconciled, even if its failure happened before the network push.
+No missing receipt/job is treated as permission to replace work. Identical replay keeps
+package bytes/signatures and Git commit unchanged. A repository named README has its own
+status/README/README.md page, separate from status/README.md.

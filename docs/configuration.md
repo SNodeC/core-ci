@@ -67,11 +67,11 @@ Package signing private keys are GitHub Actions secrets of the trusted worker's 
 
 | Secret | Material |
 | --- | --- |
-| PACKAGES_GPG_PRIVATE_KEY | Armored OpenPGP archive/RPM signing key |
+| APT_SIGNING_KEY | Armored OpenPGP archive/RPM signing key |
 | PACKAGES_GPG_PASSPHRASE | Only if that key is passphrase protected |
-| OPENWRT_USIGN_PRIVATE_KEY | IPK/opkg index signing key |
-| OPENWRT_APK_PRIVATE_KEY | EC P-256 PEM for OpenWrt APK v3 |
-| FEED_WRITER_APP_PRIVATE_KEY | Separate App key with feed-only write access |
+| OPENWRT_USIGN_KEY | IPK/opkg index signing key |
+| OPENWRT_APK_KEY | EC P-256 PEM for OpenWrt APK v3 |
+| PACKAGES_APP_PRIVATE_KEY | Separate App key with feed-only write access |
 
 Organization secrets must be restricted to the trusted worker repository; environment
 secrets permit the tighter publication-job boundary. Source builds do not reference that
@@ -122,7 +122,9 @@ OpenWrt metadata discovery is worker code. Public worker variable
 origin. Roots select the latest stable numeric patch in the configured series; dependents
 reuse the SDK/toolchain identities in all selected prerequisite receipts. Incompatible joins
 fail explicitly. The worker checks profiles.json and records the official SDK URL/checksum.
-Repository owners maintain no SDK SHA. Prepared SDK execution/signing still needs live proof.
+Repository owners maintain no SDK SHA. SDK execution, signing and real client installation are
+verified in the sandbox; see [acceptance evidence](sandbox-deployment.md). Resolved checksums
+currently trust the configured HTTPS metadata origin; signed checksum-list verification is not implemented.
 `OPENWRT_WORKER_IMAGE` (default ubuntu:24.04) and `OPENWRT_WORKER_PLATFORM` (default linux/amd64)
 select the GitHub-side SDK host container, resolved to an immutable identity before hooks.
 
@@ -253,3 +255,19 @@ Only after a trusted external TLS connection is proved should the GitHub App web
 activated at `https://gw-home.vchrist.at:8443/github/webhook`, with SSL verification enabled
 and the configured raw-body HMAC secret. Public activation is not implied by local tests
 using a generated test certificate. No public certificate/key paths have been supplied yet.
+
+
+## Execution evidence and supported runners
+
+The controller reads the assigned GitHub run's attempt-one result and jobs explicitly.
+A later GitHub rerun cannot replace that evidence; a rerun process is refused before build
+resolution or protected publication. Explicit controller retry creates its own package revision.
+Oversized dispatch inputs remain visible blockers; another target may advance independently.
+The full serialized inputs object is conservatively bounded by UTF-8 bytes, including JSON
+escaping and publication evidence, within GitHub's character limit. Worker assignment JSON
+also retains its 60,000-byte bound. No persistent blocker/ready queue is added.
+
+Workflow blob and tooling pins must match the single rendered thin template. Builds run on
+source-selected runner labels; only trusted, disposable GitHub-hosted or equivalently isolated
+runners support the stated provenance boundary. A source-controlled/self-hosted runner can
+alter host tooling, credentials and evidence; labels alone do not establish trust.

@@ -489,9 +489,9 @@ Deterministic feed paths separate identities that can have different bytes:
 | APT packages | apt/<distribution>/<suite>/pool/<namespace>/... |
 | APT metadata | apt/<distribution>/<suite>/dists/<suite>/main/binary-<arch>/... |
 | RPM | rpm/<distribution>/<suite>/<arch>/... |
-| OpenWrt | openwrt/<suite>/<release>/<target-path>/<arch>/<format>/<sdk-sha256>/... |
+| OpenWrt | openwrt/<suite>/<arch>/<format>/<sdk-sha256>/... |
 | Public keys | keys/<trusted-key-file> |
-| Receipts/exports | receipts/<attempt-id>.json and exports/<receipt-id>/... |
+| Receipts/exports | receipts/<execution>/<revision>.json and exports/<execution>/<revision>/... |
 
 OpenWrt target path is validated, not interpolated unsafely. SDK hash in the path permits
 same-series incompatible SDKs without overwriting feed identities. APT client sources use

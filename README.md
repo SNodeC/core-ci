@@ -10,7 +10,7 @@ and assigned-run/job/artifact reconciliation are implemented. Builds, signing an
 publication run on GitHub in the authorized VOC-Experiments sandbox.
 
 Actual Debian amd64/arm64, Fedora x86_64 and OpenWrt IPK/APK jobs have built and published
-packages. Real apt/dnf/opkg/apk clients reject unrelated keys, install exact package versions
+packages. Real apt/dnf/opkg/apk clients reject unrelated keys, install requested top-level versions and compatible dependencies
 from the signed HTTPS feed and execute the installed program. Complete diamond installation
 passes on all five targets. Public webhook activation still requires certificate/key paths. See
 [verified sandbox status](docs/sandbox-deployment.md) for evidence and remaining limits.
