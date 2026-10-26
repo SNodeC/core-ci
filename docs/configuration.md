@@ -271,3 +271,19 @@ Workflow blob and tooling pins must match the single rendered thin template. Bui
 source-selected runner labels; only trusted, disposable GitHub-hosted or equivalently isolated
 runners support the stated provenance boundary. A source-controlled/self-hosted runner can
 alter host tooling, credentials and evidence; labels alone do not establish trust.
+
+## Active sandbox webhook (2026-10-26)
+
+The sandbox App now delivers signed push, workflow_run and workflow_job events to
+https://gw-home.vchrist.at:8443/github/webhook with certificate verification enabled.
+Core-ci uses /home/voc/ci-test/core-ci-tls/fullchain.pem and the matching protected
+private-key.pem; its HMAC secret file is /home/voc/ci-test/core-ci-webhook.secret.
+Only the webhook route is public; administration remains on loopback port8080.
+These are sandbox deployment paths, not compiled-in application defaults.
+
+Validated work notifications receive202 before asynchronous GitHub verification finishes.
+Processing outcomes are logged as GitHub webhook completed; failures do not authorize
+replacement executions. A crash before a new tag selection is persisted still needs an
+explicit rescan/redelivery. No durable delivery inbox or automatic replay was added.
+The router renews its ACME certificate; automatic transfer of renewed files and controller
+restart is not configured yet. Do not confuse renewal on the router with controller reload.

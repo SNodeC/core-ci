@@ -2,6 +2,7 @@
 
 #include "Version.h"
 
+#include <Log.h>
 #include <algorithm>
 #include <regex>
 #include <stdexcept>
@@ -127,6 +128,10 @@ namespace coreci {
     }
 
     void Pipeline::event(const std::string& type, const std::string& signature, const std::string& body, const Callback& callback) {
+        const auto completed = [](const PipelineResult& result) {
+            snode::log::application().info() << "GitHub webhook completed: "
+                                             << nlohmann::json{{"status", result.status}, {"result", result.body}}.dump();
+        };
         if (!github.verifyWebhook(body, signature)) {
             callback({401, {{"error", "invalid GitHub raw-body webhook signature"}}});
         } else {
@@ -151,7 +156,9 @@ namespace coreci {
                             }
                         }
                         if (versionTag) {
-                            request(repository, ref.substr(10), true, callback, delivery.at("after").get<std::string>());
+                            const auto tagObject = delivery.at("after").get<std::string>();
+                            callback({202, {{"event", "version notification accepted"}}});
+                            request(repository, ref.substr(10), true, completed, tagObject);
                         } else {
                             callback({202, {{"event", "no version selection required"}}});
                         }
@@ -190,7 +197,8 @@ namespace coreci {
                         if (selected.empty()) {
                             callback({202, {{"event", "unassigned execution ignored"}}});
                         } else {
-                            inspect(selected, attemptId, publication, runId, callback);
+                            callback({202, {{"event", "assigned execution notification accepted"}}});
+                            inspect(selected, attemptId, publication, runId, completed);
                         }
                     } else {
                         callback({422, {{"error", "unsupported GitHub webhook event"}}});

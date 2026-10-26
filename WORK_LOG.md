@@ -981,3 +981,49 @@
   Local UI stays on 127.0.0.1:8080; public webhook listener is disabled pending actual
   certificate-chain/key paths. Asked owner for those paths; no certificate fabricated,
   UI exposed, port 443 changed, or production SNodeC resource activated. No full test rerun.
+
+- Owner issued gw-home.vchrist.at certificate on OpenWrt using IONOS DNS validation.
+  Secure SSH copied fullchain and private key to /home/voc/ci-test/core-ci-tls/ (0600),
+  verified matching public keys and hostname. No key contents printed or committed.
+- Restarted controller with framework command-line webhook TLS options, LAN
+  192.168.1.239:8443. Existing 45 graph executions/states preserved; verified public
+  HTTPS GET reaches listener (404 for GET on POST-only webhook route), without bypassing
+  certificate verification. UI remains loopback-only and port 443 unchanged.
+- GitHub App metadata reports no subscribed events; webhook configuration API returns404.
+  Opened sandbox App settings in Chrome; GitHub requires owner sudo authentication.
+  Event subscription/activation and real delivery remain pending that authentication.
+  Certificate renewal-to-controller deployment automation remains to be configured.
+
+- Authenticated GitHub settings confirm webhook inactive, URL empty and no subscriptions.
+  No HMAC secret was configured in the deployment master settings; generated a new 32-byte
+  random HMAC secret in /home/voc/ci-test/core-ci-webhook.secret (0600). Configured controller
+  through --webhook-secret-file and restarted, preserving graph. No secret contents logged.
+- Automatic browser approval rejected enabling a blank-secret hook. Kept delivery disabled;
+  the official signed configuration PATCH returns404 until a hook exists. Prepared the URL
+  and handed off secret entry to owner; do not enable an unauthenticated webhook. Chrome
+  tab marked handoff to remain open. Event subscription and delivery proof still pending.
+
+- Owner completed signed-hook setup. Verified active hook, configured secret, SSL
+  verification enabled and subscriptions push/workflow_job/workflow_run. Real GitHub
+  signed ping and ping redelivery return200; unsigned HTTPS POST returns401; UI path404.
+- Created sandbox demo-join v2.1.2 at existing f542f5e... (no existing tag changed).
+  Actual push delivery selected five targets and dispatched all five builds without a
+  manual reconcile call. GitHub timed out waiting for slow processing; work continued.
+  All five builds succeeded. First publisher 40311405971 assigned automatically.
+- Owner explicitly approved bounded prompt-acknowledgement fix: at most20 net production
+  and30 test lines, existing callbacks/graph, no queue/state/scheduler. Invariant: validate
+  signature, event identity and assignment/tag shape before acknowledgement; later API
+  verification still governs graph transitions. Log asynchronous processing results.
+  Acknowledgement is not persistence of a new tag: crash-before-selection needs explicit
+  rescan/redelivery, as accepted by owner. No automatic replay of uncertain mutations.
+- Fix uses +8 net production and +23 test lines. Relevant pipeline-boundaries passes
+  (9.84s), including a deliberately delayed GitHub response and prompt HTTPS acknowledgement,
+  final graph transitions, invalid signature/repository rejection and asynchronous failures.
+  Build/format-check pass. Restart during assigned publisher preserved all50 executions,
+  states and assigned runs. Actual completed-build redelivery returns202 in2.43s; verified
+  processing continues through the existing callbacks. No full suite run.
+- SNode.C client traffic also reveals repeated Double disable warnings and occasional
+  transport shutdown errors. These are recorded observations, not diagnosed framework
+  defects, and no framework changes or deferred client refactoring were introduced.
+  GitHub webhook response deadline reference:
+  https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks

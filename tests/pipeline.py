@@ -13,6 +13,7 @@ import pwd
 import ssl
 import subprocess
 import tempfile
+import time
 import threading
 import urllib.error
 import urllib.parse
@@ -64,6 +65,7 @@ def exercise(args, directory):
     errors = []
     lose_next = False
     reject_workflow = False
+    delayed_run = False
     unavailable_artifacts = False
     missing_artifacts = False
     malformed_publication_jobs = False
@@ -256,6 +258,8 @@ def exercise(args, directory):
                     if len(parts) == 4:
                         self.reply(200, {**run, "run_attempt": 2, "status": "completed", "conclusion": "failure"})
                     elif parts[4:6] == ["attempts", "1"] and len(parts) == 6:
+                        if delayed_run:
+                            time.sleep(1)
                         if run_id < 500:
                             build_status_reads.append(run_id)
                         self.reply(200, run)
@@ -324,7 +328,24 @@ def exercise(args, directory):
         body = {"installation": {"id": 7}, "repository": {"id": 1000 if run_id >= 500 else repository_id, "full_name": "Owner/worker" if run_id >= 500 else "Owner/example"}, "workflow_run": runs[run_id]}
         raw = json.dumps(body).encode()
         signature = signature or "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
-        return request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature}, webhook=True)
+        log_path = root / "app.log"
+        offset = log_path.stat().st_size
+        started = time.monotonic()
+        result = request("/github/webhook", body, {"Content-Type": "application/json", "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature}, webhook=True)
+        if delayed_run:
+            assert time.monotonic() - started < 0.8, "webhook waited for delayed GitHub evidence"
+        if result[0] == 202 and "accepted" in result[1].get("event", ""):
+            completed = None
+            deadline = time.monotonic() + 10
+            while completed is None and time.monotonic() < deadline:
+                for line in log_path.read_text()[offset:].splitlines():
+                    if "GitHub webhook completed: " in line:
+                        completed = json.loads(line.split("GitHub webhook completed: ", 1)[1])
+                if completed is None:
+                    time.sleep(0.01)
+            assert completed is not None, "accepted webhook did not finish processing"
+            result = (completed["status"], completed["result"])
+        return result
 
     database = None
     application = None
@@ -388,7 +409,9 @@ def exercise(args, directory):
 
             assert report(100, "sha256=" + "0" * 64)[0] == 401
             assert report(100, repository_id=999)[0] == 422
+            delayed_run = True
             assert report(100)[0] == 200 and len(dispatches) == 1
+            delayed_run = False
             lifecycle.stop(application)
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
