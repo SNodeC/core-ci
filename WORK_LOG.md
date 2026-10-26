@@ -870,3 +870,15 @@
   expose contradictory latest attempt-two evidence and require attempt-one queries. No full
   suite run. Two initial test-fixture issues (an HTML link substitution and missing runner
   attempt in a second environment fixture) were corrected; both affected tests then passed.
+
+- Owner approved bounded fixes: 70–110 net production lines and 180–260 test lines,
+  one graph authority, no new persisted state/scheduler. Owner explicitly chose F3 blocking:
+  report an unreadable selected repository, preserve the whole new selection request;
+  never exclude unknown dependency definitions. Existing readSources behavior implements it.
+- F2: preparation now renders status, verifies expected staged bytes and commits locally.
+  The existing push step only obtains its writer token, performs the checked push and verifies
+  HTTPS. No second render or new staging manifest. Preparation failure leaves push skipped;
+  errors inside push still preserve uncertainty, including token/connection/file failures.
+  Reduced production by seven lines. Focused provenance test proves render failure cannot
+  reach writer token/commit/push and cleans temporary material; real local Git proves normal
+  update, byte-identical replay, ignored-file rejection and stale-push rejection.

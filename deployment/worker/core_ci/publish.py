@@ -78,7 +78,7 @@ def run_identity(selected):
     return result
 
 
-def checked_push(feed, branch, token, expected_paths):
+def prepare_commit(feed, expected_paths):
     run(["git", "-C", str(feed), "add", "--all"])
     for path in expected_paths:
         raw = output(["git", "-C", str(feed), "hash-object", "--no-filters", str(feed / path)])
@@ -102,21 +102,24 @@ def checked_push(feed, branch, token, expected_paths):
             ],
             stdout=subprocess.DEVNULL,
         )
-        authorization = base64.b64encode(("x-access-token:" + token).encode()).decode()
-        environment = {
-            **os.environ,
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-            "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + authorization,
-            "GIT_TERMINAL_PROMPT": "0",
-        }
-        # A concurrent update is rejected by this normal fast-forward-only push. No force or rebase.
-        run(
-            ["git", "-C", str(feed), "push", "origin", "HEAD:refs/heads/" + branch],
-            env=environment,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+
+
+def checked_push(feed, branch, token):
+    authorization = base64.b64encode(("x-access-token:" + token).encode()).decode()
+    environment = {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + authorization,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    # A concurrent update is rejected by this normal fast-forward-only push. No force or rebase.
+    run(
+        ["git", "-C", str(feed), "push", "origin", "HEAD:refs/heads/" + branch],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
     revision = output(["git", "-C", str(feed), "rev-parse", "HEAD"])
     return revision
 
@@ -161,16 +164,6 @@ def main():
         "publication identity mismatch",
     )
     feed = Path(arguments.feed).resolve()
-    # GitHub Pages has a 1 GB site limit. Leave headroom; never remove retained versions implicitly.
-    require(
-        sum(
-            path.stat().st_size
-            for path in feed.rglob("*")
-            if path.is_file() and ".git" not in path.relative_to(feed).parts
-        )
-        < 900 * 1024 * 1024,
-        "feed exceeds reviewed Pages capacity",
-    )
     package_format = selected["target"]["build"]["format"]
     secret_name, public_name = {
         "deb": ("APT_SIGNING_KEY", "apt.asc"),
@@ -223,27 +216,27 @@ def main():
                     public_key,
                     root,
                 )
-        else:
             receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
             require(receipt is not None, "publication requires the prepared verified receipt")
-        require(
-            sum(
-                path.stat().st_size
-                for path in feed.rglob("*")
-                if path.is_file() and ".git" not in path.relative_to(feed).parts
+            # GitHub Pages has a 1 GB site limit. Retain versions and leave headroom.
+            require(
+                sum(
+                    path.stat().st_size
+                    for path in feed.rglob("*")
+                    if path.is_file() and ".git" not in path.relative_to(feed).parts
+                )
+                < 900 * 1024 * 1024,
+                "new packages would exceed reviewed Pages capacity",
             )
-            < 900 * 1024 * 1024,
-            "new packages would exceed reviewed Pages capacity",
-        )
-        if arguments.phase == "push":
             paths = [receipt_path(selected), "keys/" + public_name] + [
                 item["path"] for item in receipt["packages"] + receipt["indexes"]
             ]
             if receipt.get("development_export"):
                 paths.append(receipt["development_export"]["path"])
-            paths.extend(render(feed))
+            prepare_commit(feed, paths + render(feed))
+        else:
             token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
-            revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, paths)
+            revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
     if arguments.phase == "push":
         wait_for_https(selected, feed)
         print("Verified feed revision:", revision)

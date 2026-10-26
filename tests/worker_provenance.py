@@ -229,13 +229,22 @@ def main():
     subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(writer)], check=True)
     contract.run(["git", "-C", str(writer), "remote", "add", "origin", str(remote)])
     (writer / "receipt.json").write_text("initial receipt\n")
-    first = publish.checked_push(writer, "main", "synthetic-no-access-token", ["receipt.json"])
+    publish.prepare_commit(writer, ["receipt.json"])
+    assert (
+        subprocess.run(
+            ["git", "--git-dir", str(remote), "show-ref", "--verify", "--quiet", "refs/heads/main"]
+        ).returncode
+        != 0
+    )
+    first = publish.checked_push(writer, "main", "synthetic-no-access-token")
+    publish.prepare_commit(writer, ["receipt.json"])
+    assert publish.checked_push(writer, "main", "synthetic-no-access-token") == first
     assert contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == first
     (writer / ".gitignore").write_text("ignored-package\n")
     (writer / "ignored-package").write_text("must be committed with indexes")
     rejected = False
     try:
-        publish.checked_push(writer, "main", "synthetic-no-access-token", ["ignored-package"])
+        publish.prepare_commit(writer, ["ignored-package"])
     except (ValueError, subprocess.CalledProcessError):
         rejected = True
     assert rejected and contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == first
@@ -261,10 +270,65 @@ def main():
     (writer / "receipt.json").write_text("new receipt\n")
     rejected = False
     try:
-        publish.checked_push(writer, "main", "synthetic-no-access-token", ["receipt.json"])
+        publish.prepare_commit(writer, ["receipt.json"])
+        publish.checked_push(writer, "main", "synthetic-no-access-token")
     except subprocess.CalledProcessError:
         rejected = True
     assert rejected and contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == concurrent
+    prepared = copy.deepcopy(selected)
+    prepared["revision"] = 1
+    prepared["target"] = {"build": {"format": "deb"}}
+    prepared["source"]["deployment"]["feed"] = {"branch": "main"}
+    empty_receipt = {"packages": [], "indexes": [], "development_export": None}
+    argv = [
+        "publish.py",
+        "--phase",
+        "prepare",
+        "--assignment",
+        "assigned.json",
+        "--assignment-sha256",
+        "fixture",
+        "--build-result",
+        "result.json",
+        "--artifacts",
+        "outputs",
+        "--feed",
+        str(writer),
+    ]
+    with patch.object(sys, "argv", argv), patch.dict(
+        os.environ,
+        {
+            "EXECUTION": prepared["execution"],
+            "ATTEMPT": prepared["attempt"],
+            "RUNNER_TEMP": str(directory),
+            "APT_SIGNING_KEY": "synthetic-test-material",
+        },
+    ), patch.object(publish, "assignment", return_value=prepared), patch.object(
+        publish, "trusted_deployment"
+    ), patch.object(
+        publish, "run_identity", return_value={}
+    ), patch.object(
+        publish, "read_json", return_value={}
+    ), patch.object(
+        publish, "update", return_value=empty_receipt
+    ), patch.object(
+        publish, "retained_receipt", return_value=empty_receipt
+    ), patch.object(
+        publish, "render", side_effect=ValueError("invalid status receipt")
+    ), patch.object(
+        publish, "prepare_commit"
+    ) as commit, patch.object(
+        publish, "checked_push"
+    ) as push, patch.object(
+        publish, "writer_token"
+    ) as token:
+        rejected = False
+        try:
+            publish.main()
+        except ValueError:
+            rejected = True
+        assert rejected and not commit.called and not push.called and not token.called
+    assert not list(directory.glob("core-ci-secrets-*")), "temporary key material survived preparation failure"
     shutil.rmtree(writer)
     shutil.rmtree(remote)
     print("Real local Git: checked update accepted, ignored package and stale publication rejected")
