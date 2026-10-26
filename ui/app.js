@@ -114,6 +114,12 @@ function renderExecution(execution, panel, open) {
         if (run && typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/")) {
             const link = node("a", label + " ↗");
             Object.assign(link, {href: run.html_url, target: "_blank", rel: "noopener noreferrer"});
+            link.addEventListener("click", (event) => {
+                if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+                    event.preventDefault();
+                    window.open(link.href, "_blank", "popup,width=1100,height=800,resizable=yes,scrollbars=yes,noopener,noreferrer");
+                }
+            });
             actions.append(link);
         }
     }

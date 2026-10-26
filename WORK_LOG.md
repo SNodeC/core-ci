@@ -1168,3 +1168,18 @@
   links and verified separate GitHub tabs, the same expanded execution/search and Live SSE.
   Restart preserved all55 execution states and assigned runs. No GitHub jobs were triggered.
   Parallel worker/template edits remain untouched; no unrelated suite was run.
+
+## 2026-10-26 — independent log popup windows
+
+- Owner approved multiple movable/resizable non-modal log windows. Ordinary clicks request
+  a fresh _blank popup with1100x800 content dimensions, resize/scroll controls and
+  noopener/noreferrer. Preserve native link behavior for Ctrl/Meta/Shift/Alt clicks.
+  Browser/window-manager presentation remains browser-controlled; no saved navigation state.
+- Production +6/-0; tests +0/-0. This extends the approved desktop UI within its300-line
+  combined ceiling. No controller, graph, SSE, workflow or credential change.
+- JavaScript syntax, changed-production160-column and diff checks pass; focused application
+  build passes. Actual Chrome clicks opened two distinct type=popup windows (1100x834 outer
+  bounds) simultaneously. Main-page search remained interactive, selected row stayed expanded
+  and SSE remained Live. Closed only our two verification popups; existing user tabs preserved.
+- Restart preserved all55 execution states and GitHub assignments. No builds/publications
+  triggered. Parallel worker/template source and WORK_LOG changes excluded from this checkpoint.
