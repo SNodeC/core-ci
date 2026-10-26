@@ -1,6 +1,7 @@
 """Real MariaDB and synthetic GitHub/feed HTTPS pipeline boundaries, not live jobs."""
 
 import argparse
+import concurrent.futures
 import base64
 import hashlib
 import hmac
@@ -244,7 +245,7 @@ def exercise(args, directory):
                     sha = suffix[11:]
                     self.reply(200, {"sha": sha, "encoding": "base64", "content": base64.b64encode(blobs[sha]).decode()})
                 elif suffix == "/actions/workflows/core-ci-build.yml/runs":
-                    self.reply(200, {"workflow_runs": list(runs.values())})
+                    self.reply(200, {"workflow_runs": list(runs.values()) + [{**run, "id": run["id"] + 9000, "actor": {"id": 999}} for run in runs.values()]})
                 elif suffix.startswith("/actions/runs/"):
                     parts = suffix.split("/")
                     run_id = int(parts[3])
@@ -472,6 +473,34 @@ def exercise(args, directory):
             runs[104].update(status="completed", conclusion="success")
             assert report(104)[0] == 202 and len(publications) == 3, "oversized publication prevented independent dispatch"
             assert publications[-1]["assignment"]["execution"] != initial["id"]
+            for digit in ("8", "7"):
+                source_sha = digit * 40
+                register(source_sha, definition)
+                assert request("/api/work/request", {"repository": "Owner/example", "tag": "v2.0.0-rc.1"})[0] == 202
+            lock = subprocess.Popen(["mariadb", "--no-defaults", "--socket=" + str(db_socket), "--user=root",
+                "--batch", "--skip-column-names", "--unbuffered", "--execute",
+                "LOCK TABLES core_ci.graph_revision WRITE; SELECT 'locked'; DO SLEEP(1); UNLOCK TABLES;"], stdout=subprocess.PIPE, text=True)
+            assert lock.stdout.readline().strip() == "locked"
+            for run_id in (105, 106):
+                runs[run_id].update(status="completed", conclusion="failure")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as reports:
+                pending = [reports.submit(report, run_id) for run_id in (105, 106)]
+                outcomes = [response.result() for response in pending]
+            assert lock.wait(timeout=5) == 0
+            assert all(result[0] == 200 for result in outcomes), outcomes
+            current = {row["id"]: row for row in request("/api/graph")[1]["executions"]}
+            assert all(current[dispatches[index]["execution"]]["state"] == "failed" for index in (5, 6))
+            original_settings = settings.read_text()
+            lifecycle.stop(application)
+            settings.write_text(original_settings.replace('pipeline.tooling-sha="' + "f" * 40 + '"', 'pipeline.tooling-sha="' + "e" * 40 + '"'))
+            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
+            status, mismatch = request("/api/work/request", {"repository": "Owner/example", "tag": "v2.0.0-rc.1"})
+            assert status == 422 and "approved blob" in mismatch["error"] and len(dispatches) == 7
+            lifecycle.stop(application)
+            settings.write_text(original_settings)
+            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
             assert not errors, errors
             print("PASS local pipeline: enrollment/highest tag, committed dispatch, raw HMAC, exact older source, lost response, restart, failure/retry, late reports and assigned artifact identities")
     finally:

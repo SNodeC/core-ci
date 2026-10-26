@@ -600,7 +600,9 @@ namespace coreci {
                                const auto& runs = result.body.at("workflow_runs");
                                require(runs.is_array() && runs.size() <= 100, "invalid GitHub execution page");
                                for (const auto& run : runs) {
-                                   if (run.at("display_title") == title(attempt, publication)) {
+                                   if (run.at("display_title") == title(attempt, publication) &&
+                                       run.at("actor").at("id") ==
+                                           attempt.assignment.at("source").at("deployment").at("controller_app_bot_id")) {
                                        matches->push_back(run.at("id").get<std::uint64_t>());
                                    }
                                }
@@ -657,7 +659,8 @@ namespace coreci {
     }
 
     void Pipeline::change(const Node& node, const Callback& callback) {
-        store.commit({{node}, store.graph().nextRebuildRevision(), {}}, [this, node, callback](const DatabaseResult& result) {
+        const auto generation = store.getGeneration();
+        const auto completed = [this, node, callback](const DatabaseResult& result) {
             if (result.error.empty()) {
                 if (node.attempts.back().state == "published" || node.attempts.back().state == "failed") {
                     advance(callback);
@@ -666,6 +669,14 @@ namespace coreci {
                 }
             } else {
                 callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+            }
+        };
+        store.commit({{node}, store.graph().nextRebuildRevision(), {}}, [this, node, generation, completed](const DatabaseResult& result) {
+            if (!result.uncertain && result.error == "conditional mutation did not match the expected graph revision/state" &&
+                store.getGeneration() != generation) {
+                store.commit({{node}, store.graph().nextRebuildRevision(), {}}, completed);
+            } else {
+                completed(result);
             }
         });
     }

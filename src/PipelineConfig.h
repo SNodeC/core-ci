@@ -9,6 +9,7 @@ namespace coreci {
         constexpr static std::string_view NAME{"pipeline"};
         constexpr static std::string_view DESCRIPTION{"Trusted worker, workflows, feed and public signing identities"};
         explicit PipelineConfig(utils::SubCommand* parent);
+        std::string sourceWorkflowContent() const;
         nlohmann::json deployment(const GitHub& github, const GitHubConfig& app, const nlohmann::json& repository) const;
 
         std::string workerRepository;

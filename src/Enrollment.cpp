@@ -1,7 +1,5 @@
 #include "Enrollment.h"
 
-#include "UiAssets.h"
-
 #include <openssl/evp.h>
 #include <regex>
 #include <stdexcept>
@@ -169,15 +167,7 @@ namespace coreci {
                             std::regex_match(deployment.sourceWorkflow, std::regex(R"(^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$)")) &&
                             std::regex_match(deployment.toolingSha, std::regex("^[a-f0-9]{40}$")),
                         "configure the reviewed worker repository and tooling SHA first");
-                std::string content = ui::sourceWorkflow;
-                for (const auto& [key, value] : std::map<std::string, std::string>{{"@WORKER@", deployment.workerRepository},
-                                                                                   {"@TOOLING_SHA@", deployment.toolingSha}}) {
-                    const auto position = content.find(key);
-                    require(position != std::string::npos, "workflow template substitution is missing");
-                    content.replace(position, key.size(), value);
-                }
-                require(SourceReader::blobSha(content) == deployment.sourceWorkflowBlob,
-                        "rendered source workflow differs from the configured approved blob SHA");
+                const auto content = deployment.sourceWorkflowContent();
                 const auto branch = enrolled.at("branch").get<std::string>();
                 github.request(
                     repository,

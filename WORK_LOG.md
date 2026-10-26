@@ -899,3 +899,16 @@
   before writing a manifest. Publisher remains the package metadata/signing trust boundary.
   Focused worker-environment test exercises the host wrapper with synthetic container results:
   honest evidence accepted, altered environment/source rejected. No local Docker build executed.
+
+- F6/F11: moved source-workflow rendering/blob validation into the existing deployment
+  configuration authority, shared by enrollment preview and every selection. No extra HTTP
+  request. Search ignores copied titles from actors other than the pinned controller bot.
+  HTTP pipeline tests prove configuration mismatch rejection and forged-title isolation.
+- F10 reproduced before fixing: two independent failed-run reports overlap while the isolated
+  test DB's generation row is briefly locked; one returns a definite conditional rollback.
+  After that specific known rollback and an advanced generation, revalidate once against the
+  current graph. No retry after uncertain outcomes; no recursion/loop/new queue. The original
+  generation/state guard and immutability validation still apply. Same focused test now records
+  both failures successfully. Residual second conflicts remain visible, never blindly replayed.
+- Focused pipeline and graph-state tests pass. Production growth remains below the approved
+  110-line cap; test growth is 259 lines, within the approved 260-line cap. No full suite run.

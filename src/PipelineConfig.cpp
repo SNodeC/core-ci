@@ -1,6 +1,8 @@
 #include "PipelineConfig.h"
 
 #include "HttpsUrl.h"
+#include "SourceReader.h"
+#include "UiAssets.h"
 
 #include <regex>
 #include <stdexcept>
@@ -85,6 +87,21 @@ namespace coreci {
             true);
     }
 
+    std::string PipelineConfig::sourceWorkflowContent() const {
+        std::string content = ui::sourceWorkflow;
+        for (const auto& [key, value] : std::map<std::string, std::string>{{"@WORKER@", workerRepository}, {"@TOOLING_SHA@", toolingSha}}) {
+            const auto position = content.find(key);
+            if (position == std::string::npos) {
+                throw std::invalid_argument("workflow template substitution is missing");
+            }
+            content.replace(position, key.size(), value);
+        }
+        if (SourceReader::blobSha(content) != sourceWorkflowBlob) {
+            throw std::invalid_argument("rendered source workflow differs from the configured approved blob SHA");
+        }
+        return content;
+    }
+
     nlohmann::json PipelineConfig::deployment(const GitHub& github, const GitHubConfig& app, const nlohmann::json& repository) const {
         static const std::regex sha(R"(^[a-f0-9]{40}$)");
         static const std::regex hash(R"(^[a-f0-9]{64}$)");
@@ -107,6 +124,7 @@ namespace coreci {
             feedBranch.empty() || feedBranch.size() > 256) {
             throw std::invalid_argument("configure reviewed pipeline tooling/workflow identities and explicit publication/feed refs");
         }
+        sourceWorkflowContent();
         const HttpsUrl feed(feedBaseUrl);
         if (feed.path.find('?') != std::string::npos || !std::regex_match(gpgFingerprint, fingerprint) ||
             !std::regex_match(usignKeySha256, hash) || !std::regex_match(apkKeySha256, hash)) {
