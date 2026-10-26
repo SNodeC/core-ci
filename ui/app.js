@@ -43,7 +43,7 @@ async function reload() {
     if (graph.executions.length === 0) {
         element("graph").textContent = "No source executions selected yet.";
     }
-    const names = new Map(graph.executions.map((execution) => [execution.id, execution.label]));
+    const names = new Map(graph.executions.map((execution) => [execution.id, execution.repository + " " + execution.tag]));
     const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 4};
     graph.executions.sort((left, right) =>
         (left.superseded_by ? 5 : order[left.state]) - (right.superseded_by ? 5 : order[right.state]) || right.revision - left.revision);
