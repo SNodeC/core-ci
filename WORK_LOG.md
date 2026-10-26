@@ -1095,3 +1095,36 @@
   Jinja example renders recorded/absent values. Only relevant preview checks, no application
   suite rerun. Production/test changes zero; proposal/mockup are uncommitted design artifacts
   on docs/status-and-ui-proposal. Local preview at127.0.0.1:8879 is retained for owner review.
+
+## 2026-10-26 — accepted desktop UI and SNode.C SSE
+
+- Owner accepted the management UI and instructed implementation with SSE and removal of
+  Refresh view. Combined estimate220–300 net production/70–90 test lines; actual changes
+  are+221 production (404 added/183 removed) and+66 tests (68 added/2 removed), under bounds.
+- Invariant: one committed graph authority supplies the browser; reconnect sends current
+  views without replay state, timers, polling GitHub or rewriting unsaved drafts. Used native
+  SNode.C sendHeader/sendFragment and MQTTSuite disconnect/receiver patterns. GraphStore's
+  write-completion notification exposes only applied state and the existing uncertainty guard.
+  Added immutable target_row to the existing view; no schema/state/scheduler extension.
+- Implemented full-width work table, local filters, selected execution/prerequisite details,
+  separate repository editor, compact typography, original revision guards, expandable IDs
+  and explicit inspection/retry controls. Stream updates retain filters, selection and drafts.
+  Write feedback distinguishes known commits, uncertain outcomes and failures; losing a POST
+  response cannot claim a definite failed mutation. No automatic mutation retry.
+- Relevant real-MariaDB/synthetic-GitHub enrollment and pipeline tests pass (3.57s/8.66s),
+  covering two subscribers, committed graph/enrollment delivery, reconnect/restart, explicit
+  retry and uncertain database outcome. Corrected an existing enrollment fixture's stale
+  latest-run URL to the controller's assigned attempt-one endpoint. Final pipeline7.48s also
+  verifies the SSE route remains absent on the public TLS listener. Build, format-check,
+  JavaScript syntax and changed-production160-column checks pass. No full suite run.
+- Real sandbox controller restarted with all55 execution states/run assignments preserved;
+  all five v2.1.3 targets remain published. Chrome verified Live SSE, filtering/editor layout,
+  automatic reconnection across controller restart with unsaved title/base revision/filters
+  retained, and narrow-screen contained table overflow. Synthetic local browser fault checks
+  cover committed-but-controller-failed, rejected/uncertain writes, post-commit view-read
+  failure and lost POST response; these are not live GitHub write tests.
+- Updated current architecture/deployment documentation. Current sandbox runs the development
+  binary under /tmp/codex/build/core-ci/foundation with existing configuration; no system-service
+  install, production SNodeC resources, package bytes, keys or workflow/feed activation changed.
+  Concurrent worker/template changes belong to other work and are preserved/excluded from
+  this checkpoint. Temporary UI fault servers stopped; no additional checkout created.

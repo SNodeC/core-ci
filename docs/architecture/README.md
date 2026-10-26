@@ -396,8 +396,21 @@ revisions, assignments, states, run identities, results, receipts and failures. 
 contains the conditional generation and next rebuild revision allocator.
 
 Readable labels are derived execution metadata, not an independently editable naming authority.
-The UI shows stage, source version and target coordinates first. Technical details retain full
-identities. The feed's status pages are publication projections from receipts; they do not
+The desktop UI shows work in a compact table, with repository editing in a separate tab.
+Stage, source version and target coordinates are explicit; full identities are expandable.
+The local `/api/events` SSE route uses SNode.C `sendHeader()`/`sendFragment()` response
+streaming, following MQTTSuite's receiver/disconnect pattern. A connection receives current
+graph and repository views. The existing graph store notifies the stream after write completion;
+only successful transactions advance graph state. Uncertain failures expose the mutation guard
+without inventing a transition. Responses are released on socket disconnection.
+
+Browser `EventSource` reconnects automatically and receives a fresh current view; no event log,
+replay queue, application timer or GitHub polling is added. Search, selection and unsaved
+repository drafts survive incoming events and stream reconnection. A changed remote definition
+is announced without replacing the draft or its original conditional-write revision. `Live`
+means the stream is connected, not that every execution or external service is healthy.
+"Inspect assigned GitHub work" remains an explicit action and is independent of SSE delivery.
+The feed's status pages are publication projections from receipts; they do not
 mirror waiting/failed controller state or imply that an artifact upload is a publication.
 
 The controller remains deliberately small: no distribution/runner catalogue, registry/SDK
@@ -417,7 +430,8 @@ are operator tooling, not the controller's HTTP transport.
 | `POST /api/repositories/refresh` | Read/enroll a committed definition using `repository` and `branch` |
 | `POST /api/repositories/save` | Validate/commit `definition` with repository, branch and expected `revision`/`blob_sha` |
 | `POST /api/repositories/workflow` | Preview by repository; conditional write adds `write`, expected `head` and `blob_sha` |
-| `GET /api/graph` | Derived execution/state/blocker/identity view |
+| `GET /api/graph` | Derived execution/state/blocker/identity view, including the immutable `target_row` |
+| `GET /api/events` | Local SSE stream with current graph/repository views and automatic reconnect baseline |
 | `POST /api/work/request` | Select `repository` and exact `tag`, or empty tag for highest SemVer |
 | `POST /api/work/retry` | Explicit retry by `execution` after definite failure |
 | `POST /api/work/reconcile` | Inspect assigned GitHub work and advance verified state |

@@ -122,7 +122,7 @@ def exercise(args, root):
                 errors.append("missing scoped token")
             if self.path == "/repos/Owner/example":
                 self.send_json(200, {"id": 99, "full_name": "Owner/example"})
-            elif self.path == "/repos/Owner/example/actions/runs/123":
+            elif self.path == "/repos/Owner/example/actions/runs/123/attempts/1":
                 self.send_json(404, {})
             elif self.path == "/repos/Owner/example/commits/main":
                 self.send_json(200, {"sha": head})
@@ -204,11 +204,22 @@ def exercise(args, root):
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             assert request("/api/repositories") == (200, {"repositories": []})
+            stream = lifecycle.event_stream(origin)
+            peer = lifecycle.event_stream(origin)
+            for receiver in (stream, peer):
+                assert lifecycle.stream_event(receiver) == ("graph", request("/api/graph")[1])
+                assert lifecycle.stream_event(receiver) == ("repositories", {"repositories": []})
             status, result = request("/api/repositories/save", save, "http://untrusted.example")
             assert status == 403 and writes == 0, result
             status, result = request("/api/repositories/save", save)
             assert status == 200 and result["github_committed"] is True and writes == 1, result
             first = result["revision"]
+            for receiver in (stream, peer):
+                event, current_graph = lifecycle.stream_event(receiver)
+                assert event == "graph" and current_graph == request("/api/graph")[1]
+                event, current_repositories = lifecycle.stream_event(receiver)
+                assert event == "repositories" and current_repositories["repositories"][0]["revision"] == first
+            peer.close()
             status, listed = request("/api/repositories")
             assert status == 200 and listed["repositories"][0]["definition"] == definition, listed
             assert listed["repositories"][0]["revision"] == first
@@ -226,9 +237,14 @@ def exercise(args, root):
             lose = False
             status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
             assert status == 200 and result["revision"] == head and writes == 2, result
+            stream.close()
             lifecycle.stop(application)
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
+            with lifecycle.event_stream(origin) as recovered:
+                assert lifecycle.stream_event(recovered) == ("graph", request("/api/graph")[1])
+                event, restored = lifecycle.stream_event(recovered)
+                assert event == "repositories" and restored["repositories"][0]["revision"] == head
             assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
             # A database failure after a successful GitHub commit must be reported honestly.
             save["revision"] = head
@@ -246,17 +262,28 @@ def exercise(args, root):
             status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
             assert status == 200, result
             save["revision"] = head
+            uncertain_stream = lifecycle.event_stream(origin)
+            assert lifecycle.stream_event(uncertain_stream)[0] == "graph"
+            assert lifecycle.stream_event(uncertain_stream)[0] == "repositories"
             proxy.drop_commit = True
             status, result = request("/api/repositories/save", save)
             assert status == 503 and result["github_committed"] is True and proxy.dropped == 1, result
+            event, uncertain_graph = lifecycle.stream_event(uncertain_stream)
+            assert event == "graph" and uncertain_graph["mutations_allowed"] is False
+            uncertain_stream.close()
             # The server really committed, but the application did not receive proof.
             assert lifecycle.query(db_socket, "SELECT configuration_revision FROM core_ci.repositories").strip() == head
             previous_writes = writes
             status, result = request("/api/repositories/save", save)
             assert status == 503 and writes == previous_writes, "uncertain database outcome allowed another remote mutation"
+            stream.close()
             lifecycle.stop(application)
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
+            with lifecycle.event_stream(origin) as recovered:
+                assert lifecycle.stream_event(recovered) == ("graph", request("/api/graph")[1])
+                event, restored = lifecycle.stream_event(recovered)
+                assert event == "repositories" and restored["repositories"][0]["revision"] == head
             assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
             save["revision"] = head
             save["definition"]["package"] = "renamed-example"

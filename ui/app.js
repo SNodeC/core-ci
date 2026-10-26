@@ -1,23 +1,43 @@
 "use strict";
 const element = (id) => document.getElementById(id);
-let selected = null;
-let workflowPreview = null;
-let repositories = [];
+let repositories = [], graph = {executions: [], mutations_allowed: false};
+let selected = null, executionId = null, workflowPreview = null, events = null, dirty = false, busy = false;
 
+function node(tag, text = "", className = "") {
+    const result = document.createElement(tag);
+    result.textContent = text;
+    result.className = className;
+    return result;
+}
+function button(text, action, className = "") {
+    const result = node("button", text, className);
+    result.type = "button";
+    result.addEventListener("click", action);
+    return result;
+}
+function state(execution) {
+    const result = node("span", execution.superseded_by ? "superseded" : execution.state, "state " + execution.state);
+    return result;
+}
 function feedback(value, failed = false) {
     element("feedback").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     element("feedback").className = failed ? "error" : "";
-    const message = typeof value === "string" ? value : failed ? "Operation failed — technical details" : "Operation completed — technical details";
-    element("feedback-summary").textContent = message.replace(/[a-f0-9]{40,64}/g, (hash) => hash.slice(0, 12));
-    element("feedback-details").open = failed;
+    const committed = value && typeof value === "object" ? value.github_committed : undefined;
+    element("feedback-summary").textContent = committed === true ?
+        "GitHub content committed" + (failed ? "; controller/view update failed" : "") : committed === null || value?.uncertain === true ?
+        "Operation outcome uncertain — inspect before retrying" : failed ? "Operation failed — technical details" : "Operation details";
+    element("feedback-details").open = true;
 }
-
 async function api(path, body) {
-    const options = body === undefined ? {} : {
-        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
-    };
-    const response = await fetch(path, options);
-    const result = await response.json();
+    let response, result;
+    try {
+        response = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+        result = await response.json();
+    } catch (failure) {
+        const error = new Error("Controller response unavailable; inspect current state before retrying.");
+        error.result = {error: error.message, uncertain: true};
+        throw error;
+    }
     if (!response.ok) {
         const error = new Error(JSON.stringify(result, null, 2));
         error.result = result;
@@ -25,178 +45,271 @@ async function api(path, body) {
     }
     return result;
 }
-
-function select(repository) {
-    selected = repository;
-    workflowPreview = null;
-    element("repository").value = repository.repository;
-    element("branch").value = repository.branch;
-    element("revision").textContent = "Committed configuration: " + repository.branch + " · " + repository.revision.slice(0, 12);
-    element("revision").title = repository.revision;
-    element("definition").value = JSON.stringify(repository.definition, null, 2);
-}
-
-async function reload() {
-    const [result, graph] = await Promise.all([api("/api/repositories"), api("/api/graph")]);
-    repositories = result.repositories;
-    element("graph").replaceChildren();
-    if (graph.executions.length === 0) {
-        element("graph").textContent = "No source executions selected yet.";
-    }
-    const names = new Map(graph.executions.map((execution) => [execution.id, execution.repository + " " + execution.tag]));
-    const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 4};
-    graph.executions.sort((left, right) =>
-        (left.superseded_by ? 5 : order[left.state]) - (right.superseded_by ? 5 : order[right.state]) || right.revision - left.revision);
-    for (const execution of graph.executions) {
-        const card = document.createElement("article");
-        card.id = "execution-" + execution.id;
-        const title = document.createElement("h3");
-        title.textContent = execution.label;
-        const state = document.createElement("p");
-        state.textContent = execution.activity + " · " + execution.tag + " · rebuild " + execution.revision;
-        const source = document.createElement("pre");
-        const technical = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.textContent = "Technical details";
-        source.textContent = "Execution: " + execution.id + "\nSource: " + execution.source_commit + "\nDefinition: " + execution.definition_revision;
-        const reasons = document.createElement("p");
-        reasons.textContent = execution.failure || execution.blockers.join("; ");
-        technical.append(summary, source);
-        card.append(title, state, reasons, technical);
-        for (const prerequisite of execution.prerequisites) {
-            const link = document.createElement("a");
-            link.href = "#execution-" + prerequisite;
-            link.textContent = "Prerequisite: " + names.get(prerequisite) + " ";
-            card.append(link);
+async function operation(action) {
+    if (!busy) {
+        busy = true;
+        document.querySelectorAll("form button, form input, form textarea, #repositories button, .actions button, #enroll, #reconcile, #request-build")
+            .forEach((control) => { control.disabled = true; });
+        try {
+            await action();
+        } catch (error) {
+            feedback(error.result || error.message, true);
+        } finally {
+            busy = false;
+            document.querySelectorAll("button, form input, form textarea").forEach((control) => { control.disabled = false; });
+            renderWork();
         }
-        for (const run of [execution.build_run, execution.publication_run]) {
+    }
+}
+function tab(name) {
+    for (const value of ["work", "repositories"]) {
+        element(value + "-panel").hidden = value !== name;
+        element(value + "-tab").setAttribute("aria-pressed", String(value === name));
+    }
+}
+function showExecution(id) {
+    executionId = id;
+    element("search").value = "";
+    element("state-filter").value = "all";
+    tab("work");
+    renderWork();
+}
+function renderExecution(execution) {
+    const panel = element("execution"), open = panel.querySelector("details")?.open || false;
+    panel.replaceChildren();
+    panel.hidden = !execution;
+    if (execution) {
+        const target = execution.target_row;
+        const heading = node("div", "", "heading"), title = node("div");
+        title.append(node("h2", execution.repository + " " + execution.tag),
+            node("p", target.distribution + " " + target.suite + " · " + target.arch + " · " + target.build.format +
+                " · rebuild " + execution.revision, "secondary"));
+        heading.append(title, state(execution));
+        const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl");
+        for (const [label, value] of [["Source", execution.tag], ["Target", execution.target], ["Activity", execution.activity],
+            ["Selection", execution.automatic ? "Automatic" : "Explicit request"]]) {
+            values.append(node("dt", label), node("dd", value));
+        }
+        facts.append(node("h2", "Selected execution"), values,
+            node("p", execution.failure || execution.blockers.join("; ") || "No current blockers", execution.failure ? "error" : "secondary"));
+        const dependencies = node("div"), list = node("ul", "", "dependencies");
+        for (const id of execution.prerequisites) {
+            const prerequisite = graph.executions.find((row) => row.id === id);
+            const item = node("li");
+            item.append(button(prerequisite ? prerequisite.repository + " " + prerequisite.tag : id,
+                () => showExecution(id), "row-select"));
+            if (prerequisite) {
+                item.append(state(prerequisite));
+            }
+            list.append(item);
+        }
+        dependencies.append(node("h2", "Prerequisite executions — current state"), list);
+        if (list.children.length === 0) {
+            dependencies.append(node("p", "No prerequisites", "secondary"));
+        }
+        columns.append(facts, dependencies);
+        const actions = node("div", "", "actions");
+        for (const [label, run] of [["Build logs", execution.build_run], ["Publication logs", execution.publication_run]]) {
             if (run && typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/")) {
-                const link = document.createElement("a");
+                const link = node("a", label + " ↗");
                 link.href = run.html_url;
-                link.textContent = " GitHub execution log ";
                 link.rel = "noopener noreferrer";
-                card.append(link);
+                actions.append(link);
             }
         }
-        if (execution.state === "failed" && !execution.superseded_by) {
-            const retry = document.createElement("button");
-            retry.textContent = "Retry with a new rebuild revision";
-            retry.addEventListener("click", () => operation(async () => {
-                const result = await api("/api/work/retry", {execution: execution.id});
-                await reload();
-                feedback(result);
-            }));
-            card.append(retry);
+        if (execution.state === "failed" && !execution.superseded_by && graph.mutations_allowed) {
+            const retry = button("Retry with a new rebuild revision", () => operation(async () => {
+                feedback(await api("/api/work/retry", {execution: execution.id}));
+            }), "primary");
+            retry.disabled = busy;
+            actions.append(retry);
         }
-        element("graph").append(card);
+        const technical = node("details");
+        technical.open = open;
+        technical.append(node("summary", "Source, configuration and execution identities"), node("pre", JSON.stringify(execution, null, 2)));
+        panel.append(heading, columns, actions, technical);
     }
-
+}
+function renderWork() {
+    const query = element("search").value.toLowerCase(), filter = element("state-filter").value;
+    const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 4};
+    const visible = graph.executions.filter((row) => {
+        const target = row.target_row;
+        const matches = filter === "all" || (filter === "active" && row.state !== "published" && !row.superseded_by) || row.state === filter;
+        return matches && [row.repository, row.tag, target.distribution, target.suite, target.arch, target.build.format]
+            .join(" ").toLowerCase().includes(query);
+    }).sort((a, b) => (a.superseded_by ? 5 : order[a.state]) - (b.superseded_by ? 5 : order[b.state]) || b.revision - a.revision);
+    if (!visible.some((row) => row.id === executionId)) {
+        executionId = visible[0]?.id || null;
+    }
+    element("graph").replaceChildren();
+    for (const execution of visible) {
+        const target = execution.target_row, row = node("tr"), repository = node("td"), distribution = node("td");
+        row.setAttribute("aria-selected", String(execution.id === executionId));
+        repository.append(button(execution.repository, () => { executionId = execution.id; renderWork(); }, "row-select"),
+            node("span", execution.tag, "secondary"));
+        distribution.append(node("span", target.distribution), node("span", target.suite, "secondary"));
+        const status = node("td");
+        status.append(state(execution));
+        row.append(repository, distribution, node("td", target.arch), node("td", target.build.format),
+            node("td", "r" + execution.revision, "revision"), status);
+        element("graph").append(row);
+    }
+    element("visible-count").textContent = visible.length + " of " + graph.executions.length + " executions";
+    element("counts").textContent = ["building", "publishing", "waiting", "failed"].map((value) =>
+        graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + value).join(" · ");
+    renderExecution(visible.find((row) => row.id === executionId));
+}
+function fields() {
+    const definition = JSON.parse(element("definition").value);
+    element("title").value = definition.title;
+    element("package").value = definition.package;
+    element("dependencies").value = definition.depends_on.join(", ");
+    element("targets").replaceChildren();
+    for (const target of definition.matrix) {
+        const row = node("tr");
+        for (const value of [target.id, target.distribution + " " + target.suite, target.arch, JSON.stringify(target.runner)]) {
+            row.append(node("td", value));
+        }
+        element("targets").append(row);
+    }
+}
+function selectRepository(repository = null) {
+    if (!dirty || window.confirm("Discard the unsaved definition edits?")) {
+        selected = repository;
+        dirty = false;
+        workflowPreview = null;
+        element("repository").value = repository?.repository || "";
+        element("branch").value = repository?.branch || "";
+        element("definition").value = repository ? JSON.stringify(repository.definition, null, 2) : "";
+        element("revision").textContent = repository ? "Committed configuration: " + repository.branch + " · " + repository.revision.slice(0, 12) :
+            "No committed revision selected";
+        for (const id of ["title", "package", "dependencies", "workflow-current", "workflow-proposed", "tag"]) {
+            element(id).value = "";
+        }
+        element("targets").replaceChildren();
+        if (repository) {
+            fields();
+        }
+        renderRepositories();
+    }
+}
+function renderRepositories() {
+    const owners = new Set(repositories.map((row) => row.repository.split("/")[0]));
+    element("owner").textContent = owners.size === 1 ? Array.from(owners)[0] : "Local administration";
     element("repositories").replaceChildren();
-    if (repositories.length === 0) {
-        element("repositories").textContent = "No repositories enrolled.";
-    }
     for (const repository of repositories) {
-        const card = document.createElement("article");
-        const title = document.createElement("h3");
-        title.textContent = repository.definition.title;
-        const name = document.createElement("p");
-        name.textContent = repository.repository;
-        const dependencies = document.createElement("p");
-        dependencies.textContent = "Depends on: " + (repository.definition.depends_on.join(", ") || "none");
-        const revision = document.createElement("details");
-        const revisionTitle = document.createElement("summary");
-        revisionTitle.textContent = "Definition revision";
-        const revisionHash = document.createElement("code");
-        revisionHash.textContent = repository.revision;
-        revision.append(revisionTitle, revisionHash);
-        const targets = document.createElement("ul");
-        for (const row of repository.definition.matrix) {
-            const target = document.createElement("li");
-            target.textContent = row.id + " · " + row.distribution + " / " + row.suite + " / " + row.arch;
-            targets.append(target);
+        const control = button(repository.definition.title, () => selectRepository(repository));
+        control.append(node("span", repository.repository, "secondary"));
+        control.setAttribute("aria-pressed", String(repository.repository === selected?.repository));
+        control.disabled = busy;
+        element("repositories").append(control);
+    }
+    const remote = repositories.find((row) => row.repository === selected?.repository);
+    element("remote-revision").textContent = remote && remote.revision !== selected.revision ?
+        "A newer committed definition is available. Your draft and its original revision are preserved." : "";
+}
+function connect() {
+    if (events) {
+        events.close();
+    }
+    element("connection").textContent = "Connecting…";
+    element("reconnect").hidden = true;
+    events = new EventSource("/api/events");
+    events.addEventListener("graph", (event) => {
+        graph = JSON.parse(event.data);
+        element("connection").textContent = "Live";
+        element("reconnect").hidden = true;
+        renderWork();
+    });
+    events.addEventListener("repositories", (event) => {
+        repositories = JSON.parse(event.data).repositories;
+        renderRepositories();
+    });
+    events.addEventListener("unavailable", (event) => { feedback(JSON.parse(event.data), true); });
+    events.onerror = () => {
+        element("connection").textContent = events.readyState === EventSource.CLOSED ? "Disconnected" : "Reconnecting…";
+        element("reconnect").hidden = false;
+    };
+}
+for (const name of ["work", "repositories"]) {
+    element(name + "-tab").addEventListener("click", () => tab(name));
+}
+element("reconnect").addEventListener("click", connect);
+element("search").addEventListener("input", renderWork);
+element("state-filter").addEventListener("change", renderWork);
+element("enroll").addEventListener("click", () => selectRepository());
+element("reconcile").addEventListener("click", () => operation(async () => { feedback(await api("/api/work/reconcile", {})); }));
+for (const id of ["repository", "branch", "definition", "title", "package", "dependencies"]) {
+    element(id).addEventListener("input", () => {
+        dirty = true;
+        workflowPreview = null;
+        if (id === "repository" || id === "branch") {
+            selected = null;
+            element("revision").textContent = "Read the committed definition before updating this repository/ref";
         }
-        const edit = document.createElement("button");
-        edit.textContent = "Edit";
-        edit.addEventListener("click", () => select(repository));
-        const tag = document.createElement("input");
-        tag.placeholder = "Exact version tag; empty selects highest";
-        tag.setAttribute("aria-label", "Version tag for " + repository.repository);
-        const build = document.createElement("button");
-        build.textContent = "Request build";
-        build.addEventListener("click", () => operation(async () => {
-            const result = await api("/api/work/request", {repository: repository.repository, tag: tag.value});
-            await reload();
-            feedback(result);
-        }));
-        card.append(title, name, dependencies, revision, targets, edit, tag, build);
-        element("repositories").append(card);
-    }
+    });
 }
-
-async function operation(action) {
-    const buttons = document.querySelectorAll("button");
-    buttons.forEach((button) => { button.disabled = true; });
-    try {
-        await action();
-    } catch (error) {
-        feedback(error.message, true);
-    } finally {
-        buttons.forEach((button) => { button.disabled = false; });
-    }
+for (const id of ["title", "package", "dependencies"]) {
+    element(id).addEventListener("change", () => {
+        try {
+            const definition = JSON.parse(element("definition").value);
+            definition.title = element("title").value;
+            definition.package = element("package").value;
+            definition.depends_on = element("dependencies").value.split(",").map((value) => value.trim()).filter(Boolean);
+            element("definition").value = JSON.stringify(definition, null, 2);
+            fields();
+        } catch (error) {
+            feedback("Repair the definition JSON before editing its fields: " + error.message, true);
+        }
+    });
 }
-
-element("reconcile").addEventListener("click", () => operation(async () => {
-    const result = await api("/api/work/reconcile", {});
-    await reload();
-    feedback(result);
-}));
-element("reload").addEventListener("click", () => operation(reload));
-element("repository").addEventListener("input", () => {
-    selected = null;
-    element("revision").textContent = "No committed revision selected";
+element("definition").addEventListener("change", () => {
+    try { fields(); } catch (error) { feedback(error.message, true); }
 });
-element("import").addEventListener("click", () => operation(async () => {
-    let result;
+async function adoptCommitted(result) {
+    feedback(result);
     try {
-        result = await api("/api/repositories/refresh", {
-            repository: element("repository").value, branch: element("branch").value
-        });
+        const response = await fetch("/api/repositories");
+        if (!response.ok) {
+            throw new Error("Could not read the committed controller view");
+        }
+        repositories = (await response.json()).repositories;
+        dirty = false;
+        selectRepository(repositories.find((row) => row.repository === result.repository));
     } catch (error) {
-        const body = error.result;
-        if (body && typeof body.content === "string" && body.blob_sha) {
+        feedback({...result, error: error.message}, true);
+    }
+}
+element("import").addEventListener("click", () => operation(async () => {
+    try {
+        const result = await api("/api/repositories/refresh", {repository: element("repository").value, branch: element("branch").value});
+        await adoptCommitted(result);
+    } catch (error) {
+        if (error.result && typeof error.result.content === "string" && error.result.blob_sha) {
             const effective = repositories.find((row) => row.repository === element("repository").value);
-            selected = {revision: effective ? effective.revision : "", blob_sha: body.blob_sha};
-            element("definition").value = body.content;
-            element("revision").textContent = "Read GitHub revision: " + body.github_revision + " · repair the invalid definition before saving";
+            selected = {revision: effective?.revision || "", blob_sha: error.result.blob_sha};
+            element("definition").value = error.result.content;
+            dirty = true;
+            element("definition-details").open = true;
+            element("revision").textContent = "Read GitHub revision: " + error.result.github_revision + " · repair invalid JSON before saving";
         }
         throw error;
     }
-    await reload();
-    const repository = repositories.find((row) => row.repository === result.repository);
-    if (repository) {
-        select(repository);
-    }
-    feedback(result);
 }));
 element("editor").addEventListener("submit", (event) => {
     event.preventDefault();
     operation(async () => {
         const result = await api("/api/repositories/save", {
-            repository: element("repository").value,
-            branch: element("branch").value,
-            revision: selected ? selected.revision : "",
-            blob_sha: selected ? selected.blob_sha : "",
-            definition: JSON.parse(element("definition").value)
+            repository: element("repository").value, branch: element("branch").value,
+            revision: selected?.revision || "", blob_sha: selected?.blob_sha || "", definition: JSON.parse(element("definition").value)
         });
-        await reload();
-        select(repositories.find((row) => row.repository === result.repository));
-        feedback(result);
+        await adoptCommitted(result);
     });
 });
-operation(reload);
-
-element("branch").addEventListener("input", () => { workflowPreview = null; });
-element("repository").addEventListener("input", () => { workflowPreview = null; });
+element("request-build").addEventListener("click", () => operation(async () => {
+    feedback(await api("/api/work/request", {repository: element("repository").value, tag: element("tag").value}));
+}));
 element("workflow-preview").addEventListener("click", () => operation(async () => {
     workflowPreview = await api("/api/repositories/workflow", {repository: element("repository").value});
     element("workflow-current").value = workflowPreview.current;
@@ -213,3 +326,4 @@ element("workflow-write").addEventListener("click", () => operation(async () => 
     workflowPreview = null;
     feedback(result);
 }));
+connect();

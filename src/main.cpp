@@ -12,13 +12,16 @@
 #include <core/SNodeC.h>
 #include <database/mariadb/MariaDBClient.h>
 #include <exception>
+#include <express/Response.h>
 #include <express/legacy/in/WebApp.h>
 #include <express/tls/in/WebApp.h>
+#include <list>
 #include <memory>
 #include <utility>
 #include <utils/Config.h>
 #include <web/http/ConfigHttpParser.h>
 #include <web/http/server/ConfigHttpServer.h>
+#include <web/http/server/SocketContext.h>
 
 int main(int argc, char* argv[]) {
     auto* databaseConfig = utils::Config::configRoot.newSubCommand<coreci::DatabaseConfig>();
@@ -60,6 +63,14 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<coreci::Enrollment> enrollment;
     std::unique_ptr<coreci::Pipeline> pipeline;
     bool initialConnection = true;
+    std::list<std::shared_ptr<express::Response>> eventReceivers;
+    const auto sendEvent = [](const auto& response, const std::string& event, const nlohmann::json& data) {
+        if (response->isConnected()) {
+            response->sendFragment("event:" + event);
+            response->sendFragment("data:" + data.dump());
+            response->sendFragment();
+        }
+    };
 
     try {
         github.loadCredentials();
@@ -130,6 +141,35 @@ int main(int argc, char* argv[]) {
 
                             app.get("/api/graph", [&] APPLICATION(req, res) {
                                 res->type("application/json").send(graphStore->view().dump());
+                            });
+
+                            graphStore->onChanged = [&]() {
+                                const auto receivers = eventReceivers;
+                                const auto graph = graphStore->view();
+                                for (const auto& response : receivers) {
+                                    sendEvent(response, "graph", graph);
+                                }
+                                if (!receivers.empty()) {
+                                    enrollment->list([receivers, sendEvent](const coreci::EnrollmentResult& result) {
+                                        for (const auto& response : receivers) {
+                                            sendEvent(response, result.status == 200 ? "repositories" : "unavailable", result.body);
+                                        }
+                                    });
+                                }
+                            };
+
+                            app.get("/api/events", [&] APPLICATION(req, res) {
+                                res->set("Content-Type", "text/event-stream").set("Connection", "keep-alive").sendHeader();
+                                eventReceivers.push_back(res);
+                                res->getSocketContext()->setOnDisconnected([&, receiver = res.get()]() {
+                                    eventReceivers.remove_if([receiver](const auto& response) {
+                                        return response.get() == receiver;
+                                    });
+                                });
+                                sendEvent(res, "graph", graphStore->view());
+                                enrollment->list([res, sendEvent](const coreci::EnrollmentResult& result) {
+                                    sendEvent(res, result.status == 200 ? "repositories" : "unavailable", result.body);
+                                });
                             });
 
                             app.get("/api/repositories", [&] APPLICATION(req, res) {

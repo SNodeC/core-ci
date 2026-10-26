@@ -362,7 +362,7 @@ def exercise(args, directory):
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             # Public TLS endpoint has no administration/UI routes; HTTP endpoint has no webhook.
-            for endpoint, path, payload in ((webhook_origin, "/", None), (webhook_origin, "/api/graph", None),
+            for endpoint, path, payload in ((webhook_origin, "/", None), (webhook_origin, "/api/graph", None), (webhook_origin, "/api/events", None),
                                             (webhook_origin, "/api/repositories/save", b"{}"), (origin, "/github/webhook", b"{}")):
                 probe = urllib.request.Request(endpoint + path, data=payload,
                     headers={"Origin": origin, "Content-Type": "application/json"})
@@ -417,12 +417,23 @@ def exercise(args, directory):
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 1, "restart dispatched a replacement"
+            stream = lifecycle.event_stream(origin)
+            assert lifecycle.stream_event(stream) == ("graph", request("/api/graph")[1])
+            assert lifecycle.stream_event(stream)[0] == "repositories"
             lose_next = True
             status, selected = request("/api/work/request", {"repository": "Owner/example", "tag": "v0.9.0+build"})
             assert status == 202 and len(dispatches) == 2, selected
             older = dispatches[1]
             assert older["source"]["commit"] == older_sha and older["source"]["build"]["native"] == "ci/native-older.sh"
+            event, pushed = lifecycle.stream_event(stream)
+            remaining = 20
+            while remaining > 0 and (event != "graph" or not any(row["tag"] == "v0.9.0+build" and row["state"] == "building"
+                    for row in pushed["executions"])):
+                event, pushed = lifecycle.stream_event(stream)
+                remaining -= 1
+            assert remaining > 0, "committed build selection did not reach SSE"
             graph = request("/api/graph")[1]["executions"]
+            assert all(row["target_row"]["id"] == row["target"] for row in graph)
             assert next(row for row in graph if row["id"] == older["execution"])["build_run"] is None
             assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 2, "lost dispatch response caused replay"
             runs[101].update(status="completed", conclusion="failure")
@@ -442,6 +453,14 @@ def exercise(args, directory):
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
             runs[100].update(status="completed", conclusion="success")
             assert report(100)[0] == 200 and len(publications) == 1, "second writer started before the assigned publication resolved"
+            event, pushed = lifecycle.stream_event(stream)
+            remaining = 20
+            while remaining > 0 and (event != "graph" or not any(row["id"] == older["execution"] and row["revision"] == current["revision"]
+                    and row["state"] == "building" for row in pushed["executions"])):
+                event, pushed = lifecycle.stream_event(stream)
+                remaining -= 1
+            assert remaining > 0, "explicit retry did not update SSE"
+            stream.close()
             generation = request("/api/graph")[1]["generation"]
             assert report(102)[0] == 200 and len(dispatches) == 3
             assert request("/api/graph")[1]["generation"] == generation, "duplicate report caused a redundant mutation"

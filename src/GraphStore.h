@@ -4,6 +4,8 @@
 #include "Database.h"
 #include "Graph.h"
 
+#include <functional>
+
 namespace coreci {
     class GraphStore {
     public:
@@ -19,6 +21,7 @@ namespace coreci {
         std::uint64_t getGeneration() const;
         const Graph& graph() const;
         nlohmann::json view() const;
+        std::function<void()> onChanged;
 
     private:
         struct Restoring {

@@ -1,24 +1,48 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>core-ci</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body><header><h1>core-ci</h1><p>Repositories, dependencies and package targets</p></header>
-<main><section aria-labelledby="repositories-heading"><h2 id="repositories-heading">Enrolled repositories</h2>
-<button id="reload">Refresh view</button> <button id="reconcile">Inspect assigned GitHub work</button><div id="repositories"></div>
-<h2>Dependency graph and executions</h2><div id="graph"></div></section>
-<section aria-labelledby="editor-heading"><h2 id="editor-heading">Enroll or edit a repository</h2>
-<form id="editor"><label>GitHub repository <input id="repository" required placeholder="owner/repository" autocomplete="off"></label>
-<label>Configuration branch <input id="branch" required autocomplete="off"></label>
-<p id="revision">No committed revision selected</p>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>core-ci</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<header><strong>core-ci</strong><span id="owner">Local administration</span><span id="connection" role="status">Connecting…</span>
+<button id="reconnect" hidden>Reconnect</button></header>
+<nav aria-label="Management"><button id="work-tab" aria-controls="work-panel" aria-pressed="true">Work</button>
+<button id="repositories-tab" aria-controls="repositories-panel" aria-pressed="false">Repositories</button></nav>
+<main>
+<section id="work-panel" aria-labelledby="work-heading">
+<div class="heading"><div><h1 id="work-heading">Package work</h1><p id="counts"></p></div>
+<button id="reconcile">Inspect assigned GitHub work</button></div>
+<div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
+<label>Show<select id="state-filter"><option value="active">Active and failed</option><option value="all">All work</option>
+<option value="failed">Failed</option><option value="published">Published</option></select></label></div>
+<div class="table-wrap"><table><thead><tr><th>Repository / version</th><th>Distribution / series</th><th>Architecture</th>
+<th>Format</th><th>Rebuild</th><th>State</th></tr></thead><tbody id="graph"></tbody></table></div>
+<p id="visible-count"></p><section id="execution" aria-label="Selected execution" hidden></section>
+</section>
+<section id="repositories-panel" aria-labelledby="repositories-heading" hidden>
+<div class="heading"><div><h1 id="repositories-heading">Repositories</h1><p>Definitions are committed to GitHub</p></div>
+<button id="enroll">Enroll repository</button></div>
+<div class="repository-layout"><div id="repositories" aria-label="Enrolled repositories"></div><section class="editor-panel">
+<form id="editor"><h2>Enroll or edit a repository</h2><div class="fields">
+<label>GitHub repository<input id="repository" required placeholder="owner/repository" autocomplete="off"></label>
+<label>Configuration branch<input id="branch" required autocomplete="off"></label></div>
+<p id="revision">No committed revision selected</p><p id="remote-revision" role="status"></p>
 <button type="button" id="import">Read committed definition from GitHub</button>
-<label>Package definition — dependencies, hooks and explicit target rows
-<textarea id="definition" rows="22" spellcheck="false" required></textarea></label>
-<button type="submit">Commit definition to GitHub</button></form>
-<h3>Source build workflow</h3>
-<button id="workflow-preview" type="button">Preview configured workflow</button>
-<label>Current committed workflow<textarea id="workflow-current" rows="8" readonly></textarea></label>
-<label>Proposed pinned workflow<textarea id="workflow-proposed" rows="12" readonly></textarea></label>
-<button id="workflow-write" type="button">Commit previewed workflow to GitHub</button>
+<div class="fields"><label>Display title<input id="title"></label><label>Package namespace<input id="package"></label>
+<label class="wide">Dependencies<input id="dependencies" placeholder="Enrolled repository names, separated by commas"></label></div>
+<h2>Target matrix</h2><div class="table-wrap"><table><thead><tr><th>Row</th><th>Distribution / series</th><th>Architecture</th>
+<th>Runner</th></tr></thead><tbody id="targets"></tbody></table></div>
+<details id="definition-details"><summary>Edit definition JSON — target rows and build hooks</summary>
+<label>Package definition<textarea id="definition" rows="14" spellcheck="false" required></textarea></label></details>
+<button type="submit" class="primary">Commit definition to GitHub</button></form>
+<div class="heading"><h2>Source selection</h2></div><label>Exact version tag<input id="tag" placeholder="Empty selects highest SemVer"></label>
+<button id="request-build">Request build</button>
+<details><summary>Source build workflow</summary><button id="workflow-preview" type="button">Preview configured workflow</button>
+<label>Current committed workflow<textarea id="workflow-current" rows="6" readonly></textarea></label>
+<label>Proposed pinned workflow<textarea id="workflow-proposed" rows="8" readonly></textarea></label>
+<button id="workflow-write" type="button">Commit previewed workflow to GitHub</button></details>
+</section></div></section>
 <details id="feedback-details"><summary id="feedback-summary" role="status" aria-live="polite">Operation details</summary>
-<pre id="feedback"></pre></details></section>
+<pre id="feedback"></pre></details>
 </main></body></html>

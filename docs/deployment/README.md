@@ -453,8 +453,11 @@ An existing highest SemVer is selected immediately; dependencies must have expli
 work and compatible rows. New tags and explicit older requests follow the same graph rules.
 
 The controller UI shows active work first, readable repository/version/target/rebuild labels,
-prerequisites, stage, blockers, failure reason and GitHub links. Refresh the view to fetch the
-current graph. Full identities remain available in technical details and API evidence.
+prerequisites, stage, blockers, failure reason and GitHub links. The local SSE stream updates
+the view automatically; there is no Refresh view button. The connection indicator shows Live,
+Reconnecting or Disconnected. Reconnection receives current state and preserves unsaved edits.
+Full identities remain available in technical details and API evidence. Inspection of assigned
+GitHub work remains a separate explicit action, not a side effect of opening the UI.
 The public feed status only lists verified retained publications.
 
 For an explicit rescan, request the repository with an empty tag through the UI/API; core-ci

@@ -177,6 +177,9 @@ namespace coreci {
             if (result.error.empty()) {
                 ++generation;
             }
+            if (onChanged) {
+                onChanged();
+            }
             callback(result);
         });
     }
@@ -267,6 +270,9 @@ namespace coreci {
                     state.apply(change);
                     ++generation;
                 }
+                if (onChanged) {
+                    onChanged();
+                }
                 callback(result);
             });
         }
@@ -288,6 +294,7 @@ namespace coreci {
                              {"source_commit", node.source.at("commit")},
                              {"definition_revision", node.source.at("definition_revision")},
                              {"target", node.target.at("id")},
+                             {"target_row", node.target},
                              {"state", attempt.state},
                              {"activity", activity},
                              {"revision", attempt.revision},

@@ -1,7 +1,8 @@
 # Status templates and management interface proposal
 
-This is a design for owner review. No controller, worker, deployed workflow or feed behavior
-changes are implemented by this proposal. The accompanying management preview uses illustrative
+The Work table management layout is accepted and implemented with automatic SSE updates;
+Refresh view is removed. Status-template implementation is tracked separately; public work-state
+projection needs its own final design. The accompanying management preview uses illustrative
 work states; it is not a live monitor and its actions do not call core-ci or GitHub.
 
 ## 1. Required result for package status pages
@@ -123,12 +124,19 @@ available/in-build values, a waiting diamond and unavailable/unrecorded data.
 ## 4. Additional data needed for full reproduction
 
 Current `feed_status.py` reads retained publication receipts only. It cannot know waiting,
-building or failed graph work. Current `GraphStore::view()` provides most execution state but
-not all target coordinates, timestamps or publication selection metadata as separate fields.
+building or failed graph work. Current `GraphStore::view()` provides execution state and the immutable `target_row`, but
+not every timestamp or publication-selection detail as separate fields.
 The gap is data and update timing, not merely choice of template language.
 
-For full parity, propose a public read-only graph snapshot captured after committed state
-changes. The controller remains the only execution authority. A trusted GitHub status job
+Publication timestamps, job duration, compiler versions and structured test summaries do not
+require a complete graph snapshot. They can be recorded/retrieved as execution evidence and
+exposed through existing receipts/view data. Test summaries are optional additional display
+information, not a requirement for the reference layout or authority to publish.
+
+For full in-build-column parity, propose a minimal public work projection captured after
+committed state changes. Include only project/target/rebuild, work state, immediate prerequisite
+references/blockers, verified links, generation and capture time. Do not export the entire
+internal graph or duplicate its authoritative state. The controller remains the only execution authority. A trusted GitHub status job
 renders that snapshot together with verified retained receipts and deployment presentation
 settings, then performs a serialized checked feed update. No source build gets feed credentials.
 Snapshots are projections, not a second scheduler/configuration store. Include generation and
@@ -162,8 +170,8 @@ are bounded in the table. All essential data remains accessible without hover or
 
 The active view includes waiting, building, publishing and failures. Published/history is
 available through a local filter. Repository/target search and state filtering operate on the
-existing graph response, not new GitHub queries. No automatic controller reconcile or new
-polling policy is introduced by this layout proposal.
+existing graph response, not new GitHub queries. SNode.C SSE delivers committed controller
+updates and a fresh baseline on reconnect, preserving filters, selection and drafts. No automatic controller reconcile or new polling policy is introduced.
 
 Selecting a row exposes source/target identity, immediate prerequisite states, the actual
 blocker/failure, assigned job links, publication evidence and collapsed technical identities.
@@ -209,5 +217,4 @@ reference-layout reproduction from explicit fixtures. Status snapshot acceptance
 covers waiting diamonds, failures with an older available package, stale generations and
 serialized updates that preserve package bytes/keys/indexes. Live proof stays in the sandbox.
 
-The current preview and this document add no runtime dependencies and do not activate any of
-these production behaviors.
+The accompanying preview uses illustrative data and performs no live operations.

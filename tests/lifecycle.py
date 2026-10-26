@@ -189,6 +189,26 @@ def exercise(args):
     print("PASS", args.case)
 
 
+
+def event_stream(origin):
+    request = urllib.request.Request(origin + "/api/events", headers={"Accept": "text/event-stream"})
+    response = urllib.request.urlopen(request, timeout=10)
+    assert response.headers.get_content_type() == "text/event-stream"
+    return response
+
+
+def stream_event(response):
+    fields = {}
+    line = response.readline()
+    while line and line.strip():
+        key, _, value = line.decode().partition(":")
+        fields[key] = value.strip()
+        line = response.readline()
+    assert "event" in fields and "data" in fields, fields
+    result = fields["event"], json.loads(fields["data"])
+    return result
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True)
