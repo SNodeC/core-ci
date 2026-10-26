@@ -1,110 +1,129 @@
-# VOC-Experiments sandbox activation review
+# VOC-Experiments sandbox
 
-These files are now installed in the sandbox repositories; see the verified
-[deployment status](../../docs/sandbox-deployment.md) for revisions, live setup checks and
-the signing-identity correction that preserves existing feed keys. They implement source-owned examples,
-not controller policy. No production SNodeC repository, credential, tag or feed is a target.
+[Deployment guide](../../docs/deployment/README.md) · [Architecture](../../docs/architecture/README.md)
 
-## Source-owned files
+This is the configured example deployment. Names, IDs, targets and URLs here are sandbox
+settings; they are not controller policy or authorization for production SNodeC resources.
 
-For each of demo-core, demo-app, demo-side and demo-join, commit:
+## Services and repositories
 
-- `ci/build.py`, `ci/native.sh`, `ci/openwrt.sh` from this directory's `ci/`.
-- `ci/packages.json` from `definitions/REPOSITORY.json`.
-- `.github/workflows/core-ci-build.yml`, rendered from the reviewed thin template with the
-  actual full trusted worker commit SHA. Do not dispatch an unrendered template.
+| Role | Current setting |
+| --- | --- |
+| Controller checkout | `/home/voc/projects/snodec/core-ci`, branch `feat/persistent-package-graph` |
+| Local administration UI | `http://127.0.0.1:8080/` |
+| Public signed webhook | `https://gw-home.vchrist.at:8443/github/webhook` |
+| Controller LAN endpoint | `192.168.1.239:8443`, router TCP forwarding |
+| Database | Private managed MariaDB, application schema `core_ci` |
+| Controller App / installation | `5467318` / `175134675` |
+| Trusted worker | `VOC-Experiments/ci-coordinator` |
+| Source repositories | `demo-core`, `demo-app`, `demo-side`, `demo-join` under `VOC-Experiments` |
+| Feed | `VOC-Experiments/packages`, branch `main`, numeric ID `1429576922` |
+| Package HTTPS root | <https://voc-experiments.github.io/packages/> |
+| Feed-writer App / installation | `5424800` / `174142534` |
+| Signing environment | Worker `package-publication`, restricted to `main` |
 
-The recipe uses each project's existing C sources. Core exports demo-core.h and its own
-static library; side exports demo-side.h and its own static library. App and join export no
-other project's files. All four provide a runtime binary. Native hooks execute the built
-binary and check its interface; join also checks that side's result equals core plus two.
-Cross-target OpenWrt runtime checks require a matching client/emulator and remain outstanding.
+The controller runs a development build under `/tmp/codex/build/core-ci/foundation`; it is
+not installed as a system service. Runtime command/PID and local acceptance artifacts are
+under `/tmp/codex/build/core-ci/live-sandbox` and
+`/tmp/codex/build/core-ci/deployment-final`. No extra source checkout
+is required. GitHub jobs perform all package compilation, signing and publication.
 
-The graph is core → app/side → join, with an additional declared core → join edge because
-join includes core's public header directly. Join also declares app as a package prerequisite
-so that its publication exercises both arms of the diamond. Recipe dependencies are by name,
-without exact rebuild pins: these demo source interfaces declare broad compatibility. Build
-inputs still use the graph's exact selected artifacts. This example is not a policy for
-unrelated enrolled projects.
+The UI stays on loopback. Public TLS serves the webhook only, with SSL verification enabled
+in GitHub and raw-body HMAC validation in core-ci. Subscribed App events are Push, Workflow
+job and Workflow run. Port 443 remains untouched. The configured TLS files are
+`/home/voc/ci-test/core-ci-tls/fullchain.pem` and `private-key.pem`; the HMAC file is
+`/home/voc/ci-test/core-ci-webhook.secret`. These paths contain private material and are not
+files to commit or include in screenshots.
 
-Rows are explicit JSON: Debian trixie AMD64 and ARM64, Fedora 43 x86_64, OpenWrt 24.10 x86_64
-IPK and OpenWrt 25.12 x86_64 APK. OpenWrt roots discover latest stable patch releases and
-freeze SDK identities. Dependents inherit the selected prerequisites' SDK/toolchain, including
-at joins. The controller contains no row catalogue or SDK resolver.
+## Trusted deployment pins
 
-## Authorized workflow deployment plan
+| Identity | Current value |
+| --- | --- |
+| Worker tooling commit | `8aa1158081d7b532b32bb44bfcfa03d21fd918ca` |
+| Thin source workflow Git blob | `753ac0b1a641471ecf556cf0929a81f70cc62515` |
+| Publication workflow Git blob | `46f748906e0418fcf8c2ebf3f904df92a19e66d0` |
+| Source workflow main commits | core `e215bade97cf4b6b913bfad480c562d7be6fc2cf`; app `ef3216643b6d4bfe56560235c79175db5d2f0018`; side `d528d3387007d0201d7d48da9300192b8c21b9ad`; join `2def1adf02a95f7fe5c7eae67fa8cf4164c294b4` |
 
-1. In VOC-Experiments/ci-coordinator, add the fresh `deployment/worker/` contents at repository
-   root. Preserve unrelated files. Record the resulting full commit and publication workflow
-   blob SHA. Configure public variables described in ../README.md and protect trusted code.
-2. Disable these existing sandbox worker workflows through GitHub's reversible workflow
-   disable API; do not reuse their implementation:
+New GitHub run/job names and core-ci labels show repository, source tag, distribution/suite,
+architecture, package format and rebuild revision. Full cryptographic evidence remains in
+assignments, metadata and UI technical details. Previously selected inputs are immutable.
 
-   - build-packages.yml
-   - control-packages.yml
-   - live-capacity-check.yml
-   - notify-release.yml
-   - orchestrate-packages.yml
-   - publish-guides-and-status.yml
-   - sign-and-publish-packages.yml
+## Example graph and project files
 
-3. Disable `.github/workflows/build-distribution-packages.yml` in all four source
-   repositories, plus `.github/workflows/capacity-probe.yml` in demo-side (all were active
-   at the read-only inventory). Install the three hook files, definition and rendered thin
-   workflow above through checked commits on main before creating tags.
-4. In VOC-Experiments/packages, add the prepared `deployment/feed/.github/workflows/pages.yml`
-   as `.github/workflows/pages.yml` and enable GitHub Pages using Actions. Preserve existing
-   package versions and unrelated feed contents. The selected public package root is
-   https://voc-experiments.github.io/packages/; current Pages access returned HTTP 404, so
-   this address is not yet accepted as a serving feed.
-5. Package signing keys and the feed-writer key are provisioned in package-publication,
-   restricted to worker main. Review existing repository-scoped signing/feed-writer secrets
-   before activation: they remain present and are not protected by this environment policy.
-   After the old workflows are disabled, the proposed cleanup removes worker repository
-   secrets APT_SIGNING_KEY, OPENWRT_USIGN_KEY, OPENWRT_APK_KEY and PACKAGES_APP_PRIVATE_KEY;
-   their environment-scoped copies remain. Keep PACKAGES_OBSERVER_TOKEN for validation.
-   Remove obsolete source-repository PACKAGE_CAPTURE_APP_PRIVATE_KEY and
-   PACKAGE_NOTIFY_APP_PRIVATE_KEY after disabling their consumers. These exact removals
-   are part of the requested activation approval. Owner-held originals remain available.
-   Never rotate keys merely for this transition.
-6. Configure the controller with the actual tooling/workflow pins and existing App file,
-   local-only UI, explicit MariaDB settings and raw-body webhook signature secret. The owner
-   must supply the public HTTPS webhook URL/TLS deployment. There is no assumed external
-   tunnel or public configuration-writing UI.
+```mermaid
+flowchart LR
+    C[demo-core] --> A[demo-app]
+    C --> S[demo-side]
+    C --> J[demo-join]
+    A --> J
+    S --> J
+```
 
-The owner authorized this workflow deployment. Files, Pages and public variables are
-installed; signing identities are aligned and obsolete repository-secret cleanup is complete.
-Existing feed keys and package versions were preserved. No application push, PR, merge or installation
-is included implicitly. Source tag creation and package jobs have not been performed.
+The additional direct core-to-join edge represents join's direct use of core's header.
+Join waits for every declared prerequisite for its target. Core and side export their own
+headers/static libraries; app and join do not export other projects' files. Runtime package
+ranges remain compatible ranges while build consumption uses exact selected receipts.
 
-## Initial execution sequence to approve
+[definitions/](definitions) contains explicit source-owned JSON examples.
+[ci/](ci) contains the corresponding example build hooks and recipe logic. The worker consumes
+these from each selected source commit, not from this checkout during a GitHub build.
 
-Propose fresh v2.0.0 tags on the reviewed source commits, leaving all existing tags intact.
-The existing v0/v1 tags predate these fresh definitions and cannot stand in for valid new
-source selections. Create the root tag/enrollment first and wait for verified publication;
-then app and side; then join. This follows the owner's rule that missing prerequisite work
-is an explicit error rather than automatically created upstream work. Every assigned target
-must progress independently, and join must wait for all selected prerequisites.
+| Target | Runner | Format |
+| --- | --- | --- |
+| Debian trixie amd64 | `ubuntu-24.04` | DEB |
+| Debian trixie arm64 | `ubuntu-24.04-arm` | DEB |
+| Fedora 43 x86_64 | `ubuntu-24.04` | RPM |
+| OpenWrt 24.10 x86_64, target `x86/64` | `ubuntu-24.04` | IPK |
+| OpenWrt 25.12 x86_64, target `x86/64` | `ubuntu-24.04` | APK v3 |
 
-Also propose v2.1.0 for a distinct newer demo-core source commit during acceptance, with a
-reviewable one-value source change; preserve v2.0.0 so direct older-source selection can be
-proven. No other new tag name is implicitly authorized by this proposal.
+OpenWrt roots select the latest stable official SDK in their configured series. Dependents
+reuse prerequisite SDK/toolchain identity. The controller contains no SDK/runner catalogue.
 
-Subsequent acceptance must cover a distinct newer source commit/tag, direct older selection,
-tag movement without changing assigned inputs, failed work with explicit retry, delayed and
-duplicate reports, restart with assigned GitHub work, and a diamond with one failed arm.
-Any new acceptance tags/commits are sandbox-only and must be included in the activation scope.
+## Live verification
 
-## Evidence and outstanding checks
+The current readable-name acceptance source is `demo-join v2.1.3` at
+`2def1adf02a95f7fe5c7eae67fa8cf4164c294b4`. Build and publication evidence is linked below.
+All five builds and publications succeeded, and the controller verified all five targets as
+`published`. The feed retains 43 receipt rows. The controller verifies receipts and HTTPS bytes
+before marking any target published.
 
-The sandbox hook test builds all four projects as DEB and RPM using real local tools over
-synthetic C fixtures. It checks package metadata, dependency declarations, own-only exports
-and the join's runtime result with a changed fixture value. The controller's definition
-parser validates all four committed definitions together, including their five target rows.
-These are local proofs, not GitHub/container/package-client installation acceptance.
+| Target | Build | Publication |
+| --- | --- | --- |
+| DEB amd64 | [40314410511](https://github.com/VOC-Experiments/demo-join/actions/runs/40314410511) | [40315654310](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40315654310) |
+| DEB arm64 | [40314406035](https://github.com/VOC-Experiments/demo-join/actions/runs/40314406035) | [40314877639](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40314877639) |
+| RPM x86_64 | [40314418015](https://github.com/VOC-Experiments/demo-join/actions/runs/40314418015) | [40316373370](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40316373370) |
+| IPK x86_64 | [40314402294](https://github.com/VOC-Experiments/demo-join/actions/runs/40314402294) | [40315084320](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40315084320) |
+| APK x86_64 | [40314414315](https://github.com/VOC-Experiments/demo-join/actions/runs/40314414315) | [40315955938](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40315955938) |
 
-Real GitHub SDK preparation, builds, publication, Pages serving and signature verification
-must run next. Perform actual apt/dnf/opkg/apk refresh and exact-version installation with
-trusted public keys; reject wrong keys and modified metadata/packages. Record architecture
-and runtime limitations explicitly. Do not substitute file-existence checks or untrusted
-installation flags for those proofs.
+Actual apt/dnf/opkg/apk installation and runtime checks cover the five-target example diamond.
+[ARM64 APT client](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40298188386)
+and [APK client](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40239260480)
+are representative client evidence. Wrong-key rejection is verified. These client scripts
+assert the top-level requested version; compatible runtime dependency resolution is distinct
+from exact graph-selected build inputs and static-export runtime output.
+
+Signed ping/redelivery, unsigned-request rejection, real tag selection, duplicate reports and
+restart during assigned work are verified at the public endpoint. The five-target webhook
+path progresses without an operator calling the reconciliation REST endpoint. Explicit report
+redelivery remains available when investigating a particular delivery.
+
+Local graph/pipeline/worker suites use real isolated MariaDB and synthetic service fixtures;
+they are not counted as live GitHub jobs. No `--allow-untrusted` installation is used to claim
+package-client trust acceptance.
+
+## Current operational limits
+
+- Automatic transfer of renewed router certificates and controller restart is not configured.
+- Observer-token credential type/minimum scope still needs owner confirmation.
+- Feed main has no configured ruleset/branch protection; restrict writers before production use.
+- Full live modified-index/package rejection coverage across every format is incomplete.
+- Acknowledged tag notifications not yet persisted require explicit rescan/redelivery after a
+  crash. This accepted boundary has no durable inbox.
+- A deleted/expired original environment artifact can prevent explicit retry from preserving
+  its selected image/SDK. core-ci refuses to substitute a newly resolved environment.
+- Self-hosted runners require deployment-owned isolation/provenance guarantees; a runner label
+  alone does not make their host state trustworthy.
+
+Production activation is a separate deployment decision with its own repositories, hosting,
+credentials, key identities and access protection. No production SNodeC workflow/feed/tag is
+part of the sandbox setup.

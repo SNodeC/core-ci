@@ -1056,3 +1056,19 @@
   prerequisite node's latest rebuild label: that latest attempt need not be the consumed
   receipt. One production line replaced, zero net growth; no state or behavior extension.
   JavaScript syntax, browser display, build and format-check pass; no broad suite run.
+- Replaced proposal/advisory documentation with current-snapshot READMEs: architecture and
+  algorithms, project/worker/controller extensions, and full deployment/operations. Added
+  a glossary, reading paths, contents, source references and ten Mermaid diagrams, including
+  seven sequences. Removed superseded narrative documents rather than creating an attic.
+- Deployment guide covers both MariaDB ownership modes, App permissions/installations,
+  exact configuration/secret inventories, file-input provisioning, workflow pins, signing,
+  feed/client trust, local UI/public TLS, renewal, upgrades and backup/restore. Current sandbox
+  evidence and unresolved operational limits remain explicitly separate from general setup.
+- Checked documentation against current controller/worker/schema/configuration and SNode.C
+  database/demo and MQTTSuite lifecycle/callback patterns. Official GitHub App, secret and
+  Pages documentation and Let's Encrypt challenge documentation are linked in the guide.
+  Local links, fenced JSON, shell syntax and Mermaid11.12 parsing pass; the complete source
+  definition example passes the actual Definition::parse validator. No package suite rerun
+  for documentation; existing build/format and UI syntax/browser checks cover the one-line
+  presentation correction. Documentation changes add no production/test code or dependencies;
+  Mermaid validation tools are isolated under /tmp/codex/build/core-ci/documentation.

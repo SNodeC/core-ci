@@ -1,80 +1,95 @@
 # core-ci
 
-A persistent dependency graph and package execution state machine. The SNode.C controller
-coordinates GitHub and MariaDB; GitHub runs builds and trusted publication. There is no IdP.
+**core-ci turns versioned source repositories into a dependency-aware, signed package feed.**
+It is a small C++ controller built on SNode.C, a MariaDB database, a local web interface,
+and GitHub Actions workflows. The controller decides what may run. GitHub performs the
+builds, package validation, signing, indexing and publication.
 
-Implementation and live acceptance are in progress. The development controller runs locally
-with real managed MariaDB. Repository enrollment/editing, committed-revision feedback,
-authenticated tag events, immutable selections, dependency traversal, committed dispatch
-and assigned-run/job/artifact reconciliation are implemented. Builds, signing and feed
-publication run on GitHub in the authorized VOC-Experiments sandbox.
+A version tag can start a chain of builds. Each dependent waits for the exact prerequisite
+executions selected for it. A project depending on two branches of a diamond waits for both;
+one successful branch cannot stand in for the other. A restart preserves assigned GitHub
+work instead of starting replacements.
 
-Actual Debian amd64/arm64, Fedora x86_64 and OpenWrt IPK/APK jobs have built and published
-packages. Real apt/dnf/opkg/apk clients reject unrelated keys, install requested top-level versions and compatible dependencies
-from the signed HTTPS feed and execute the installed program. Complete diamond installation
-passes on all five targets. Public webhook activation still requires certificate/key paths. See
-[verified sandbox status](docs/sandbox-deployment.md) for evidence and remaining limits.
-The application branch is committed locally; the running application is a temporary
-development build, with no application push or installation. Sandbox workflows are active.
+## Read the documentation
 
-GitHub workers own image/SDK resolution and record immutable identities in verified
-publication receipts. Explicit retries reuse existing environment evidence through read-only
-artifact retrieval and assigned-run references. Missing evidence after a possible build
-stops retry without changing inputs. Public webhook TLS activation remains outstanding;
-the configuration-writing UI stays local. See [worker setup](deployment/README.md).
+| You want to… | Start here |
+| --- | --- |
+| Understand the terms and find a reading path | [Documentation guide](docs/README.md) |
+| Understand selection, graph traversal, state transitions and recovery | [Architecture and algorithms](docs/architecture/README.md) |
+| Enroll a project, write a hook, add targets or extend supported behavior | [Extension guide](docs/extensions/README.md) |
+| Install and configure the complete system, keys, GitHub Apps, HTTPS and MariaDB | [Deployment and operations](docs/deployment/README.md) |
+| Find the deployable workflow and worker files | [Deployment files](deployment/README.md) |
+| Inspect the configured example graph and current live verification | [VOC-Experiments sandbox](deployment/sandbox/README.md) |
 
-See [the refined design](docs/design.md), [setup inputs](docs/setup-inputs.md),
-[the independent Claude review](docs/claude-design-review.md) and [the work log](WORK_LOG.md). Deployment settings and credential-file ownership are
-documented in [configuration](docs/configuration.md).
-No discarded implementation, protocol or design is reused.
+The guides describe the current implementation. Engineering instructions are in
+[AGENTS.md](AGENTS.md); implementation decisions and check records are in
+[WORK_LOG.md](WORK_LOG.md).
 
-## Build and focused checks
+## What happens when a tag is pushed?
 
-Use installed SNode.C development packages with db-mariadb and Express IPv4 components,
-CMake 3.25+, a C++20 compiler, Ninja, Python 3, clang-format and cmake-format.
+1. GitHub sends an authenticated notification to core-ci.
+2. Core-ci resolves exact source commits and reads their `ci/packages.json` definitions.
+3. The graph selects repository/target executions and their prerequisite relationships.
+4. Eligible build assignments are committed to MariaDB before GitHub is contacted.
+5. A thin workflow in each source repository calls pinned tooling in a trusted worker repository.
+6. A separate trusted workflow verifies, signs and publishes the packages.
+7. Core-ci verifies publication evidence before releasing dependent work.
+
+The configuration-writing UI stays local. Only the signed webhook endpoint needs public
+HTTPS access. There is no application login, identity provider or role-management system.
+
+## Where the responsibilities live
+
+| Location | Owns |
+| --- | --- |
+| Controller and MariaDB | Enrollment, graph, immutable selections, attempts, dispatch authority and verified results |
+| Source repository | Build definition, source, project-specific hooks and recipes |
+| Trusted worker repository | Reusable builders, independent validators, publisher and trusted public keys |
+| Feed repository and HTTPS host | Packages, development exports, publication receipts, indexes and public verification keys |
+
+The controller does not run package builds or containers. Containers, SDK discovery and
+package-manager tools run in GitHub jobs. Supported package paths are native DEB/RPM and
+OpenWrt IPK/APK v3; distributions and runner choices come from explicit source-owned rows.
+
+## Build the controller
+
+Install the public SNode.C development packages, OpenSSL and nlohmann-json development
+packages, a C++20 compiler, CMake 3.25 or later, and Ninja. The required SNode.C CMake
+components are listed in [CMakeLists.txt](CMakeLists.txt). No personal framework source
+path belongs in the build configuration.
 
 ```sh
 cmake -S . -B build/codex/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/codex/debug -j2
 cmake --build build/codex/debug --target format-check
-ctest --test-dir build/codex/debug --output-on-failure -j2
 ```
 
-Lifecycle tests require mariadbd, mariadb-install-db and mariadb. They create only isolated
-private test servers under the selected build directory, with networking disabled. Their
-HTTP listeners bind loopback. The worker package suite also requires cc, dpkg-deb, dpkg,
-rpmbuild, rpm, rpmkeys, rpmsign, gpg, gpgv, gpgconf, apt-ftparchive and createrepo_c.
-It uses isolated generated test keys, not deployment signing secrets. They never control the administrator's MariaDB service.
+Building does not configure a database, install a service or activate GitHub. Follow the
+[deployment guide](docs/deployment/README.md) for those steps. It also explains the required
+private files and why the configuration template is not a ready-to-run installation.
 
-## Current database lifecycle
-
-Register configuration before core::SNodeC::init(), explicitly connect once, and listen only
-after initial success. Named framework help exposes database options and web instance options:
+For a change to selection, dispatch or worker evidence, relevant focused checks include:
 
 ```sh
-build/codex/debug/core-ci --help=expanded
-build/codex/debug/core-ci web --help=expanded
+ctest --test-dir build/codex/debug --output-on-failure \
+  -R '^(graph-state-boundaries|pipeline-boundaries|worker-environment-boundaries|worker-provenance-boundaries)$'
 ```
 
-Supply an explicit application config file when running local experiments. Select ownership
-on the CLI using database --mode managed or unmanaged; it cannot come from the default
-application configuration. Specify --socket (or --host/--port), --user, --name and a private
---password-file. The file must be owned, regular, at most 4096 bytes and inaccessible to
-group/other users. An empty file explicitly selects an empty password for a separately
-configured socket-authenticated account; it does not grant database permissions.
+Pipeline tests use real isolated MariaDB with synthetic GitHub/HTTPS services. Those are
+local boundary checks, not live GitHub acceptance. Package-tool and live client checks have
+additional requirements described in the extension and deployment guides.
 
-Managed mode also requires --managed-executable, --managed-config-file, --managed-datadir
-and --managed-pid-file. The pre-provisioned datadir must be private and owned by the current
-process account; absent socket and PID paths must be directly inside it. The separate server
-config chooses the actual database account and log settings. The controller starts it with
-networking disabled and waits for its native authenticated readiness notification, without
-polling. It owns shutdown only for that child. No datadir/schema initialization runs inside
-the controller. Later command execution uses the framework's lazy connection establishment
-when its connection object has disappeared; mutations will not be automatically replayed.
+## Operational guarantees and limits
 
-Apply the fresh `sql/schema.sql` before startup; missing/invalid schema leaves no listener.
-The local web UI supports enrollment, JSON target/dependency editing, import and GitHub save
-feedback. Existing committed definitions must be read before replacing them.
+Source selections and assigned inputs are immutable. Explicit retries reserve a new package
+rebuild revision. Unknown dispatches, database commits and possible feed writes are preserved
+as uncertain; they are never a reason to launch a replacement automatically.
 
-GET /api/status queries the real database asynchronously and returns available/unavailable.
-It is a lifecycle boundary check, not evidence that repository orchestration is ready.
+Validated webhook notifications are acknowledged promptly, while asynchronous work continues.
+If the controller crashes before a new tag selection reaches MariaDB, the operator must
+explicitly rescan/request the tag or redeliver the notification. This accepted boundary does
+not have a durable notification inbox.
+
+The sandbox has real five-target build, signing, publication and package-client evidence.
+Its current deployment details and remaining operational checks are documented separately;
+they are not a claim that every production deployment is configured or accepted.
