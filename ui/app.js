@@ -89,11 +89,28 @@ function renderExecution(execution, panel, open) {
     const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl");
     for (const [label, value] of [["Activity", execution.activity], ["Selection", execution.automatic ? "Automatic" : "Explicit request"],
         ["Build started", timestamp(execution.build_job?.started_at)], ["Build finished", timestamp(execution.build_job?.completed_at)],
-        ["Build duration", duration(execution.build_job)]]) {
+        ["Build duration", duration(execution.build_job)],
+        ["Publication verified", timestamp(execution.receipt?.publication_verified_utc)]]) {
         values.append(node("dt", label), node("dd", value));
     }
     facts.append(values,
         node("p", execution.failure || execution.blockers.join("; ") || "No current blockers", execution.failure ? "error" : "secondary"));
+    const summary = execution.receipt?.summary, tests = summary?.tests, reported = node("dl");
+    const compilers = (summary?.compilers || []).map((compiler) => compiler.name + " " + compiler.version).join("; ");
+    reported.append(node("dt", "Compilers"), node("dd", compilers || "Not recorded"));
+    reported.append(node("dt", "Tests"), node("dd", tests ?
+        tests.passed + " passed, " + tests.failed + " failed, " + tests.skipped + " skipped" : "Not recorded"));
+    if (tests?.coverage_percent !== undefined) {
+        reported.append(node("dt", "Coverage"), node("dd", tests.coverage_percent + "%"));
+    }
+    if (typeof tests?.report_url === "string" && tests.report_url.startsWith("https://")) {
+        const link = node("a", "Test report ↗");
+        Object.assign(link, {href: tests.report_url, target: "_blank", rel: "noopener noreferrer"});
+        const value = node("dd");
+        value.append(link);
+        reported.append(node("dt", "Report"), value);
+    }
+    facts.append(node("h2", "Hook-reported build summary"), reported);
     const dependencies = node("div"), list = node("ul", "", "dependencies");
     for (const id of execution.prerequisites) {
         const prerequisite = graph.executions.find((row) => row.id === id);

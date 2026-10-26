@@ -3,11 +3,14 @@
 #include "Version.h"
 
 #include <algorithm>
+#include <ctime>
 #include <functional>
+#include <iomanip>
 #include <limits>
 #include <openssl/evp.h>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 
 namespace coreci {
@@ -479,8 +482,23 @@ namespace coreci {
                     receipt.at("environment").is_object() && !receipt.at("environment").empty() && receipt.at("packages").is_array() &&
                     !receipt.at("packages").empty(),
                 "publication receipt identities differ from assignment");
-        require(attempt.receipt.is_null() || attempt.receipt == receipt, "conflicting publication receipt");
-        attempt.receipt = receipt;
+        // Verification time belongs to the controller; the feed cannot supply or refresh it.
+        auto verified = receipt;
+        verified.erase("publication_verified_utc");
+        auto previous = attempt.receipt;
+        if (!previous.is_null()) {
+            previous.erase("publication_verified_utc");
+        }
+        require(previous.is_null() || previous == verified, "conflicting publication receipt");
+        if (attempt.receipt.is_null()) {
+            const auto now = std::time(nullptr);
+            const auto* utc = std::gmtime(&now);
+            require(utc != nullptr, "publication verification clock is unavailable");
+            std::ostringstream timestamp;
+            timestamp << std::put_time(utc, "%Y-%m-%dT%H:%M:%SZ");
+            verified["publication_verified_utc"] = timestamp.str();
+            attempt.receipt = verified;
+        }
         attempt.state = "published";
         return selected;
     }

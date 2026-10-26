@@ -96,8 +96,10 @@ Old receipts remain untouched; facts not recorded in them stay null.
 
 This phase is publication-only. `work` is null: a worker cannot infer waiting/failed controller
 state from retained receipts. `published_utc` stays null unless supplied by recorded verified
-publication evidence; no render/prepare time is substituted. Precise public-verification time
-and a minimal current-work projection require coordinated controller-side work. Therefore the
+publication evidence; no render/prepare time is substituted. The controller records its first successful
+verification time separately as `publication_verified_utc` in its persisted receipt and displays
+it in management execution details. Exporting that fact to public templates and supplying a
+minimal current-work projection still require the status-update integration. Therefore the
 full information content of the SNode.C reference pages is not yet reproduced by this phase.
 
 Run locally with the pinned dependencies installed:

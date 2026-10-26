@@ -79,10 +79,28 @@ namespace {
                            {"run", publishing.publicationRun},
                            {"source_commit", graph.node(id).source.at("commit")},
                            {"feed_revision", std::string(40, 'f')},
+                           {"publication_verified_utc", "1900-01-01T00:00:00Z"},
                            {"environment", {{"worker_evidence", "immutable identity"}}},
                            {"packages", {{{"name", "fixture-package"}, {"sha256", std::string(64, 'e')}}}}};
         apply(graph, graph.published(id, attempt, receipt));
+        const auto verified = graph.node(id).attempts.back().receipt;
+        const auto timestamp = verified.at("publication_verified_utc").get<std::string>();
+        check(timestamp.size() == 20 && timestamp.back() == 'Z' && timestamp != receipt.at("publication_verified_utc").get<std::string>(),
+              "feed supplied the controller's publication verification time");
         apply(graph, graph.published(id, attempt, receipt));
+        check(graph.node(id).attempts.back().receipt == verified, "duplicate publication refreshed its verification time");
+        std::vector<coreci::Node> stored;
+        for (const auto& [key, node] : graph.nodes()) {
+            stored.push_back(node);
+            if (key == id) {
+                stored.back().attempts.back().receipt.erase("publication_verified_utc");
+            }
+        }
+        coreci::Graph historical;
+        historical.restore(stored, graph.nextRebuildRevision());
+        apply(historical, historical.published(id, attempt, receipt));
+        check(!historical.node(id).attempts.back().receipt.contains("publication_verified_utc"),
+              "replay invented a verification time for an existing unrecorded publication");
         auto conflicting = receipt;
         conflicting["feed_revision"] = std::string(40, '0');
         rejects([&]() {

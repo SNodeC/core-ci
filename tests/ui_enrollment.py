@@ -19,6 +19,7 @@ def serve(directory):
     condition = threading.Condition()
     generation = 0
     writes = 0
+    executions = []
     base = {"schema": 1, "title": "Core", "package": "core", "depends_on": [],
             "build": {"native": "ci/native.sh"}, "matrix": [
                 {"id": "core-row", "family": "native", "distribution": "custom", "suite": "series", "arch": "customarch",
@@ -49,12 +50,26 @@ def serve(directory):
                         with condition:
                             condition.wait_for(lambda: current != generation, timeout=60)
                             current = generation
-                            for name, value in [("graph", {"executions": [], "generation": current, "mutations_allowed": True}),
+                            for name, value in [("graph", {"executions": executions, "generation": current, "mutations_allowed": True}),
                                                 ("repositories", {"repositories": repositories})]:
                                 self.wfile.write(("event:" + name + "\ndata:" + json.dumps(value) + "\n\n").encode())
                             self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+            elif self.path == "/test/metadata":
+                with condition:
+                    sample = {"id": "recorded", "label": "Recorded build", "repository": "Owner/core", "tag": "v1.0.0",
+                              "target_row": base["matrix"][0], "revision": 2, "state": "published", "activity": "published",
+                              "automatic": True, "prerequisites": [], "blockers": [], "build_job": {
+                                  "started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:01:42Z"},
+                              "receipt": {"publication_verified_utc": "2026-10-26T10:02:00Z", "summary": {
+                                  "compilers": [{"name": "cc", "version": "compiler <img src=x onerror=alert(1)>"}],
+                                  "tests": {"passed": 3, "failed": 0, "skipped": 1, "coverage_percent": 0,
+                                            "report_url": "https://reports.example.test/results"}}}}
+                    executions[:] = [sample, {**sample, "id": "historical", "label": "Older build", "revision": 1, "receipt": {}}]
+                    generation += 1
+                    condition.notify_all()
+                self.reply(200, {"synthetic_metadata": generation})
             elif self.path == "/test/update":
                 with condition:
                     repositories.append({**repositories[0], "repository": "Owner/extra"})

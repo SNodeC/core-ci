@@ -410,6 +410,21 @@ repository drafts survive incoming events and stream reconnection. A changed rem
 is announced without replacing the draft or its original conditional-write revision. `Live`
 means the stream is connected, not that every execution or external service is healthy.
 "Inspect assigned GitHub work" remains an explicit action and is independent of SSE delivery.
+Execution details show the first controller verification time as **Publication verified**,
+formatted in the browser's local timezone. The `publication_verified_utc` field belongs to the
+controller and is stored in the existing receipt only when the verified publication transition
+is recorded. It is an observation time, not the feed commit time or build completion time.
+Duplicate reports and restarts preserve it. The host's UTC system clock supplies the value;
+existing receipts without that fact stay unrecorded rather than being backfilled.
+
+Compiler versions, test counts, optional coverage and a report link come from `receipt.summary`
+and are labelled **Hook-reported build summary**. The source hook reports them; verification
+of publication does not independently attest that its tests ran. These optional facts appear
+after publication evidence is recorded and do not affect eligibility, signatures or retry.
+Missing facts show **Not recorded**. The browser uses text nodes for reported content and
+opens HTTPS report links separately with `noopener noreferrer`. Existing graph/SSE delivery
+carries this information without another API, state, database column or GitHub request.
+
 The feed's status pages are publication projections from receipts; they do not
 mirror waiting/failed controller state or imply that an artifact upload is a publication.
 

@@ -3,6 +3,7 @@
 import argparse
 import concurrent.futures
 import base64
+import datetime
 import hashlib
 import hmac
 import http.server
@@ -486,6 +487,9 @@ def exercise(args, directory):
                        "environment": {"image": "worker-resolved", "digest": "sha256:" + "a" * 64},
                        "assignment_sha256": hashlib.sha256(json.dumps(selected, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                        "source_commit": selected["source"]["commit"], "run": public_run, "build_result": publications[0]["build_result"],
+                       "publication_verified_utc": "1900-01-01T00:00:00Z",
+                       "summary": {"compilers": [{"name": "cc", "version": "reported compiler"}],
+                                   "tests": {"passed": 3, "failed": 0, "skipped": 1}},
                        "feed": selected["source"]["deployment"]["feed"], "packages": [{"name": "example", "sha256": "e" * 64}]}
             path = "receipts/" + selected["execution"] + "/" + str(selected["revision"]) + ".json"
             raw = json.dumps(receipt).encode()
@@ -499,11 +503,20 @@ def exercise(args, directory):
             trees[ids[2]] = [{"path": str(selected["revision"]) + ".json", "type": "blob", "mode": "100644", "sha": sha}]
             deployed_files["/" + path] = b"modified HTTPS receipt"
             assert report(500)[0] == 202, "modified HTTPS receipt authorized publication"
+            unverified = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
+            assert unverified["state"] == "publishing" and unverified["receipt"] is None
             deployed_files["/" + path] = raw
+            verified_after = time.time()
             assert report(500)[0] == 202, "verified publication did not release the next completed build"
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert current["state"] == "published" and len(publications) == 2
+            recorded_receipt = current["receipt"]
+            verified_at = recorded_receipt["publication_verified_utc"]
+            observed = datetime.datetime.fromisoformat(verified_at.replace("Z", "+00:00")).timestamp()
+            assert verified_after - 1 <= observed <= time.time(), "verification time did not come from the controller"
+            assert recorded_receipt["summary"] == receipt["summary"]
             assert report(500)[0] == 200 and report(102)[0] == 200, "late report regressed published state"
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["receipt"] == recorded_receipt
             assert request("/api/repositories/save", {"repository": "Owner/worker", "branch": "main", "definition": definition})[0] == 422
             runs[100].update(status="completed", conclusion="success")
             assert report(100)[0] == 200 and len(publications) == 2, "completed build was dispatched for publication more than once"
@@ -572,6 +585,8 @@ def exercise(args, directory):
             settings.write_text(original_settings)
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
+            historical = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
+            assert historical["receipt"] == recorded_receipt, "restart changed publication timing or summary"
             assert not errors, errors
             print("PASS local pipeline: enrollment/highest tag, committed dispatch, raw HMAC, exact older source, lost response, restart, failure/retry, late reports and assigned artifact identities")
     finally:

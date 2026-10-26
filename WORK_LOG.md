@@ -1267,3 +1267,39 @@
 - No additional code change or worker activation. Existing working files already match
   the combined source tree. Merge without stashing, discarding files or creating a checkout.
   Main and the UI feature branch retain both histories. No push is included in this action.
+
+## 2026-10-26 — controller publication verification time and summary display
+
+- Owner approved40–70 net production/35–60 test lines for the controller/UI metadata
+  integration after the two prior threads merged. Actual production38 added/3 removed
+  (net35), tests49 added/1 removed (net48). Existing receipt storage, graph view and SSE
+  carry the facts; no new column, state, scheduler, endpoint, client or GitHub request.
+- Traced assigned publication -> committed/HTTPS receipt proof -> Graph::published ->
+  GraphStore commit/restore -> existing graph/SSE -> expanded UI details. Invariant: only
+  the verified published transition records controller-owned publication_verified_utc;
+  source/feed claims cannot set it. Duplicate evidence compares unchanged publication
+  content, retains the first timestamp, and still rejects conflicting publication evidence.
+  Existing unrecorded receipts remain unrecorded. UTC time comes from the controller clock.
+- Added Publication verified in local browser time beside existing build timing. Optional
+  receipt.summary compiler versions, test counts, coverage and HTTPS report link appear as
+  Hook-reported build summary. Missing facts show Not recorded; reported text uses existing
+  textContent DOM creation and report links open separately with noopener/noreferrer.
+  These facts are display evidence, never test attestation or permission to publish.
+- Reused the merged UI directly; no redesign or second metadata/state authority. Added
+  recording/rendering because existing fields cannot supply an unrecorded observation or
+  show optional summaries. Current-work export/public status-update jobs remain separate;
+  this change does not rewrite feed receipts or claim public template timestamp delivery.
+- Isolated build: /tmp/codex/build/core-ci/publication-details, Debug, installed SNode.C
+  packages. Build core-ci/graph-test, format-check, JavaScript/Python syntax,160-column and
+  whitespace checks pass. Relevant ctest graph-state-boundaries/pipeline-boundaries pass
+  (0.09s/8.62s), using real isolated MariaDB and synthetic GitHub/feed HTTPS. Added historical
+  replay case also passes the focused graph boundary (0.10s). No full/package suite run.
+- Chrome disposable fixture verifies recorded/missing facts, local timezone,1min42s build
+  duration, literal markup in compiler text (no image/script), coverage0%, secure report
+  attributes, no horizontal document overflow and expanded details retained over SSE.
+  No live GitHub builds/publications claimed. Preview tab/server stopped after verification.
+- Updated architecture and template-boundary documentation. Canonical feature branch:
+  feat/publication-verification-details, based on local merged main d847f82. No commit,
+  push, merge, sandbox restart or installation performed for this step. Temporary build/logs
+  retained for review; no additional checkout. No production SNodeC resources, feed bytes,
+  tags, keys or credentials changed; .qtcreator/ and .local-credentials/ left uninspected.
