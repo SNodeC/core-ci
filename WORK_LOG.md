@@ -1320,3 +1320,42 @@
   https://docs.github.com/en/rest/git/trees#create-a-tree and
   https://docs.github.com/en/rest/git/refs#update-a-reference . No uncertain mutation is retried.
   Existing keys and tags are preserved; external activation is VOC-Experiments only.
+
+## 2026-10-26 — early verified execution evidence
+
+- Owner approved the isolated checkout checkouts/live-execution-evidence and revised bound
+  of120–180 net production/70–110 test lines, with merge requested. Branch
+  feat/live-execution-evidence is based on main58f6a72. Purpose: isolate controller/UI
+  changes from the concurrent public-status thread. Remove the worktree after safe merge.
+- Invariant: immutable assignments and run identities never change; verified attempt-1
+  progress and job timestamps may accumulate before successful artifact/publication proof.
+  Delayed observations cannot erase completion or change established facts. Reused the
+  existing graph commit/SSE path and selected job for all evidence consumers; no timer,
+  queue, scheduler, workflow changes or additional timing authority. Atomic evidence/failure
+  persistence avoids a second competing graph write for a definite failed build.
+- Added one per-attempt evidence JSON column, restored through asynchronous MariaDB.
+  Existing deployments require the documented administrative ALTER before restart; no
+  runtime DDL or fabricated historical timestamps. Deployment instructions and field
+  contract: docs/extensions/execution-evidence.md. Runtime has not yet been upgraded.
+- UI distinguishes assigned, queued, running, verification and waiting-for-publication
+  activity. Early job starts appear immediately through SSE; expected timestamps are
+  Pending. Publisher timing remains separate from verified publication. Existing five
+  states and all exact inputs, uncertainty and retry policy remain unchanged.
+- Official evidence contract checked against
+  https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt
+  and https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_job .
+  Reviewed SNode.C apps/main.cpp and MQTTSuite MqttModel.cpp streaming/lifetime patterns;
+  existing SSE ownership/lifecycle is retained.
+- Debug build in /tmp/codex/build/core-ci/live-execution-evidence uses installed public
+  SNode.C packages. Build, format-check, node --check ui/app.js,160-column and whitespace
+  checks pass. Focused graph-state-boundaries and pipeline-boundaries pass (0.11s/8.33s):
+  real isolated MariaDB, synthetic GitHub/feed. Tests cover early/late evidence, attempt2
+  rejection, restart, duplicate SSE/generation stability, failed-build timing and immutable
+  identities. No full suite or live GitHub acceptance claimed.
+- Disposable Chrome fixture verifies queued Pending, running start time, completion and
+  duration over SSE while preserving expansion. Screenshot retained in the task build
+  directory. Production:+313/-224 (net89); tests:+79/-4 (net75). Production growth is
+  below the approved upper bound; consolidating job reads reduced the required addition.
+- No sandbox database ALTER, controller restart, installation, push or external resource
+  mutation performed in this checkpoint. Concurrent canonical changes are untouched;
+  .qtcreator/ and .local-credentials/ were preserved and not inspected.

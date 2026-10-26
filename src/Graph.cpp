@@ -22,6 +22,30 @@ namespace coreci {
             }
         }
 
+        nlohmann::json mergeEvidence(nlohmann::json previous, const nlohmann::json& incoming) {
+            require(previous.is_object() && incoming.is_object(), "execution evidence must be an object");
+            const std::map<std::string, unsigned int> progress{
+                {"requested", 0}, {"waiting", 0}, {"pending", 0}, {"queued", 0}, {"in_progress", 1}, {"completed", 2}};
+            for (const auto& [phase, facts] : incoming.items()) {
+                require((phase == "build" || phase == "publication") && facts.is_object(), "unknown execution evidence phase");
+                auto& known = previous[phase];
+                for (const auto& [key, value] : facts.items()) {
+                    if (!value.is_null()) {
+                        if (key == "status" || key == "job_status") {
+                            const auto rank = progress.at(value.get<std::string>());
+                            if (!known.contains(key) || rank >= progress.at(known.at(key).get<std::string>())) {
+                                known[key] = value;
+                            }
+                        } else {
+                            require(!known.contains(key) || known.at(key) == value, "conflicting execution evidence: " + key);
+                            known[key] = value;
+                        }
+                    }
+                }
+            }
+            return previous;
+        }
+
         nlohmann::json identity(const Node& node) {
             return {{"source", node.source},
                     {"target", node.target},
@@ -150,6 +174,8 @@ namespace coreci {
                             attempt.state == "published" || attempt.state == "failed",
                         "unknown persisted attempt state");
                 require(attempt.state == "waiting" || !attempt.assignment.is_null(), "assigned attempt lost its immutable inputs");
+                require(mergeEvidence(nlohmann::json::object(), attempt.evidence) == attempt.evidence,
+                        "invalid persisted execution evidence");
                 require(attempt.state != "published" || (!attempt.receipt.is_null() && !attempt.publicationRun.is_null()),
                         "published attempt lost its receipt");
             }
@@ -415,9 +441,13 @@ namespace coreci {
         return selected;
     }
 
-    Node Graph::bindRun(const std::string& id, const std::string& attemptId, bool publication, const nlohmann::json& run) const {
+    Node Graph::bindRun(const std::string& id,
+                        const std::string& attemptId,
+                        bool publication,
+                        const nlohmann::json& run,
+                        const nlohmann::json& observation) const {
         auto selected = records.at(id);
-        require(run.at("id").get<std::uint64_t>() != 0 && run.at("run_attempt").get<std::uint64_t>() != 0 &&
+        require(run.at("id").get<std::uint64_t>() != 0 && run.at("run_attempt").get<std::uint64_t>() == 1 &&
                     run.at("repository_id").get<std::uint64_t>() != 0 && run.contains("workflow_blob_sha") && run.contains("actor_id"),
                 "incomplete GitHub run identity");
         auto found = std::find_if(selected.attempts.begin(), selected.attempts.end(), [&](const auto& attempt) {
@@ -433,6 +463,10 @@ namespace coreci {
         auto& assigned = publication ? found->publicationRun : found->buildRun;
         require(assigned.is_null() || assigned == run, "conflicting GitHub run identity");
         assigned = run;
+        if (!observation.empty()) {
+            require(observation.at("run_id") == assigned.at("id"), "execution evidence belongs to another run");
+            found->evidence = mergeEvidence(found->evidence, {{publication ? "publication" : "build", observation}});
+        }
         return selected;
     }
 
@@ -503,8 +537,12 @@ namespace coreci {
         return selected;
     }
 
-    Node Graph::failed(const std::string& id, const std::string& attemptId, const std::string& reason) const {
-        auto selected = records.at(id);
+    Node Graph::failed(const std::string& id,
+                       const std::string& attemptId,
+                       const std::string& reason,
+                       const nlohmann::json& buildRun,
+                       const nlohmann::json& observation) const {
+        auto selected = buildRun.is_null() ? records.at(id) : bindRun(id, attemptId, false, buildRun, observation);
         auto& attempt = current(selected, attemptId);
         require((attempt.state == "building" || attempt.state == "publishing" || attempt.state == "failed") && !reason.empty(),
                 "failure must belong to assigned work");
@@ -563,6 +601,8 @@ namespace coreci {
                 for (std::size_t index = 0; index < old.attempts.size(); ++index) {
                     const auto& before = old.attempts[index];
                     const auto& after = node.attempts[index];
+                    require(mergeEvidence(before.evidence, after.evidence) == after.evidence,
+                            "execution evidence regressed or disappeared");
                     require(before.id == after.id && before.revision == after.revision, "attempt identity changed");
                     require(before.assignment.is_null() || before.assignment == after.assignment, "assigned inputs changed");
                     require(before.buildRun.is_null() || before.buildRun == after.buildRun, "assigned build run changed");

@@ -70,6 +70,7 @@ def exercise(args, directory):
     unavailable_artifacts = False
     missing_artifacts = False
     malformed_publication_jobs = False
+    job_attempt = 1
     workflow = (Path(__file__).resolve().parents[1] / "deployment/source/core-ci-build.yml.in").read_text().replace("@WORKER@", "Owner/worker").replace("@TOOLING_SHA@", "f" * 40).encode()
     workflow_blob = hashlib.sha1(b"blob " + str(len(workflow)).encode() + b"\0" + workflow).hexdigest()
     blobs[workflow_blob] = workflow
@@ -138,7 +139,7 @@ def exercise(args, directory):
                     run = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 99}, "head_repository": {"id": 99},
                            "actor": {"id": 42}, "display_title": "Build " + assignment["label"],
                            "path": ".github/workflows/core-ci-build.yml", "head_sha": head,
-                           "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id) + ("x" * 65536 if run_id == 103 else ""), "status": "in_progress", "conclusion": None}
+                           "html_url": "https://github.com/Owner/example/actions/runs/" + str(run_id) + ("x" * 65536 if run_id == 103 else ""), "status": "queued" if run_id == 100 else "in_progress", "conclusion": None}
                     runs[run_id] = run
                     dispatches.append(assignment)
                     if lose_next:
@@ -269,7 +270,7 @@ def exercise(args, directory):
                         if run_id >= 500 and malformed_publication_jobs:
                             self.reply(200, {"total_count": 1, "jobs": "not a job array"})
                         else:
-                            self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": 1,
+                            self.reply(200, {"total_count": 1, "jobs": [{"id": run_id + 1000, "run_id": run_id, "run_attempt": job_attempt,
                                 "name": ("Publish " if run_id >= 500 else "build / Build ") + assignment["label"],
                                 "status": run["status"], "conclusion": run["conclusion"],
                                 "started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z",
@@ -385,6 +386,28 @@ def exercise(args, directory):
             assert status == 200 and saved["enrolled"] and saved["work"]["status"] == 202, saved
             assert writes == 1 and len(dispatches) == 1 and dispatches[0]["source"]["commit"] == source_sha
             assert runs[100]["head_sha"] != source_sha, "workflow and selected source were conflated"
+            first_id = dispatches[0]["execution"]
+            first = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == first_id)
+            assert first["activity"] == "build queued on GitHub"
+            assert "started_at" not in first["build_job"], "queued metadata was mistaken for an actual job start"
+            evidence_stream = lifecycle.event_stream(origin)
+            lifecycle.stream_event(evidence_stream)
+            lifecycle.stream_event(evidence_stream)
+            job_attempt = 2
+            assert report(100)[0] == 409, "attempt-2 job evidence was accepted"
+            job_attempt = 1
+            runs[100]["status"] = "in_progress"
+            assert report(100)[0] == 200
+            event, early = lifecycle.stream_event(evidence_stream)
+            assert event == "graph"
+            early = next(row for row in early["executions"] if row["id"] == first_id)
+            assert early["activity"] == "build running" and early["build_job"]["started_at"] == "2026-10-26T10:00:00Z"
+            assert "completed_at" not in early["build_job"] and early["state"] == "building"
+            evidence_stream.close()
+            immutable_run = early["build_run"]
+            generation = request("/api/graph")[1]["generation"]
+            assert report(100)[0] == 200
+            assert request("/api/graph")[1]["generation"] == generation, "duplicate progress report mutated the graph"
             status, preview = request("/api/repositories/workflow", {"repository": "Owner/example"})
             assert status == 200 and preview["proposed"].encode() == workflow and preview["blob_sha"] == workflow_blob, preview
             status, unchanged = request("/api/repositories/workflow", {"repository": "Owner/example", "head": head, "blob_sha": workflow_blob, "write": True})
@@ -419,6 +442,8 @@ def exercise(args, directory):
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
             assert request("/api/work/reconcile", {})[0] == 200 and len(dispatches) == 1, "restart dispatched a replacement"
+            restored_early = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == first_id)
+            assert restored_early["build_job"] == early["build_job"] and restored_early["build_run"] == immutable_run
             stream = lifecycle.event_stream(origin)
             assert lifecycle.stream_event(stream) == ("graph", request("/api/graph")[1])
             assert lifecycle.stream_event(stream)[0] == "repositories"
@@ -452,8 +477,11 @@ def exercise(args, directory):
             assert report(102)[0] == 202 and len(publications) == 1
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert current["state"] == "publishing"
+            assert current["activity"] == "publication running"
+            assert current["publication_job"]["started_at"] == "2026-10-26T10:00:00Z"
+            assert "completed_at" not in current["publication_job"]
             timing = {"started_at": "2026-10-26T10:00:00Z", "completed_at": "2026-10-26T10:03:25Z"}
-            assert current["build_job"] == timing, "UI timing is not the assigned attempt-1 package job evidence"
+            assert {key: current["build_job"][key] for key in timing} == timing, "UI timing is not the assigned attempt-1 package job evidence"
             assert publications[0]["build_result"]["build_job"] == timing
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
             runs[100].update(status="completed", conclusion="success")
@@ -480,7 +508,7 @@ def exercise(args, directory):
             assert build_status_reads.count(100) == verified_reads, "restart re-read an already persisted verified build"
             assert len(publications) == 1, "restart replaced uncertain publication"
             restored = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
-            assert restored["build_job"] == timing, "recorded build timing was lost on restart"
+            assert {key: restored["build_job"][key] for key in timing} == timing, "recorded build timing was lost on restart"
             selected = publications[0]["assignment"]
             public_run = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])["publication_run"]
             receipt = {"schema": 1, "execution": selected["execution"], "attempt": selected["attempt"],
@@ -574,6 +602,7 @@ def exercise(args, directory):
             assert report(107)[0] == 200
             current = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[7]["execution"])
             assert current["state"] == "failed" and current["failure"] == "required artifacts missing/expired"
+            assert current["build_job"]["completed_at"] == "2026-10-26T10:03:25Z", "failure lost verified completion timing"
             original_settings = settings.read_text()
             lifecycle.stop(application)
             settings.write_text(original_settings.replace('pipeline.tooling-sha="' + "f" * 40 + '"', 'pipeline.tooling-sha="' + "e" * 40 + '"'))

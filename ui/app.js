@@ -16,7 +16,8 @@ function button(text, action, className = "") {
     return result;
 }
 function state(execution) {
-    const result = node("span", execution.superseded_by ? "superseded" : execution.state, "state " + execution.state);
+    const result = node("span", execution.superseded_by ? "superseded" :
+        ["building", "publishing"].includes(execution.state) ? execution.activity : execution.state, "state " + execution.state);
     return result;
 }
 function feedback(value, failed = false) {
@@ -75,22 +76,29 @@ function showExecution(id) {
     tab("work");
     renderWork();
 }
-function timestamp(value) {
+function timestamp(value, pending = false) {
     const date = new Date(value || "");
     return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, {
         dateStyle: "short", timeStyle: "long"
-    }).format(date) : "Not recorded";
+    }).format(date) : pending ? "Pending" : "Not recorded";
 }
-function duration(job) {
+function duration(job, pending = false) {
     const seconds = (Date.parse(job?.completed_at) - Date.parse(job?.started_at)) / 1000;
-    return Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds / 60) + " min " + Math.floor(seconds % 60) + " s" : "Not recorded";
+    return Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds / 60) + " min " + Math.floor(seconds % 60) + " s" :
+        pending ? "Pending" : "Not recorded";
 }
 function renderExecution(execution, panel, open) {
+    const buildPending = ["waiting", "building"].includes(execution.state) && execution.build_job?.status !== "completed";
+    const publicationPending = !["published", "failed"].includes(execution.state) && execution.publication_job?.status !== "completed";
     const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl");
     for (const [label, value] of [["Activity", execution.activity], ["Selection", execution.automatic ? "Automatic" : "Explicit request"],
-        ["Build started", timestamp(execution.build_job?.started_at)], ["Build finished", timestamp(execution.build_job?.completed_at)],
-        ["Build duration", duration(execution.build_job)],
-        ["Publication verified", timestamp(execution.receipt?.publication_verified_utc)]]) {
+        ["Build started", timestamp(execution.build_job?.started_at, buildPending)],
+        ["Build finished", timestamp(execution.build_job?.completed_at, buildPending)],
+        ["Build duration", duration(execution.build_job, buildPending)],
+        ["Publisher job started", timestamp(execution.publication_job?.started_at, publicationPending)],
+        ["Publisher job finished", timestamp(execution.publication_job?.completed_at, publicationPending)],
+        ["Publisher job duration", duration(execution.publication_job, publicationPending)],
+        ["Publication verified", timestamp(execution.receipt?.publication_verified_utc, !["published", "failed"].includes(execution.state))]]) {
         values.append(node("dt", label), node("dd", value));
     }
     facts.append(values,
@@ -184,7 +192,8 @@ function renderWork() {
         const status = node("td");
         status.append(state(execution));
         row.append(control, repository, distribution, node("td", target.arch), node("td", target.build.format),
-            node("td", "r" + execution.revision, "revision"), status, node("td", timestamp(execution.build_job?.started_at), "build-time"));
+            node("td", "r" + execution.revision, "revision"), status, node("td", timestamp(execution.build_job?.started_at,
+                ["waiting", "building"].includes(execution.state) && execution.build_job?.status !== "completed"), "build-time"));
         element("graph").append(row);
         if (execution.id === executionId) {
             const details = node("tr"), panel = node("td", "", "execution-details");
@@ -196,8 +205,9 @@ function renderWork() {
         }
     }
     element("visible-count").textContent = visible.length + " of " + graph.executions.length + " executions";
+    const stageLabels = {building: "in build stage", publishing: "in publication stage", waiting: "waiting", failed: "failed"};
     element("counts").textContent = ["building", "publishing", "waiting", "failed"].map((value) =>
-        graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + value).join(" · ");
+        graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + stageLabels[value]).join(" · ");
 }
 function preview(definition) {
     element("definition").value = JSON.stringify(definition, null, 2);

@@ -57,8 +57,8 @@ namespace coreci {
                     unsigned int page,
                     const std::shared_ptr<std::vector<std::uint64_t>>& matches,
                     const Callback& callback);
-        void buildArtifacts(const Node& node, const Callback& callback);
-        void publicationResult(const Node& node, const nlohmann::json& run, const Callback& callback);
+        void buildArtifacts(const Node& node, const nlohmann::json& job, const Callback& callback);
+        void publicationResult(const Node& node, const nlohmann::json& run, const nlohmann::json& job, const Callback& callback);
         void change(const Node& node, const Callback& callback);
         static std::string title(const Attempt& attempt, bool publication, bool job = false);
 

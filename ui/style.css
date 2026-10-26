@@ -26,7 +26,7 @@ td { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: middl
 tr[aria-selected="true"] { background: var(--soft); } .secondary { display: block; font-size: 12px; color: var(--sub); }
 .row-select { padding: 0; border: 0; background: none; color: var(--accent); text-align: left; max-width: 240px; overflow-wrap: anywhere; }
 .row-select:hover { text-decoration: underline; background: none; } .revision { font-variant-numeric: tabular-nums; }
-.state { font-size: 12px; white-space: nowrap; } .state::before { content: '●'; font-size: 9px; padding-right: 6px; }
+.state { font-size: 12px; } .state::before { content: '●'; font-size: 9px; padding-right: 6px; }
 .state.building, .state.publishing { color: var(--accent); } .state.waiting { color: light-dark(#875719,#e6bf80); }
 .state.published { color: light-dark(#236445,#90d6b0); } .state.failed, .error { color: light-dark(#a43135,#ffacaf); }
 .editor-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin-top: 16px; }
