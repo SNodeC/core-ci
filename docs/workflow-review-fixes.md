@@ -3,7 +3,7 @@
 Review findings are advisory; this records verification against current sources and owner policy.
 Only relevant graph, pipeline, worker environment/provenance and formatting checks were run.
 Existing five-target package-client diamond evidence remains recorded separately in
-[sandbox deployment](sandbox-deployment.md). New live tooling evidence will be added there.
+[sandbox deployment](sandbox-deployment.md). New live tooling evidence is recorded there.
 
 | Finding | Classification and result |
 | --- | --- |
@@ -34,3 +34,7 @@ Official API references are recorded in WORK_LOG.md. Public webhook TLS remains 
 but valid certificate-chain/key paths for gw-home.vchrist.at are still missing. No SNode.C
 organization deployment, credential/key rotation, tag rewrite or package overwrite is authorized
 by this review correction. Deployment and live verification remain in VOC-Experiments.
+
+Owner approved definite failure for a successful assigned build whose complete GitHub artifact
+listing proves its required artifact missing/expired. Denied or incomplete listings remain
+uncertain. No automatic replacement or new persisted state was introduced.
