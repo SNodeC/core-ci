@@ -10,6 +10,7 @@
 
 #include <Log.h>
 #include <core/SNodeC.h>
+#include <core/timer/Timer.h>
 #include <database/mariadb/MariaDBClient.h>
 #include <exception>
 #include <express/Response.h>
@@ -161,7 +162,17 @@ int main(int argc, char* argv[]) {
                             app.get("/api/events", [&] APPLICATION(req, res) {
                                 res->set("Content-Type", "text/event-stream").set("Connection", "keep-alive").sendHeader();
                                 eventReceivers.push_back(res);
-                                res->getSocketContext()->setOnDisconnected([&, receiver = res.get()]() {
+                                const auto heartbeat = std::make_shared<core::timer::Timer>(core::timer::Timer::intervalTimer(
+                                    [response = std::weak_ptr<express::Response>(res)] {
+                                        const auto receiver = response.lock();
+                                        if (receiver && receiver->isConnected()) {
+                                            receiver->sendFragment(":keep-alive");
+                                            receiver->sendFragment();
+                                        }
+                                    },
+                                    30));
+                                res->getSocketContext()->setOnDisconnected([&, receiver = res.get(), heartbeat]() {
+                                    heartbeat->cancel();
                                     eventReceivers.remove_if([receiver](const auto& response) {
                                         return response.get() == receiver;
                                     });
