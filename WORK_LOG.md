@@ -1475,3 +1475,53 @@
   standard failure diagnostic is visible. No retry mechanism or execution state added.
 - Fresh current-state status renders are derivative display updates using checked pushes;
   preserve the earlier failed run and verify all retained package/key blobs independently.
+
+
+## 2026-10-26 — live public-status deployment and feed authentication investigation
+
+- Owner authorized the merged status rollout with “OK start!”; prior commit/merge/live-test
+  instructions cover these reviewable checkpoints, sandbox tooling deployment and source push.
+  Canonical checkout remains /home/voc/projects/snodec/core-ci. No additional source checkout.
+- Worker tooling96f34e0 and matching thin workflow pins are deployed in VOC-Experiments only.
+  The running development controller is the focused-checked build of3aa775d under
+  /tmp/codex/build/core-ci/public-status-projection. Restart preserved all60 executions and
+  generation297 exactly. Existing evidence schema was verified, not altered again. Main includes
+  the parent evidence and SSE heartbeat work. UI remains loopback; TLS/443 settings unchanged.
+- Status run40367183456 prepared successfully, then Git rejected the feed writer with HTTP403.
+  The one-line stderr reduction exposed this standard Git diagnostic. Earlier40365097888 lost
+  that diagnostic; do not retrospectively infer its exact cause from the unchanged feed.
+- Existing writer App5424800/installation174142534 successfully minted a feed-only Contents-write
+  token. Official GitHub documentation supports installation-token HTTP Git authentication:
+  https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
+  No credential, installation permission, ruleset, key or token scope was changed.
+- Read-only HTTP advertisements and no-update receive-pack checks succeeded. An empty generated
+  Git fixture reproduced403 once; subsequent fresh-token dry-runs passed authentication and
+  reached the expected non-fast-forward rejection. This does not establish a root cause.
+  Automatic review rejected a dry-run from the application checkout over potential private
+  object disclosure. Used only the empty fixture instead; it has now been removed. No private
+  repository objects or credentials were sent to the feed by those diagnostics.
+- Fresh original controller-dispatched status run40368835408 succeeded; Pages run40368892486
+  succeeded. Public feed commit4af1d4e7d0c2eee5631d716a7c35b4270a2d64c5 contains exactly13
+  changed display paths. Every path was verified over HTTPS against its committed Git blob.
+  All265 retained package paths, five trusted key paths and every non-display path are unchanged,
+  including signed indexes, receipts and exports. No package build was dispatched for this test.
+- Identical original refresh40369085122 succeeded and retained the exact same feed commit.
+  No new signatures, replacement package bytes or duplicate graph work. Browser inspection of
+  status/demo-join.html confirms latestv2.1.4, all five targets, UTC first-verification times,
+  verified build links and no-active-work dashes. Management graph remains byte-for-byte equal
+  to the recorded pre-rollout view. Status states while active remain focused synthetic proof;
+  this rollout started with all package executions terminal.
+- Both successful refreshes used the same code/pins/credentials as the explicit403 failure.
+  Its cause remains unresolved and could affect a future feed write. Successful later runs are
+  not a permanent fix. No automatic retry, token cache, scheduler or persisted state was added.
+- Existing focused local proof: Debug build and format-check; five relevant CTests passed
+  (lifecycle-sse-heartbeat, enrollment, graph-state, pipeline, worker-provenance). Worker
+  provenance passed again after the one-line stderr change. No unrelated full suite. Subsequent
+  changes are documentation only; whitespace validation passes. Public run evidence is saved in
+  /tmp/codex/build/core-ci/public-status-projection/live, not counted as synthetic tests.
+- Updated sandbox README to current pins, running paths, public status andv2.1.4 evidence.
+  Private directories .qtcreator/ and .local-credentials/ were preserved without inspection.
+  No production SNodeC workflow, feed, credential or tag, and no existing sandbox tag was changed.
+
+- Task accounting against merged parent main d9502fe: production +383/-54 (net329); tests +178/-8 (net170); documentation +305/-40 (net265).
+  Production growth remains within the approved500-line bound; no new production change for403.
