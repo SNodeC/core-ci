@@ -138,7 +138,6 @@ def checked_push(feed, branch, token):
         ["git", "-C", str(feed), "push", "origin", "HEAD:refs/heads/" + branch],
         env=environment,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
     )
     revision = output(["git", "-C", str(feed), "rev-parse", "HEAD"])
     return revision

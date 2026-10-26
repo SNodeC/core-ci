@@ -1459,3 +1459,19 @@
   and adaptation. Earlier passing checks apply only to the pre-alignment checkpoint.
 - Next authorized step is the local status -> main merge. No push, installation, database ALTER,
   controller restart, workflow activation, feed/key/tag or credential mutation is included.
+
+
+## 2026-10-26 — combined sandbox activation verification
+
+- Owner resumed focused checks and authorized the VOC-Experiments rollout in this thread.
+  Merged d2d743e builds; lifecycle-sse-heartbeat, enrollment, graph-state, pipeline and worker
+  provenance boundaries all pass (91.85s/2.94s/0.10s/13.17s/1.93s). Formatting passes.
+- Discovered the matching worker tooling7cba278 and combined controller already activated by
+  the preceding deployment operation. Evidence column exists, public HTTPS facts respond,
+  and no package work is active. Do not repeat schema ALTER or replace trusted keys.
+- Previous status run40365097888 rendered successfully but git push exited128. Its captured
+  stderr was discarded from the job log; feed main remains5516c3f. Do not claim certainty
+  from that absence or rerun assigned package work. Removed one stderr redirection so Git's
+  standard failure diagnostic is visible. No retry mechanism or execution state added.
+- Fresh current-state status renders are derivative display updates using checked pushes;
+  preserve the earlier failed run and verify all retained package/key blobs independently.
