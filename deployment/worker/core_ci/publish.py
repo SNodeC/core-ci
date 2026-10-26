@@ -2,18 +2,37 @@
 
 import argparse
 import base64
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
 
 from contract import assignment, canonical, output, read_json, require, run
 from github import api
-from feed_status import render
 from sign_native import receipt_path, retained_receipt, update
 from validate import trusted_deployment
+
+
+def render(feed):
+    # Templates run after signing files are removed, with no inherited job credentials.
+    result = subprocess.run(
+        [
+            os.environ.get("CORE_CI_RENDER_PYTHON", sys.executable),
+            str(Path(__file__).with_name("feed_status.py")),
+            "--feed",
+            str(feed),
+        ],
+        env={"PATH": os.defpath, "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"},
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return json.loads(result.stdout)
 
 
 def base64url(value):
@@ -218,22 +237,11 @@ def main():
                 )
             receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
             require(receipt is not None, "publication requires the prepared verified receipt")
-            # GitHub Pages has a 1 GB site limit. Retain versions and leave headroom.
-            require(
-                sum(
-                    path.stat().st_size
-                    for path in feed.rglob("*")
-                    if path.is_file() and ".git" not in path.relative_to(feed).parts
-                )
-                < 900 * 1024 * 1024,
-                "new packages would exceed reviewed Pages capacity",
-            )
             paths = [receipt_path(selected), "keys/" + public_name] + [
                 item["path"] for item in receipt["packages"] + receipt["indexes"]
             ]
             if receipt.get("development_export"):
                 paths.append(receipt["development_export"]["path"])
-            prepare_commit(feed, paths + render(feed))
         else:
             token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected)
             revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
@@ -241,6 +249,18 @@ def main():
         wait_for_https(selected, feed)
         print("Verified feed revision:", revision)
     else:
+        paths += render(feed)
+        # GitHub Pages has a 1 GB site limit. Retain versions and leave headroom.
+        require(
+            sum(
+                path.stat().st_size
+                for path in feed.rglob("*")
+                if path.is_file() and ".git" not in path.relative_to(feed).parts
+            )
+            < 900 * 1024 * 1024,
+            "new packages would exceed reviewed Pages capacity",
+        )
+        prepare_commit(feed, paths)
         print("Prepared and locally verified publication; no feed mutation requested")
 
 

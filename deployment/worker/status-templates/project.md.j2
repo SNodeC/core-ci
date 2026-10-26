@@ -1,0 +1,28 @@
+<a id="banner"></a>
+
+<h1>{{ project.title }} publications</h1>
+
+All retained published versions. Unknown facts are shown as —; current controller work is not captured here.
+
+{% for target in project.targets %}
+<h2>{{ target.coordinates.distribution }} {{ target.coordinates.suite }} · {{ target.coordinates.format }}</h2>
+<table><thead><tr>
+<th>Architecture</th><th>Package</th><th>Available</th><th>Published (UTC)</th><th>In build</th><th>Build duration</th><th>Links</th>
+</tr></thead><tbody>
+{% for row in target.publications %}
+<tr><td><code>{{ row.coordinates.arch }}</code></td><td>{{ row.package }}</td><td><code>{{ row.version }}</code></td>
+<td>{{ row.published_utc or '—' }}</td><td>{{ row.work.activity if row.work else '—' }}</td>
+<td>{{ row.build_duration_seconds ~ ' s' if row.build_duration_seconds is not none else '—' }}</td><td>
+<a href="{{ row.build_url }}">Build log</a> · <a href="{{ row.package_url }}">Package</a> · <a href="{{ row.receipt_url }}">Receipt</a>
+</td></tr>
+{% if row.summary %}
+<tr><td colspan="7">Hook-reported build summary:
+{% for compiler in row.summary.get('compilers', []) %}{{ compiler.name }} {{ compiler.version }}; {% endfor %}
+{% if row.summary.get('tests') %}
+{{ row.summary.tests.passed }} passed, {{ row.summary.tests.failed }} failed, {{ row.summary.tests.skipped }} skipped
+{% if row.summary.tests.get('coverage_percent') is not none %} · coverage {{ row.summary.tests.coverage_percent }}%{% endif %}
+{% if row.summary.tests.get('report_url') %} · <a href="{{ row.summary.tests.report_url }}">Test report</a>{% endif %}
+{% endif %}</td></tr>
+{% endif %}
+{% endfor %}</tbody></table>
+{% endfor %}

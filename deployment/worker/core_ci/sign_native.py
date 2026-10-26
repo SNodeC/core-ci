@@ -178,7 +178,7 @@ def update(
     require(feed.is_dir(), "feed checkout is required")
     receipt = retained_receipt(selected, build_result, publication_run, feed)
     if receipt is None:
-        manifest = verify_manifest(selected, artifacts)
+        manifest = verify_manifest(selected, artifacts, build_result)
         package_format = selected["target"]["build"]["format"]
         require(package_format in ("deb", "rpm"), "this publisher supports native packages only")
         target = selected["target"]
