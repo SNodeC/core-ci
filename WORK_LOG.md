@@ -1077,3 +1077,21 @@
   relevant local checks and five-target live publication evidence are recorded above.
   Sandbox UI/graph remains available with all five v2.1.3 targets published. Fast-forward
   main preserves reviewed checkpoints; no new production/test code or production activation.
+
+## 2026-10-26 — package status and management UX proposal
+
+- Owner requested SNodeC/Packages status-page inspection and a management-UI proposal/mockup.
+  Read only public status index/project pages and their presentation/data requirements. No
+  production repository or feed was changed and no orchestration implementation was reused.
+- Proposed trusted Jinja templates replacing hard-coded rendering, one normalized public
+  context with owner-defined presentation parameters and provenance-backed extension fields.
+  Full in-build/reference-page parity requires a separately approved read-only graph projection
+  and serialized trusted status-update path; receipts alone cannot supply live work state.
+- Created a desktop-first interactive design preview: full-width work table/detail layout and
+  alternative inspector, separate repository editing, compact typography and expandable IDs.
+  All preview states are illustrative; actions perform no live API or GitHub mutation.
+- Verified JavaScript syntax, filter/selection/failure actions, repository navigation and
+  variant switching in Chrome; checked1024px layout and320/360px contained table overflow.
+  Jinja example renders recorded/absent values. Only relevant preview checks, no application
+  suite rerun. Production/test changes zero; proposal/mockup are uncommitted design artifacts
+  on docs/status-and-ui-proposal. Local preview at127.0.0.1:8879 is retained for owner review.

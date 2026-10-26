@@ -1,0 +1,215 @@
+<div id="core-ci-ux-proposal" class="viz-carousel" aria-label="core-ci management interface proposals">
+<style>
+#core-ci-ux-proposal { color-scheme: light dark; }
+#core-ci-ux-proposal .cc-app { --cc-bg:light-dark(#f5f7fa,#111820); --cc-panel:light-dark(#ffffff,#18212c); --cc-text:light-dark(#1e293b,#e5edf6); --cc-sub:light-dark(#526277,#a9b8ca); --cc-line:light-dark(#dce3ec,#354353); --cc-accent:light-dark(#2459a8,#92b9ff); --cc-soft:light-dark(#edf3fd,#263850); --cc-good:light-dark(#236445,#90d6b0); --cc-bad:light-dark(#a43135,#ffacaf); --cc-warn:light-dark(#875719,#e6bf80); --cc-font:13px; --cc-pad:10px; background:var(--cc-bg); color:var(--cc-text); font:var(--cc-font)/1.45 system-ui,sans-serif; min-height:690px; border:1px solid var(--cc-line); border-radius:8px; overflow:hidden; }
+#core-ci-ux-proposal .cc-app * { box-sizing:border-box; }
+#core-ci-ux-proposal .cc-top { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:14px 20px; background:var(--cc-panel); border-bottom:1px solid var(--cc-line); padding-right:100px; }
+#core-ci-ux-proposal .cc-brand { font-size:18px; font-weight:650; letter-spacing:-.5px; }
+#core-ci-ux-proposal .cc-env { font-size:12px; color:var(--cc-sub); padding-left:14px; border-left:1px solid var(--cc-line); }
+#core-ci-ux-proposal .cc-spacer { flex:1; }
+#core-ci-ux-proposal .cc-preview { font-size:11px; color:var(--cc-sub); }
+#core-ci-ux-proposal .cc-nav { display:flex; align-items:center; gap:20px; background:var(--cc-panel); padding:0 20px; border-bottom:1px solid var(--cc-line); }
+#core-ci-ux-proposal .cc-nav button { padding:11px 0; border:0; border-radius:0; border-bottom:2px solid transparent; color:var(--cc-sub); background:transparent; }
+#core-ci-ux-proposal .cc-nav button[aria-selected="true"] { color:var(--cc-accent); border-bottom-color:var(--cc-accent); }
+#core-ci-ux-proposal button,#core-ci-ux-proposal input,#core-ci-ux-proposal select,#core-ci-ux-proposal textarea { font:inherit; }
+#core-ci-ux-proposal button { color:var(--cc-text); background:var(--cc-panel); border:1px solid var(--cc-line); border-radius:5px; padding:6px 10px; }
+#core-ci-ux-proposal button:hover { background:var(--cc-soft); }
+#core-ci-ux-proposal button:disabled { opacity:.5; }
+#core-ci-ux-proposal button.cc-primary { background:var(--cc-accent); color:light-dark(#fff,#11203c); border-color:var(--cc-accent); }
+#core-ci-ux-proposal .cc-content { padding:20px; }
+#core-ci-ux-proposal .cc-titlebar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+#core-ci-ux-proposal h2 { font-size:19px; font-weight:600; margin:0; letter-spacing:-.4px; }
+#core-ci-ux-proposal h3 { font-size:14px; font-weight:600; margin:0 0 10px; }
+#core-ci-ux-proposal p { margin:5px 0; }
+#core-ci-ux-proposal .cc-sub { color:var(--cc-sub); }
+#core-ci-ux-proposal .cc-counts { color:var(--cc-sub); font-size:12px; }
+#core-ci-ux-proposal .cc-filterbar { display:flex; align-items:end; flex-wrap:wrap; gap:10px; margin-bottom:14px; }
+#core-ci-ux-proposal .cc-filterbar label { display:grid; gap:4px; color:var(--cc-sub); font-size:12px; }
+#core-ci-ux-proposal input,#core-ci-ux-proposal select,#core-ci-ux-proposal textarea { color:var(--cc-text); background:var(--cc-panel); border:1px solid var(--cc-line); border-radius:5px; padding:7px 9px; min-width:0; }
+#core-ci-ux-proposal .cc-filterbar input { width:260px; }
+#core-ci-ux-proposal .cc-layout { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; }
+#core-ci-ux-proposal .cc-inspector .cc-layout { grid-template-columns:minmax(0,1fr) 280px; align-items:start; }
+#core-ci-ux-proposal .cc-tablewrap { overflow-x:auto; background:var(--cc-panel); border:1px solid var(--cc-line); border-radius:6px; }
+#core-ci-ux-proposal table { border-collapse:collapse; width:100%; font-size:var(--cc-font); text-align:left; }
+#core-ci-ux-proposal th { font-size:11px; font-weight:600; color:var(--cc-sub); letter-spacing:.02em; padding:9px 10px; white-space:nowrap; background:var(--cc-bg); }
+#core-ci-ux-proposal td { padding:var(--cc-pad) 10px; border-top:1px solid var(--cc-line); vertical-align:middle; }
+#core-ci-ux-proposal tbody tr[data-selected="true"] { background:var(--cc-soft); }
+#core-ci-ux-proposal .cc-reponame { color:var(--cc-accent); border:0; background:none; padding:0; text-align:left; font-weight:550; max-width:210px; overflow-wrap:anywhere; }
+#core-ci-ux-proposal .cc-reponame:hover { text-decoration:underline; background:none; }
+#core-ci-ux-proposal .cc-secondary { color:var(--cc-sub); font-size:12px; display:block; }
+#core-ci-ux-proposal .cc-now { font-size:12px; padding-top:3px; color:var(--cc-sub); }
+#core-ci-ux-proposal .cc-state { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font-size:12px; }
+#core-ci-ux-proposal .cc-state::before { content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
+#core-ci-ux-proposal .cc-state.published { color:var(--cc-good); }
+#core-ci-ux-proposal .cc-state.building,#core-ci-ux-proposal .cc-state.publishing { color:var(--cc-accent); }
+#core-ci-ux-proposal .cc-state.failed { color:var(--cc-bad); }
+#core-ci-ux-proposal .cc-state.waiting { color:var(--cc-warn); }
+#core-ci-ux-proposal td:nth-child(3) { max-width:155px; overflow-wrap:anywhere; }
+#core-ci-ux-proposal .cc-revision { font-variant-numeric:tabular-nums; white-space:nowrap; }
+#core-ci-ux-proposal .cc-detail { background:var(--cc-panel); padding:16px; border:1px solid var(--cc-line); border-radius:6px; min-width:0; }
+#core-ci-ux-proposal .cc-detailtop { display:flex; justify-content:space-between; align-items:start; gap:12px; margin-bottom:12px; }
+#core-ci-ux-proposal .cc-detailgrid { display:grid; grid-template-columns:1fr 1.1fr; gap:24px; }
+#core-ci-ux-proposal .cc-inspector .cc-detailgrid { grid-template-columns:1fr; gap:16px; }
+#core-ci-ux-proposal .cc-facts { display:grid; grid-template-columns:90px minmax(0,1fr); gap:5px 12px; margin:0; }
+#core-ci-ux-proposal .cc-facts dt { color:var(--cc-sub); }
+#core-ci-ux-proposal .cc-facts dd { margin:0; overflow-wrap:anywhere; }
+#core-ci-ux-proposal .cc-deps { list-style:none; margin:0; padding:0; }
+#core-ci-ux-proposal .cc-deps li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid var(--cc-line); }
+#core-ci-ux-proposal .cc-reason { padding:9px 0 0; margin-top:10px; color:var(--cc-sub); font-size:12px; }
+#core-ci-ux-proposal details { margin-top:16px; color:var(--cc-sub); font-size:12px; }
+#core-ci-ux-proposal summary { padding:4px 0; }
+#core-ci-ux-proposal code { color:var(--cc-text); font:12px/1.5 ui-monospace,monospace; overflow-wrap:anywhere; }
+#core-ci-ux-proposal .cc-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
+#core-ci-ux-proposal .cc-footer { margin-top:12px; color:var(--cc-sub); font-size:11px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+#core-ci-ux-proposal .cc-notice { margin:10px 0 0; padding:8px 0; color:var(--cc-accent); font-size:12px; min-height:30px; }
+#core-ci-ux-proposal .cc-editorlayout { display:grid; grid-template-columns:230px minmax(0,1fr); gap:20px; }
+#core-ci-ux-proposal .cc-projectlist { display:flex; flex-direction:column; gap:5px; }
+#core-ci-ux-proposal .cc-projectlist button { text-align:left; padding:10px 12px; }
+#core-ci-ux-proposal .cc-projectlist button[aria-pressed="true"] { border-color:var(--cc-accent); background:var(--cc-soft); }
+#core-ci-ux-proposal .cc-editor { background:var(--cc-panel); border:1px solid var(--cc-line); border-radius:6px; padding:16px; min-width:0; }
+#core-ci-ux-proposal .cc-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:14px 0; }
+#core-ci-ux-proposal .cc-fields label { display:grid; gap:5px; font-size:12px; color:var(--cc-sub); }
+#core-ci-ux-proposal .cc-fields .cc-wide { grid-column:1/-1; }
+#core-ci-ux-proposal textarea { width:100%; min-height:110px; font:12px/1.5 ui-monospace,monospace; }
+#core-ci-ux-proposal .cc-inspector .cc-formatcol,#core-ci-ux-proposal .cc-inspector .cc-revcol { display:none; }
+#core-ci-ux-proposal .cc-titlewrap { flex:1; }
+#core-ci-ux-proposal [hidden] { display:none !important; }
+@media(max-width:850px) { #core-ci-ux-proposal .cc-inspector .cc-layout { grid-template-columns:minmax(0,1fr); } #core-ci-ux-proposal .cc-inspector .cc-detailgrid { grid-template-columns:1fr 1fr; } #core-ci-ux-proposal .cc-inspector .cc-formatcol,#core-ci-ux-proposal .cc-inspector .cc-revcol { display:table-cell; } }
+@media(max-width:560px) { #core-ci-ux-proposal .cc-content { padding:12px; } #core-ci-ux-proposal .cc-top { padding:12px; padding-right:95px; gap:6px 12px; } #core-ci-ux-proposal .cc-detailgrid,#core-ci-ux-proposal .cc-inspector .cc-detailgrid,#core-ci-ux-proposal .cc-editorlayout,#core-ci-ux-proposal .cc-fields { grid-template-columns:minmax(0,1fr); } #core-ci-ux-proposal .cc-filterbar label,#core-ci-ux-proposal .cc-filterbar input { width:100%; } #core-ci-ux-proposal .cc-env { padding-left:0; border:0; } #core-ci-ux-proposal .cc-top .cc-spacer { display:none; } #core-ci-ux-proposal .cc-tablewrap table { min-width:660px; } #core-ci-ux-proposal .cc-titlebar { gap:8px; } }
+@media(pointer:coarse) { #core-ci-ux-proposal button,#core-ci-ux-proposal input,#core-ci-ux-proposal select { min-height:44px; } }
+</style>
+<section data-variant="Work table" aria-label="Full-width work table">
+<div class="cc-app" data-layout="table" aria-label="Work table design"></div>
+</section>
+<section data-variant="Inspector" aria-label="Work list with execution inspector" hidden>
+<div class="cc-app cc-inspector" data-layout="inspector" aria-label="Inspector design"></div>
+</section>
+<script>
+(() => {
+    const root = document.getElementById('core-ci-ux-proposal');
+    const work = [
+        {id:'arm-pub',repo:'demo-join',tag:'v2.2.0',distro:'Debian',suite:'trixie',arch:'arm64',format:'DEB',revision:61,state:'publishing',reason:'Assigned publisher is running. Publication is not yet verified.',deps:[]},
+        {id:'app-build',repo:'demo-app',tag:'v2.2.0',distro:'Debian',suite:'trixie',arch:'amd64',format:'DEB',revision:58,state:'building',reason:'Build assigned to GitHub. Selected demo-core publication is available.',deps:[['demo-core','published']]},
+        {id:'side-apk',repo:'demo-side',tag:'v2.2.0',distro:'OpenWrt',suite:'25.12',arch:'x86_64',format:'APK',revision:62,state:'building',reason:'Building with the SDK pinned by the selected prerequisite.',deps:[['demo-core','published']]},
+        {id:'join-wait',repo:'demo-join',tag:'v2.2.0',distro:'Debian',suite:'trixie',arch:'amd64',format:'DEB',revision:60,state:'waiting',reason:'Waiting for demo-app and demo-side. Every selected prerequisite must be published.',deps:[['demo-core','published'],['demo-app','building'],['demo-side','failed']]},
+        {id:'join-apk',repo:'demo-join',tag:'v2.2.0',distro:'OpenWrt',suite:'25.12',arch:'x86_64',format:'APK',revision:63,state:'waiting',reason:'Waiting for the selected demo-side publication for this target.',deps:[['demo-core','published'],['demo-app','published'],['demo-side','building']]},
+        {id:'side-fail',repo:'demo-side',tag:'v2.2.0',distro:'Debian',suite:'trixie',arch:'amd64',format:'DEB',revision:59,state:'failed',reason:'Required artifacts missing/expired. Completed build and complete artifact listing verified.',deps:[['demo-core','published']]},
+        {id:'core-pub',repo:'demo-core',tag:'v2.2.0',distro:'Debian',suite:'trixie',arch:'amd64',format:'DEB',revision:57,state:'published',reason:'Feed publication and package identities verified.',deps:[]},
+        {id:'rpm-pub',repo:'demo-core',tag:'v2.2.0',distro:'Fedora',suite:'43',arch:'x86_64',format:'RPM',revision:64,state:'published',reason:'Feed publication and package identities verified.',deps:[]}
+    ];
+    const states = {publishing:'Publishing',building:'Building',waiting:'Waiting',failed:'Failed',published:'Published'};
+    const projects = ['demo-core','demo-app','demo-side','demo-join'];
+    const density = {font:13,rowPadding:10};
+    function badge(state) {
+        const result = '<span class="cc-state '+state+'">'+states[state]+'</span>';
+        return result;
+    }
+    function notice(app,message) {
+        app.querySelector('.cc-notice').textContent = message;
+    }
+    function details(app,row) {
+        app.querySelectorAll('tr[data-work]').forEach((tr) => {
+            tr.dataset.selected = String(tr.dataset.work === row.id);
+        });
+        const panel = app.querySelector('.cc-detail');
+        panel.innerHTML = '<div class="cc-detailtop"><div><h3>'+row.repo+' <span class="cc-sub">'+row.tag+'</span></h3><span class="cc-secondary">'+row.distro+' '+row.suite+' · '+row.arch+' · '+row.format+' · rebuild '+row.revision+'</span></div>'+badge(row.state)+'</div><div class="cc-detailgrid"><div><h3>Selected execution</h3><dl class="cc-facts"><dt>Repository</dt><dd>VOC-Experiments/'+row.repo+'</dd><dt>Source</dt><dd>'+row.tag+' · exact commit pinned</dd><dt>Target</dt><dd>'+row.distro+' '+row.suite+' / '+row.arch+'</dd><dt>Trigger</dt><dd>Dependency selection</dd><dt>Publication</dt><dd>'+(row.state==='published'?'Verified':'Not yet verified')+'</dd></dl><p class="cc-reason">'+row.reason+'</p></div><div><h3>Selected prerequisites</h3><ul class="cc-deps">'+row.deps.map((dep) => '<li><span>'+dep[0]+'</span>'+badge(dep[1])+'</li>').join('')+'</ul>'+(row.deps.length===0?'<p class="cc-sub">No prerequisite rows shown in this preview.</p>':'')+'</div></div><div class="cc-actions"><button type="button" class="cursor-interaction cc-logs" '+(row.state==='waiting'?'disabled':'')+'>GitHub logs ↗</button>'+(row.state==='failed'?'<button type="button" class="cursor-interaction cc-primary cc-retry">Retry with new rebuild</button>':'')+'</div><details><summary class="cursor-interaction">Source, configuration and execution identities</summary><p>Full pinned identities and consumed receipt links appear here in the implementation.</p><p><code>Technical identity values are omitted from this illustrative preview.</code></p></details>';
+        const logs = panel.querySelector('.cc-logs');
+        logs.addEventListener('click',() => {
+            notice(app,'Design preview: this action opens the assigned GitHub run. No live request was made.');
+        });
+        const retry = panel.querySelector('.cc-retry');
+        if (retry) {
+            retry.addEventListener('click',() => {
+                notice(app,'Design preview: explicit retry reserves a new rebuild revision. No execution was changed.');
+            });
+        }
+    }
+    function filter(app) {
+        const query = app.querySelector('.cc-search').value.toLowerCase();
+        const status = app.querySelector('.cc-statefilter').value;
+        let count = 0;
+        app.querySelectorAll('tr[data-work]').forEach((tr) => {
+            const row = work.find((item) => item.id === tr.dataset.work);
+            const matches = (status === 'all' || (status === 'active' && row.state !== 'published') || row.state === status) &&
+                [row.repo,row.tag,row.distro,row.suite,row.arch,row.format].join(' ').toLowerCase().includes(query);
+            tr.hidden = !matches;
+            if (matches) {
+                count += 1;
+            }
+        });
+        app.querySelector('.cc-visible').textContent = count+' of '+work.length+' illustrative executions';
+        const visible = Array.from(app.querySelectorAll('tr[data-work]')).filter((tr) => !tr.hidden);
+        const selected = visible.find((tr) => tr.dataset.selected === 'true');
+        app.querySelector('.cc-detail').hidden = visible.length === 0;
+        if (!selected && visible.length > 0) {
+            details(app,work.find((row) => row.id === visible[0].dataset.work));
+        }
+    }
+    function repository(app,name) {
+        app.querySelectorAll('.cc-projectlist button').forEach((button) => {
+            button.setAttribute('aria-pressed',String(button.dataset.repo===name));
+        });
+        const editor = app.querySelector('.cc-editor');
+        editor.innerHTML = '<h3>VOC-Experiments/'+name+'</h3><p class="cc-secondary">Definition · ci/packages.json · main · committed revision available</p><div class="cc-fields"><label>Display title<input value="'+name+'" aria-label="Display title"></label><label>Package namespace<input value="'+name+'" aria-label="Package namespace"></label><label class="cc-wide">Dependencies<input value="'+(name==='demo-join'?'demo-core, demo-app, demo-side':name==='demo-core'?'':'demo-core')+'" aria-label="Dependencies"></label></div><h3>Target matrix</h3><div class="cc-tablewrap"><table><thead><tr><th>Distribution</th><th>Series</th><th>Architecture</th><th>Format</th></tr></thead><tbody><tr><td>Debian</td><td>trixie</td><td>amd64</td><td>DEB</td></tr><tr><td>Debian</td><td>trixie</td><td>arm64</td><td>DEB</td></tr><tr><td>OpenWrt</td><td>25.12</td><td>x86_64</td><td>APK</td></tr></tbody></table></div><div class="cc-actions"><button type="button" class="cc-primary cursor-interaction cc-save">Save definition to GitHub</button><button type="button" class="cursor-interaction cc-addtarget">Edit target rows</button></div><details><summary class="cursor-interaction">JSON, hooks and pinned source workflow</summary><p>Full JSON editor, hook paths, committed revision and workflow preview/install controls.</p></details>';
+        editor.querySelector('.cc-save').addEventListener('click',() => {
+            notice(app,'Design preview only. No GitHub commit was created; committed revision remains unchanged.');
+        });
+        editor.querySelector('.cc-addtarget').addEventListener('click',() => {
+            notice(app,'Proposed target editor: explicit row ID, family, distribution, suite, architecture, runner and worker parameters.');
+        });
+    }
+    root.querySelectorAll('.cc-app').forEach((app,index) => {
+        app.innerHTML = '<header class="cc-top"><span class="cc-brand">core-ci</span><span class="cc-env">VOC-Experiments</span><span class="cc-spacer"></span><span class="cc-preview">Design preview · illustrative states</span></header><nav class="cc-nav" role="tablist" aria-label="Management"><button class="cursor-interaction" type="button" role="tab" id="cc-work-tab-'+index+'" aria-controls="cc-work-'+index+'" aria-selected="true" data-tab="work">Work</button><button class="cursor-interaction" type="button" role="tab" id="cc-repo-tab-'+index+'" aria-controls="cc-repositories-'+index+'" aria-selected="false" data-tab="repositories">Repositories</button><span class="cc-spacer"></span><span class="cc-preview">Local administration</span></nav><main class="cc-content"><section id="cc-work-'+index+'" class="cc-workpanel" role="tabpanel" aria-labelledby="cc-work-tab-'+index+'"><div class="cc-titlebar"><div class="cc-titlewrap"><h2>Package work</h2><p class="cc-counts">2 building · 1 publishing · 2 waiting · 1 failed</p></div><button class="cursor-interaction cc-refresh" type="button">Refresh view</button><button class="cursor-interaction cc-inspect" type="button">Inspect assigned work</button></div><div class="cc-filterbar"><label>Find repository or target<input class="cc-search" placeholder="Repository, version, distribution…"></label><label>Show<select class="cc-statefilter"><option value="active">Active and failed</option><option value="all">All work</option><option value="failed">Failed</option><option value="published">Published</option></select></label></div><div class="cc-layout"><div><div class="cc-tablewrap"><table><thead><tr><th>Repository / version</th><th>Distribution / series</th><th>Architecture</th><th class="cc-formatcol">Format</th><th class="cc-revcol">Rebuild</th><th>State</th></tr></thead><tbody>'+work.map((row) => '<tr data-work="'+row.id+'"><td><button type="button" class="cc-reponame cursor-interaction">'+row.repo+'</button><span class="cc-secondary">'+row.tag+'</span></td><td>'+row.distro+'<span class="cc-secondary">'+row.suite+'</span></td><td>'+row.arch+'</td><td class="cc-formatcol">'+row.format+'</td><td class="cc-revcol cc-revision">r'+row.revision+'</td><td>'+badge(row.state)+'</td></tr>').join('')+'</tbody></table></div><div class="cc-footer"><span class="cc-visible"></span><span>Choose a repository row to inspect its execution</span></div></div><aside class="cc-detail" aria-label="Selected execution"></aside></div></section><section id="cc-repositories-'+index+'" class="cc-repopanel" role="tabpanel" aria-labelledby="cc-repo-tab-'+index+'" hidden><div class="cc-titlebar"><div class="cc-titlewrap"><h2>Repositories</h2><p class="cc-counts">Definitions are committed to GitHub</p></div><button type="button" class="cursor-interaction cc-enroll">Enroll repository</button></div><div class="cc-editorlayout"><div class="cc-projectlist">'+projects.map((name) => '<button type="button" class="cursor-interaction" data-repo="'+name+'">'+name+'<span class="cc-secondary">VOC-Experiments</span></button>').join('')+'</div><div class="cc-editor"></div></div></section><div class="cc-notice" role="status" aria-live="polite"></div></main>';
+        app.querySelectorAll('tr[data-work] .cc-reponame').forEach((button) => {
+            button.addEventListener('click',() => {
+                details(app,work.find((row) => row.id===button.closest('tr').dataset.work));
+            });
+        });
+        app.querySelector('.cc-search').addEventListener('input',() => {
+            filter(app);
+        });
+        app.querySelector('.cc-statefilter').addEventListener('change',() => {
+            filter(app);
+        });
+        app.querySelectorAll('[data-tab]').forEach((button) => {
+            button.addEventListener('click',() => {
+                app.querySelectorAll('[data-tab]').forEach((tab) => {
+                    tab.setAttribute('aria-selected',String(tab===button));
+                });
+                app.querySelector('.cc-workpanel').hidden = button.dataset.tab!=='work';
+                app.querySelector('.cc-repopanel').hidden = button.dataset.tab!=='repositories';
+                notice(app,'');
+            });
+        });
+        app.querySelectorAll('.cc-projectlist button').forEach((button) => {
+            button.addEventListener('click',() => {
+                repository(app,button.dataset.repo);
+            });
+        });
+        app.querySelector('.cc-refresh').addEventListener('click',() => {
+            notice(app,'Design preview: refresh reads the controller view. No GitHub reconciliation is implied.');
+        });
+        app.querySelector('.cc-inspect').addEventListener('click',() => {
+            notice(app,'Design preview: explicit inspection reads already assigned GitHub evidence. No new build or retry was requested.');
+        });
+        app.querySelector('.cc-enroll').addEventListener('click',() => {
+            notice(app,'Enrollment editor: repository name, editing branch and committed definition. App grants remain deployment-owned.');
+        });
+        repository(app,'demo-join');
+        filter(app);
+        details(app,work.find((row) => row.id==='join-wait'));
+    });
+    function applyDensity() {
+        root.querySelectorAll('.cc-app').forEach((app) => {
+            app.style.setProperty('--cc-font',density.font+'px');
+            app.style.setProperty('--cc-pad',density.rowPadding+'px');
+        });
+    }
+    if (globalThis.Tweak) {
+        const tweak = new Tweak({container:root,onChange:applyDensity});
+        tweak.addSlider(density,'font',{label:'Body text',min:12,max:14,step:1,unit:'px'});
+        tweak.addSlider(density,'rowPadding',{label:'Row spacing',min:6,max:12,step:1,unit:'px'});
+    }
+})();
+</script>
+</div>
