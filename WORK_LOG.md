@@ -1359,3 +1359,29 @@
 - No sandbox database ALTER, controller restart, installation, push or external resource
   mutation performed in this checkpoint. Concurrent canonical changes are untouched;
   .qtcreator/ and .local-credentials/ were preserved and not inspected.
+
+## 2026-10-26 — SSE idle heartbeat
+
+- Owner requested the heartbeat fix after approving the bounded approach (15–25 production
+  lines and20–35 test lines). Reused the approved isolated worktree
+  checkouts/live-execution-evidence on fix/sse-heartbeat, based on main330b8d9, to preserve
+  the other thread's uncommitted canonical changes. Cleanup follows the authorized merge.
+- Invariant: an idle SSE connection receives transport traffic without graph/GitHub work,
+  and its timer is cancelled on disconnect. Followed SNode.C apps/main.cpp and MQTTSuite
+  mqttbroker/lib/MqttModel.cpp and mqttbridge/lib/SSEDistributor.cpp interval-timer patterns.
+  Checked core/Timer.cpp handle cancellation/destruction and HTTP responseStarted():
+  EventSource's Accept header enables the framework's SSE read-timeout handling.
+- Each stream now sends :keep-alive plus the blank SSE terminator every30 seconds.
+  Existing disconnect cleanup owns the timer handle; its callback captures a weak response.
+  No event ID, UI event, database write, GitHub read, queue or scheduling policy is added.
+- Debug build and format-check pass with installed public SNode.C targets in
+  /tmp/codex/build/core-ci/sse-heartbeat. Focused command:
+  ctest --test-dir /tmp/codex/build/core-ci/sse-heartbeat -R '^lifecycle-sse-heartbeat$'
+  --output-on-failure. Passed in91.09s using real isolated MariaDB and a real HTTP stream:
+  three comments arrive over the same idle connection beyond60s, graph generation remains
+  unchanged, the stream closes and the controller shuts down normally. No full suite run.
+- Production:+12/-1 (net11); tests including CTest wiring:+19/-2 (net17), both below
+  approved upper bounds. Architecture documentation updated. This is local runtime proof,
+  not browser/proxy or live GitHub acceptance. No sandbox restart or installation performed;
+  no credentials, tags, keys or feed bytes touched. .qtcreator/ and .local-credentials/
+  remain uninspected and unchanged.

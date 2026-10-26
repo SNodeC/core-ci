@@ -402,10 +402,12 @@ The local `/api/events` SSE route uses SNode.C `sendHeader()`/`sendFragment()` r
 streaming, following MQTTSuite's receiver/disconnect pattern. A connection receives current
 graph and repository views. The existing graph store notifies the stream after write completion;
 only successful transactions advance graph state. Uncertain failures expose the mutation guard
-without inventing a transition. Responses are released on socket disconnection.
+without inventing a transition. Each connection sends a `:keep-alive` SSE comment every
+30 seconds through SNode.C's interval timer. The disconnect callback cancels that timer and
+releases the response. Comments cause no browser data event, graph mutation or GitHub work.
 
 Browser `EventSource` reconnects automatically and receives a fresh current view; no event log,
-replay queue, application timer or GitHub polling is added. Search, selection and unsaved
+replay queue or GitHub polling is added. Search, selection and unsaved
 repository drafts survive incoming events and stream reconnection. A changed remote definition
 is announced without replacing the draft or its original conditional-write revision. `Live`
 means the stream is connected, not that every execution or external service is healthy.
