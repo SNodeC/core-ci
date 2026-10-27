@@ -2041,3 +2041,25 @@ proposed. Commit/push/merge remain separate authorization stages.
   sandbox demo-core tag, or separately designed explicit rebuild behavior. No new tag,
   source commit, retry, workflow mutation or production behavior extension was made.
   Runtime/session records are /tmp/codex/build/core-ci/ui-origin/live/.
+
+## 2026-10-27 — approved sandbox v2.1.1 starts full graph through webhook
+
+- Owner explicitly approved new demo-core v2.1.1 tag at existing source commit
+  1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57. Verified v2.1.0 points there and new
+  tag was absent. CLI creation returned definite404; independent read confirmed absent.
+  Used the existing controller App with a token restricted to demo-core contents/workflows
+  writes. Creation returned201. No App permissions, secret values or existing tags changed.
+- The real tag webhook selected20 new executions and automatically assigned five root
+  builds at graph709, leaving15 dependents waiting. No manual work request/advance or
+  retry was submitted for this tag. Actual source tag is v2.1.1; selected source commit
+  remains unchanged. Source workflow checkout is separate as required by the contract.
+- All five root runs are in_progress, verified through GitHub:
+  DEB amd64 https://github.com/VOC-Experiments/demo-core/actions/runs/40464159579
+  DEB arm64 https://github.com/VOC-Experiments/demo-core/actions/runs/40464156677
+  RPM https://github.com/VOC-Experiments/demo-core/actions/runs/40464154014
+  OpenWrt IPK https://github.com/VOC-Experiments/demo-core/actions/runs/40464151131
+  OpenWrt APK https://github.com/VOC-Experiments/demo-core/actions/runs/40464146574
+- Read-only SSE/HTTPS status observer is running from ui-origin/live/observe.py with a
+  bounded three-hour observation window. New baseline records retained package/key/
+  receipt/export Git blobs before any new publication. Results are ongoing; full-session
+  acceptance is not yet claimed. No package-client installation proof is implied.
