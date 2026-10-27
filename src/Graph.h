@@ -57,6 +57,9 @@ namespace coreci {
 
     class Graph {
     public:
+        explicit Graph(unsigned int publicationLimit = 8);
+        static std::string publicationFeed(const Node& node);
+        std::string publicationBlocker(const std::string& id, std::size_t reserved = 0) const;
         void restore(const std::vector<Node>& records, std::uint64_t nextRevision);
         const std::map<std::string, Node>& nodes() const;
         std::uint64_t nextRebuildRevision() const;
@@ -75,7 +78,7 @@ namespace coreci {
                      const nlohmann::json& observation = nlohmann::json::object()) const;
         Node built(const std::string& id, const std::string& attemptId, const nlohmann::json& result) const;
         bool publicationReady(const std::string& id) const;
-        Node beginPublication(const std::string& id) const;
+        Node beginPublication(const std::string& id, std::size_t reserved = 0) const;
         Node published(const std::string& id, const std::string& attemptId, const nlohmann::json& receipt) const;
         Node failed(const std::string& id,
                     const std::string& attemptId,
@@ -96,6 +99,7 @@ namespace coreci {
 
     private:
         nlohmann::json buildAssignment(const Node& selected) const;
+        unsigned int publicationLimit;
         std::map<std::string, Node> records;
         std::uint64_t nextRevision = 1;
     };

@@ -53,12 +53,6 @@ namespace coreci {
                     {"reactivated", node.cause.value("reactivated", std::string{})}};
         }
 
-        std::string publicationFeed(const Node& node) {
-            const auto& feed = node.source.at("deployment").at("feed");
-            const nlohmann::json identity{feed.at("repository_id"), feed.at("branch")};
-            return identity.dump();
-        }
-
         Attempt waiting(const std::string& id, std::uint64_t revision) {
             require(revision > 0 && revision < std::numeric_limits<std::uint64_t>::max(), "package rebuild revision is exhausted");
             Attempt result;
@@ -116,6 +110,16 @@ namespace coreci {
         }
     } // namespace
 
+    Graph::Graph(unsigned int publicationLimit)
+        : publicationLimit(publicationLimit) {
+    }
+
+    std::string Graph::publicationFeed(const Node& node) {
+        const auto& feed = node.source.at("deployment").at("feed");
+        const nlohmann::json identity{feed.at("repository_id"), feed.at("branch")};
+        return identity.dump();
+    }
+
     void Graph::verifyDefinition(const Node& node, const nlohmann::json& document, const std::string& blobSha) {
         const auto definition = Definition::parse(document);
         require(node.source.at("definition_blob_sha") == blobSha, "selected definition blob differs from its persisted reference");
@@ -156,13 +160,10 @@ namespace coreci {
     void Graph::restore(const std::vector<Node>& nodes, std::uint64_t next) {
         std::map<std::string, Node> restored;
         std::set<std::uint64_t> revisions;
-        std::set<std::string> publicationFeeds;
         for (const auto& node : nodes) {
             require(!node.id.empty() && !node.attempts.empty() && restored.emplace(node.id, node).second,
                     "duplicate or empty persisted execution");
             validateExecutionSource(node);
-            require(node.attempts.back().state != "publishing" || publicationFeeds.insert(publicationFeed(node)).second,
-                    "persisted graph has conflicting assigned feed writers");
             require(node.id == digest(identity(node)), "persisted execution selection identity changed");
             std::uint64_t previous = 0;
             for (const auto& attempt : node.attempts) {
@@ -207,7 +208,13 @@ namespace coreci {
         if (!selected.supersededBy.empty()) {
             reasons.push_back("superseded by " + selected.supersededBy);
         }
-        if (selected.attempts.back().state != "waiting") {
+        const bool publication = selected.attempts.back().state == "building" && !selected.attempts.back().buildResult.is_null();
+        if (publication) {
+            const auto reason = publicationBlocker(id);
+            if (!reason.empty()) {
+                reasons.push_back(reason);
+            }
+        } else if (selected.attempts.back().state != "waiting") {
             reasons.push_back("attempt is " + selected.attempts.back().state);
         }
         for (const auto& prerequisite : selected.prerequisites) {
@@ -217,7 +224,7 @@ namespace coreci {
                                   other.attempts.back().state);
             }
         }
-        if (reasons.empty() || (selected.attempts.back().state == "building" && !selected.attempts.back().buildResult.is_null())) {
+        if (reasons.empty() && !publication) {
             const auto reason = dispatchBlocker(selected, selected.attempts.back().state == "building");
             if (!reason.empty()) {
                 reasons.push_back(reason);
@@ -482,25 +489,33 @@ namespace coreci {
         return selected;
     }
 
-    bool Graph::publicationReady(const std::string& id) const {
+    std::string Graph::publicationBlocker(const std::string& id, std::size_t reserved) const {
         const auto& selected = records.at(id);
         const auto& attempt = selected.attempts.back();
-        bool ready = attempt.state == "building" && !attempt.buildResult.is_null() && dispatchBlocker(selected, true).empty();
-        if (ready) {
+        std::string reason;
+        if (attempt.state != "building" || attempt.buildResult.is_null()) {
+            reason = "publication requires a verified assigned build";
+        } else {
+            reason = dispatchBlocker(selected, true);
             const auto feed = publicationFeed(selected);
-            for (const auto& [otherId, other] : records) {
-                if (other.attempts.back().state == "publishing" && publicationFeed(other) == feed) {
-                    ready = false;
-                }
+            const auto assigned = std::count_if(records.begin(), records.end(), [&](const auto& entry) {
+                return entry.second.attempts.back().state == "publishing" && publicationFeed(entry.second) == feed;
+            });
+            if (reason.empty() && assigned + reserved >= publicationLimit) {
+                reason = "feed publication capacity is assigned; unresolved assignments retain their slots";
             }
         }
-        return ready;
+        return reason;
     }
 
-    Node Graph::beginPublication(const std::string& id) const {
+    bool Graph::publicationReady(const std::string& id) const {
+        return publicationBlocker(id).empty();
+    }
+
+    Node Graph::beginPublication(const std::string& id, std::size_t reserved) const {
         auto selected = records.at(id);
         auto& attempt = selected.attempts.back();
-        require(publicationReady(id), "publication requires a verified assigned build and no uncertain writer for this feed");
+        require(publicationBlocker(id, reserved).empty(), "publication is blocked by assigned capacity or invalid build inputs");
         attempt.state = "publishing";
         return selected;
     }
@@ -577,7 +592,7 @@ namespace coreci {
         require(change.nextRevision >= nextRevision, "graph revision allocator regressed");
         std::map<std::string, const Node*> changed;
         std::set<std::uint64_t> allocated;
-        std::set<std::string> publicationFeeds;
+        std::map<std::string, std::size_t> publicationFeeds;
         for (const auto& node : change.nodes) {
             require(changed.emplace(node.id, &node).second && !node.attempts.empty(), "duplicate/empty execution mutation");
             require(node.id == digest(identity(node)), "execution selection identity changed");
@@ -611,7 +626,7 @@ namespace coreci {
                     require(before.buildResult.is_null() || before.buildResult == after.buildResult, "accepted build result changed");
                     require(before.receipt.is_null() || before.receipt == after.receipt, "published receipt changed");
                     if (before.state == "building" && after.state == "publishing") {
-                        require(publicationReady(node.id) && publicationFeeds.insert(publicationFeed(node)).second,
+                        require(publicationBlocker(node.id, publicationFeeds[publicationFeed(node)]++).empty(),
                                 "publication conflicts with assigned work for the same feed");
                     }
                     bool allowed = before.state == after.state;

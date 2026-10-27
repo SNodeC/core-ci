@@ -176,7 +176,12 @@ int main() {
         completeBuild(publicationBound, find(publicationBound, "r", "target-second", sha));
         check(publicationBound.publicationReady(find(publicationBound, "r", "target-second", sha)),
               "oversized publication blocked an independent writer");
-        auto serialized = graph;
+        coreci::Graph serialized(1);
+        std::vector<coreci::Node> snapshot;
+        for (const auto& [id, node] : graph.nodes()) {
+            snapshot.push_back(node);
+        }
+        serialized.restore(snapshot, graph.nextRebuildRevision());
         const auto secondRoot = find(serialized, "r", "target-second", sha);
         completeBuild(serialized, root);
         completeBuild(serialized, secondRoot);
@@ -190,6 +195,63 @@ int main() {
         rejects([&]() {
             serialized.beginPublication(secondRoot);
         });
+        coreci::Graph generations;
+        auto oldSource = graph_fixture::source("retained", 11, {});
+        generations.apply(generations.select("retained", {{"retained", oldSource}}, true));
+        const auto historical = find(generations, "retained", "target-first", sha);
+        completeBuild(generations, historical);
+        apply(generations, generations.failed(historical, generations.node(historical).attempts.back().id, "explicit test failure"));
+        auto newSource = oldSource;
+        newSource["commit"] = std::string(40, 'e');
+        newSource["definition_revision"] = std::string(40, 'e');
+        newSource["deployment"]["worker"]["tooling_sha"] = std::string(40, 'f');
+        newSource["deployment"]["source_workflow"]["path"] = ".github/workflows/build-parallel.yml";
+        newSource["deployment"]["publication_workflow"]["path"] = ".github/workflows/publish-parallel.yml";
+        generations.apply(generations.select("retained", {{"retained", newSource}}, true));
+        generations.apply(generations.retry(historical));
+        const auto retrying = generations.beginBuild(historical);
+        check(retrying.attempts.back().assignment.at("source").at("deployment") == oldSource.at("deployment"),
+              "historical retry adopted new tooling or workflow paths");
+        check(generations.node(find(generations, "retained", "target-first", std::string(40, 'e'))).source.at("deployment") ==
+                  newSource.at("deployment"),
+              "new selection did not retain its own generation");
+        coreci::Graph capacity;
+        std::map<std::string, json> independent;
+        for (unsigned index = 1; index <= 5; ++index) {
+            const auto name = "root" + std::to_string(index);
+            independent[name] = graph_fixture::source(name, index, {});
+            capacity.apply(capacity.select(name, independent, false));
+        }
+        std::vector<std::string> ready;
+        for (const auto& [id, node] : capacity.nodes()) {
+            ready.push_back(id);
+        }
+        for (const auto& id : ready) {
+            completeBuild(capacity, id);
+        }
+        coreci::GraphChange admitted{{}, capacity.nextRebuildRevision()};
+        for (std::size_t index = 0; index < 8; ++index) {
+            admitted.nodes.push_back(capacity.beginPublication(ready[index], index));
+        }
+        capacity.apply(admitted);
+        check(!capacity.publicationReady(ready[8]), "ninth publisher exceeded default feed capacity");
+        check(capacity.publicationBlocker(ready[8]).find("capacity") != std::string::npos, "capacity blocker was hidden");
+        rejects([&]() {
+            capacity.beginPublication(ready[8]);
+        });
+        auto parallel = graph;
+        completeBuild(parallel, root);
+        completeBuild(parallel, secondRoot);
+        parallel.apply({{parallel.beginPublication(root), parallel.beginPublication(secondRoot)}, parallel.nextRebuildRevision()});
+        std::vector<coreci::Node> assigned;
+        for (const auto& [id, node] : parallel.nodes()) {
+            assigned.push_back(node);
+        }
+        coreci::Graph reduced(1);
+        reduced.restore(assigned, parallel.nextRebuildRevision());
+        check(reduced.node(root).attempts.back().state == "publishing" && reduced.node(secondRoot).attempts.back().state == "publishing",
+              "lowering capacity rejected assigned independent publications");
+        check(!parallel.blockers(a).empty(), "unverified parallel publication satisfied a dependent");
         publish(graph, root);
         check(graph.blockers(a).empty() && graph.blockers(b).empty(), "published root did not unblock both branches");
         publish(graph, a);

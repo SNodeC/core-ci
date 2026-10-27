@@ -173,7 +173,7 @@ def exercise(args, directory):
                     selected = json.loads(value["inputs"]["assignment"])
                     durable = lifecycle.query(db_socket, "SELECT state FROM core_ci.attempts WHERE id='" + selected["attempt"] + "'").strip()
                     assert durable == "publishing", "publication dispatched before committed authority"
-                    assert lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts WHERE state='publishing'").strip() == "1"
+                    assert 1 <= int(lifecycle.query(db_socket, "SELECT COUNT(*) FROM core_ci.attempts WHERE state='publishing'").strip()) <= 8
                     run_id = 500 + len(publications)
                     runs[run_id] = {"id": run_id, "run_attempt": 1, "event": "workflow_dispatch", "repository": {"id": 1000}, "head_repository": {"id": 1000},
                                     "actor": {"id": 42}, "display_title": "Publish " + selected["label"],
@@ -474,6 +474,11 @@ def exercise(args, directory):
             assert report(100)[0] == 200
             runs[100]["status"] = "in_progress"
             assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == first_id)["activity"] == "build running"
+            # Earlier progress may still be refreshing status independently of this report.
+            deadline = time.monotonic() + 5
+            while (not status_refreshes or status_refreshes[-1] != request("/api/graph")[1]["generation"]) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert status_refreshes[-1] == request("/api/graph")[1]["generation"]
             offset = len(request_trace)
             assert report(100, job=True, job_name="unrelated helper") == (202, {"event": "unassigned execution ignored"})
             assert len(request_trace) == offset, "helper job repeated assigned-run inspection"
@@ -632,7 +637,7 @@ def exercise(args, directory):
             assert publications[0]["build_result"]["build_job"] == timing
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
             runs[100].update(status="completed", conclusion="success")
-            assert report(100)[0] == 200 and len(publications) == 1, "second writer started before the assigned publication resolved"
+            assert report(100)[0] == 202 and len(publications) == 2, "independent publication was blocked by another assignment"
             event, pushed = lifecycle.stream_event(stream)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline and (event != "graph" or not any(row["id"] == older["execution"] and row["revision"] == current["revision"]
@@ -653,7 +658,7 @@ def exercise(args, directory):
             application = start()
             request("/api/work/reconcile", {})
             assert build_status_reads.count(100) == verified_reads, "restart re-read an already persisted verified build"
-            assert len(publications) == 1, "restart replaced uncertain publication"
+            assert len(publications) == 2, "restart replaced an uncertain publication"
             restored = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert {key: restored["build_job"][key] for key in timing} == timing, "recorded build timing was lost on restart"
             selected = publications[0]["assignment"]

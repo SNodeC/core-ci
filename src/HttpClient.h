@@ -43,10 +43,18 @@ namespace coreci {
             HttpResult result;
             std::weak_ptr<web::http::client::MasterRequest> master;
             std::uint64_t connectionId = 0;
+            bool started = false;
+            web::http::tls::in::Client::FlowHandle flow;
         };
 
-        void connect();
-        void finish();
+        void pump();
+        void connect(const std::shared_ptr<Operation>& operation);
+        void deliver(const std::shared_ptr<Operation>& operation);
+        void finish(const std::shared_ptr<Operation>& operation);
+        std::shared_ptr<Operation> find(std::uint64_t connectionId) const;
+        unsigned int maximum = 8;
+        bool pumping = false;
+        std::shared_ptr<Operation> connecting;
         std::string fixedPeer;
         std::deque<std::shared_ptr<Operation>> requests;
         web::http::tls::in::Client client;

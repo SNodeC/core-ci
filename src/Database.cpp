@@ -1,5 +1,6 @@
 #include "Database.h"
 
+#include <Log.h>
 #include <errmsg.h>
 #include <exception>
 #include <utility>
@@ -26,19 +27,38 @@ namespace coreci {
     }
 
     void Database::enqueue(const std::function<void()>& operation) {
-        operations.push_back(operation);
+        operations.push_back(std::make_shared<std::function<void()>>(operation));
         if (operations.size() == 1) {
-            const auto start = operations.front();
-            start();
+            drain();
         }
     }
 
     void Database::completed() {
         operations.pop_front();
-        if (!operations.empty()) {
-            const auto start = operations.front();
-            start();
+        drain();
+    }
+
+    void Database::drain() {
+        if (!draining) {
+            draining = true;
+            bool pending = false;
+            while (!operations.empty() && !pending) {
+                const auto operation = operations.front();
+                (*operation)();
+                pending = !operations.empty() && operations.front() == operation;
+            }
+            draining = false;
         }
+    }
+
+    void Database::finish(const std::shared_ptr<Write>& write, const DatabaseResult& result) {
+        try {
+            write->callback(result);
+        } catch (const std::exception& error) {
+            mutationUncertain = true;
+            snode::log::application().error() << "Database completion failed; restart and reconcile: " << error.what();
+        }
+        completed();
     }
 
     void Database::query(const std::string& sql, const Callback& callback) {
@@ -81,14 +101,22 @@ namespace coreci {
             });
     }
 
-    void Database::write(const std::vector<DatabaseStatement>& statements, const Callback& callback) {
+    void Database::write(const std::function<std::vector<DatabaseStatement>()>& prepare, const Callback& callback) {
         const auto write = std::make_shared<Write>();
-        write->statements = statements;
         write->callback = callback;
-        enqueue([this, write]() {
+        enqueue([this, write, prepare]() {
+            DatabaseResult rejected;
             if (mutationUncertain) {
-                completed();
-                write->callback({{}, "database mutation outcome needs reconciliation before further writes", true});
+                rejected = {{}, "database mutation outcome needs reconciliation before further writes", true};
+            } else {
+                try {
+                    write->statements = prepare();
+                } catch (const std::exception& error) {
+                    rejected = {{}, error.what(), false, true};
+                }
+            }
+            if (!rejected.error.empty() || write->statements.empty()) {
+                finish(write, rejected);
             } else {
                 client.exec(
                     "START TRANSACTION",
@@ -96,8 +124,7 @@ namespace coreci {
                         writeNext(write);
                     },
                     [this, write](const std::string& error, unsigned int) {
-                        completed();
-                        write->callback({{}, error, false});
+                        finish(write, {{}, error, false});
                     });
             }
         });
@@ -129,31 +156,26 @@ namespace coreci {
         } else {
             client.commit(
                 [this, write]() {
-                    completed();
-                    write->callback({});
+                    finish(write, {});
                 },
                 [this, write](const std::string& error, unsigned int) {
                     mutationUncertain = true;
-                    completed();
-                    write->callback({{}, error, true});
+                    finish(write, {{}, error, true});
                 });
         }
     }
 
     void Database::writeFailed(const std::shared_ptr<Write>& write, const std::string& error, unsigned int code) {
         if (code == CR_SERVER_GONE_ERROR || code == CR_SERVER_LOST || code == CR_SERVER_LOST_EXTENDED) {
-            completed();
-            write->callback({{}, error, false});
+            finish(write, {{}, error, false});
         } else {
             client.rollback(
                 [this, write, error]() {
-                    completed();
-                    write->callback({{}, error, false});
+                    finish(write, {{}, error, false});
                 },
                 [this, write, error](const std::string&, unsigned int) {
                     mutationUncertain = true;
-                    completed();
-                    write->callback({{}, error, true});
+                    finish(write, {{}, error, true});
                 });
         }
     }

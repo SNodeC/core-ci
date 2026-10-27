@@ -122,6 +122,8 @@ def exercise(args, root):
                 errors.append("missing scoped token")
             if self.path == "/repos/Owner/example":
                 self.send_json(200, {"id": 99, "full_name": "Owner/example"})
+            elif self.path == "/repos/Owner/example/actions/workflows/core-ci-build.yml/runs?event=workflow_dispatch&per_page=100&page=1":
+                self.send_json(200, {"total_count": 0, "workflow_runs": []})
             elif self.path == "/repos/Owner/example/actions/runs/123/attempts/1":
                 self.send_json(404, {})
             elif self.path == "/repos/Owner/example/commits/main":

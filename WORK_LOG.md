@@ -2063,3 +2063,94 @@ proposed. Commit/push/merge remain separate authorization stages.
   bounded three-hour observation window. New baseline records retained package/key/
   receipt/export Git blobs before any new publication. Results are ongoing; full-session
   acceptance is not yet claimed. No package-client installation proof is implied.
+
+## 2026-10-27 — approved controller/workflow parallelism implementation
+
+- Owner approved all four refined choices and implementation bounds: P1 independent publication
+  admission while uncertainty remains assigned; eight HTTP operations per client and eight
+  publication assignments per feed; secret-free HTTPS confirmation job; two retained approved
+  tooling/workflow generations. Bounds: +310 net canonical production, +790 test lines;
+  later sandbox copies/aliases have a separate +450 net production bound. This does not
+  authorize further privileged setup splitting or commit/push/merge/install stages.
+- Canonical checkout `/home/voc/projects/snodec/core-ci`; implementation branch
+  `fix/controller-parallelism`, based on local main `4257cb0fc67412da8696afdba307fc2e85ff64aa`.
+  Existing deployment/review documentation remains preserved and uncommitted. No extra checkout.
+- Invariant: overlap independent transport and execution work; derive each shared graph mutation
+  once against applied state at the front of the existing Database FIFO; apply commit/generation
+  before the next derivation; run execution continuation before derivative status/SSE work.
+  Dispatch still follows persisted authority. No second graph queue, scheduler, timer, schema,
+  persisted state or controller thread was added.
+- Replaced eager graph changes/stale-node continuation retries with lazy Database producers and
+  GraphStore derivations. Selection/enrollment generation and namespace guards remain explicit.
+  Preparation failures/no-ops do not open transactions. SQL uncertainty still closes mutation
+  admission. Reentrant synchronous completion drains iteratively; query startup callbacks retain
+  their resource-release ordering. All write completion paths were traced through Database.
+- Verified installed SNode.C client callbacks and FlowHandle interfaces against framework source
+  and HTTP/database apps; also checked MQTTSuite lifecycle/ownership patterns (references in the
+  design proposal). Connection status precedes onConnect; an HTTP disconnect clears the request
+  socket context before its callback. A first runtime test exposed an incorrect socket lookup
+  there; corrected correlation to the retained MasterRequest identity, then reran the affected
+  transport/startup/integration checks successfully. This was a local test defect/fix cycle,
+  not a deployed failure. Intermediate address errors wait for actual flow termination.
+- HTTP uses the existing waiting list with bounded same-origin overlap. Response callbacks are
+  correlated by connection/request identity, delivered once, and transports retain capacity until
+  disconnect. Origin changes wait for active transports to drain; the deferred per-origin client
+  refactor was not introduced. Existing scoped token expiry/coalescing and mutation non-replay
+  remain. Independent source reads aggregate once in enrollment order; an unreadable newly
+  selected repository still blocks the request. Public options register before framework init:
+  `github-http --max-in-flight` and `feed-http --max-in-flight` default 8, range 1–16.
+- Removed status approval's obsolete generation-equality restart before POST; a generation is
+  a minimum and the worker reads live facts. Newer-generation handling and uncertainty are kept.
+  Full SSE graph views are constructed only for receivers; repository-list SSE reads follow
+  successful enrollment changes, rather than every evidence commit. Same-state progress remains.
+- Graph publication admission/validation/blockers use one capacity calculation. Default
+  `pipeline --publication-limit 8`, range 1–32. Uncertain assignments consume capacity but do not
+  block independent nodes below the bound or satisfy their prerequisites. Restore accepts
+  already valid assignments even when the configured admission limit is lower.
+- Canonical worker templates move only the feed-mutating publication job into the shared feed
+  concurrency group, also used by status. Validation stays outside it. Prepare exports the
+  exact staged receipt SHA-256 and local commit SHA. The push step retains checked update and
+  its failure-certainty boundary. A separate secret-free confirm job, `needs: publish`, validates
+  mandatory public outputs/actor/executing attempt/tooling and bounded HTTPS receipt bytes.
+  It has no publication environment/signing/feed token, and does not match the publisher name.
+  Controller committed-receipt/HTTPS proof remains authoritative; post-push failure is uncertain.
+- New publisher/status templates have a deployment-rendered literal `@TOOLING_SHA@` marker;
+  it must be replaced by the reviewed tooling commit in a subsequent wrapper commit before
+  installation. The deployment guide specifies O/N aliases without overwriting old wrappers or
+  their global pin. No actual aliases or hashes were fabricated/installed. Historical retry
+  retains its original immutable deployment. Old-controller rollback requires assignments to
+  drain to its supported shape. No generic compatibility implementation was added.
+- Focused local proof (synthetic GitHub, real isolated MariaDB/TLS/local Git/package tooling):
+  Debug configure/build succeeded under `/tmp/codex/build/core-ci/controller-parallelism/build`,
+  compiler temporary files under the sibling `tmp/`. `format-check` and `git diff --check` pass.
+  CTest selections: lifecycle help/initial-failure/schema-failure; graph-state-boundaries;
+  enrollment-boundaries (includes GraphStore real-MariaDB harness); github-transport-*;
+  pipeline-boundaries; worker-provenance-boundaries; worker-package-boundaries. Every selected
+  boundary passed after correcting old one-writer assertions and letting preceding derivative
+  status work finish before a zero-traffic measurement. No unrelated/full suite was run.
+- Added public-boundary regressions for overlapping graph commits/evidence and independent
+  advancement, 4096 reentrant no-ops plus 4096 invalid derivations, eight/ninth publication
+  admission, lower-limit restore, O/N historical retry identity, twelve overlapping TLS requests
+  with callback correlation/capacity/token coalescing, independent publication while another is
+  uncertain, prepare output hashes, confirm hash/origin rejection and executing attempt rejection.
+  Real local DEB/RPM signing/replay checks remain passing; these are not live GitHub acceptance.
+- Latest synthetic pipeline measurement: eight handled unchanged signed notifications at 30 ms
+  API fixture delay produced zero HTTP/token/status requests in 0.0672 s (old investigation
+  baseline: 112 requests/40 Git-object reads/4.515 s). This zero-request property already existed
+  before this parallelism change and is preserved. Graph/SSE progress took 0.0919 s with 0.300 s
+  derivative API delay. Complex synthetic session totals include failures/retries/restarts and
+  status: 25 token mints, 44 evidence, 104 source/edit, 81 worker approval, 8 build dispatch,
+  3 publication dispatch, 58 status dispatch, 18 feed-GitHub, 2 feed-HTTPS = 343 requests.
+  These are not a normal 20-node live-session budget or live latency evidence.
+- Logs and request/latency accounting remain under the permitted temporary task directory.
+  No live controller restart, settings/listener/port change, GitHub mutation, tag/key/feed/package
+  change or new live acceptance occurred. `.qtcreator/` and `.local-credentials/` were preserved
+  without inspection. Deferred renderer/403/service-management/production rollout work is untouched.
+- Remaining gates: review/authorize commit and later push/merge stages; deploy reviewed N tooling
+  and rendered aliases within sandbox authority, capture assignments/back up and restore before
+  restart, verify mixed O/N dispatch and actual feed lock exclusion, exact public receipt and
+  graph/SSE/Pages timings, retained bytes/signatures and affected real package-client checks.
+  No end-to-end live speedup or completed rollout is claimed here.
+- Tracked diff accounting against HEAD: production +652/-452 (net +200); tests +398/-116 (net +282). Both implementation nets are within the approved bounds.
+  Documentation is separately modified and includes preserved pre-existing deployment/review work; untracked proposal/review files are preserved, not counted as production or tests.
+- Owner subsequently authorized committing/pushing this task on its separate branch and sending Claude a detailed agreement-based review request. The staged documentation includes the task review/design evidence; unrelated deployment documentation and private/untracked files remain outside the commit. No merge or installation is authorized by that instruction.

@@ -226,8 +226,12 @@ Inspect the complete framework configuration with:
 
 Commit the contents of [deployment/worker](../../deployment/worker) at the trusted repository
 root: `core_ci/`, `status-templates/`, `.github/workflows/` and reviewed `keys/`.
-Preserve unrelated repository content. Record the resulting full tooling commit SHA. Set `CORE_CI_TOOLING_SHA` to that
-reviewed commit. Tooling is checked out independently of the selected source.
+Preserve unrelated repository content. Record the resulting full tooling commit SHA.
+The publisher and status YAML are installation templates: replace `@TOOLING_SHA@` with that
+reviewed commit in a subsequent workflow commit. Their workflow-local `CORE_CI_TOOLING_SHA`
+and checkout select that exact tooling revision, independently of the selected source.
+Never install a template with an unresolved marker. Keep the repository variable for any
+retained older workflows that still use it; changing it would invalidate their exact retries.
 
 The publication workflow installs the pinned Jinja2 dependencies before the signing step.
 Review the deployment-owned templates, public `presentation.json` parameters and any declared
@@ -565,15 +569,43 @@ inaccessible or an HTTP response was lost.
 
 ### Upgrade trusted tooling coherently
 
-1. Review code and relevant focused checks before deploying.
-2. Inspect assigned work. Finish it or retain access to its approved tooling/workflow bytes;
-   changing a branch under an assigned pin does not authorize rewriting the assignment.
-3. Commit reviewed worker files and public keys, preserving unrelated files and key identities.
-4. Render/commit source workflows at the new full worker SHA and calculate both approved blobs.
-5. Update `CORE_CI_TOOLING_SHA` and matching controller pins together.
-6. Build/restart the intended controller revision with existing MariaDB and configuration.
-7. Verify restoration and a new selection, including real build/publication when the changed
-   boundary requires it. Existing executions retain their original inputs and expected names.
+Keep two reviewed generations, O (previous) and N (new), through separate deployment-owned
+workflow paths. This preserves immutable historical assignments without adding a controller
+compatibility mechanism. Paths below are examples; the controller configuration owns them.
+
+1. Review code and focused checks. Record active assignments and back up MariaDB before restart.
+2. Retain O's deployed source, publisher and status workflow bytes and repository variable
+   `CORE_CI_TOOLING_SHA=O`. Keep its tooling commit accessible. Do not overwrite old paths.
+3. Commit reviewed new worker tooling first, obtaining N. Then render the publisher and status
+   templates with N into new paths, such as `core-ci-publish-parallel.yml` and
+   `core-ci-status-parallel.yml`. Commit those wrappers separately: a commit cannot embed its
+   own SHA. Both generations must use the same actual feed concurrency group and trusted keys.
+4. Render the thin source template with N into a new path in each enrolled repository, such
+   as `core-ci-build-parallel.yml`. Preserve its previous workflow path on the dispatch branch.
+   Calculate the approved Git blob identities from the actual committed wrapper bytes.
+5. Configure future selections with N and the new source/publication/status paths and blobs.
+   Do not rewrite old selections, attempts or their deployment JSON. The main-only publication
+   environment remains in place; path retention does not require additional secrets.
+6. Build/restart the reviewed controller first with `pipeline.publication-limit=1` if old
+   tooling is still active, then enable the approved capacity after mixed-generation checks.
+   Restore old assignments without replacement dispatches; explicitly retry a historical
+   failure and make a new selection to verify both generations against their own exact pins.
+7. Verify actual publication and public HTTPS confirmation. The new `confirm` job receives only
+   the prepared receipt SHA-256 and feed commit SHA, has no publication environment or secrets,
+   and runs outside the feed lock. Controller receipt/Git/HTTPS proof still decides publication.
+
+The defaults are eight HTTPS operations per named client (`github-http --max-in-flight 8`,
+`feed-http --max-in-flight 8`, permitted range 1–16), and eight publication assignments per feed
+(`pipeline --publication-limit 8`, range 1–32). HTTP overlap stays within the current origin;
+a pending origin change waits for in-flight transports to drain. The shared client remains.
+Publication capacity includes uncertain assignments. Independent nodes may proceed within
+capacity; an uncertain node retains its assignment and cannot satisfy its dependents.
+The actual feed-mutating jobs and status writer still share one GitHub concurrency group.
+
+Do not remove O merely to make room for N: retiring an approved historical generation requires
+an owner decision about its future explicit retries. Rollback to an older controller is unsafe
+while multiple publications for one feed remain assigned, because its restore validation may
+reject that graph. Drain/reconcile valid assignments first; never delete them to force rollback.
 
 Each workflow dispatch is independent, but a later job is not free to adopt arbitrary current
 CI files. Its assignment pins still govern which bytes may execute. A workflow/blob mismatch

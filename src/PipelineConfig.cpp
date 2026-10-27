@@ -10,6 +10,9 @@
 namespace coreci {
     PipelineConfig::PipelineConfig(utils::SubCommand* parent)
         : SubCommand(parent, this, "Package pipeline deployment") {
+        setConfigurable(
+            addOptionVariable("--publication-limit", publicationLimit, "Assigned publications per feed", "uint", 8u, CLI::Range(1u, 32u)),
+            true);
         setConfigurable(addOptionVariable("--status-workflow",
                                           statusWorkflow,
                                           "Optional trusted public status workflow path",

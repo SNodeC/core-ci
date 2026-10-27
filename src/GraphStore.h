@@ -9,9 +9,11 @@
 namespace coreci {
     class GraphStore {
     public:
-        explicit GraphStore(Database& database);
+        explicit GraphStore(Database& database, unsigned int publicationLimit = 8);
         void restore(const Database::Callback& callback);
-        void commit(const GraphChange& change, const Database::Callback& callback);
+        using Derive = std::function<GraphChange(const Graph&)>;
+        using CommitCallback = std::function<void(const DatabaseResult&, const GraphChange*)>;
+        void commit(const Derive& derive, const CommitCallback& callback);
         void enroll(const std::string& name,
                     const std::string& repository,
                     const std::string& branch,
@@ -22,7 +24,7 @@ namespace coreci {
         const Graph& graph() const;
         nlohmann::json view() const;
         nlohmann::json publicView() const;
-        std::function<void(bool)> onChanged;
+        std::function<void(bool, bool)> onChanged;
 
     private:
         struct Restoring {

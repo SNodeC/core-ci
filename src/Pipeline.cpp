@@ -67,40 +67,49 @@ namespace coreci {
     }
 
     void Pipeline::readSources(const std::shared_ptr<Selecting>& selection) {
-        if (selection->index == selection->repositories.size()) {
-            try {
-                if (!selection->sources.contains(selection->root) && selection->tag.empty()) {
-                    selection->callback({200, {{"selected", 0}, {"reason", "repository has no semantic-version tag"}}});
-                } else {
-                    commitSelection(selection);
-                }
-            } catch (const std::exception& error) {
-                selection->callback({422, {{"error", error.what()}}});
-            }
-        } else {
-            const auto row = selection->repositories.at(selection->index);
-            const auto repository = row.at("repository").get<std::string>();
+        selection->remaining = selection->repositories.size();
+        selection->results.resize(selection->remaining);
+        for (std::size_t index = 0; index < selection->repositories.size(); ++index) {
+            const auto repository = selection->repositories.at(index).at("repository").get<std::string>();
             sources.select(
-                repository, repository == selection->repository ? selection->tag : "", [this, selection, row](const SourceResult& result) {
-                    if (result.status == 404 && result.source.contains("repository_id")) {
-                        ++selection->index;
-                        readSources(selection);
-                    } else if (result.status != 200) {
-                        selection->callback({result.status, {{"error", result.error}, {"repository", row.at("repository")}}});
-                    } else {
-                        try {
-                            require(result.source.at("repository_id") == row.at("id"), "selected source ID differs from enrollment");
-                            require(row.at("repository") != selection->repository || selection->expectedTagObject.empty() ||
-                                        result.source.at("commit") == selection->expectedTagObject ||
-                                        result.source.at("tag_object_sha") == selection->expectedTagObject,
-                                    "tag moved after this delivery; retain existing selections and process its current event");
-                            auto source = result.source;
-                            source["deployment"] = config.deployment(github, app, row);
-                            selection->sources.emplace(row.at("name").get<std::string>(), std::move(source));
-                            ++selection->index;
-                            readSources(selection);
-                        } catch (const std::exception& error) {
-                            selection->callback({422, {{"error", error.what()}}});
+                repository,
+                repository == selection->repository ? selection->tag : "",
+                [this, selection, index](const SourceResult& result) {
+                    selection->results.at(index) = result;
+                    --selection->remaining;
+                    if (selection->remaining == 0) {
+                        PipelineResult failure;
+                        for (std::size_t position = 0; position < selection->repositories.size(); ++position) {
+                            const auto& row = selection->repositories.at(position);
+                            const auto& selected = selection->results.at(position);
+                            if (failure.status == 200) {
+                                if (selected.status == 404 && selected.source.contains("repository_id")) {
+                                    // A known repository without a semantic-version tag has no selected definition.
+                                } else if (selected.status != 200) {
+                                    failure = {selected.status, {{"error", selected.error}, {"repository", row.at("repository")}}};
+                                } else {
+                                    try {
+                                        require(selected.source.at("repository_id") == row.at("id"),
+                                                "selected source ID differs from enrollment");
+                                        require(row.at("repository") != selection->repository || selection->expectedTagObject.empty() ||
+                                                    selected.source.at("commit") == selection->expectedTagObject ||
+                                                    selected.source.at("tag_object_sha") == selection->expectedTagObject,
+                                                "tag moved after this delivery; retain existing selections and process its current event");
+                                        auto source = selected.source;
+                                        source["deployment"] = config.deployment(github, app, row);
+                                        selection->sources.emplace(row.at("name").get<std::string>(), std::move(source));
+                                    } catch (const std::exception& error) {
+                                        failure = {422, {{"error", error.what()}, {"repository", row.at("repository")}}};
+                                    }
+                                }
+                            }
+                        }
+                        if (failure.status != 200) {
+                            selection->callback(failure);
+                        } else if (!selection->sources.contains(selection->root) && selection->tag.empty()) {
+                            selection->callback({200, {{"selected", 0}, {"reason", "repository has no semantic-version tag"}}});
+                        } else {
+                            commitSelection(selection);
                         }
                     }
                 });
@@ -108,23 +117,22 @@ namespace coreci {
     }
 
     void Pipeline::commitSelection(const std::shared_ptr<Selecting>& selection) {
-        try {
-            require(selection->generation == store.getGeneration(), "graph changed during selection; request it again");
-            const auto change = store.graph().select(selection->root, selection->sources, !selection->automatic);
-            store.commit(change, [this, selection, count = change.nodes.size()](const DatabaseResult& result) {
+        store.commit(
+            [this, selection](const Graph& graph) {
+                require(selection->generation == store.getGeneration(), "graph changed during selection; request it again");
+                return graph.select(selection->root, selection->sources, !selection->automatic);
+            },
+            [this, selection](const DatabaseResult& result, const GraphChange* change) {
                 if (!result.error.empty()) {
-                    selection->callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+                    selection->callback({result.preparationFailed ? 409 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
                 } else {
-                    advance([selection, count](const PipelineResult& dispatched) {
+                    advance([selection, count = change == nullptr ? 0 : change->nodes.size()](const PipelineResult& dispatched) {
                         auto response = dispatched.body;
                         response["selected"] = count;
                         selection->callback({dispatched.status, response});
                     });
                 }
             });
-        } catch (const std::exception& error) {
-            selection->callback({409, {{"error", error.what()}}});
-        }
     }
 
     void Pipeline::event(const std::string& type, const std::string& signature, const std::string& body, const Callback& callback) {
@@ -220,17 +228,17 @@ namespace coreci {
     }
 
     void Pipeline::retry(const std::string& execution, const Callback& callback) {
-        try {
-            store.commit(store.graph().retry(execution), [this, callback](const DatabaseResult& result) {
+        store.commit(
+            [execution](const Graph& graph) {
+                return graph.retry(execution);
+            },
+            [this, callback](const DatabaseResult& result, const GraphChange*) {
                 if (!result.error.empty()) {
-                    callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+                    callback({result.preparationFailed ? 409 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
                 } else {
                     advance(callback);
                 }
             });
-        } catch (const std::exception& error) {
-            callback({409, {{"error", error.what()}}});
-        }
     }
 
     bool Pipeline::matchesJob(const Attempt& attempt, bool publication, const nlohmann::json& job) {
@@ -256,54 +264,52 @@ namespace coreci {
     }
 
     void Pipeline::advance(const Callback& callback) {
-        try {
-            GraphChange change;
-            change.nextRevision = store.graph().nextRebuildRevision();
-            bool publicationSelected = false;
-            nlohmann::json blocked = nlohmann::json::object();
-            for (const auto& [id, node] : store.graph().nodes()) {
-                if (!publicationSelected && store.graph().publicationReady(id)) {
-                    change.nodes.push_back(store.graph().beginPublication(id));
-                    publicationSelected = true;
-                }
-                if (node.attempts.back().state == "waiting") {
-                    const auto reasons = store.graph().blockers(id);
-                    if (reasons.empty()) {
-                        change.nodes.push_back(store.graph().beginBuild(id));
-                    } else {
-                        blocked[id] = reasons;
-                    }
-                } else if (node.attempts.back().state == "building" && !node.attempts.back().buildResult.is_null()) {
-                    const auto reason = store.graph().dispatchBlocker(node, true);
-                    if (!reason.empty()) {
-                        blocked[id] = nlohmann::json::array({reason});
-                    }
-                }
-            }
-            if (change.nodes.empty()) {
-                callback({200, {{"assigned", 0}, {"blocked", blocked}}});
-            } else {
-                store.commit(change, [this, nodes = change.nodes, blocked, callback](const DatabaseResult& result) {
-                    if (!result.error.empty()) {
-                        callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
-                    } else {
-                        auto responses = std::make_shared<nlohmann::json>(nlohmann::json::array());
-                        for (const auto& node : nodes) {
-                            dispatch(node,
-                                     node.attempts.back().state == "publishing",
-                                     [responses, count = nodes.size(), blocked, callback](const PipelineResult& dispatched) {
-                                         responses->push_back(dispatched.body);
-                                         if (responses->size() == count) {
-                                             callback({202, {{"assigned", count}, {"dispatches", *responses}, {"blocked", blocked}}});
-                                         }
-                                     });
+        const auto blocked = std::make_shared<nlohmann::json>(nlohmann::json::object());
+        store.commit(
+            [blocked](const Graph& graph) {
+                GraphChange change;
+                change.nextRevision = graph.nextRebuildRevision();
+                std::map<std::string, std::size_t> reserved;
+                for (const auto& [id, node] : graph.nodes()) {
+                    if (node.attempts.back().state == "waiting") {
+                        const auto reasons = graph.blockers(id);
+                        if (reasons.empty()) {
+                            change.nodes.push_back(graph.beginBuild(id));
+                        } else {
+                            (*blocked)[id] = reasons;
+                        }
+                    } else if (node.attempts.back().state == "building" && !node.attempts.back().buildResult.is_null()) {
+                        auto& count = reserved[Graph::publicationFeed(node)];
+                        const auto reason = graph.publicationBlocker(id, count);
+                        if (reason.empty()) {
+                            change.nodes.push_back(graph.beginPublication(id, count));
+                            ++count;
+                        } else {
+                            (*blocked)[id] = nlohmann::json::array({reason});
                         }
                     }
-                });
-            }
-        } catch (const std::exception& error) {
-            callback({422, {{"error", error.what()}}});
-        }
+                }
+                return change;
+            },
+            [this, blocked, callback](const DatabaseResult& result, const GraphChange* change) {
+                if (!result.error.empty()) {
+                    callback({result.preparationFailed ? 422 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+                } else if (change == nullptr) {
+                    callback({200, {{"assigned", 0}, {"blocked", *blocked}}});
+                } else {
+                    const auto responses = std::make_shared<nlohmann::json>(nlohmann::json::array());
+                    for (const auto& node : change->nodes) {
+                        dispatch(node,
+                                 node.attempts.back().state == "publishing",
+                                 [responses, count = change->nodes.size(), blocked, callback](const PipelineResult& dispatched) {
+                                     responses->push_back(dispatched.body);
+                                     if (responses->size() == count) {
+                                         callback({202, {{"assigned", count}, {"dispatches", *responses}, {"blocked", *blocked}}});
+                                     }
+                                 });
+                    }
+                }
+            });
     }
 
     void Pipeline::read(const std::string& repository,
@@ -393,11 +399,9 @@ namespace coreci {
                 workflow(config.workerRepository,
                          {{"path", config.statusWorkflow}, {"ref", config.publicationRef}, {"blob_sha", config.statusWorkflowBlob}},
                          [this, generation](const SourceResult& approved) {
-                             if (approved.status != 200 || generation != store.getGeneration()) {
+                             if (approved.status != 200) {
                                  refreshing = false;
-                                 if (approved.status != 200) {
-                                     snode::log::application().error() << "Public status workflow approval could not be verified";
-                                 }
+                                 snode::log::application().error() << "Public status workflow approval could not be verified";
                                  if (generation != store.getGeneration()) {
                                      refreshStatus();
                                  }
@@ -435,7 +439,11 @@ namespace coreci {
             repository, definition, [this, node, attempt, publication, repository, definition, callback](const SourceResult& approved) {
                 if (approved.status != 200) {
                     try {
-                        change(store.graph().rejectedDispatch(node.id, attempt.id, publication, 0, false, approved.error), callback);
+                        change(
+                            [=](const Graph& graph) {
+                                return graph.rejectedDispatch(node.id, attempt.id, publication, 0, false, approved.error);
+                            },
+                            callback);
                     } catch (const std::exception& error) {
                         callback({409, {{"error", error.what()}}});
                     }
@@ -454,9 +462,12 @@ namespace coreci {
                                     const auto reason = result.error.empty()
                                                             ? "GitHub rejected dispatch (HTTP " + std::to_string(result.status) + ")"
                                                             : result.error;
-                                    change(store.graph().rejectedDispatch(
-                                               node.id, attempt.id, publication, result.status, result.submitted, reason),
-                                           callback);
+                                    change(
+                                        [=](const Graph& graph) {
+                                            return graph.rejectedDispatch(
+                                                node.id, attempt.id, publication, result.status, result.submitted, reason);
+                                        },
+                                        callback);
                                 } catch (const std::exception& error) {
                                     callback({409, {{"error", error.what()}}});
                                 }
@@ -622,33 +633,21 @@ namespace coreci {
                           const Callback& callback,
                           bool recovery,
                           bool readJobs) {
-        const auto bound = store.graph().bindRun(execution, attemptId, publication, identity, observation);
-        const auto generation = store.getGeneration();
-        if (bound == store.graph().node(execution)) {
-            if (recovery) {
-                complete(execution, attemptId, publication, callback, readJobs);
-            } else {
-                callback({200, {{"execution", execution}, {"report", "unchanged"}}});
-            }
-        } else {
-            store.commit({{bound}, store.graph().nextRebuildRevision(), {}},
-                         [this, execution, attemptId, publication, identity, observation, callback, generation, readJobs](
-                             const DatabaseResult& result) {
-                             if (!result.uncertain &&
-                                 result.error == "conditional mutation did not match the expected graph revision/state" &&
-                                 generation != store.getGeneration()) {
-                                 try {
-                                     record(execution, attemptId, publication, identity, observation, callback, true, readJobs);
-                                 } catch (const std::exception& error) {
-                                     callback({409, {{"error", error.what()}, {"assignment_preserved", true}}});
-                                 }
-                             } else if (!result.error.empty()) {
-                                 callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
-                             } else {
-                                 complete(execution, attemptId, publication, callback, readJobs);
-                             }
-                         });
-        }
+        store.commit(
+            [=](const Graph& graph) {
+                return GraphChange{
+                    {graph.bindRun(execution, attemptId, publication, identity, observation)}, graph.nextRebuildRevision(), {}};
+            },
+            [this, execution, attemptId, publication, callback, recovery, readJobs](const DatabaseResult& result,
+                                                                                    const GraphChange* change) {
+                if (!result.error.empty()) {
+                    callback({result.preparationFailed ? 409 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+                } else if (change == nullptr && !recovery) {
+                    callback({200, {{"execution", execution}, {"report", "unchanged"}}});
+                } else {
+                    complete(execution, attemptId, publication, callback, readJobs);
+                }
+            });
     }
 
     void Pipeline::complete(
@@ -662,9 +661,12 @@ namespace coreci {
             (!publication && !attempt.buildResult.is_null())) {
             callback({200, {{"execution", execution}, {"report", "progress/history retained"}}});
         } else if (!publication && evidence.contains("run_conclusion") && evidence.at("run_conclusion") != "success") {
-            change(store.graph().failed(
-                       execution, attemptId, "GitHub execution completed: " + evidence.at("run_conclusion").get<std::string>()),
-                   callback);
+            change(
+                [=](const Graph& graph) {
+                    return graph.failed(
+                        execution, attemptId, "GitHub execution completed: " + evidence.at("run_conclusion").get<std::string>());
+                },
+                callback);
         } else if (!evidence.contains("run_conclusion") || (!readJobs && evidence.value("job_status", "") != "completed")) {
             callback({202, {{"assignment_preserved", true}, {"error", "run conclusion incomplete"}}});
         } else {
@@ -747,7 +749,11 @@ namespace coreci {
                             }
                         }
                         if (artifact.is_null() || artifact.at("expired").get<bool>()) {
-                            change(store.graph().failed(node.id, attempt.id, "required artifacts missing/expired"), callback);
+                            change(
+                                [=](const Graph& graph) {
+                                    return graph.failed(node.id, attempt.id, "required artifacts missing/expired");
+                                },
+                                callback);
                         } else {
                             static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
                             require(artifact.at("id").get<std::uint64_t>() > 0 && artifact.at("workflow_run").at("id") == runId &&
@@ -767,13 +773,17 @@ namespace coreci {
                                                                {"build_job",
                                                                 {{"started_at", job.value("started_at", nlohmann::json())},
                                                                  {"completed_at", job.value("completed_at", nlohmann::json())}}}};
-                            change(store.graph().built(node.id, attempt.id, result), [this, callback](const PipelineResult& stored) {
-                                if (stored.status == 200) {
-                                    advance(callback);
-                                } else {
-                                    callback(stored);
-                                }
-                            });
+                            change(
+                                [=](const Graph& graph) {
+                                    return graph.built(node.id, attempt.id, result);
+                                },
+                                [this, callback](const PipelineResult& stored) {
+                                    if (stored.status == 200) {
+                                        advance(callback);
+                                    } else {
+                                        callback(stored);
+                                    }
+                                });
                         }
                     } catch (const std::exception& error) {
                         callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
@@ -789,16 +799,23 @@ namespace coreci {
         const bool beforePush = evidence.at("run_conclusion") != "success" &&
                                 (evidence.value("conclusion", "") == "skipped" || evidence.value("push_step_conclusion", "") == "skipped");
         if (beforePush) {
-            change(store.graph().failed(
-                       node.id, attemptId, "Verified GitHub publication failure before the feed-update step; explicit retry is available"),
-                   callback);
+            change(
+                [=](const Graph& graph) {
+                    return graph.failed(
+                        node.id, attemptId, "Verified GitHub publication failure before the feed-update step; explicit retry is available");
+                },
+                callback);
         } else {
             feeds.verify(node, [this, node, attemptId, evidence, callback](const FeedResult& result) {
                 try {
                     const auto& current = store.graph().node(node.id).attempts.back();
                     require(current.id == attemptId && current.state == "publishing", "late feed result; current attempt preserved");
                     if (result.error.empty()) {
-                        change(store.graph().published(node.id, attemptId, result.receipt), callback);
+                        change(
+                            [=](const Graph& graph) {
+                                return graph.published(node.id, attemptId, result.receipt);
+                            },
+                            callback);
                     } else {
                         callback({202,
                                   {{"execution", node.id},
@@ -898,26 +915,25 @@ namespace coreci {
         }
     }
 
-    void Pipeline::change(const Node& node, const Callback& callback) {
-        const auto generation = store.getGeneration();
-        const auto completed = [this, node, callback](const DatabaseResult& result) {
-            if (result.error.empty()) {
-                if (node.attempts.back().state == "published" || node.attempts.back().state == "failed") {
-                    advance(callback);
+    void Pipeline::change(const std::function<Node(const Graph&)>& derive, const Callback& callback) {
+        store.commit(
+            [derive](const Graph& graph) {
+                return GraphChange{{derive(graph)}, graph.nextRebuildRevision(), {}};
+            },
+            [this, callback](const DatabaseResult& result, const GraphChange* change) {
+                if (!result.error.empty()) {
+                    callback({result.preparationFailed ? 409 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+                } else if (change == nullptr) {
+                    callback({200, {{"report", "unchanged"}}});
                 } else {
-                    callback({200, {{"execution", node.id}, {"attempt", node.attempts.back().id}, {"state", node.attempts.back().state}}});
+                    const auto& node = change->nodes.front();
+                    if (node.attempts.back().state == "published" || node.attempts.back().state == "failed") {
+                        advance(callback);
+                    } else {
+                        callback(
+                            {200, {{"execution", node.id}, {"attempt", node.attempts.back().id}, {"state", node.attempts.back().state}}});
+                    }
                 }
-            } else {
-                callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
-            }
-        };
-        store.commit({{node}, store.graph().nextRebuildRevision(), {}}, [this, node, generation, completed](const DatabaseResult& result) {
-            if (!result.uncertain && result.error == "conditional mutation did not match the expected graph revision/state" &&
-                store.getGeneration() != generation) {
-                store.commit({{node}, store.graph().nextRebuildRevision(), {}}, completed);
-            } else {
-                completed(result);
-            }
-        });
+            });
     }
 } // namespace coreci

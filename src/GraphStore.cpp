@@ -30,8 +30,9 @@ namespace coreci {
         }
     } // namespace
 
-    GraphStore::GraphStore(Database& database)
-        : database(database) {
+    GraphStore::GraphStore(Database& database, unsigned int publicationLimit)
+        : database(database)
+        , state(publicationLimit) {
     }
 
     const Graph& GraphStore::graph() const {
@@ -162,124 +163,135 @@ namespace coreci {
                             const SelectedDefinition& definition,
                             std::uint64_t expectedGeneration,
                             const Database::Callback& callback) {
-        const auto id = std::to_string(definition.repositoryId);
-        const auto revision = Database::text(definition.revision);
-        std::vector<DatabaseStatement> statements{
-            {guard(state.nextRebuildRevision(), expectedGeneration), 1},
-            {"INSERT INTO repositories(github_id,name,full_name,editing_ref,configuration_revision) VALUES (" + id + "," +
-                 Database::text(name) + "," + Database::text(repository) + "," + Database::text(branch) + "," + revision +
-                 ") ON DUPLICATE KEY UPDATE "
-                 "github_id=IF(name=VALUES(name) AND full_name=VALUES(full_name) AND editing_ref=VALUES(editing_ref),github_id,0),"
-                 "configuration_revision=VALUES(configuration_revision)",
-             std::nullopt},
-            {"INSERT INTO definitions(repository_id,revision,blob_sha,document) VALUES (" + id + "," + revision + "," +
-                 Database::text(definition.blobSha) + "," + document(definition.document) +
-                 ") ON DUPLICATE KEY UPDATE revision=VALUES(revision)",
-             std::nullopt}};
-        reserveNamespace(statements, definition);
-        database.write(statements, [this, callback](const DatabaseResult& result) {
-            if (result.error.empty()) {
-                ++generation;
-            }
-            if (onChanged) {
-                onChanged(result.error.empty());
-            }
-            callback(result);
-        });
+        database.write(
+            [this, name, repository, branch, definition, expectedGeneration]() {
+                const auto id = std::to_string(definition.repositoryId);
+                const auto revision = Database::text(definition.revision);
+                std::vector<DatabaseStatement> statements{
+                    {guard(state.nextRebuildRevision(), expectedGeneration), 1},
+                    {"INSERT INTO repositories(github_id,name,full_name,editing_ref,configuration_revision) VALUES (" + id + "," +
+                         Database::text(name) + "," + Database::text(repository) + "," + Database::text(branch) + "," + revision +
+                         ") ON DUPLICATE KEY UPDATE "
+                         "github_id=IF(name=VALUES(name) AND full_name=VALUES(full_name) AND editing_ref=VALUES(editing_ref),github_id,0),"
+                         "configuration_revision=VALUES(configuration_revision)",
+                     std::nullopt},
+                    {"INSERT INTO definitions(repository_id,revision,blob_sha,document) VALUES (" + id + "," + revision + "," +
+                         Database::text(definition.blobSha) + "," + document(definition.document) +
+                         ") ON DUPLICATE KEY UPDATE revision=VALUES(revision)",
+                     std::nullopt}};
+                reserveNamespace(statements, definition);
+                return statements;
+            },
+            [this, callback](const DatabaseResult& result) {
+                if (result.error.empty()) {
+                    ++generation;
+                }
+                callback(result);
+                if (onChanged) {
+                    onChanged(result.error.empty(), result.error.empty());
+                }
+            });
     }
 
-    void GraphStore::commit(const GraphChange& change, const Database::Callback& callback) {
-        std::string invalid;
-        try {
-            state.validate(change);
-        } catch (const std::exception& error) {
-            invalid = error.what();
-        }
-        if (!invalid.empty()) {
-            callback({{}, invalid, false});
-        } else if (change.nextRevision == state.nextRebuildRevision() && change.definitions.empty() &&
-                   std::all_of(change.nodes.begin(), change.nodes.end(), [&](const auto& node) {
-                       return state.nodes().contains(node.id) && state.node(node.id) == node;
-                   })) {
-            callback({});
-        } else {
-            std::vector<DatabaseStatement> statements{{guard(change.nextRevision, generation), 1}};
-            for (const auto& selected : change.definitions) {
-                const auto id = std::to_string(selected.repositoryId);
-                statements.push_back({"INSERT INTO definitions(repository_id,revision,blob_sha,document) SELECT " + id + "," +
-                                          Database::text(selected.revision) + "," + Database::text(selected.blobSha) + "," +
-                                          document(selected.document) +
-                                          " WHERE NOT EXISTS (SELECT 1 FROM definitions WHERE repository_id=" + id +
-                                          " AND revision=" + Database::text(selected.revision) + ")",
-                                      std::nullopt});
-                reserveNamespace(statements, selected);
-            }
-            for (const auto& node : change.nodes) {
-                if (!state.nodes().contains(node.id)) {
-                    statements.push_back(
-                        {"INSERT INTO executions(id,repository_id,definition_revision,source,target,cause,automatic) VALUES (" +
-                             Database::text(node.id) + "," + std::to_string(node.source.at("repository_id").get<std::uint64_t>()) + "," +
-                             Database::text(node.source.at("definition_revision").get<std::string>()) + "," + document(node.source) + "," +
-                             document(node.target) + "," + document(node.cause) + "," + (node.automatic ? "1" : "0") + ")",
-                         1});
-                }
-            }
-            for (const auto& node : change.nodes) {
-                const auto previous = state.nodes().find(node.id);
-                if (previous == state.nodes().end()) {
-                    for (std::size_t index = 0; index < node.prerequisites.size(); ++index) {
-                        statements.push_back({"INSERT INTO prerequisites(execution_id,prerequisite_id,position) VALUES (" +
-                                                  Database::text(node.id) + "," + Database::text(node.prerequisites[index]) + "," +
-                                                  std::to_string(index) + ")",
-                                              1});
+    void GraphStore::commit(const Derive& derive, const CommitCallback& callback) {
+        const auto prepared = std::make_shared<std::optional<GraphChange>>();
+        database.write(
+            [this, derive, prepared]() {
+                const auto change = derive(state);
+                state.validate(change);
+                std::vector<DatabaseStatement> result;
+                const bool unchanged = change.nextRevision == state.nextRebuildRevision() && change.definitions.empty() &&
+                                       std::all_of(change.nodes.begin(), change.nodes.end(), [&](const auto& node) {
+                                           return state.nodes().contains(node.id) && state.node(node.id) == node;
+                                       });
+                if (!unchanged) {
+                    std::vector<DatabaseStatement> statements{{guard(change.nextRevision, generation), 1}};
+                    for (const auto& selected : change.definitions) {
+                        const auto id = std::to_string(selected.repositoryId);
+                        statements.push_back({"INSERT INTO definitions(repository_id,revision,blob_sha,document) SELECT " + id + "," +
+                                                  Database::text(selected.revision) + "," + Database::text(selected.blobSha) + "," +
+                                                  document(selected.document) +
+                                                  " WHERE NOT EXISTS (SELECT 1 FROM definitions WHERE repository_id=" + id +
+                                                  " AND revision=" + Database::text(selected.revision) + ")",
+                                              std::nullopt});
+                        reserveNamespace(statements, selected);
                     }
-                }
-                if (previous != state.nodes().end() && previous->second.automatic != node.automatic) {
-                    statements.push_back({"UPDATE executions SET automatic=0 WHERE id=" + Database::text(node.id) + " AND automatic=1", 1});
-                }
-                if (!node.supersededBy.empty() && (previous == state.nodes().end() || previous->second.supersededBy != node.supersededBy)) {
-                    statements.push_back({"UPDATE executions SET superseded_by=" + Database::text(node.supersededBy) +
-                                              " WHERE id=" + Database::text(node.id) + " AND superseded_by IS NULL",
-                                          1});
-                }
-                for (const auto& attempt : node.attempts) {
-                    const Attempt* old = nullptr;
-                    if (previous != state.nodes().end()) {
-                        for (const auto& candidate : previous->second.attempts) {
-                            if (candidate.id == attempt.id) {
-                                old = &candidate;
+                    for (const auto& node : change.nodes) {
+                        if (!state.nodes().contains(node.id)) {
+                            statements.push_back(
+                                {"INSERT INTO executions(id,repository_id,definition_revision,source,target,cause,automatic) VALUES (" +
+                                     Database::text(node.id) + "," + std::to_string(node.source.at("repository_id").get<std::uint64_t>()) +
+                                     "," + Database::text(node.source.at("definition_revision").get<std::string>()) + "," +
+                                     document(node.source) + "," + document(node.target) + "," + document(node.cause) + "," +
+                                     (node.automatic ? "1" : "0") + ")",
+                                 1});
+                        }
+                    }
+                    for (const auto& node : change.nodes) {
+                        const auto previous = state.nodes().find(node.id);
+                        if (previous == state.nodes().end()) {
+                            for (std::size_t index = 0; index < node.prerequisites.size(); ++index) {
+                                statements.push_back({"INSERT INTO prerequisites(execution_id,prerequisite_id,position) VALUES (" +
+                                                          Database::text(node.id) + "," + Database::text(node.prerequisites[index]) + "," +
+                                                          std::to_string(index) + ")",
+                                                      1});
+                            }
+                        }
+                        if (previous != state.nodes().end() && previous->second.automatic != node.automatic) {
+                            statements.push_back(
+                                {"UPDATE executions SET automatic=0 WHERE id=" + Database::text(node.id) + " AND automatic=1", 1});
+                        }
+                        if (!node.supersededBy.empty() &&
+                            (previous == state.nodes().end() || previous->second.supersededBy != node.supersededBy)) {
+                            statements.push_back({"UPDATE executions SET superseded_by=" + Database::text(node.supersededBy) +
+                                                      " WHERE id=" + Database::text(node.id) + " AND superseded_by IS NULL",
+                                                  1});
+                        }
+                        for (const auto& attempt : node.attempts) {
+                            const Attempt* old = nullptr;
+                            if (previous != state.nodes().end()) {
+                                for (const auto& candidate : previous->second.attempts) {
+                                    if (candidate.id == attempt.id) {
+                                        old = &candidate;
+                                    }
+                                }
+                            }
+                            if (old == nullptr) {
+                                statements.push_back(
+                                    {"INSERT INTO "
+                                     "attempts(id,execution_id,revision,state,assignment,build_run,build_result,publication_run,"
+                                     "receipt,evidence,failure) VALUES (" +
+                                         Database::text(attempt.id) + "," + Database::text(node.id) + "," +
+                                         std::to_string(attempt.revision) + "," + attemptValues(attempt) + ")",
+                                     1});
+                            } else if (*old != attempt) {
+                                statements.push_back(
+                                    {"UPDATE attempts SET state=" + Database::text(attempt.state) +
+                                         ",assignment=" + document(attempt.assignment) + ",build_run=" + document(attempt.buildRun) +
+                                         ",build_result=" + document(attempt.buildResult) +
+                                         ",publication_run=" + document(attempt.publicationRun) + ",receipt=" + document(attempt.receipt) +
+                                         ",evidence=" + document(attempt.evidence) + ",failure=" + Database::text(attempt.failure) +
+                                         " WHERE id=" + Database::text(attempt.id) + " AND state=" + Database::text(old->state),
+                                     1});
                             }
                         }
                     }
-                    if (old == nullptr) {
-                        statements.push_back({"INSERT INTO "
-                                              "attempts(id,execution_id,revision,state,assignment,build_run,build_result,publication_run,"
-                                              "receipt,evidence,failure) VALUES (" +
-                                                  Database::text(attempt.id) + "," + Database::text(node.id) + "," +
-                                                  std::to_string(attempt.revision) + "," + attemptValues(attempt) + ")",
-                                              1});
-                    } else if (*old != attempt) {
-                        statements.push_back(
-                            {"UPDATE attempts SET state=" + Database::text(attempt.state) + ",assignment=" + document(attempt.assignment) +
-                                 ",build_run=" + document(attempt.buildRun) + ",build_result=" + document(attempt.buildResult) +
-                                 ",publication_run=" + document(attempt.publicationRun) + ",receipt=" + document(attempt.receipt) +
-                                 ",evidence=" + document(attempt.evidence) + ",failure=" + Database::text(attempt.failure) +
-                                 " WHERE id=" + Database::text(attempt.id) + " AND state=" + Database::text(old->state),
-                             1});
-                    }
+                    *prepared = change;
+                    result = std::move(statements);
                 }
-            }
-            database.write(statements, [this, change, callback](const DatabaseResult& result) {
-                if (result.error.empty()) {
-                    state.apply(change);
+                return result;
+            },
+            [this, prepared, callback](const DatabaseResult& result) {
+                const bool changed = result.error.empty() && prepared->has_value();
+                if (changed) {
+                    state.apply(**prepared);
                     ++generation;
                 }
-                if (onChanged) {
-                    onChanged(result.error.empty());
+                callback(result, changed ? &**prepared : nullptr);
+                if (onChanged && (changed || (!result.error.empty() && !result.preparationFailed))) {
+                    onChanged(changed, false);
                 }
-                callback(result);
             });
-        }
     }
 
     nlohmann::json GraphStore::view() const {

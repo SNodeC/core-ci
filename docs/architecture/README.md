@@ -81,9 +81,15 @@ sequenceDiagram
 ```
 
 Requests and transaction contexts are retained by callback-owned objects while asynchronous
-operations are outstanding. The controller's HTTP helper serializes its operations in memory;
-the database wrapper serializes complete transactions on its connection. These transient
-ownership FIFOs are not a persisted queue of ready graph work. Later database commands use
+operations are outstanding. The HTTP helper overlaps up to eight operations for the current
+origin, retaining each request until its transport closes. An origin change waits for active
+transports to drain. Independent enrolled-source reads share this bounded transport capacity;
+selection waits for all required results and reports failures in enrollment order.
+The database wrapper serializes complete transactions on its connection. A graph mutation is
+derived only at the front of that existing FIFO, against already applied state. Commit success
+applies the graph and advances its generation before releasing the FIFO; its execution
+continuation runs before derivative status/SSE notification. No transaction waits for HTTP.
+These transient ownership FIFOs are not a persisted queue of ready graph work. Later database commands use
 SNode.C's lazy connection establishment after the connection disappears. They do not replay
 an operation whose mutation outcome is unknown.
 
@@ -265,9 +271,11 @@ REST input payload are bounded before a transition commits; publication includes
 It does not consume a writer slot or stop unrelated nodes advancing. Assignments are limited
 to 60,000 bytes and full serialized dispatch inputs to 65,535 bytes.
 
-Publication is serialized per feed repository ID and branch in the graph. GitHub's publication
-workflow concurrency group adds a worker-side serialization boundary. Neither is a replacement
-for a checked normal Git update.
+The graph admits up to eight publication assignments per feed repository ID and branch.
+Uncertain assignments retain their slots and cannot satisfy dependents, while independent work
+may proceed within capacity. GitHub serializes only the actual feed-mutating publication job
+and status writer in one shared concurrency group. Artifact validation and public HTTPS
+confirmation run outside that group. The normal checked Git update remains required.
 
 ## 7. Dispatching a build and recording evidence
 
@@ -322,6 +330,7 @@ sequenceDiagram
     participant V as Unprivileged validator
     participant P as Trusted publication job
     participant F as Feed Git repository
+    participant Q as Secret-free confirmation job
     participant H as Public HTTPS host
     C->>DB: Commit building to publishing
     C->>V: Dispatch approved publication workflow
@@ -332,8 +341,9 @@ sequenceDiagram
     P->>P: Check receipt, render status, verify staged bytes and commit
     P->>P: Mint feed-only token in push step
     P->>F: Normal checked push
-    P->>H: Confirm expected public bytes
-    P-->>C: Signed workflow completion notification
+    P-->>Q: Mandatory receipt SHA-256 and local commit SHA
+    Q->>H: Confirm exact expected receipt bytes
+    Q-->>C: GitHub-authenticated run completion notification
     C->>F: Verify recorded feed revision and receipt provenance
     C->>H: Verify receipt and package/export identities
     C->>DB: Commit published

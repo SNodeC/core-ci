@@ -2,6 +2,8 @@
 
 import argparse
 import copy
+import hashlib
+import io
 from pathlib import Path
 import shutil
 import sys
@@ -626,6 +628,85 @@ def main():
             rejected = True
         assert rejected and not commit.called and not push.called and not token.called
     assert not list(directory.glob("core-ci-secrets-*")), "temporary key material survived preparation failure"
+
+    # Public outputs bind the already prepared bytes and local commit, before any push.
+    receipt_file = writer / publish.receipt_path(prepared)
+    receipt_file.parent.mkdir(parents=True)
+    receipt_file.write_text(contract.canonical(empty_receipt))
+    output_file = directory / "public-outputs"
+    with patch.object(sys, "argv", argv), patch.dict(os.environ, {
+        "EXECUTION": prepared["execution"], "ATTEMPT": prepared["attempt"],
+        "RUNNER_TEMP": str(directory), "APT_SIGNING_KEY": "synthetic-test-material",
+        "GITHUB_OUTPUT": str(output_file),
+    }), patch.object(publish, "assignment", return_value=prepared), patch.object(
+        publish, "trusted_deployment"
+    ), patch.object(publish, "run_identity", return_value={}), patch.object(
+        publish, "read_json", return_value={}
+    ), patch.object(publish, "update", return_value=empty_receipt), patch.object(
+        publish, "retained_receipt", return_value=empty_receipt
+    ), patch.object(publish, "render", return_value=[]), patch.object(
+        publish, "prepare_commit"
+    ) as commit, patch.object(publish, "checked_push") as push, patch.object(publish, "writer_token") as token:
+        publish.main()
+        assert commit.called and not push.called and not token.called
+    public_outputs = dict(line.split("=", 1) for line in output_file.read_text().splitlines())
+    assert public_outputs == {"receipt-sha256": contract.file_hash(receipt_file),
+                              "feed-revision": contract.output(["git", "-C", str(writer), "rev-parse", "HEAD"])}
+    # Confirmation consumes only public outputs and cannot reach privileged preparation.
+    prepared["source"]["deployment"]["feed"]["base_url"] = "https://feed.example/packages"
+    expected_bytes = b'{"assigned":"receipt"}'
+    expected_hash = hashlib.sha256(expected_bytes).hexdigest()
+    confirmation = ["publish.py", "--phase", "confirm", "--assignment", "assigned.json",
+                    "--assignment-sha256", "fixture", "--receipt-sha256", expected_hash,
+                    "--feed-revision", "a" * 40]
+    with patch.object(sys, "argv", confirmation), patch.dict(
+        os.environ, {"EXECUTION": prepared["execution"], "ATTEMPT": prepared["attempt"]}
+    ), patch.object(publish, "assignment", return_value=prepared), patch.object(
+        publish, "trusted_deployment"
+    ), patch.object(publish, "wait_for_https") as https, patch.object(
+        publish, "run_identity", side_effect=AssertionError("publisher identity in secret-free confirm")
+    ), patch.object(publish, "writer_token", side_effect=AssertionError("token in confirm")), patch.object(
+        publish, "update", side_effect=AssertionError("signing in confirm")
+    ), patch.object(publish, "checked_push", side_effect=AssertionError("push in confirm")):
+        publish.main()
+        https.assert_called_once_with(prepared, expected_hash)
+        https.reset_mock()
+        confirmation[-1] = "invalid"
+        rejected = False
+        try:
+            publish.main()
+        except ValueError:
+            rejected = True
+        assert rejected and not https.called, "invalid public output reached confirmation"
+    url = prepared["source"]["deployment"]["feed"]["base_url"] + "/" + publish.receipt_path(prepared)
+    replies = []
+    for body, origin in ((b"modified", url), (expected_bytes, "https://other.example/receipt"), (expected_bytes, url)):
+        response = io.BytesIO(body)
+        response.url = origin
+        replies.append(response)
+    with patch.object(publish.urllib.request, "urlopen", side_effect=replies) as reads, patch.object(
+        publish.time, "sleep"
+    ) as sleeps:
+        publish.wait_for_https(prepared, expected_hash)
+        assert reads.call_count == 3 and sleeps.call_count == 2, "hash/origin mismatch was accepted"
+    import validate
+    with patch.dict(os.environ, {"CONTROLLER_APP_BOT_ID": "42", "GITHUB_ACTOR_ID": "42",
+                                 "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "2"}):
+        rejected = False
+        try:
+            validate.trusted_deployment(prepared)
+        except ValueError as error:
+            rejected = "unsupported publication invocation" in str(error)
+        assert rejected, "re-run confirmation escaped executing-attempt rejection"
+    publish_section = publication_workflow.split("  publish:\n", 1)[1].split("  confirm:\n", 1)[0]
+    confirm_section = publication_workflow.split("  confirm:\n", 1)[1]
+    assert "concurrency:" not in publication_workflow.split("jobs:\n", 1)[0]
+    assert "group: core-ci-feed-" in publish_section and "group: core-ci-feed-" in status_workflow
+    assert "needs: publish" in confirm_section and "environment:" not in confirm_section
+    assert "secrets." not in confirm_section and "always()" not in confirm_section
+    assert "--phase confirm" in confirm_section and "--receipt-sha256" in confirm_section
+    assert 'CORE_CI_TOOLING_SHA: "@TOOLING_SHA@"' in publication_workflow
+    assert 'CORE_CI_TOOLING_SHA: "@TOOLING_SHA@"' in status_workflow
     shutil.rmtree(writer)
     shutil.rmtree(remote)
     print("Real local Git: checked update accepted, ignored package and stale publication rejected")

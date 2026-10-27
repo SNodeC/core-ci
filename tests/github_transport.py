@@ -37,6 +37,9 @@ def exercise(args, directory):
     tls_key.chmod(0o600)
     errors = []
     seen = []
+    active = 0
+    peak = 0
+    lock = threading.Lock()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, format, *values):
@@ -87,24 +90,36 @@ def exercise(args, directory):
                 self.send_json(400, {"message": "fixture rejected request"})
 
         def do_GET(self):
+            nonlocal active, peak
             seen.append("repository")
             selected = "Other/feed" if public_mode else "Owner/example"
-            if self.path != "/repos/" + selected or self.headers.get("Authorization") != "Bearer unit-test-only-token":
+            probe = int(self.path.rsplit("/", 1)[1]) if args.case == "parallel" else None
+            expected_path = "/repos/" + selected + ("/probe/" + str(probe) if probe is not None else "")
+            if self.path != expected_path or self.headers.get("Authorization") != "Bearer unit-test-only-token":
                 errors.append("unexpected repository request")
             if args.case == "token-reuse" and seen.count("repository") == 2:
                 time.sleep(2.1)
+            if probe is not None:
+                with lock:
+                    active += 1
+                    peak = max(peak, active)
+                time.sleep(0.2 if probe == 0 else 0.04)
             if args.case == "lost-response":
                 self.close_connection = True
             else:
-                self.send_json(200, {"full_name": selected, "id": 1001 if public_mode else 99})
+                self.send_json(200, {"full_name": selected, "id": 1001 if public_mode else 99, "probe": probe})
+            if probe is not None:
+                with lock:
+                    active -= 1
 
-    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    server_type = http.server.ThreadingHTTPServer if args.case == "parallel" else http.server.HTTPServer
+    server = server_type(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, tls_key)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    expected = "200" if args.case in ("success", "token-reuse") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
+    expected = "200" if args.case in ("success", "token-reuse", "parallel") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
     command = [args.executable, "--config-file", str(config), "--log-file", str(root / "framework.log"), "github", "--app-id", "42", "--installation-id", "7", "--private-key-file", str(app_key), "--allowed-owner", "Owner", "--repository", "Owner/example=99", "github-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port)]
     if args.case != "wrong-ca":
         command += ["tls", "--ca-cert", str(certificate)]
@@ -112,9 +127,11 @@ def exercise(args, directory):
     environment["CORE_CI_TEST_EXPECTED_STATUS"] = expected
     if args.case == "mutation-lost-response":
         environment["CORE_CI_TEST_METHOD"] = "POST"
+    if args.case == "parallel":
+        environment["CORE_CI_TEST_PARALLEL"] = "1"
     if args.case == "token-reuse":
         environment["CORE_CI_TEST_REUSE"] = "1"
-    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse") else "0"
+    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse", "parallel") else "0"
     try:
         result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -124,6 +141,10 @@ def exercise(args, directory):
             assert seen == [], "authorization was sent before TLS identity was verified"
         elif args.case in ("token-rejected", "token-lost-response", "expired-token"):
             assert seen == ["token"], "a failed token request reached the repository operation"
+        elif args.case == "parallel":
+            assert seen.count("token") == 1 and seen.count("repository") == 12, seen
+            assert 2 <= peak <= 8, peak
+            print("Synthetic concurrent HTTP peak:", peak)
         elif args.case == "token-reuse":
             assert seen.count("token") == 3 and seen.count("repository") == 4, seen
             assert seen[:3] == ["token", "repository", "repository"], "cold concurrent reads minted twice"

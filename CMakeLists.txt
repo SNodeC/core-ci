@@ -183,6 +183,7 @@ if(BUILD_TESTING)
         token-rejected
         token-lost-response
         token-reuse
+        parallel
         expired-token
         mutation-lost-response
     )

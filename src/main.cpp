@@ -155,16 +155,18 @@ int main(int argc, char* argv[]) {
                                 res->type("application/json").send(graphStore->view().dump());
                             });
 
-                            graphStore->onChanged = [&](bool committed) {
+                            graphStore->onChanged = [&](bool committed, bool repositoriesChanged) {
                                 if (committed) {
                                     pipeline->refreshStatus();
                                 }
                                 const auto receivers = eventReceivers;
-                                const auto graph = graphStore->view();
-                                for (const auto& response : receivers) {
-                                    sendEvent(response, "graph", graph);
-                                }
                                 if (!receivers.empty()) {
+                                    const auto graph = graphStore->view();
+                                    for (const auto& response : receivers) {
+                                        sendEvent(response, "graph", graph);
+                                    }
+                                }
+                                if (repositoriesChanged && !receivers.empty()) {
                                     enrollment->list([receivers, sendEvent](const coreci::EnrollmentResult& result) {
                                         for (const auto& response : receivers) {
                                             sendEvent(response, result.status == 200 ? "repositories" : "unavailable", result.body);
@@ -334,7 +336,7 @@ int main(int argc, char* argv[]) {
             });
 
         store = std::make_unique<coreci::Database>(*database);
-        graphStore = std::make_unique<coreci::GraphStore>(*store);
+        graphStore = std::make_unique<coreci::GraphStore>(*store, pipelineConfig->publicationLimit);
         enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources, *pipelineConfig);
         pipeline = std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, *enrollment, *graphStore, feeds);
 

@@ -2,7 +2,9 @@
 
 import argparse
 import base64
+import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -143,9 +145,9 @@ def checked_push(feed, branch, token):
     return revision
 
 
-def wait_for_https(selected, feed):
+def wait_for_https(selected, expected):
     path = receipt_path(selected)
-    expected = (Path(feed) / path).read_bytes()
+    require(re.fullmatch(r"[a-f0-9]{64}", expected) is not None, "invalid prepared receipt hash")
     url = selected["source"]["deployment"]["feed"]["base_url"].rstrip("/") + "/" + path
     verified = False
     deadline = time.monotonic() + 600
@@ -153,9 +155,11 @@ def wait_for_https(selected, feed):
         try:
             request = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
             with urllib.request.urlopen(request, timeout=30) as response:
+                content = response.read(2 * 1024 * 1024 + 1)
                 verified = (
-                    response.url.startswith(selected["source"]["deployment"]["feed"]["base_url"].rstrip("/") + "/")
-                    and response.read(2 * 1024 * 1024) == expected
+                    len(content) <= 2 * 1024 * 1024
+                    and response.url.startswith(selected["source"]["deployment"]["feed"]["base_url"].rstrip("/") + "/")
+                    and hashlib.sha256(content).hexdigest() == expected
                 )
         except OSError:
             verified = False
@@ -168,12 +172,14 @@ def wait_for_https(selected, feed):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("prepare", "push"), required=True)
+    parser.add_argument("--phase", choices=("prepare", "push", "confirm"), required=True)
     parser.add_argument("--assignment", required=True)
     parser.add_argument("--assignment-sha256", required=True)
-    parser.add_argument("--build-result", required=True)
-    parser.add_argument("--artifacts", required=True)
-    parser.add_argument("--feed", required=True)
+    parser.add_argument("--build-result", default="")
+    parser.add_argument("--artifacts", default="")
+    parser.add_argument("--feed", default="")
+    parser.add_argument("--receipt-sha256", default="")
+    parser.add_argument("--feed-revision", default="")
     arguments = parser.parse_args()
     os.umask(0o077)
     selected = assignment(arguments.assignment, arguments.assignment_sha256)
@@ -182,86 +188,94 @@ def main():
         selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"],
         "publication identity mismatch",
     )
-    feed = Path(arguments.feed).resolve()
-    package_format = selected["target"]["build"]["format"]
-    secret_name, public_name = {
-        "deb": ("APT_SIGNING_KEY", "apt.asc"),
-        "rpm": ("APT_SIGNING_KEY", "apt.asc"),
-        "ipk": ("OPENWRT_USIGN_KEY", "opkg.pub"),
-        "apk": ("OPENWRT_APK_KEY", "core-ci-apk.pem"),
-    }[package_format]
-    identity = run_identity(selected)
-    with tempfile.TemporaryDirectory(prefix="core-ci-secrets-", dir=os.environ["RUNNER_TEMP"]) as temporary:
-        root = Path(temporary)
-        root.chmod(0o700)
-        keys = {}
-        for name in (secret_name,) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
-            value = os.environ.pop(name, "")
-            require(bool(value), "missing protected publication secret: " + name)
-            path = root / name
-            path.write_text(value)
-            path.chmod(0o600)
-            keys[name] = path
-        passphrase = None
-        value = os.environ.pop("PACKAGES_GPG_PASSPHRASE", "")
-        if value and arguments.phase == "prepare" and package_format in ("deb", "rpm"):
-            passphrase = root / "passphrase"
-            passphrase.write_text(value)
-            passphrase.chmod(0o600)
-        if arguments.phase == "prepare":
-            public_key = Path(__file__).resolve().parents[1] / "keys" / public_name
-            if package_format in ("ipk", "apk"):
-                from sign_openwrt import update as update_openwrt
-
-                receipt = update_openwrt(
-                    selected,
-                    read_json(arguments.build_result),
-                    identity,
-                    arguments.artifacts,
-                    feed,
-                    keys[secret_name],
-                    public_key,
-                    root,
-                )
-            else:
-                receipt = update(
-                    selected,
-                    read_json(arguments.build_result),
-                    identity,
-                    arguments.artifacts,
-                    feed,
-                    keys[secret_name],
-                    passphrase,
-                    public_key,
-                    root,
-                )
-            receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
-            require(receipt is not None, "publication requires the prepared verified receipt")
-            paths = [receipt_path(selected), "keys/" + public_name] + [
-                item["path"] for item in receipt["packages"] + receipt["indexes"]
-            ]
-            if receipt.get("development_export"):
-                paths.append(receipt["development_export"]["path"])
-        else:
-            token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected["source"]["deployment"]["feed"])
-            revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
-    if arguments.phase == "push":
-        wait_for_https(selected, feed)
-        print("Verified feed revision:", revision)
+    if arguments.phase == "confirm":
+        require(re.fullmatch(r"[a-f0-9]{40}", arguments.feed_revision) is not None, "invalid prepared feed revision")
+        wait_for_https(selected, arguments.receipt_sha256)
+        print("Verified public receipt for prepared revision:", arguments.feed_revision)
     else:
-        paths += render(feed)
-        # GitHub Pages has a 1 GB site limit. Retain versions and leave headroom.
-        require(
-            sum(
-                path.stat().st_size
-                for path in feed.rglob("*")
-                if path.is_file() and ".git" not in path.relative_to(feed).parts
+        feed = Path(arguments.feed).resolve()
+        package_format = selected["target"]["build"]["format"]
+        secret_name, public_name = {
+            "deb": ("APT_SIGNING_KEY", "apt.asc"),
+            "rpm": ("APT_SIGNING_KEY", "apt.asc"),
+            "ipk": ("OPENWRT_USIGN_KEY", "opkg.pub"),
+            "apk": ("OPENWRT_APK_KEY", "core-ci-apk.pem"),
+        }[package_format]
+        identity = run_identity(selected)
+        with tempfile.TemporaryDirectory(prefix="core-ci-secrets-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            keys = {}
+            for name in (secret_name,) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
+                value = os.environ.pop(name, "")
+                require(bool(value), "missing protected publication secret: " + name)
+                path = root / name
+                path.write_text(value)
+                path.chmod(0o600)
+                keys[name] = path
+            passphrase = None
+            value = os.environ.pop("PACKAGES_GPG_PASSPHRASE", "")
+            if value and arguments.phase == "prepare" and package_format in ("deb", "rpm"):
+                passphrase = root / "passphrase"
+                passphrase.write_text(value)
+                passphrase.chmod(0o600)
+            if arguments.phase == "prepare":
+                public_key = Path(__file__).resolve().parents[1] / "keys" / public_name
+                if package_format in ("ipk", "apk"):
+                    from sign_openwrt import update as update_openwrt
+
+                    receipt = update_openwrt(
+                        selected,
+                        read_json(arguments.build_result),
+                        identity,
+                        arguments.artifacts,
+                        feed,
+                        keys[secret_name],
+                        public_key,
+                        root,
+                    )
+                else:
+                    receipt = update(
+                        selected,
+                        read_json(arguments.build_result),
+                        identity,
+                        arguments.artifacts,
+                        feed,
+                        keys[secret_name],
+                        passphrase,
+                        public_key,
+                        root,
+                    )
+                receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
+                require(receipt is not None, "publication requires the prepared verified receipt")
+                paths = [receipt_path(selected), "keys/" + public_name] + [
+                    item["path"] for item in receipt["packages"] + receipt["indexes"]
+                ]
+                if receipt.get("development_export"):
+                    paths.append(receipt["development_export"]["path"])
+            else:
+                token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected["source"]["deployment"]["feed"])
+                revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
+        if arguments.phase == "push":
+            print("Pushed checked feed revision:", revision)
+        else:
+            paths += render(feed)
+            # GitHub Pages has a 1 GB site limit. Retain versions and leave headroom.
+            require(
+                sum(
+                    path.stat().st_size
+                    for path in feed.rglob("*")
+                    if path.is_file() and ".git" not in path.relative_to(feed).parts
+                )
+                < 900 * 1024 * 1024,
+                "new packages would exceed reviewed Pages capacity",
             )
-            < 900 * 1024 * 1024,
-            "new packages would exceed reviewed Pages capacity",
-        )
-        prepare_commit(feed, paths)
-        print("Prepared and locally verified publication; no feed mutation requested")
+            prepare_commit(feed, paths)
+            receipt_hash = hashlib.sha256((feed / receipt_path(selected)).read_bytes()).hexdigest()
+            revision = output(["git", "-C", str(feed), "rev-parse", "HEAD"])
+            with open(os.environ["GITHUB_OUTPUT"], "a") as outputs:
+                outputs.write("receipt-sha256=" + receipt_hash + "\nfeed-revision=" + revision + "\n")
+            print("Prepared and locally verified publication; no feed mutation requested")
 
 
 if __name__ == "__main__":

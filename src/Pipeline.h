@@ -45,7 +45,8 @@ namespace coreci {
             bool automatic = false;
             std::uint64_t generation = 0;
             std::vector<nlohmann::json> repositories;
-            std::size_t index = 0;
+            std::size_t remaining = 0;
+            std::vector<SourceResult> results;
             std::map<std::string, nlohmann::json> sources;
             Callback callback;
         };
@@ -86,7 +87,7 @@ namespace coreci {
                     const Callback& callback);
         void buildArtifacts(const Node& node, const nlohmann::json& job, const Callback& callback);
         void publicationResult(const Node& node, const nlohmann::json& evidence, const Callback& callback);
-        void change(const Node& node, const Callback& callback);
+        void change(const std::function<Node(const Graph&)>& derive, const Callback& callback);
         static bool matchesJob(const Attempt& attempt, bool publication, const nlohmann::json& job);
         static std::string title(const Attempt& attempt, bool publication, bool job = false);
 

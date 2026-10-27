@@ -14,7 +14,9 @@ int main(int argc, char* argv[]) {
 
     int calls = 0;
     const bool reuse = std::getenv("CORE_CI_TEST_REUSE") != nullptr;
-    const int expectedCalls = reuse ? 4 : 1;
+    const bool parallel = std::getenv("CORE_CI_TEST_PARALLEL") != nullptr;
+    const int expectedCalls = parallel ? 12 : (reuse ? 4 : 1);
+    bool correlated = true;
     std::function<void(const coreci::GitHubResult&)> completed;
     int status = -1;
     bool submitted = false;
@@ -44,6 +46,18 @@ int main(int argc, char* argv[]) {
         };
         if (std::getenv("CORE_CI_TEST_PUBLIC_READ") != nullptr) {
             github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, completed, true);
+        } else if (parallel) {
+            for (int index = 0; index < expectedCalls; ++index) {
+                github.request(repository,
+                               "GET",
+                               "/probe/" + std::to_string(index),
+                               nullptr,
+                               {{"contents", "read"}},
+                               [&, index](const coreci::GitHubResult& result) {
+                                   correlated = correlated && result.body.value("probe", -1) == index;
+                                   completed(result);
+                               });
+            }
         } else if (reuse) {
             github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, completed);
             github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, completed);
@@ -58,7 +72,7 @@ int main(int argc, char* argv[]) {
     const int loopStatus = core::SNodeC::start();
     const char* submittedSetting = std::getenv("CORE_CI_TEST_EXPECTED_SUBMISSION");
     const bool expectedSubmission = submittedSetting == nullptr || std::string(submittedSetting) == "1";
-    if (submitted != expectedSubmission) {
+    if (submitted != expectedSubmission || !correlated) {
         status = -3;
     }
     if (calls != expectedCalls || status != expected) {
