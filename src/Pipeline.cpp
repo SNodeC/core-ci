@@ -438,15 +438,11 @@ namespace coreci {
         workflow(
             repository, definition, [this, node, attempt, publication, repository, definition, callback](const SourceResult& approved) {
                 if (approved.status != 200) {
-                    try {
-                        change(
-                            [=](const Graph& graph) {
-                                return graph.rejectedDispatch(node.id, attempt.id, publication, 0, false, approved.error);
-                            },
-                            callback);
-                    } catch (const std::exception& error) {
-                        callback({409, {{"error", error.what()}}});
-                    }
+                    change(
+                        [=](const Graph& graph) {
+                            return graph.rejectedDispatch(node.id, attempt.id, publication, 0, false, approved.error);
+                        },
+                        callback);
                 } else {
                     const auto inputs = store.graph().dispatchInputs(node, publication);
                     const auto filename = definition.at("path").get<std::string>().substr(std::string(".github/workflows/").size());
@@ -458,19 +454,15 @@ namespace coreci {
                         {{"actions", "write"}},
                         [this, node, attempt, publication, callback](const GitHubResult& result) {
                             if (!result.submitted || (result.status >= 400 && result.status < 500 && result.status != 408)) {
-                                try {
-                                    const auto reason = result.error.empty()
-                                                            ? "GitHub rejected dispatch (HTTP " + std::to_string(result.status) + ")"
-                                                            : result.error;
-                                    change(
-                                        [=](const Graph& graph) {
-                                            return graph.rejectedDispatch(
-                                                node.id, attempt.id, publication, result.status, result.submitted, reason);
-                                        },
-                                        callback);
-                                } catch (const std::exception& error) {
-                                    callback({409, {{"error", error.what()}}});
-                                }
+                                const auto reason = result.error.empty()
+                                                        ? "GitHub rejected dispatch (HTTP " + std::to_string(result.status) + ")"
+                                                        : result.error;
+                                change(
+                                    [=](const Graph& graph) {
+                                        return graph.rejectedDispatch(
+                                            node.id, attempt.id, publication, result.status, result.submitted, reason);
+                                    },
+                                    callback);
                             } else if (result.status == 200 && result.error.empty() && result.body.contains("workflow_run_id") &&
                                        result.body.at("workflow_run_id").is_number_unsigned()) {
                                 inspect(node.id, attempt.id, publication, result.body.at("workflow_run_id").get<std::uint64_t>(), callback);
@@ -640,8 +632,10 @@ namespace coreci {
             },
             [this, execution, attemptId, publication, callback, recovery, readJobs](const DatabaseResult& result,
                                                                                     const GraphChange* change) {
-                if (!result.error.empty()) {
-                    callback({result.preparationFailed ? 409 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+                if (result.preparationFailed) {
+                    callback({409, {{"error", result.error}, {"assignment_preserved", true}, {"uncertain", result.uncertain}}});
+                } else if (!result.error.empty()) {
+                    callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
                 } else if (change == nullptr && !recovery) {
                     callback({200, {{"execution", execution}, {"report", "unchanged"}}});
                 } else {
@@ -753,7 +747,8 @@ namespace coreci {
                                 [=](const Graph& graph) {
                                     return graph.failed(node.id, attempt.id, "required artifacts missing/expired");
                                 },
-                                callback);
+                                callback,
+                                {503, {{"execution", node.id}, {"assignment_preserved", true}}});
                         } else {
                             static const std::regex digest(R"(^sha256:[a-f0-9]{64}$)");
                             require(artifact.at("id").get<std::uint64_t>() > 0 && artifact.at("workflow_run").at("id") == runId &&
@@ -783,7 +778,8 @@ namespace coreci {
                                     } else {
                                         callback(stored);
                                     }
-                                });
+                                },
+                                {503, {{"execution", node.id}, {"assignment_preserved", true}}});
                         }
                     } catch (const std::exception& error) {
                         callback({503, {{"error", error.what()}, {"execution", node.id}, {"assignment_preserved", true}}});
@@ -815,7 +811,8 @@ namespace coreci {
                             [=](const Graph& graph) {
                                 return graph.published(node.id, attemptId, result.receipt);
                             },
-                            callback);
+                            callback,
+                            {409, {{"assignment_preserved", true}}});
                     } else {
                         callback({202,
                                   {{"execution", node.id},
@@ -915,14 +912,20 @@ namespace coreci {
         }
     }
 
-    void Pipeline::change(const std::function<Node(const Graph&)>& derive, const Callback& callback) {
+    void
+    Pipeline::change(const std::function<Node(const Graph&)>& derive, const Callback& callback, const PipelineResult& preparationFailure) {
         store.commit(
             [derive](const Graph& graph) {
                 return GraphChange{{derive(graph)}, graph.nextRebuildRevision(), {}};
             },
-            [this, callback](const DatabaseResult& result, const GraphChange* change) {
-                if (!result.error.empty()) {
-                    callback({result.preparationFailed ? 409 : 503, {{"error", result.error}, {"uncertain", result.uncertain}}});
+            [this, callback, preparationFailure](const DatabaseResult& result, const GraphChange* change) {
+                if (result.preparationFailed) {
+                    auto response = preparationFailure;
+                    response.body["error"] = result.error;
+                    response.body["uncertain"] = result.uncertain;
+                    callback(response);
+                } else if (!result.error.empty()) {
+                    callback({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
                 } else if (change == nullptr) {
                     callback({200, {{"report", "unchanged"}}});
                 } else {

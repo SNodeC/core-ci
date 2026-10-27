@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 import pwd
 import ssl
+import socket
+import signal
 import subprocess
 import tempfile
 import time
@@ -56,6 +58,13 @@ def exercise(args, directory):
     build_status_reads = []
     request_trace = []
     probe_delay = 0
+    approval_gate = None
+    approval_started = threading.Event()
+    response_gate = None
+    artifact_gate = None
+    artifact_started = threading.Event()
+    response_started = threading.Event()
+    response_done = threading.Event()
     trees = {}
     blobs = {}
     writes = 0
@@ -108,6 +117,13 @@ def exercise(args, directory):
             pass
 
         def reply(self, status, body):
+            if artifact_gate is not None and "/actions/runs/108/artifacts" in self.path:
+                artifact_started.set()
+                assert artifact_gate.wait(10), "artifact result was not released"
+            held = response_gate is not None and "/actions/runs/108/attempts/1" in self.path
+            if held:
+                response_started.set()
+                assert response_gate.wait(10), "response stall was not released"
             time.sleep(probe_delay)
             content = json.dumps(body).encode()
             self.send_response(status)
@@ -115,7 +131,13 @@ def exercise(args, directory):
             self.send_header("Content-Type", "application/json")
             self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(content)
+            try:
+                self.wfile.write(content)
+            except ConnectionError:
+                if not held:
+                    raise
+            if held:
+                response_done.set()
             self.close_connection = True
 
         def do_POST(self):
@@ -251,6 +273,9 @@ def exercise(args, directory):
                 elif suffix == "/git/ref/heads/main":
                     self.reply(200, {"object": {"sha": head}})
                 elif suffix == "/commits/main":
+                    if prefix.endswith("worker") and approval_gate is not None:
+                        approval_started.set()
+                        assert approval_gate.wait(10), "approval stall was not released"
                     self.reply(200, {"sha": head, "commit": {"tree": {"sha": hashlib.sha1(("root" + head).encode()).hexdigest()}}})
                 elif suffix == "/tags":
                     self.reply(200, [{"name": "v0.9.0+build"}, {"name": "v2.0.0-rc.1"}])
@@ -312,7 +337,7 @@ def exercise(args, directory):
                     errors.append("unexpected GitHub query " + suffix)
                     self.reply(404, {})
 
-    github = http.server.HTTPServer(("127.0.0.1", 0), GitHub)
+    github = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHub)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, tls_key)
     github.socket = context.wrap_socket(github.socket, server_side=True)
@@ -386,14 +411,14 @@ def exercise(args, directory):
             result = (completed["status"], completed["result"])
         return result
 
-    def start():
+    def start(reconciled=True):
         offset = (root / "app.log").stat().st_size
         process = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
         lifecycle.wait_http(port, process)
         deadline = time.monotonic() + 5
-        while "Startup graph reconciliation: " not in (root / "app.log").read_bytes()[offset:].decode() and time.monotonic() < deadline:
+        while reconciled and "Startup graph reconciliation: " not in (root / "app.log").read_bytes()[offset:].decode() and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert "Startup graph reconciliation: " in (root / "app.log").read_bytes()[offset:].decode(), "restart reconciliation did not finish"
+        assert not reconciled or "Startup graph reconciliation: " in (root / "app.log").read_bytes()[offset:].decode(), "restart reconciliation did not finish"
         return process
 
     database = None
@@ -636,8 +661,19 @@ def exercise(args, directory):
             assert {key: current["build_job"][key] for key in timing} == timing, "UI timing is not the assigned attempt-1 package job evidence"
             assert publications[0]["build_result"]["build_job"] == timing
             assert current["revision"] == dispatches[2]["revision"] and len(dispatches) == 3
+            lifecycle.stop(application)
+            original_capacity = settings.read_text()
+            settings.write_text(original_capacity + 'pipeline.publication-limit=1\n')
+            application = start()
             runs[100].update(status="completed", conclusion="success")
-            assert report(100)[0] == 202 and len(publications) == 2, "independent publication was blocked by another assignment"
+            limited = report(100)
+            assert limited[0] == 200 and len(publications) == 1, limited
+            pending = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == dispatches[0]["execution"])
+            assert any("capacity" in reason for reason in pending["blockers"])
+            lifecycle.stop(application)
+            settings.write_text(original_capacity)
+            application = start()
+            assert report(100)[0] == 200 and len(publications) == 2, "independent publication was blocked by another assignment"
             event, pushed = lifecycle.stream_event(stream)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline and (event != "graph" or not any(row["id"] == older["execution"] and row["revision"] == current["revision"]
@@ -688,6 +724,19 @@ def exercise(args, directory):
             assert request("/api/work/reconcile", {})[0] == 200
             unverified = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
             assert unverified["state"] == "publishing" and unverified["receipt"] is None
+            # Disabled HTTPS proof must release completionReads, preserving the same assignment.
+            lifecycle.stop(application)
+            normal_settings = settings.read_text()
+            settings.write_text(normal_settings + "\nfeed-http.disabled=true\n")
+            application = start()
+            for _ in range(2):
+                disabled = request("/api/work/reconcile", {})
+                assert disabled[0] == 200 and any("HTTPS receipt does not match committed feed bytes" in result.get("error", "") for result in disabled[1]["reconciled"]), disabled
+                retained = next(row for row in request("/api/graph")[1]["executions"] if row["id"] == older["execution"])
+                assert retained["state"] == "publishing" and retained["publication_run"] == public_run
+            lifecycle.stop(application)
+            settings.write_text(normal_settings)
+            application = start()
             deployed_files["/" + path] = raw
             verified_after = time.time()
             offset = len(request_trace)
@@ -768,7 +817,9 @@ def exercise(args, directory):
             runs[107].update(status="completed", conclusion="success")
             for unavailable_artifacts in (403, 200):
                 if unavailable_artifacts == 403:
-                    assert report(107)[0] == 503
+                    unavailable = report(107)
+                    assert unavailable[0] == 503 and unavailable[1]["execution"] == dispatches[7]["execution"]
+                    assert unavailable[1]["assignment_preserved"] is True
                 else:
                     reconciled = request("/api/work/reconcile", {})[1]
                     assert any(item.get("assignment_preserved") and "artifacts" in item.get("error", "") for item in reconciled["reconciled"])
@@ -795,6 +846,170 @@ def exercise(args, directory):
             while status_refreshes[-1] != request("/api/graph")[1]["generation"] and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert status_refreshes[-1] == request("/api/graph")[1]["generation"], "latest generation never reached status dispatch"
+            # Two authenticated run claims reach lazy binding while the first write is held.
+            source_sha = "6" * 40
+            register(source_sha, definition)
+            lose_next = True
+            assert request("/api/work/request", {"repository": "Owner/example", "tag": "v2.0.0-rc.1"})[0] == 202
+            assert len(dispatches) == 9
+            current_id = dispatches[-1]["execution"]
+            runs[108]["status"] = "queued"
+            runs[499] = {**runs[108], "id": 499, "html_url": "https://github.com/Owner/example/actions/runs/499"}
+            lock = subprocess.Popen(["mariadb", "--no-defaults", "--socket=" + str(db_socket), "--user=root",
+                "--batch", "--skip-column-names", "--unbuffered"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            lock.stdin.write("LOCK TABLES core_ci.graph_revision WRITE; SELECT 'locked';\n")
+            lock.stdin.flush()
+            assert lock.stdout.readline().strip() == "locked"
+            log_offset = (root / "app.log").stat().st_size
+            try:
+                for run_id in (108, 499):
+                    payload = {"installation": {"id": 7}, "repository": {"id": 99, "full_name": "Owner/example"},
+                               "action": "requested", "workflow_run": runs[run_id]}
+                    signature = "sha256=" + hmac.new(secret, json.dumps(payload).encode(), hashlib.sha256).hexdigest()
+                    assert request("/github/webhook", payload, {"X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": signature}, webhook=True)[0] == 202
+                    assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["build_run"] is None
+            finally:
+                lock.stdin.write("UNLOCK TABLES;\nquit\n")
+                lock.stdin.flush()
+                assert lock.wait(timeout=5) == 0
+            deadline = time.monotonic() + 5
+            outcomes = []
+            while len(outcomes) < 2 and time.monotonic() < deadline:
+                outcomes = [json.loads(line.split("GitHub webhook completed: ", 1)[1]) for line in
+                    (root / "app.log").read_bytes()[log_offset:].decode().splitlines() if "GitHub webhook completed: " in line]
+                time.sleep(0.01)
+            rejected = next(row for row in outcomes if row["status"] == 409)
+            assert rejected["result"]["error"] == "conflicting GitHub run identity" and rejected["result"]["assignment_preserved"]
+            assert rejected["result"]["uncertain"] is False
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["build_run"]["id"] == 108
+            assert len(dispatches) == 9, "binding conflict dispatched a replacement"
+
+            # Approval must dispatch its captured minimum even as newer evidence commits.
+            deadline = time.monotonic() + 5
+            while status_refreshes[-1] != request("/api/graph")[1]["generation"] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            approval_gate = threading.Event()
+            offset = len(status_refreshes)
+            runs[108].update(status="in_progress")
+            observed = report(108)
+            assert observed[0] == 200, observed
+            assert approval_started.wait(3), request_trace[-12:]
+            captured = request("/api/graph")[1]["generation"]
+            assert report(108, job=True)[0] == 200
+            assert request("/api/graph")[1]["generation"] > captured
+            approval_gate.set()
+            deadline = time.monotonic() + 5
+            while captured not in status_refreshes[offset:] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert captured in status_refreshes[offset:], "approval discarded captured generation during progress"
+            approval_gate = None
+            runs[108].update(status="completed", conclusion="success")
+            assert report(108, job=True)[0] == 200
+            runs[108].update(status="in_progress", conclusion=None)
+            latest = request("/api/graph")[1]["generation"]
+            deadline = time.monotonic() + 5
+            while status_refreshes[-1] != latest and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert status_refreshes[-1] == latest and len(set(status_refreshes[offset:])) == len(status_refreshes[offset:])
+
+            # Restart with an assigned run while TLS establishment is stalled.
+            lifecycle.stop(application)
+            peers = []
+            accepted = threading.Event()
+            release = threading.Event()
+            with socket.socket() as stalled:
+                stalled.bind(("127.0.0.1", 0))
+                stalled.listen(16)
+                stalled.settimeout(0.1)
+                def accept_stalled():
+                    while not release.is_set():
+                        try:
+                            peer, _ = stalled.accept()
+                            peers.append(peer)
+                            accepted.set()
+                        except TimeoutError:
+                            pass
+                stalled_thread = threading.Thread(target=accept_stalled)
+                stalled_thread.start()
+                peer_port = command.index("--port", command.index("github-http")) + 1
+                normal_port = command[peer_port]
+                try:
+                    command[peer_port] = str(stalled.getsockname()[1])
+                    application = start(False)
+                    assert accepted.wait(3), "TLS stall never reached the socket"
+                    lifecycle.stop(application)
+                    assert application.returncode == (-signal.SIGTERM & 255), ("TLS-stalled shutdown", application.returncode, (root / "app.log").read_text()[-6000:])
+                finally:
+                    command[peer_port] = normal_port
+                    release.set()
+                    stalled_thread.join(timeout=3)
+                    for peer in peers:
+                        peer.close()
+            # A full local accept backlog holds TCP establishment without routing/firewall changes.
+            with socket.socket() as backlogged:
+                backlogged.bind(("127.0.0.1", 0))
+                backlogged.listen(0)
+                with socket.create_connection(backlogged.getsockname(), timeout=2):
+                    try:
+                        command[peer_port] = str(backlogged.getsockname()[1])
+                        application = start(False)
+                        remote = "0100007F:" + format(backlogged.getsockname()[1], "04X")
+                        deadline = time.monotonic() + 3
+                        connecting = False
+                        while not connecting and time.monotonic() < deadline:
+                            connecting = any(row.split()[2:4] == [remote, "02"] for row in Path("/proc/net/tcp").read_text().splitlines()[1:])
+                            if not connecting:
+                                time.sleep(0.01)
+                        assert connecting, "fixture did not hold a TCP SYN_SENT phase"
+                        lifecycle.stop(application)
+                        assert application.returncode == (-signal.SIGTERM & 255)
+                    finally:
+                        command[peer_port] = normal_port
+            application = start()
+            assert len(dispatches) == 9 and next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["build_run"]["id"] == 108
+            lifecycle.stop(application)
+            response_gate = threading.Event()
+            try:
+                application = start(False)
+                assert response_started.wait(3), "response stall did not reach assigned-run evidence"
+                lifecycle.stop(application)
+                assert application.returncode == (-signal.SIGTERM & 255), ("response-stalled shutdown", application.returncode, (root / "app.log").read_text()[-6000:])
+            finally:
+                response_gate.set()
+            assert response_done.wait(3)
+            response_gate = None
+            application = start()
+            assert len(dispatches) == 9 and next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["build_run"]["id"] == 108
+            # Hold the real artifact-list boundary while a duplicate completion is processed.
+            artifact_gate = threading.Event()
+            missing_artifacts = False
+            runs[108].update(status="completed", conclusion="success")
+            payload = {"installation": {"id": 7}, "repository": {"id": 99, "full_name": "Owner/example"},
+                       "action": "completed", "workflow_run": runs[108]}
+            raw = json.dumps(payload).encode()
+            offset = len(request_trace)
+            log_offset = (root / "app.log").stat().st_size
+            try:
+                ack = request("/github/webhook", payload, {"X-GitHub-Event": "workflow_run", "Content-Type": "application/json",
+                    "X-Hub-Signature-256": "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()}, webhook=True)
+                assert ack[0] == 202 and artifact_started.wait(3)
+                assert report(108)[0] == 200
+                assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["state"] == "building"
+            finally:
+                artifact_gate.set()
+            deadline = time.monotonic() + 5
+            while next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["state"] not in ("publishing", "failed") and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert sum("/actions/runs/108/artifacts" in item[2] for item in request_trace[offset:]) == 1
+            assert next(row for row in request("/api/graph")[1]["executions"] if row["id"] == current_id)["state"] == "publishing"
+            artifact_gate = None
+            deadline = time.monotonic() + 5
+            while (root / "app.log").read_bytes()[log_offset:].decode().count("GitHub webhook completed: ") < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert (root / "app.log").read_bytes()[log_offset:].decode().count("GitHub webhook completed: ") == 2
+            deadline = time.monotonic() + 5
+            while status_refreshes[-1] != request("/api/graph")[1]["generation"] and time.monotonic() < deadline:
+                time.sleep(0.01)
             counts = {"token_mint": 0, "evidence": 0, "source_read_or_edit": 0, "worker_approval": 0,
                       "build_dispatch": 0, "publication_dispatch": 0, "status_dispatch": 0, "feed_github": 0, "feed_https": 0}
             for _, method, path in request_trace:

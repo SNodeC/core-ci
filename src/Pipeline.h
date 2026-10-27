@@ -87,7 +87,9 @@ namespace coreci {
                     const Callback& callback);
         void buildArtifacts(const Node& node, const nlohmann::json& job, const Callback& callback);
         void publicationResult(const Node& node, const nlohmann::json& evidence, const Callback& callback);
-        void change(const std::function<Node(const Graph&)>& derive, const Callback& callback);
+        void change(const std::function<Node(const Graph&)>& derive,
+                    const Callback& callback,
+                    const PipelineResult& preparationFailure = {409, {}});
         static bool matchesJob(const Attempt& attempt, bool publication, const nlohmann::json& job);
         static std::string title(const Attempt& attempt, bool publication, bool job = false);
 

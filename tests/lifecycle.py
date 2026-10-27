@@ -91,6 +91,10 @@ def exercise(args):
         assert "8443" in enabled.stdout and "--cert-key" in enabled.stdout
         parser_help = subprocess.run([args.executable, "--config-file", str(config), "webhook", "--disabled=false", "http", "parser", "--help"], capture_output=True, text=True, timeout=5)
         assert "--maximum-body-bytes" in parser_help.stdout and "2097152" in parser_help.stdout
+        for limit in (0, 33):
+            invalid = subprocess.run([args.executable, "--config-file", str(config), "pipeline", "--publication-limit", str(limit)],
+                                     capture_output=True, text=True, timeout=5)
+            assert invalid.returncode != 0 and "range" in invalid.stdout + invalid.stderr
         assert "Initial MariaDB connection established" not in root.stdout + root.stderr
     else:
         datadir = directory / "data"
@@ -107,7 +111,7 @@ def exercise(args):
         account = pwd.getpwuid(os.geteuid()).pw_name
         run(["mariadb-install-db", "--no-defaults", "--datadir=" + str(datadir), "--auth-root-authentication-method=normal", "--skip-test-db", "--tmpdir=" + str(temporary)])
         datadir.chmod(0o700)
-        db_socket = datadir / "server.sock"
+        db_socket = datadir / "db"
         pid_file = datadir / "server.pid"
         server_config = directory / "server.cnf"
         server_config.write_text("[mariadbd]\nuser=" + account + "\ninnodb-buffer-pool-size=32M\ntmpdir=" + str(temporary) + "\nlog-error=" + str(directory / "server.log") + "\n")

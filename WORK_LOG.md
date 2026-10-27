@@ -2154,3 +2154,54 @@ proposed. Commit/push/merge remain separate authorization stages.
 - Tracked diff accounting against HEAD: production +652/-452 (net +200); tests +398/-116 (net +282). Both implementation nets are within the approved bounds.
   Documentation is separately modified and includes preserved pre-existing deployment/review work; untracked proposal/review files are preserved, not counted as production or tests.
 - Owner subsequently authorized committing/pushing this task on its separate branch and sending Claude a detailed agreement-based review request. The staged documentation includes the task review/design evidence; unrelated deployment documentation and private/untracked files remain outside the commit. No merge or installation is authorized by that instruction.
+
+
+### Controller parallelism correction implementation and focused verification (2026-10-27)
+
+- Continued `fix/controller-parallelism` at HEAD/origin `63ab7b207f55afb5a71c7b2f54d76fa05ee7ebef`,
+  against reviewed base4257cb0. Reproduced starting production652/452 (net200) and tests398/116
+  (net282). Preserved pre-existing public documentation hunks, review records and improvements;
+  private directories were not inspected or modified.
+- Applied the agreed M1/H1/L1/L2/L3/L4a corrections. Removed two obsolete eager-dispatch catches,
+  retained synchronous identity/metadata/current-attempt validation, captured preparation responses
+  by value, and preserved caller409/503 classifications plus assignment context. No new production
+  mechanism, state, retry path, queue or lifecycle was added. L4b/L4c/I1 remain unchanged.
+- Observable L4b behavior remains internal503/uncertain:true and failed-mutation SSE for latched
+  no-ops; authenticated webhook acknowledgement stays202. This is not byte-identical no-op behavior.
+- Added reachable public-boundary checks for asynchronous disabled delivery, capacity1/invalid
+  capacities, queued shutdown, disabled feed proof, phase validation, competing run binding under
+  a MariaDB lock, delayed approval, TCP/TLS/response shutdown and restoration, forced artifact
+  overlap, actual START/ROLLBACK wire faults and IPv4 fallback in a private mount/user namespace.
+  Failed rollback closes on shutdown, permissions are restored, and no leaked graph revision is asserted.
+- Corrected a pre-existing GraphTest local-variable name collision that prevented that target from
+  rebuilding. Earlier stale-binary graph results are not validation; verified-final-build.log and
+  verified-graph.log establish successful final compilation and graph boundaries. All other selected
+  targets were rebuilt; transport and pipeline results use their rebuilt binaries.
+- All27 selected checks ran:26 initially passed in CTest. Unmanaged-initial-failure exceeded the
+  Linux107-byte Unix socket path limit; a shorter socket filename fixed the registered test. Final
+  transport16/16, SQL fault2/2, startup3/3, pipeline and rebuilt graph checks passed after fixture edits.
+  Canonical format-check, diff whitespace and <=160-character changed production checks pass.
+  No unrelated/full suite was run. Commands, source references, caveats and logs are recorded in
+  docs/proposals/controller-parallelism-corrections-results.md.
+- Final local burst:8 unchanged notifications,0 HTTP requests,0 workflow reads,0.074241379 seconds
+  under synthetic0.03s API delay. Extended failure/restart fixture trace475 requests is not a normal
+  graph-run budget. No live performance, runner or Pages timing is claimed. Submitted shutdown
+  currently retains an existing invalid-status error rather than a literal unknown-outcome string;
+  it remains submitted/status0, while queued requests report definitely unsubmitted.
+- No runtime claim for active-origin switching, late orphan onConnect, additional defensive
+  preparation failures, latched no-op SSE under rollback or sanitizer memory safety. These remain
+  precisely separated from reachable runtime checks in the report; no production test hooks added.
+- Cumulative production697/464=+233; tests917/271=+646. Relative63ab7b2: production67/34=+33,
+  tests534/170=+364. Remaining approved headroom77/144; separate sandbox+450 allowance unused.
+  Build-input identity:63ab7b2 plus SHA256364d21faa549290a3532b3bf1fdb3db93d7b93d8fdc1a6b00acb81ab0169fd84.
+- No commit, push, merge, install, live restart, activation or GitHub mutation performed. Mixed O/N
+  feed-lock proof above capacity1, aliases, live timings and owner acceptance remain open. Existing
+  deployment authorization was not revoked or replaced by a blanket activation gate.
+- New task evidence stays under /tmp/codex/build/core-ci/parallelism-corrections/ for review; existing
+  findings are preserved. No extra checkout/worktree was created. Temporary live fixtures clean up
+  on exit; the reusable build and diagnostic logs are retained for handover.
+
+- Owner subsequently authorized committing/pushing these corrections and requesting another detailed
+  Claude review. Stage only correction code/tests, the M1 wording, this implementation entry,
+  the correction agreement and verification report. Unrelated documentation remains unstaged;
+  merge, installation and live activation are not included in this publication step.

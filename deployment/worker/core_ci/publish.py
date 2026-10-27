@@ -181,6 +181,11 @@ def main():
     parser.add_argument("--receipt-sha256", default="")
     parser.add_argument("--feed-revision", default="")
     arguments = parser.parse_args()
+    require(arguments.phase == "confirm" or bool(arguments.feed), "prepare/push require --feed")
+    require(
+        arguments.phase != "prepare" or bool(arguments.build_result and arguments.artifacts),
+        "prepare requires --build-result and --artifacts",
+    )
     os.umask(0o077)
     selected = assignment(arguments.assignment, arguments.assignment_sha256)
     trusted_deployment(selected)

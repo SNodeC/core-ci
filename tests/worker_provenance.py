@@ -629,6 +629,19 @@ def main():
         assert rejected and not commit.called and not push.called and not token.called
     assert not list(directory.glob("core-ci-secrets-*")), "temporary key material survived preparation failure"
 
+    for phase, supplied in (("prepare", []), ("push", []), ("prepare", ["--feed", str(writer)]),
+                            ("prepare", ["--feed", str(writer), "--build-result", "result.json"]),
+                            ("prepare", ["--feed", str(writer), "--artifacts", "outputs"])):
+        invalid = ["publish.py", "--phase", phase, "--assignment", "unused", "--assignment-sha256", "unused", *supplied]
+        with patch.object(sys, "argv", invalid), patch.object(publish, "assignment") as load, patch.object(
+            publish, "run_identity"
+        ) as identity, patch.object(publish, "writer_token") as token, patch.object(publish, "checked_push") as push:
+            rejected = False
+            try:
+                publish.main()
+            except ValueError:
+                rejected = True
+            assert rejected and not any(call.called for call in (load, identity, token, push))
     # Public outputs bind the already prepared bytes and local commit, before any push.
     receipt_file = writer / publish.receipt_path(prepared)
     receipt_file.parent.mkdir(parents=True)

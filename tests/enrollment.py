@@ -31,6 +31,9 @@ class DatabaseProxy(socketserver.ThreadingUnixStreamServer):
         self.backend = str(backend)
         self.drop_commit = False
         self.dropped = 0
+        self.rewrite = None
+        self.rewrites = 0
+        self.intercepted = []
         super().__init__(str(path), DatabaseRelay)
 
 
@@ -58,6 +61,12 @@ class DatabaseRelay(socketserver.BaseRequestHandler):
                                 buffers[source] = buffers[source][size:]
                                 if source is self.request:
                                     commit = packet[4:] == b"\x03COMMIT"
+                                    if self.server.rewrite is not None and packet[4:].upper() == b"\x03" + self.server.rewrite:
+                                        self.server.intercepted.append(packet[5:].decode())
+                                        payload = b"\x03CORE_CI_INVALID_SQL"
+                                        packet = len(payload).to_bytes(3, "little") + packet[3:4] + payload
+                                        self.server.rewrite = None
+                                        self.server.rewrites += 1
                                     backend.sendall(packet)
                                 elif commit and self.server.drop_commit:
                                     assert packet[4] == 0, "fixture expected an actual MariaDB COMMIT success"
@@ -207,148 +216,180 @@ def exercise(args, root):
             lifecycle.query(db_socket, "CREATE DATABASE core_ci; CREATE USER 'core_ci_test'@'localhost' IDENTIFIED BY ''; GRANT SELECT,INSERT,UPDATE,DELETE ON core_ci.* TO 'core_ci_test'@'localhost'; USE core_ci; " + (Path(__file__).parent.parent / "sql/schema.sql").read_text())
             application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
             lifecycle.wait_http(port, application)
-            assert request("/api/repositories") == (200, {"repositories": []})
-            stream = lifecycle.event_stream(origin)
-            peer = lifecycle.event_stream(origin)
-            for receiver in (stream, peer):
-                assert lifecycle.stream_event(receiver) == ("graph", request("/api/graph")[1])
-                assert lifecycle.stream_event(receiver) == ("repositories", {"repositories": []})
-            status, result = request("/api/repositories/save", save, content_type="text/plain")
-            assert status == 403 and writes == 0, result
-            status, result = request("/api/repositories/save", {}, None)
-            assert status == 422 and writes == 0, result
-            status, result = request("/api/repositories/save", save, "http://other.example", origin.replace("127.0.0.1", "localhost"))
-            assert status == 200 and result["github_committed"] is True and writes == 1, result
-            first = result["revision"]
-            for receiver in (stream, peer):
-                event, current_graph = lifecycle.stream_event(receiver)
-                assert event == "graph" and current_graph == request("/api/graph")[1]
-                event, current_repositories = lifecycle.stream_event(receiver)
-                assert event == "repositories" and current_repositories["repositories"][0]["revision"] == first
-            peer.close()
-            status, listed = request("/api/repositories")
-            assert status == 200 and listed["repositories"][0]["definition"] == definition, listed
-            assert listed["repositories"][0]["revision"] == first
-            status, result = request("/api/repositories/save", save)
-            assert status == 409 and writes == 1, result
-            save["revision"] = first
-            reject = True
-            status, result = request("/api/repositories/save", save)
-            assert status == 502 and result["github_committed"] is False and writes == 1, result
-            reject = False
-            lose = True
-            status, result = request("/api/repositories/save", save)
-            assert status == 502 and result["github_committed"] is None and writes == 2, result
-            assert request("/api/repositories")[1]["repositories"][0]["revision"] == first
-            lose = False
-            status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
-            assert status == 200 and result["revision"] == head and writes == 2, result
-            stream.close()
-            lifecycle.stop(application)
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
-            with lifecycle.event_stream(origin) as recovered:
-                assert lifecycle.stream_event(recovered) == ("graph", request("/api/graph")[1])
-                event, restored = lifecycle.stream_event(recovered)
-                assert event == "repositories" and restored["repositories"][0]["revision"] == head
-            assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
-            # A database failure after a successful GitHub commit must be reported honestly.
-            save["revision"] = head
-            lifecycle.query(db_socket, "REVOKE INSERT ON core_ci.* FROM 'core_ci_test'@'localhost'")
-            connection_id = lifecycle.query(db_socket, "SELECT ID FROM information_schema.PROCESSLIST WHERE USER='core_ci_test' LIMIT 1").strip()
-            lifecycle.query(db_socket, "KILL CONNECTION " + connection_id)
-            lifecycle.wait_http(port, application)
-            status, result = request("/api/repositories/save", save)
-            assert status == 503 and result["github_committed"] is True and writes == 3, result
-            assert request("/api/repositories")[1]["repositories"][0]["revision"] == save["revision"], "failed transaction leaked an enrollment revision"
-            lifecycle.query(db_socket, "GRANT INSERT ON core_ci.* TO 'core_ci_test'@'localhost'")
-            connection_id = lifecycle.query(db_socket, "SELECT ID FROM information_schema.PROCESSLIST WHERE USER='core_ci_test' LIMIT 1").strip()
-            lifecycle.query(db_socket, "KILL CONNECTION " + connection_id)
-            lifecycle.wait_http(port, application)
-            status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
-            assert status == 200, result
-            save["revision"] = head
-            uncertain_stream = lifecycle.event_stream(origin)
-            assert lifecycle.stream_event(uncertain_stream)[0] == "graph"
-            assert lifecycle.stream_event(uncertain_stream)[0] == "repositories"
-            proxy.drop_commit = True
-            status, result = request("/api/repositories/save", save)
-            assert status == 503 and result["github_committed"] is True and proxy.dropped == 1, result
-            event, uncertain_graph = lifecycle.stream_event(uncertain_stream)
-            assert event == "graph" and uncertain_graph["mutations_allowed"] is False
-            uncertain_stream.close()
-            # The server really committed, but the application did not receive proof.
-            assert lifecycle.query(db_socket, "SELECT configuration_revision FROM core_ci.repositories").strip() == head
-            previous_writes = writes
-            status, result = request("/api/repositories/save", save)
-            assert status == 503 and writes == previous_writes, "uncertain database outcome allowed another remote mutation"
-            stream.close()
-            lifecycle.stop(application)
-            application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
-            with lifecycle.event_stream(origin) as recovered:
-                assert lifecycle.stream_event(recovered) == ("graph", request("/api/graph")[1])
-                event, restored = lifecycle.stream_event(recovered)
-                assert event == "repositories" and restored["repositories"][0]["revision"] == head
-            assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
-            save["revision"] = head
-            save["definition"]["package"] = "renamed-example"
-            status, result = request("/api/repositories/save", save)
-            assert status == 200, result
-            namespaces = lifecycle.query(db_socket, "SELECT namespace FROM core_ci.namespace_claims ORDER BY namespace").splitlines()
-            assert namespaces == ["example", "renamed-example"], "editing a namespace released its prior ownership"
-            # An unrelated branch commit must not invalidate the definition's blob CAS.
-            save["revision"] = result["revision"]
-            head = "f" * 40
-            status, result = request("/api/repositories/save", save)
-            assert status == 200, result
-            effective = result["revision"]
-            # Read an invalid committed JSON file, then repair it using the explicitly read blob.
-            head = "e" * 40
-            document = {}
-            raw_document = b"{"
-            blob = hashlib.sha1(b"blob 1\0" + raw_document).hexdigest()
-            status, invalid = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
-            assert status == 422 and invalid["content"] == "{" and invalid["blob_sha"] == blob, invalid
-            save["revision"] = effective
-            save["blob_sha"] = invalid["blob_sha"]
-            status, result = request("/api/repositories/save", save)
-            assert status == 200, result
-            # A different external edit must still be rejected before writing.
-            save["revision"] = result["revision"]
-            save["blob_sha"] = request("/api/repositories")[1]["repositories"][0]["blob_sha"]
-            document["title"] = "external edit"
-            raw_document = json.dumps(document).encode()
-            blob = hashlib.sha1(b"blob " + str(len(raw_document)).encode() + b"\0" + raw_document).hexdigest()
-            head = "d" * 40
-            previous_writes = writes
-            status, result = request("/api/repositories/save", save)
-            assert status == 409 and writes == previous_writes, result
-            status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
-            assert status == 200, result
-            if args.graph_executable:
+            if args.fault:
+                status, initial = request("/api/repositories/save", save)
+                assert status == 200, initial
+                revision = initial["revision"]
+                save["revision"] = revision
+                if args.fault == "rollback":
+                    lifecycle.query(db_socket, "REVOKE INSERT ON core_ci.* FROM 'core_ci_test'@'localhost'")
+                    connection = lifecycle.query(db_socket, "SELECT ID FROM information_schema.PROCESSLIST WHERE USER='core_ci_test' LIMIT 1").strip()
+                    lifecycle.query(db_socket, "KILL CONNECTION " + connection)
+                graph_revision = lifecycle.query(db_socket, "SELECT generation FROM core_ci.graph_revision").strip()
+                proxy.rewrite = b"START TRANSACTION" if args.fault == "start" else b"ROLLBACK"
+                status, result = request("/api/repositories/save", save)
+                assert status == 503 and result["github_committed"] is True and proxy.rewrites == 1, result
+                assert len(proxy.intercepted) == 1 and proxy.intercepted[0].upper() == ("START TRANSACTION" if args.fault == "start" else "ROLLBACK")
+                print("Intercepted COM_QUERY:", repr(proxy.intercepted[0]))
+                graph = request("/api/graph")[1]
+                assert graph["mutations_allowed"] == (args.fault == "start"), graph
+                assert lifecycle.query(db_socket, "SELECT configuration_revision FROM core_ci.repositories").strip() == revision, "failed write leaked revision"
+                if args.fault == "rollback":
+                    previous_writes = writes
+                    assert request("/api/repositories/save", save)[0] == 503 and writes == previous_writes
+                    lifecycle.stop(application)
+                    lifecycle.query(db_socket, "GRANT INSERT ON core_ci.* TO 'core_ci_test'@'localhost'")
+                    application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+                    lifecycle.wait_http(port, application)
+                assert request("/api/repositories")[1]["repositories"][0]["revision"] == revision, "revision leaked after cleanup/restart"
+                assert lifecycle.query(db_socket, "SELECT generation FROM core_ci.graph_revision").strip() == graph_revision, "no graph revision leaked after cleanup/restart"
+                assert request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})[0] == 200
+                assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
+                assert not errors, errors
+                print("PASS real MariaDB one-shot", args.fault, "failure, recovery and no leaked revision")
+            else:
+                assert request("/api/repositories") == (200, {"repositories": []})
+                stream = lifecycle.event_stream(origin)
+                peer = lifecycle.event_stream(origin)
+                for receiver in (stream, peer):
+                    assert lifecycle.stream_event(receiver) == ("graph", request("/api/graph")[1])
+                    assert lifecycle.stream_event(receiver) == ("repositories", {"repositories": []})
+                status, result = request("/api/repositories/save", save, content_type="text/plain")
+                assert status == 403 and writes == 0, result
+                status, result = request("/api/repositories/save", {}, None)
+                assert status == 422 and writes == 0, result
+                status, result = request("/api/repositories/save", save, "http://other.example", origin.replace("127.0.0.1", "localhost"))
+                assert status == 200 and result["github_committed"] is True and writes == 1, result
+                first = result["revision"]
+                for receiver in (stream, peer):
+                    event, current_graph = lifecycle.stream_event(receiver)
+                    assert event == "graph" and current_graph == request("/api/graph")[1]
+                    event, current_repositories = lifecycle.stream_event(receiver)
+                    assert event == "repositories" and current_repositories["repositories"][0]["revision"] == first
+                peer.close()
+                status, listed = request("/api/repositories")
+                assert status == 200 and listed["repositories"][0]["definition"] == definition, listed
+                assert listed["repositories"][0]["revision"] == first
+                status, result = request("/api/repositories/save", save)
+                assert status == 409 and writes == 1, result
+                save["revision"] = first
+                reject = True
+                status, result = request("/api/repositories/save", save)
+                assert status == 502 and result["github_committed"] is False and writes == 1, result
+                reject = False
+                lose = True
+                status, result = request("/api/repositories/save", save)
+                assert status == 502 and result["github_committed"] is None and writes == 2, result
+                assert request("/api/repositories")[1]["repositories"][0]["revision"] == first
+                lose = False
+                status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
+                assert status == 200 and result["revision"] == head and writes == 2, result
+                stream.close()
                 lifecycle.stop(application)
-                graph_config = directory / "graph.conf"
-                graph_config.write_text('database.socket="' + str(directory / "p.sock") + '"\n'
-                                        'database.user="core_ci_test"\ndatabase.name="core_ci"\n'
-                                        'database.password-file="' + str(password) + '"\n')
-                graph_config.chmod(0o600)
-                lifecycle.run([args.graph_executable, "--config-file", str(graph_config), "--log-level", "2", "database", "--mode", "unmanaged"])
                 application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
                 lifecycle.wait_http(port, application)
-                deadline = time.monotonic() + 5
-                status, graph = request("/api/graph")
-                while sorted(row["state"] for row in graph["executions"]) != ["building", "failed"] and time.monotonic() < deadline:
-                    time.sleep(0.02)
+                with lifecycle.event_stream(origin) as recovered:
+                    assert lifecycle.stream_event(recovered) == ("graph", request("/api/graph")[1])
+                    event, restored = lifecycle.stream_event(recovered)
+                    assert event == "repositories" and restored["repositories"][0]["revision"] == head
+                assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
+                # A database failure after a successful GitHub commit must be reported honestly.
+                save["revision"] = head
+                lifecycle.query(db_socket, "REVOKE INSERT ON core_ci.* FROM 'core_ci_test'@'localhost'")
+                connection_id = lifecycle.query(db_socket, "SELECT ID FROM information_schema.PROCESSLIST WHERE USER='core_ci_test' LIMIT 1").strip()
+                lifecycle.query(db_socket, "KILL CONNECTION " + connection_id)
+                lifecycle.wait_http(port, application)
+                status, result = request("/api/repositories/save", save)
+                assert status == 503 and result["github_committed"] is True and writes == 3, result
+                assert request("/api/repositories")[1]["repositories"][0]["revision"] == save["revision"], "failed transaction leaked an enrollment revision"
+                lifecycle.query(db_socket, "GRANT INSERT ON core_ci.* TO 'core_ci_test'@'localhost'")
+                connection_id = lifecycle.query(db_socket, "SELECT ID FROM information_schema.PROCESSLIST WHERE USER='core_ci_test' LIMIT 1").strip()
+                lifecycle.query(db_socket, "KILL CONNECTION " + connection_id)
+                lifecycle.wait_http(port, application)
+                status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
+                assert status == 200, result
+                save["revision"] = head
+                uncertain_stream = lifecycle.event_stream(origin)
+                assert lifecycle.stream_event(uncertain_stream)[0] == "graph"
+                assert lifecycle.stream_event(uncertain_stream)[0] == "repositories"
+                proxy.drop_commit = True
+                status, result = request("/api/repositories/save", save)
+                assert status == 503 and result["github_committed"] is True and proxy.dropped == 1, result
+                event, uncertain_graph = lifecycle.stream_event(uncertain_stream)
+                assert event == "graph" and uncertain_graph["mutations_allowed"] is False
+                uncertain_stream.close()
+                # The server really committed, but the application did not receive proof.
+                assert lifecycle.query(db_socket, "SELECT configuration_revision FROM core_ci.repositories").strip() == head
+                previous_writes = writes
+                status, result = request("/api/repositories/save", save)
+                assert status == 503 and writes == previous_writes, "uncertain database outcome allowed another remote mutation"
+                stream.close()
+                lifecycle.stop(application)
+                application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+                lifecycle.wait_http(port, application)
+                with lifecycle.event_stream(origin) as recovered:
+                    assert lifecycle.stream_event(recovered) == ("graph", request("/api/graph")[1])
+                    event, restored = lifecycle.stream_event(recovered)
+                    assert event == "repositories" and restored["repositories"][0]["revision"] == head
+                assert request("/api/repositories")[1]["repositories"][0]["revision"] == head
+                save["revision"] = head
+                save["definition"]["package"] = "renamed-example"
+                status, result = request("/api/repositories/save", save)
+                assert status == 200, result
+                namespaces = lifecycle.query(db_socket, "SELECT namespace FROM core_ci.namespace_claims ORDER BY namespace").splitlines()
+                assert namespaces == ["example", "renamed-example"], "editing a namespace released its prior ownership"
+                # An unrelated branch commit must not invalidate the definition's blob CAS.
+                save["revision"] = result["revision"]
+                head = "f" * 40
+                status, result = request("/api/repositories/save", save)
+                assert status == 200, result
+                effective = result["revision"]
+                # Read an invalid committed JSON file, then repair it using the explicitly read blob.
+                head = "e" * 40
+                document = {}
+                raw_document = b"{"
+                blob = hashlib.sha1(b"blob 1\0" + raw_document).hexdigest()
+                status, invalid = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
+                assert status == 422 and invalid["content"] == "{" and invalid["blob_sha"] == blob, invalid
+                save["revision"] = effective
+                save["blob_sha"] = invalid["blob_sha"]
+                status, result = request("/api/repositories/save", save)
+                assert status == 200, result
+                # A different external edit must still be rejected before writing.
+                save["revision"] = result["revision"]
+                save["blob_sha"] = request("/api/repositories")[1]["repositories"][0]["blob_sha"]
+                document["title"] = "external edit"
+                raw_document = json.dumps(document).encode()
+                blob = hashlib.sha1(b"blob " + str(len(raw_document)).encode() + b"\0" + raw_document).hexdigest()
+                head = "d" * 40
+                previous_writes = writes
+                status, result = request("/api/repositories/save", save)
+                assert status == 409 and writes == previous_writes, result
+                status, result = request("/api/repositories/refresh", {"repository": "Owner/example", "branch": "main"})
+                assert status == 200, result
+                if args.graph_executable:
+                    lifecycle.stop(application)
+                    graph_config = directory / "graph.conf"
+                    graph_config.write_text('database.socket="' + str(directory / "p.sock") + '"\n'
+                                            'database.user="core_ci_test"\ndatabase.name="core_ci"\n'
+                                            'database.password-file="' + str(password) + '"\n')
+                    graph_config.chmod(0o600)
+                    lifecycle.run([args.graph_executable, "--config-file", str(graph_config), "--log-level", "2", "database", "--mode", "unmanaged"])
+                    application = subprocess.Popen(command, stdout=app_log, stderr=subprocess.STDOUT)
+                    lifecycle.wait_http(port, application)
+                    deadline = time.monotonic() + 5
                     status, graph = request("/api/graph")
-                assert status == 200 and len(graph["executions"]) == 2, graph
-                assert sorted(row["state"] for row in graph["executions"]) == ["building", "failed"], graph
-                assert "workflow" in next(row for row in graph["executions"] if row["state"] == "failed")["failure"], graph
-                assert [row["build_run"]["id"] for row in graph["executions"] if row["build_run"] is not None] == [123], "assigned execution identity changed on restart"
-            assert not errors, errors
-            assert "synthetic-token" not in (directory / "application.log").read_text()
-            for log in directory.glob("*.log"):
-                assert "synthetic-token" not in log.read_text(errors="replace")
+                    while sorted(row["state"] for row in graph["executions"]) != ["building", "failed"] and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                        status, graph = request("/api/graph")
+                    assert status == 200 and len(graph["executions"]) == 2, graph
+                    assert sorted(row["state"] for row in graph["executions"]) == ["building", "failed"], graph
+                    assert "workflow" in next(row for row in graph["executions"] if row["state"] == "failed")["failure"], graph
+                    assert [row["build_run"]["id"] for row in graph["executions"] if row["build_run"] is not None] == [123], "assigned execution identity changed on restart"
+                assert not errors, errors
+                assert "synthetic-token" not in (directory / "application.log").read_text()
+                for log in directory.glob("*.log"):
+                    assert "synthetic-token" not in log.read_text(errors="replace")
     finally:
         lifecycle.stop(application)
         proxy.shutdown()
@@ -358,7 +399,8 @@ def exercise(args, root):
         github.shutdown()
         github.server_close()
         thread.join(timeout=3)
-    print("PASS local enrollment: committed revisions, stale edits, rejected/uncertain writes, reconciliation, restart, rollback, lost COMMIT, JSON validation and unrestricted management origins")
+    if not args.fault:
+        print("PASS local enrollment: committed revisions, stale edits, rejected/uncertain writes, reconciliation, restart, rollback, lost COMMIT, JSON validation and unrestricted management origins")
 
 
 if __name__ == "__main__":
@@ -366,6 +408,7 @@ if __name__ == "__main__":
     parser.add_argument("--executable", required=True)
     parser.add_argument("--directory", required=True)
     parser.add_argument("--graph-executable")
+    parser.add_argument("--fault", choices=("start", "rollback"))
     args = parser.parse_args()
     Path(args.directory).mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="enrollment-", dir=args.directory) as temporary:

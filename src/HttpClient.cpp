@@ -160,8 +160,11 @@ namespace coreci {
             if (state == core::socket::State::OK) {
                 operation->result.error.clear();
                 connecting = operation;
+            } else if (state == core::socket::State::DISABLED) {
+                operation->result.error = "HTTPS client instance is disabled; request was not submitted";
+                finish(operation);
             } else {
-                operation->result.error = "HTTPS connection failed or is disabled; request outcome may be unknown";
+                operation->result.error = "HTTPS connection failed; request outcome may be unknown";
             }
         });
         if (std::find(requests.begin(), requests.end(), operation) != requests.end()) {
@@ -190,7 +193,7 @@ namespace coreci {
         if (operation->result.status == 0 && operation->result.error.empty()) {
             operation->result.error = "HTTPS disconnected without a verified response; request outcome is unknown";
         }
-        if (const auto callback = std::move(operation->callback)) {
+        if (const auto callback = std::exchange(operation->callback, nullptr)) {
             callback(operation->result);
         }
     }
@@ -220,6 +223,7 @@ namespace coreci {
                 if (available) {
                     const auto operation = *next;
                     if (core::SNodeC::state() == core::State::STOPPING) {
+                        operation->result.error = "HTTPS request was not submitted during shutdown";
                         finish(operation);
                     } else {
                         available = active < maximum && (!fixedPeer.empty() || active == 0 ||

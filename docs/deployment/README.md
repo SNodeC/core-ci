@@ -224,7 +224,7 @@ Inspect the complete framework configuration with:
 
 ### Worker repository
 
-Commit the contents of [deployment/worker](../../deployment/worker) at the trusted repository
+For a first installation, commit the contents of [deployment/worker](../../deployment/worker) at the trusted repository
 root: `core_ci/`, `status-templates/`, `.github/workflows/` and reviewed `keys/`.
 Preserve unrelated repository content. Record the resulting full tooling commit SHA.
 The publisher and status YAML are installation templates: replace `@TOOLING_SHA@` with that
@@ -576,7 +576,9 @@ compatibility mechanism. Paths below are examples; the controller configuration 
 1. Review code and focused checks. Record active assignments and back up MariaDB before restart.
 2. Retain O's deployed source, publisher and status workflow bytes and repository variable
    `CORE_CI_TOOLING_SHA=O`. Keep its tooling commit accessible. Do not overwrite old paths.
-3. Commit reviewed new worker tooling first, obtaining N. Then render the publisher and status
+3. Commit reviewed new worker tooling first, obtaining N, while leaving O’s deployed publisher
+   and status workflow paths byte-identical. Exclude their replacement templates from this tooling
+   commit. Then render the new publisher and status
    templates with N into new paths, such as `core-ci-publish-parallel.yml` and
    `core-ci-status-parallel.yml`. Commit those wrappers separately: a commit cannot embed its
    own SHA. Both generations must use the same actual feed concurrency group and trusted keys.

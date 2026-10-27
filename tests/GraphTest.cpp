@@ -195,6 +195,10 @@ int main() {
         rejects([&]() {
             serialized.beginPublication(secondRoot);
         });
+        check(!serialized.publicationBlocker(secondRoot).empty(), "capacity-one blocker was invisible");
+        apply(serialized, serialized.rejectedDispatch(root, serialized.node(root).attempts.back().id, true, 403, true, "test rejection"));
+        check(serialized.publicationReady(secondRoot), "definite failure did not free capacity-one slot");
+        apply(serialized, serialized.beginPublication(secondRoot));
         coreci::Graph generations;
         auto oldSource = graph_fixture::source("retained", 11, {});
         generations.apply(generations.select("retained", {{"retained", oldSource}}, true));
@@ -216,11 +220,11 @@ int main() {
                   newSource.at("deployment"),
               "new selection did not retain its own generation");
         coreci::Graph capacity;
-        std::map<std::string, json> independent;
+        std::map<std::string, json> independentSources;
         for (unsigned index = 1; index <= 5; ++index) {
             const auto name = "root" + std::to_string(index);
-            independent[name] = graph_fixture::source(name, index, {});
-            capacity.apply(capacity.select(name, independent, false));
+            independentSources[name] = graph_fixture::source(name, index, {});
+            capacity.apply(capacity.select(name, independentSources, false));
         }
         std::vector<std::string> ready;
         for (const auto& [id, node] : capacity.nodes()) {

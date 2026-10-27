@@ -153,6 +153,16 @@ if(BUILD_TESTING)
 
     add_executable(graph-test tests/GraphTest.cpp)
     target_link_libraries(graph-test PRIVATE core-ci-domain)
+    foreach(fault start rollback)
+        add_test(
+            NAME database-${fault}-failure
+            COMMAND
+                ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/enrollment.py
+                --executable $<TARGET_FILE:core-ci> --directory
+                ${PROJECT_BINARY_DIR}/tests/${fault} --fault ${fault}
+        )
+        set_tests_properties(database-${fault}-failure PROPERTIES TIMEOUT 30)
+    endforeach()
     add_test(NAME graph-state-boundaries COMMAND graph-test)
 
     add_executable(definition-test tests/DefinitionTest.cpp)
@@ -184,6 +194,12 @@ if(BUILD_TESTING)
         token-lost-response
         token-reuse
         parallel
+        parallel-single
+        shutdown
+        multi-address
+        disabled
+        capacity-zero
+        capacity-seventeen
         expired-token
         mutation-lost-response
     )
@@ -197,6 +213,9 @@ if(BUILD_TESTING)
         )
         set_tests_properties(github-transport-${case} PROPERTIES TIMEOUT 25)
     endforeach()
+    set_tests_properties(
+        github-transport-multi-address PROPERTIES SKIP_RETURN_CODE 77
+    )
 endif()
 
 if(BUILD_TESTING)

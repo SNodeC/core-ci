@@ -8,6 +8,9 @@ import json
 import os
 from pathlib import Path
 import ssl
+import signal
+import socket
+import sys
 import subprocess
 import tempfile
 import threading
@@ -21,7 +24,20 @@ def run(command, data=None):
 
 
 def exercise(args, directory):
+    bind_address = "127.0.0.1"
+    if args.case == "multi-address":
+        hosts = Path(directory) / "hosts"
+        hosts.write_text("127.0.0.2 core-ci-multi.test\n127.0.0.1 core-ci-multi.test\n")
+        run(["mount", "--bind", str(hosts), "/etc/hosts"])
+        addresses = list(dict.fromkeys(row[4][0] for row in socket.getaddrinfo(
+            "core-ci-multi.test", 443, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, socket.AI_CANONNAME)))
+        assert len(addresses) == 2, addresses
+        bind_address = addresses[1]
     public_mode = False
+    parallel = args.case in ("parallel", "parallel-single", "shutdown")
+    shutdown_started = threading.Event()
+    shutdown_release = threading.Event()
+    invalid_capacity = args.case in ("capacity-zero", "capacity-seventeen")
     root = Path(directory)
     app_key = root / "app-key.pem"
     public = root / "app-public.pem"
@@ -93,18 +109,22 @@ def exercise(args, directory):
             nonlocal active, peak
             seen.append("repository")
             selected = "Other/feed" if public_mode else "Owner/example"
-            probe = int(self.path.rsplit("/", 1)[1]) if args.case == "parallel" else None
+            probe = int(self.path.rsplit("/", 1)[1]) if parallel else None
             expected_path = "/repos/" + selected + ("/probe/" + str(probe) if probe is not None else "")
             if self.path != expected_path or self.headers.get("Authorization") != "Bearer unit-test-only-token":
                 errors.append("unexpected repository request")
             if args.case == "token-reuse" and seen.count("repository") == 2:
                 time.sleep(2.1)
-            if probe is not None:
+            if args.case == "shutdown":
+                shutdown_started.set()
+                assert shutdown_release.wait(5), "shutdown fixture was not released"
+                self.close_connection = True
+            elif probe is not None:
                 with lock:
                     active += 1
                     peak = max(peak, active)
                 time.sleep(0.2 if probe == 0 else 0.04)
-            if args.case == "lost-response":
+            if args.case in ("lost-response", "shutdown"):
                 self.close_connection = True
             else:
                 self.send_json(200, {"full_name": selected, "id": 1001 if public_mode else 99, "probe": probe})
@@ -112,44 +132,76 @@ def exercise(args, directory):
                 with lock:
                     active -= 1
 
-    server_type = http.server.ThreadingHTTPServer if args.case == "parallel" else http.server.HTTPServer
-    server = server_type(("127.0.0.1", 0), Handler)
+    server_type = http.server.ThreadingHTTPServer if parallel else http.server.HTTPServer
+    server = server_type((bind_address, 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, tls_key)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    expected = "200" if args.case in ("success", "token-reuse", "parallel") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
+    expected = "200" if args.case in ("success", "token-reuse", "parallel", "parallel-single", "multi-address") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
     command = [args.executable, "--config-file", str(config), "--log-file", str(root / "framework.log"), "github", "--app-id", "42", "--installation-id", "7", "--private-key-file", str(app_key), "--allowed-owner", "Owner", "--repository", "Owner/example=99", "github-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port)]
+    if args.case == "multi-address":
+        command[command.index("--host") + 1] = "core-ci-multi.test"
+        command[1:1] = ["--log-level", "5"]
+    if args.case == "disabled":
+        command += ["probe-http", "--disabled=true"]
+    if args.case in ("parallel-single", "shutdown") or invalid_capacity:
+        capacity = "1" if parallel else "0" if args.case == "capacity-zero" else "17"
+        command.insert(command.index("remote"), "--max-in-flight=" + capacity)
     if args.case != "wrong-ca":
         command += ["tls", "--ca-cert", str(certificate)]
     environment = os.environ.copy()
     environment["CORE_CI_TEST_EXPECTED_STATUS"] = expected
     if args.case == "mutation-lost-response":
         environment["CORE_CI_TEST_METHOD"] = "POST"
-    if args.case == "parallel":
+    if args.case == "disabled":
+        environment["CORE_CI_TEST_DIRECT_DISABLED"] = "1"
+        environment["CORE_CI_TEST_EXPECTED_ERROR"] = "disabled; request was not submitted"
+    if args.case == "shutdown":
+        environment["CORE_CI_TEST_SHUTDOWN"] = "1"
+    if parallel:
         environment["CORE_CI_TEST_PARALLEL"] = "1"
     if args.case == "token-reuse":
         environment["CORE_CI_TEST_REUSE"] = "1"
-    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse", "parallel") else "0"
+    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse", "parallel", "parallel-single", "multi-address") else "0"
     try:
-        result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if args.case == "shutdown":
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+            try:
+                assert shutdown_started.wait(5), "submitted request was not held"
+                process.send_signal(signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=5)
+                result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            finally:
+                shutdown_release.set()
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=3)
+        else:
+            result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=15)
+        assert (result.returncode != 0 and "range" in result.stdout + result.stderr) if invalid_capacity else result.returncode == 0, result.stdout + result.stderr
         assert not errors, errors
         assert "unit-test-only-token" not in result.stdout + result.stderr
-        if args.case in ("wrong-hostname", "wrong-ca"):
+        if args.case == "disabled" or invalid_capacity:
+            assert seen == [], "disabled/invalid instance submitted HTTP"
+        elif args.case in ("wrong-hostname", "wrong-ca"):
             assert seen == [], "authorization was sent before TLS identity was verified"
         elif args.case in ("token-rejected", "token-lost-response", "expired-token"):
             assert seen == ["token"], "a failed token request reached the repository operation"
-        elif args.case == "parallel":
+        elif args.case == "shutdown":
+            assert seen == ["token", "repository"], seen
+        elif parallel:
             assert seen.count("token") == 1 and seen.count("repository") == 12, seen
-            assert 2 <= peak <= 8, peak
+            assert (peak == 1 if args.case == "parallel-single" else 2 <= peak <= 8), peak
             print("Synthetic concurrent HTTP peak:", peak)
         elif args.case == "token-reuse":
             assert seen.count("token") == 3 and seen.count("repository") == 4, seen
             assert seen[:3] == ["token", "repository", "repository"], "cold concurrent reads minted twice"
         else:
             assert seen == ["token", "repository"], "request was dropped or replayed"
+        if args.case == "multi-address":
+            assert "using next socketaddress" in (result.stdout + result.stderr).lower(), result.stdout + result.stderr
         if args.case == "success":
             public_mode = True
             seen.clear()
@@ -182,5 +234,14 @@ parser.add_argument("--directory", required=True)
 parser.add_argument("--case", required=True)
 arguments = parser.parse_args()
 Path(arguments.directory).mkdir(parents=True, exist_ok=True)
-with tempfile.TemporaryDirectory(prefix="run-", dir=arguments.directory) as temporary:
-    exercise(arguments, temporary)
+if arguments.case == "multi-address" and os.environ.get("CORE_CI_MULTI_NS") != "1":
+    result = subprocess.run(["unshare", "--user", "--map-current-user", "--keep-caps", "--mount", "--propagation", "private",
+                             sys.executable, __file__, *sys.argv[1:]], env={**os.environ, "CORE_CI_MULTI_NS": "1"},
+                            capture_output=True, text=True, timeout=20)
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    unsupported = "unshare failed: Operation not permitted" in result.stderr
+    raise SystemExit(77 if unsupported else result.returncode)
+else:
+    with tempfile.TemporaryDirectory(prefix="run-", dir=arguments.directory) as temporary:
+        exercise(arguments, temporary)
