@@ -2018,3 +2018,26 @@ proposed. Commit/push/merge remain separate authorization stages.
   modified during implementation. Owner subsequently authorized runtime activation,
   including removal of only obsolete ui.origin from the configured protected file.
   Restart and the new session will be recorded after verification.
+
+## 2026-10-27 — merged Origin removal, restarted, core-up request reused completed work
+
+- Owner authorized commit, merge, restart and a new full build starting from core.
+  Documentation checkpoint0434ca3 and fix47737f7 were committed and fast-forward
+  merged to local main. No push was requested or performed.
+- Removed only one obsolete ui.origin line from the protected configured runtime file,
+  under the owner's subsequent activation approval. No secret value was displayed.
+  Gracefully stopped idle controller1479498 and started tested binary from
+  /tmp/codex/build/core-ci/ui-origin/core-ci as PID1553769. All100 execution records
+  restored exactly at generation707. No listener/TLS/feed setting changed.
+- Live POSTs with invalid retry JSON through both localhost and127.0.0.1 and an
+  unrelated Origin returned the route's422 validation result rather than403. These
+  probes created no attempt. Existing focused tests/build/format checks remain valid.
+- Submitted exactly one /api/work/request for VOC-Experiments/demo-core with empty tag
+  (highest SemVer). It returned200 with selected0/assigned0; graph generation707 and
+  all completed work are unchanged. No full build is running. Existing Graph::select
+  deliberately reuses identical input identity; explicit retry permits failed work only.
+  Do not fabricate failure records or silently change selection identity to force work.
+- Starting another graph now needs a genuinely new selected source, such as a new
+  sandbox demo-core tag, or separately designed explicit rebuild behavior. No new tag,
+  source commit, retry, workflow mutation or production behavior extension was made.
+  Runtime/session records are /tmp/codex/build/core-ci/ui-origin/live/.
