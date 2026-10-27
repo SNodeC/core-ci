@@ -1906,3 +1906,86 @@ proposed. Commit/push/merge remain separate authorization stages.
   later than the observed SSE commit). Public pages sometimes wait behind the active
   publisher's shared feed-writer slot. Also noted an empty Waiting-for label on roots;
   no unrelated page redesign was made. No blanket automatic retry has been added.
+
+## 2026-10-26 — explicitly approved APK retry published
+
+- Owner approved exactly one retry of demo-side/openwrt-25.12-x86_64. Submitted
+  one existing /api/work/retry request; reserved revision102 retained the selected
+  source and prerequisite identities. No blanket retry or manual advance was used.
+- Build40397665070 succeeded; publication40398272126 succeeded. The controller
+  verified its receipt/public bytes and recorded published at generation500. Run links:
+  https://github.com/VOC-Experiments/demo-side/actions/runs/40397665070
+  https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40398272126
+- Restarted the controller at local main2b99897 to apply skipped-job matching.
+  Existing bound run identities were restored unchanged. The earlier failed revision96
+  remains history; reconciliation established its privileged job was skipped before the
+  explicit retry. No uncertain feed mutation was replayed.
+- At20:49UTC the session had7/20 published nodes, one publication active, four built
+  nodes awaiting publication and eight waiting nodes. This is ongoing live acceptance,
+  not a completed full graph. The read-only SSE/Pages observer remains running.
+- Pages caught up to generation502, including the successful retry; controller508
+  already had newer publication progress. Snapshot freshness still depends on the
+  serialized feed writer and Pages propagation, separate from prompt controller SSE.
+- Sampled20:38:54 requested notification had GitHub's generic title
+  core-ci trusted publication rather than the assignment title; strict identity
+  validation rejected it. Later expanded identity reports converged without weakening
+  validation. A second earlier identity rejection remains unclassified.
+- No additional production/test changes in this checkpoint. Source commits remain
+  local (main ahead of origin/main by three); no production SNodeC resource, trusted
+  key, existing source tag or prior package bytes was modified by the retry.
+
+## 2026-10-26 — continued graph session and runner mirror delay
+
+- Continued the same authorized session without new work requests, explicit advances
+  or retries. By21:11UTC17/20 nodes were published. Remaining work: demo-join Debian
+  arm64 publication, demo-app Fedora publication and its dependent demo-join Fedora.
+- At21:25UTC assigned arm64 publication40402091147 was still running the standard
+  signing/repository-tool installation step, started21:11:05UTC. GitHub's attempt-one
+  jobs API independently agrees with controller generation657. The live browser log
+  shows repeated Ign responses from http://azure.archive.ubuntu.com/ubuntu and fallback
+  to https://archive.ubuntu.com/ubuntu during apt-get update. Feed preparation and push
+  have not started. Do not attribute this delay to webhook processing or replace the
+  assigned run. Link:
+  https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40402091147/job/121850518683
+- Public status generation651 matches target states but retains the older assigned
+  activity for arm64 publication; the feed writer remains occupied by this live job.
+- Read-only retained-file check at21:12:27UTC compared all337 pre-session immutable
+  package/key/receipt/export Git blobs with the current feed tree: zero changed/missing.
+- Controller GitHub transport count reached760 and remained unchanged during sampled
+  mirror waiting; this includes derivative status work and restart recovery, and is
+  not an exact endpoint-category HTTP count. Earlier1914 connections covered only a
+  partial five-root session, so these are not equal-work benchmarks. CLI/browser
+  diagnostic requests are separate from controller traffic. No new source/test edit,
+  signing-key change, package replacement or production activation in this continuation.
+
+## 2026-10-27 — session recheck:19 published, one explicit failure
+
+- Live controller generation688 has19/20 session nodes published and one failed;
+  no building/waiting/publishing node remains. Both remaining Fedora publications
+  completed automatically, including demo-join run40406113963.
+- demo-join Debian arm64 publication40402091147 was cancelled at21:36:17UTC on
+  October26 while installing tools. Attempt-one job121850518683 confirms preparation
+  and checked push were skipped. The controller correctly recorded a definite failure
+  before feed update and released the writer. Cancellation cause was not established
+  by this check. No new retry was submitted; previous single retry approval concerned
+  demo-side APK, not this target.
+- Public HTTPS status.json now reports generation688, matching all20 session nodes
+  on state, activity, revision and tag. The observer stopped at its bounded deadline;
+  this recheck read the actual live controller and public feed directly.
+- All337 baseline immutable blobs remain unchanged. Controller log
+  counts833 GitHub connections across the whole session, including restart recovery
+  and derivative status dispatches. This is not an endpoint-category request count.
+- No production/test code or deployment setting changed in this recheck. Full-session
+  success remains unclaimed because the arm64 publication failed. Evidence is retained
+  under /tmp/codex/build/core-ci/webhook-latency/live/; WORK_LOG.md is uncommitted.
+
+## 2026-10-27 — completed session recheck
+
+- Owner-operated retry selected demo-join Debian arm64 revision103. Build40462326071
+  and publication40462396187 succeeded. Live controller generation707 records all20
+  session targets published; public status.json matches generation707 with no differences
+  in state/activity/revision/tag. No active sandbox workflow was found at the check.
+- This session included one approved APK retry, a controller correction/restart, and the
+  owner's arm64 retry after a cancelled publisher. It is not an uninterrupted first-pass
+  success. Package-client installation tests were not rerun in this session.
+
