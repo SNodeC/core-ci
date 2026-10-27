@@ -2205,3 +2205,20 @@ proposed. Commit/push/merge remain separate authorization stages.
   Claude review. Stage only correction code/tests, the M1 wording, this implementation entry,
   the correction agreement and verification report. Unrelated documentation remains unstaged;
   merge, installation and live activation are not included in this publication step.
+
+
+### Controller parallelism re-review and main publication (2026-10-27)
+
+- Claude completed a read-only detailed review of correction commit a28f61c and the cumulative
+  implementation. It reported no confirmed production defect and five low-priority test-quality
+  findings, retained in docs/proposals/controller-parallelism-corrections-review.md. Those findings
+  are review observations, not newly implemented corrections or live acceptance.
+- Owner explicitly authorized push and merge after receiving that review. Main was verified to
+  be an ancestor of the reviewed branch, allowing a fast-forward publication without modifying
+  the dirty canonical checkout or creating another checkout. Preserve unrelated documentation.
+- Publish this review record on fix/controller-parallelism, then fast-forward remote main to the
+  same reviewed source plus documentation record. No source/test changes since the verified
+  correction commit; production/test cumulative bounds remain +233/+646. No test rerun is needed
+  for these documentation-only additions. Merge authority does not activate deployment.
+- Installation, live restart, sandbox alias rollout and mixed-generation lock proof remain
+  separate. No production SNodeC workflow, credential, key, tag, feed or deployed state changes.
