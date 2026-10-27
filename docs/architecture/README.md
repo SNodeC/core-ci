@@ -490,7 +490,7 @@ are operator tooling, not the controller's HTTP transport.
 | `GET /api/status` | Actual asynchronous database availability query |
 | `POST /github/webhook` on TLS listener | Raw-body authenticated GitHub events |
 
-Configuration-writing requests are same-origin JSON operations. The public listener does not
+Configuration-writing requests are JSON operations without Origin/Host restrictions. The public listener does not
 expose these administration routes. The trusted workflow does not call a homemade success
 callback: GitHub's authenticated run/job events notify core-ci, which fetches assigned evidence
 itself before trusting results.
@@ -498,7 +498,7 @@ itself before trusting results.
 For example, a local exact-version request is:
 
 ```sh
-curl -H 'Origin: http://127.0.0.1:8080' -H 'Content-Type: application/json' \
+curl -H 'Content-Type: application/json' \
   --data '{"repository":"VOC-Experiments/demo-join","tag":"v2.1.3"}' \
   http://127.0.0.1:8080/api/work/request
 ```

@@ -1989,3 +1989,32 @@ proposed. Commit/push/merge remain separate authorization stages.
   owner's arm64 retry after a cancelled publisher. It is not an uninterrupted first-pass
   success. Package-client installation tests were not rerun in this session.
 
+## 2026-10-27 — remove management Origin/Host restriction
+
+- Owner explicitly requested no management Origin/Host check; authentication is deferred.
+  Invariant: management writes use the existing JSON/graph validation path regardless of
+  browser address or Origin header. GitHub webhook raw-body HMAC remains independent.
+- Traced shared main middleware, all management routes, UiConfig registration, browser
+  feedback, enrollment/pipeline harnesses and deployment documentation. Removed the
+  Origin/Host comparison and the unused UiConfig class/config option/CMake source entry.
+  Retained JSON content-type/body validation, security response headers and separate
+  public listener routes. No state, scheduler, listener binding or authentication added.
+- Branch fix/remove-ui-origin-restriction, based on current local main2b99897. Existing
+  live-session WORK_LOG entries preserved in a separate documentation commit. Owner
+  authorized commit, merge, restart and a single new core-up build request. No push requested.
+- Build: cmake -S . -B /tmp/codex/build/core-ci/ui-origin -DCMAKE_BUILD_TYPE=Debug
+  -DBUILD_TESTING=ON; built core-ci, graph-test and graph-store-test with -j2.
+  format-check and git diff --check passed. Focused enrollment-boundaries and
+  pipeline-boundaries both passed (real isolated MariaDB, synthetic GitHub;10.62s).
+  Enrollment proves JSON rejection, missing Origin accepted through body validation,
+  successful localhost write with different Origin, and the existing commit/SSE behavior.
+- Production src: +2/-40, net -38; CMake source wiring: -1; tests: +12/-8, net +4;
+  human documentation: +6/-7, net -1, excluding this WORK_LOG and prior session entries.
+- Initial auto-review rejection was resolved after checking live listener boundaries:
+  UI127.0.0.1:8080; separate webhook192.168.1.239:8443, no management routes there.
+  A subsequent configured-help check was rejected because the saved launch command
+  references .local-credentials/live-sandbox/controller.conf, whose contents must not
+  be inspected under existing instructions. Protected directory was not inspected or
+  modified during implementation. Owner subsequently authorized runtime activation,
+  including removal of only obsolete ui.origin from the configured protected file.
+  Restart and the new session will be recorded after verification.

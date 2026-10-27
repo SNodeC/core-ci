@@ -6,7 +6,6 @@
 #include "Pipeline.h"
 #include "PipelineConfig.h"
 #include "UiAssets.h"
-#include "UiConfig.h"
 
 #include <Log.h>
 #include <core/SNodeC.h>
@@ -34,8 +33,6 @@ int main(int argc, char* argv[]) {
     auto* pipelineConfig = utils::Config::configRoot.newSubCommand<coreci::PipelineConfig>();
 
     coreci::FeedProof feeds(*pipelineConfig, github, sources);
-
-    auto* uiConfig = utils::Config::configRoot.newSubCommand<coreci::UiConfig>();
 
     const express::legacy::in::WebApp app("web");
     app.getConfig()->setReuseAddress();
@@ -137,11 +134,8 @@ int main(int argc, char* argv[]) {
                                 res->set("X-Content-Type-Options", "nosniff");
                                 res->set("Content-Security-Policy",
                                          "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
-                                if (req->method == "POST" &&
-                                    (req->get("Origin") != uiConfig->origin || req->get("Content-Type").find("application/json") != 0 ||
-                                     uiConfig->origin.substr(uiConfig->origin.find("://") + 3) != req->get("Host"))) {
-                                    res->status(403).send(
-                                        R"({"error":"configuration writes require the configured same origin and JSON"})");
+                                if (req->method == "POST" && req->get("Content-Type").find("application/json") != 0) {
+                                    res->status(403).send(R"({"error":"configuration writes require JSON"})");
                                 } else {
                                     next();
                                 }

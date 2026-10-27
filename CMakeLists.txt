@@ -37,7 +37,6 @@ add_executable(
     src/PrivateFile.cpp
     src/Database.cpp
     src/Enrollment.cpp
-    src/UiConfig.cpp
     src/GraphStore.cpp
     src/SourceReader.cpp
     src/HttpsUrl.cpp

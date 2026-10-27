@@ -174,17 +174,19 @@ def exercise(args, root):
     password.write_text("")
     password.chmod(0o600)
     config = directory / "controller.conf"
-    config.write_text('github.app-id=42\ngithub.installation-id=7\ngithub.allowed-owner="Owner"\ngithub.repository=["Owner/example=99"]\ngithub.private-key-file="' + str(key) + '"\nui.origin="' + origin + '"\n')
+    config.write_text('github.app-id=42\ngithub.installation-id=7\ngithub.allowed-owner="Owner"\ngithub.repository=["Owner/example=99"]\ngithub.private-key-file="' + str(key) + '"\n')
     config.chmod(0o600)
     proxy = DatabaseProxy(directory / "p.sock", db_socket)
     proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
     proxy_thread.start()
     command = [args.executable, "--config-file", str(config), "--log-file", str(directory / "framework.log"), "database", "--mode", "unmanaged", "--socket", str(directory / "p.sock"), "--user", "core_ci_test", "--name", "core_ci", "--password-file", str(password), "web", "local", "--port", str(port), "github-http", "remote", "--host", "127.0.0.1", "--port", str(github.server_port), "tls", "--ca-cert", str(certificate)]
 
-    def request(path, body=None, request_origin=origin):
+    def request(path, body=None, request_origin=origin, endpoint=origin, content_type="application/json"):
         payload = None if body is None else json.dumps(body).encode()
-        headers = {"Content-Type": "application/json", "Origin": request_origin}
-        req = urllib.request.Request(origin + path, data=payload, headers=headers)
+        headers = {"Content-Type": content_type}
+        if request_origin is not None:
+            headers["Origin"] = request_origin
+        req = urllib.request.Request(endpoint + path, data=payload, headers=headers)
         try:
             response = urllib.request.urlopen(req, timeout=10)
         except urllib.error.HTTPError as error:
@@ -209,9 +211,11 @@ def exercise(args, root):
             for receiver in (stream, peer):
                 assert lifecycle.stream_event(receiver) == ("graph", request("/api/graph")[1])
                 assert lifecycle.stream_event(receiver) == ("repositories", {"repositories": []})
-            status, result = request("/api/repositories/save", save, "http://untrusted.example")
+            status, result = request("/api/repositories/save", save, content_type="text/plain")
             assert status == 403 and writes == 0, result
-            status, result = request("/api/repositories/save", save)
+            status, result = request("/api/repositories/save", {}, None)
+            assert status == 422 and writes == 0, result
+            status, result = request("/api/repositories/save", save, "http://other.example", origin.replace("127.0.0.1", "localhost"))
             assert status == 200 and result["github_committed"] is True and writes == 1, result
             first = result["revision"]
             for receiver in (stream, peer):
@@ -352,7 +356,7 @@ def exercise(args, root):
         github.shutdown()
         github.server_close()
         thread.join(timeout=3)
-    print("PASS local enrollment: committed revisions, stale edits, rejected/uncertain writes, reconciliation, restart, rollback, lost COMMIT and origin protection")
+    print("PASS local enrollment: committed revisions, stale edits, rejected/uncertain writes, reconciliation, restart, rollback, lost COMMIT, JSON validation and unrestricted management origins")
 
 
 if __name__ == "__main__":

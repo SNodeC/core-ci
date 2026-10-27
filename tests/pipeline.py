@@ -327,7 +327,7 @@ def exercise(args, directory):
     settings = root / "controller.conf"
     settings.write_text('github.app-id=42\ngithub.installation-id=7\ngithub.bot-id=42\ngithub.allowed-owner="Owner"\n'
         'github.repository=["Owner/example=99", "Owner/worker=1000"]\ngithub.private-key-file="' + str(app_key) + '"\n'
-        'github.webhook-secret-file="' + str(secret_file) + '"\nui.origin="' + origin + '"\n'
+        'github.webhook-secret-file="' + str(secret_file) + '"\n'
         'pipeline.worker-repository="Owner/worker"\npipeline.tooling-sha="' + "f" * 40 + '"\n'
         'pipeline.source-workflow-blob="' + workflow_blob + '"\npipeline.publication-ref="main"\npipeline.publication-workflow-blob="' + workflow_blob + '"\n'
         'pipeline.feed-repository="Owner/feed"\npipeline.feed-id=1001\npipeline.feed-branch="feed"\npipeline.feed-base-url="' + feed_origin + '/"\n'

@@ -198,7 +198,6 @@ option-name reference. These are the registered controller settings:
 | `github.private-key-file` | Protected App RSA PEM path |
 | `github.webhook-secret-file` | Protected raw-body HMAC secret path |
 | `github.api-version` | Configured GitHub REST version |
-| `ui.origin` | Exact local UI origin, including host and port |
 | `pipeline.worker-repository` / `pipeline.tooling-sha` | Trusted worker and full tooling commit |
 | `pipeline.source-workflow` / `pipeline.source-workflow-blob` | Thin workflow path and approved Git blob |
 | `pipeline.publication-workflow` / `pipeline.publication-workflow-blob` | Publisher path and approved Git blob |
@@ -376,9 +375,9 @@ versions or silently introduce another hosting service.
 
 ## 8. Enable public HTTPS webhooks without exposing the UI
 
-Keep `web` on `127.0.0.1:8080` and set `ui.origin` to exactly the address used in the browser.
-Configuration POSTs require matching Origin/Host and JSON. `localhost` and `127.0.0.1` are
-different origins. There is no application user-login protection; agree an access-protection
+Keep `web` on `127.0.0.1:8080`. Both `localhost` and `127.0.0.1` can be used in the browser.
+Configuration POSTs require JSON; the controller does not restrict their Origin or Host headers.
+There is no application user-login protection; agree an access-protection
 arrangement before making the UI public. Do not forward its port as part of webhook setup.
 
 The named `webhook` TLS listener owns only `/github/webhook`. Append:
@@ -617,7 +616,7 @@ allocator is not safe permission to reuse already published package identities.
 | Symptom | First checks |
 | --- | --- |
 | No UI listener | Initial DB connection, schema version, file ownership and explicit database mode |
-| UI POST rejected | Exact `ui.origin`, browser hostname/port, Host and JSON content type |
+| UI POST rejected | JSON content type, request body and the reported validation error |
 | Webhook `401` | Raw-body secret equality and signature header; do not disable validation |
 | GitHub delivery timeout | Running controller revision and prompt acknowledgement; inspect processing logs |
 | Selection blocked by another repository | Its selected tag/definition readability; no silent omission policy |
