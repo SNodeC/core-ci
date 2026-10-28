@@ -12,13 +12,13 @@ namespace coreci {
     public:
         using Callback = std::function<void(const EnrollmentResult&)>;
         Enrollment(GitHub& github, GraphStore& store, SourceReader& sources, const PipelineConfig& config);
-        void list(const Callback& callback) const;
-        void refresh(const Json& input, const Callback& callback);
+        Json list() const;
+        void refresh(const Json& input, const Callback& callback, const std::string& commit = "", const Json& expected = nullptr);
         void save(const Json& input, const Callback& callback);
         void workflow(const Json& input, const Callback& callback);
 
     private:
-        void persist(const Json& row, std::uint64_t generation, const Callback& callback);
+        void persist(const Json& row, const Json& expected, const Callback& callback);
         GitHub& github;
         GraphStore& store;
         SourceReader& sources;

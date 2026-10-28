@@ -45,25 +45,17 @@ namespace coreci {
             [this, change, callback](const DatabaseResult& result) {
                 const bool committed = result.error.empty() && change->next != state;
                 const bool repositories = committed && change->next.at("repositories") != state.at("repositories");
-                bool publicChange = false;
                 if (committed) {
-                    auto before = publicView(state);
-                    auto after = publicView(change->next);
-                    before["generation"] = after.at("generation");
-                    publicChange = before != after;
                     state = std::move(change->next);
                 }
                 callback(result, change->result);
                 if (onChanged && (committed || result.uncertain)) {
-                    onChanged(publicChange, repositories);
+                    onChanged(repositories);
                 }
             });
     }
 
     Json GraphStore::view() const {
-        return view(state);
-    }
-    Json GraphStore::view(const Json& state) const {
         auto executions = Json::array();
         for (const auto& [id, node] : state.at("executions").items()) {
             const auto& attempt = node.at("attempts").back();
@@ -110,12 +102,9 @@ namespace coreci {
     }
 
     Json GraphStore::publicView() const {
-        return publicView(state);
-    }
-    Json GraphStore::publicView(const Json& state) const {
         auto projects = Json::object();
         auto executions = Json::array();
-        const auto snapshot = view(state);
+        const auto snapshot = view();
         for (const auto& row : snapshot.at("executions")) {
             Json item;
             for (const auto* key : {"id",
@@ -166,6 +155,6 @@ namespace coreci {
             });
             ordered.push_back(project);
         }
-        return {{"schema", 1}, {"generation", state.at("generation")}, {"projects", ordered}, {"executions", executions}};
+        return {{"schema", 1}, {"projects", ordered}, {"executions", executions}};
     }
 } // namespace coreci

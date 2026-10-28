@@ -584,18 +584,22 @@ namespace coreci {
             });
     }
     void Pipeline::refreshStatus() {
-        const auto generation = store.graph().at("generation").get<std::uint64_t>();
-        if (!config.statusWorkflow.empty() && !refreshing && generation != statusSent) {
-            refreshing = generation;
+        if (!config.statusWorkflow.empty() && store.mutationsAllowed() && !refreshing && store.publicView() != statusSent) {
+            refreshing = true;
             sources.file(
                 config.workerRepository,
                 config.publicationRef,
                 config.statusWorkflow,
                 [=, this](const SourceResult& proof) {
                     if (!proof.error.empty() || proof.blobSha != config.statusWorkflowBlob) {
-                        refreshing.reset();
+                        refreshing = false;
                         log({503, {{"error", "approved public status workflow is unavailable"}}});
+                    } else if (!store.mutationsAllowed()) {
+                        refreshing = false;
+                        log({503, {{"error", "public status dispatch skipped: graph authority uncertain"}}});
                     } else {
+                        statusSent = store.publicView();
+                        const auto generation = store.graph().at("generation").get<std::uint64_t>();
                         const auto path = config.statusWorkflow.substr(config.statusWorkflow.rfind('/') + 1);
                         github.request(config.workerRepository,
                                        "POST",
@@ -603,8 +607,7 @@ namespace coreci {
                                        {{"ref", config.publicationRef}, {"inputs", {{"generation", std::to_string(generation)}}}},
                                        {{"actions", "write"}},
                                        [=, this](const GitHubResult& response) {
-                                           statusSent = generation;
-                                           refreshing.reset();
+                                           refreshing = false;
                                            if (!response.error.empty() || (response.status != 200 && response.status != 204)) {
                                                log({503,
                                                     {{"error", "public status dispatch is unconfirmed; not replayed"},
@@ -613,9 +616,7 @@ namespace coreci {
                                                      {"submitted", response.submitted},
                                                      {"transport", response.error}}});
                                            }
-                                           if (store.graph().at("generation") != generation) {
-                                               refreshStatus();
-                                           }
+                                           refreshStatus();
                                        });
                     }
                 },

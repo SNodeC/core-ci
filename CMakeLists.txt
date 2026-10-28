@@ -307,6 +307,14 @@ if(BUILD_TESTING)
         preflight-live
         queued-job
         large-indexes
+        enrollment-progress
+        save-progress
+        same-row-put-race
+        exact-post-put-sha
+        status-delayed-approval
+        unchanged-private-commits
+        status-uncertain
+        status-approval-recovery
         unconfirmed-dispatch
         unconfirmed-run
         retirement

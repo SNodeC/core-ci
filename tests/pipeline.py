@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 import lifecycle
+import enrollment
 
 
 def exercise(arguments):
@@ -42,23 +43,27 @@ def exercise(arguments):
     database = subprocess.Popen(["/usr/sbin/mariadbd", "--no-defaults", "--datadir=" + str(data), "--socket=" + str(socket), "--skip-networking",
                                  "--pid-file=" + str(root / "database.pid"), "--user=" + pwd.getpwuid(os.geteuid()).pw_name,
                                  "--innodb-buffer-pool-size=32M"], stdout=db_log, stderr=subprocess.STDOUT)
-    application, server, thread = None, None, None
+    application, server, thread, proxy, proxy_thread = None, None, None, None, None
     canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
     sha = lambda value: hashlib.sha1(value).hexdigest()
     blob_id = lambda value: sha(b"blob " + str(len(value)).encode() + b"\0" + value)
     trace, errors, runs, jobs, dispatches, blobs, trees, commits, public_files = [], [], {}, {}, [], {}, {}, {}, {}
-    workflow_writes = []
+    workflow_writes, definition_writes, status_dispatches = [], [], []
+    put_response = {"mode": "valid"}
     inspection = {"listing": "normal", "jobs": False}
     unconfirmed = arguments.case in ("unconfirmed-dispatch", "unconfirmed-run", "retirement")
     lock = threading.Lock()
     missing_artifacts, unreadable = set(), set()
     available, references = {}, {}
-    holds = {"tags": None, "commit": None, "token": None, "publication": False}
+    holds = {"tags": None, "commit": None, "token": None, "publication": False, "definition": False}
     token_started, token_release = threading.Event(), threading.Event()
     publication_started, publication_release = threading.Event(), threading.Event()
     tags_started, tags_release = threading.Event(), threading.Event()
     commit_started, commit_release = threading.Event(), threading.Event()
     artifact_started, artifact_release = threading.Event(), threading.Event()
+    definition_started, definition_release = threading.Event(), threading.Event()
+    if arguments.case in ("status-delayed-approval", "status-uncertain"):
+        holds["commit"] = "e" * 40
     ids = {"core": 1, "app": 2, "side": 3, "join": 4, "worker": 9, "feed": 10}
     tooling = "f" * 40
     workflow = (Path(__file__).resolve().parents[1] / "deployment/source/core-ci-build.yml.in").read_text()
@@ -116,6 +121,12 @@ def exercise(arguments):
     definitions["worker-main"] = "e" * 40
     tree_files("worker", "e" * 40, {".github/workflows/core-ci-publish.yml": publisher, ".github/workflows/core-ci-status.yml": publisher})
 
+    if arguments.case == "status-approval-recovery":
+        definitions["worker-main"] = sha(b"unapproved status workflow")
+        tree_files("worker", definitions["worker-main"], {".github/workflows/core-ci-status.yml": b"unapproved workflow"})
+
+    definition_bytes = {name: canonical(row["definition"]).encode() for name, row in enrolled.items()}
+
     def release(name, tag, visible=True):
         revision = sha((name + "-" + tag).encode())
         references[(name, tag)] = revision
@@ -146,16 +157,34 @@ def exercise(arguments):
             trace.append((time.monotonic(), "PUT", self.path))
             try:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                assert self.path == "/repos/Owner/core/contents/.github/workflows/core-ci-build.yml"
                 assert body["branch"] == "main"
                 content = base64.b64decode(body["content"], validate=True)
-                assert content == workflow
-                workflow_writes.append(body)
-                revision = sha(("installed-" + str(len(workflow_writes))).encode())
-                tree_files("core", revision, {"ci/packages.json": canonical(enrolled["core"]["definition"]).encode(),
-                                              ".github/workflows/core-ci-build.yml": content})
-                definitions["core-main"] = revision
-                self.reply(201, {"commit": {"sha": revision}, "content": {"sha": blob_id(content)}})
+                if self.path.endswith("/contents/ci/packages.json"):
+                    repository = self.path.split("/")[3]
+                    current = definition_bytes[repository]
+                    assert body["sha"] == blob_id(current)
+                    if holds["definition"]:
+                        definition_started.set()
+                        assert definition_release.wait(15), "definition PUT hold was not released"
+                    revision = sha(("saved-" + str(len(definition_writes))).encode())
+                    definition_writes.append((repository, body, revision))
+                    enrolled[repository]["definition"] = json.loads(content)
+                    definition_bytes[repository] = content
+                    tree_files(repository, revision, {"ci/packages.json": content, ".github/workflows/core-ci-build.yml": workflow})
+                    definitions[repository + "-main"] = revision
+                    replies = {"valid": {"commit": {"sha": revision}}, "missing": {}, "no-sha": {"commit": {}},
+                               "bad-sha": {"commit": {"sha": "not-a-commit"}}, "short-sha": {"commit": {"sha": "a" * 39}},
+                               "wrong-type": {"commit": {"sha": 42}}}
+                    self.reply(201, replies[put_response["mode"]])
+                else:
+                    assert self.path == "/repos/Owner/core/contents/.github/workflows/core-ci-build.yml"
+                    assert content == workflow
+                    workflow_writes.append(body)
+                    revision = sha(("installed-" + str(len(workflow_writes))).encode())
+                    tree_files("core", revision, {"ci/packages.json": canonical(enrolled["core"]["definition"]).encode(),
+                                                  ".github/workflows/core-ci-build.yml": content})
+                    definitions["core-main"] = revision
+                    self.reply(201, {"commit": {"sha": revision}, "content": {"sha": blob_id(content)}})
             except Exception as failure:
                 errors.append(str(failure))
                 self.reply(500, {"error": str(failure)})
@@ -167,12 +196,13 @@ def exercise(arguments):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if self.path.startswith("/app/installations/"):
                     assert body["repository_ids"][0] in ids.values() and len(body["repository_ids"]) == 1
-                    assert body["permissions"] in ({"contents": "read"}, {"actions": "read"}, {"actions": "write"}, {"contents": "write", "workflows": "write"})
+                    assert body["permissions"] in ({"contents": "read"}, {"contents": "write"}, {"actions": "read"}, {"actions": "write"}, {"contents": "write", "workflows": "write"})
                     if body["repository_ids"] == [holds["token"]] and body["permissions"] == {"actions": "write"}:
                         token_started.set()
                         assert token_release.wait(15), "test token hold was not released"
                     self.reply(201, {"token": "synthetic-token", "expires_at": "2099-01-01T00:00:00Z"})
                 elif "core-ci-status.yml/dispatches" in self.path:
+                    status_dispatches.append(body)
                     if unconfirmed:
                         self.close_connection = True
                     else:
@@ -247,7 +277,7 @@ def exercise(arguments):
                         self.reply(200, [{"sha": commit, "commit": {"tree": {"sha": commits[("feed", commit)]}}}] if commit else [])
                     elif suffix.startswith("/commits/"):
                         ref = urllib.parse.unquote(suffix[9:])
-                        commit = definitions[repository + "-main"] if ref in ("main", "alternate") else ref
+                        commit = definitions[repository + "-main"] if ref in ("main", "alternate", "alternate-two") else ref
                         if commit == holds["commit"]:
                             commit_started.set()
                             assert commit_release.wait(15), "test commit hold was not released"
@@ -332,8 +362,14 @@ def exercise(arguments):
                    "pipeline.feed-base-url": "https://127.0.0.1:" + str(server.server_port) + "/", "pipeline.gpg-fingerprint": "A" * 40,
                    "pipeline.usign-key-sha256": "b" * 64, "pipeline.apk-key-sha256": "c" * 64}
         config.write_text("\n".join(name + "=" + json.dumps(value) for name, value in options.items()) + "\n")
+        controller_socket = socket
+        if arguments.case == "status-uncertain":
+            proxy = enrollment.DatabaseProxy(root / "p.sock", socket)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            controller_socket = root / "p.sock"
         command = [arguments.executable, "--config-file", str(config), "--log-file", str(root / "controller.log"), "database", "--mode", "unmanaged",
-                   "--socket", str(socket), "--name", "boundary", "--user", "root", "--password-file", str(password), "web", "local", "--port", str(port),
+                   "--socket", str(controller_socket), "--name", "boundary", "--user", "root", "--password-file", str(password), "web", "local", "--port", str(port),
                    "webhook", "--disabled=false", "local", "--port", str(webhook_port), "tls", "--cert", str(cert), "--cert-key", str(tls_key),
                    "github-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port), "tls", "--ca-cert", str(cert),
                    "feed-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port), "tls", "--ca-cert", str(cert)]
@@ -392,7 +428,165 @@ def exercise(arguments):
 
         application = subprocess.Popen(command, stdout=(root / "stdout.log").open("w"), stderr=subprocess.STDOUT)
         lifecycle.wait_http(port, application)
-        if unconfirmed:
+        review_cases = ("enrollment-progress", "save-progress", "same-row-put-race", "exact-post-put-sha",
+                        "status-delayed-approval", "unchanged-private-commits", "status-uncertain", "status-approval-recovery")
+        if arguments.case in review_cases:
+            if arguments.case == "status-approval-recovery":
+                message = "approved public status workflow is unavailable"
+                wait(lambda: message in (root / "stdout.log").read_text(), "failed status preflight not reported")
+                assert not status_dispatches
+                generation = api("/api/graph")[1]["generation"]
+                assert api("/api/work/reconcile", {})[0] == 200
+                wait(lambda: (root / "stdout.log").read_text().count(message) >= 2, "explicit preflight retry was suppressed")
+                assert not status_dispatches
+                definitions["worker-main"] = "e" * 40
+                assert api("/api/work/reconcile", {})[0] == 200
+                wait(lambda: len(status_dispatches) == 1, "repaired approval did not dispatch without a new commit")
+                assert status_dispatches[0]["inputs"]["generation"] == str(generation) and not dispatches
+                assert api("/api/graph")[1]["generation"] == generation
+            elif arguments.case == "status-uncertain":
+                assert commit_started.wait(5), "status approval did not start"
+                proxy.drop_commit, proxy.drop_query = True, b"UPDATE GRAPH_STATE"
+                status, uncertain = api("/api/work/request", {"repository": "Owner/core", "tag": "v1.0.0"})
+                assert status == 503 and uncertain["uncertain"] is True and proxy.dropped == 1, uncertain
+                assert api("/api/graph")[1]["mutations_allowed"] is False
+                commit_release.set()
+                wait(lambda: "public status dispatch skipped" in (root / "stdout.log").read_text(), "approval ignored latched authority")
+                assert not status_dispatches and not dispatches
+            else:
+                if arguments.case == "status-delayed-approval":
+                    assert commit_started.wait(5), "status approval did not start"
+                else:
+                    wait(lambda: len(status_dispatches) == 1, "initial status did not dispatch")
+                assert api("/api/work/request", {"repository": "Owner/core", "tag": "v1.0.0"})[0] == 200
+                wait(lambda: len(dispatches) == 5, "independent roots did not dispatch")
+                first = dispatches[0]
+
+                def progress(job=False):
+                    generation = api("/api/graph")[1]["generation"]
+                    assert report(first, job=job, status="in_progress")[0] == 202
+                    wait(lambda: api("/api/graph")[1]["generation"] > generation, "progress did not commit")
+
+                def row(name):
+                    return next(x for x in api("/api/repositories")[1]["repositories"] if x["name"] == name)
+
+                def save_input():
+                    current = row("app")
+                    return {"repository": "Owner/app", "branch": "main", "revision": current["revision"],
+                            "blob_sha": current["blob_sha"], "definition": current["definition"]}
+
+                if arguments.case == "enrollment-progress":
+                    holds["commit"] = definitions["app-main"]
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        pending = pool.submit(api, "/api/repositories/refresh", {"repository": "Owner/app", "branch": "alternate"})
+                        assert commit_started.wait(5)
+                        progress()
+                        commit_release.set()
+                        assert pending.result(timeout=10)[0] == 200
+                    # A concurrent changed row remains protected, including two different reads.
+                    commit_started.clear()
+                    commit_release.clear()
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        a = pool.submit(api, "/api/repositories/refresh", {"repository": "Owner/app", "branch": "main"})
+                        assert commit_started.wait(5)
+                        assert api("/api/repositories/refresh", {"repository": "Owner/app", "branch": definitions["app"]})[0] == 200
+                        committed = row("app")
+                        commit_release.set()
+                        rejected = a.result(timeout=10)
+                    assert rejected[0] == 409 and "enrollment changed" in rejected[1]["error"]
+                    assert row("app") == committed
+                elif arguments.case == "save-progress":
+                    holds["commit"], holds["definition"] = definitions["app-main"], True
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pending = pool.submit(api, "/api/repositories/save", save_input())
+                        assert commit_started.wait(5)
+                        progress()
+                        commit_release.set()
+                        assert definition_started.wait(5)
+                        progress(job=True)
+                        definition_release.set()
+                        saved = pending.result(timeout=10)
+                    assert saved[0] == 200 and saved[1]["github_committed"] is True, saved
+                    assert row("app")["revision"] == definition_writes[-1][2]
+                    # A real enrollment change still invalidates pre-PUT validation.
+                    holds["commit"], holds["definition"] = definitions["app-main"], False
+                    commit_started.clear()
+                    commit_release.clear()
+                    count = len(definition_writes)
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pending = pool.submit(api, "/api/repositories/save", save_input())
+                        assert commit_started.wait(5)
+                        assert api("/api/repositories/refresh", {"repository": "Owner/side", "branch": "alternate"})[0] == 200
+                        commit_release.set()
+                        rejected = pending.result(timeout=10)
+                    assert rejected[0] == 409 and rejected[1]["github_committed"] is False and len(definition_writes) == count
+                elif arguments.case == "same-row-put-race":
+                    holds["definition"] = True
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pending = pool.submit(api, "/api/repositories/save", save_input())
+                        assert definition_started.wait(5)
+                        assert api("/api/repositories/refresh", {"repository": "Owner/app", "branch": "alternate"})[0] == 200
+                        concurrent = row("app")
+                        definition_release.set()
+                        rejected = pending.result(timeout=10)
+                    assert rejected[0] == 409 and rejected[1]["github_committed"] is True, rejected
+                    assert row("app") == concurrent
+                    assert api("/api/repositories/refresh", {"repository": "Owner/app", "branch": "main"})[0] == 200
+                    definition_started.clear()
+                    definition_release.clear()
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pending = pool.submit(api, "/api/repositories/save", save_input())
+                        assert definition_started.wait(5)
+                        assert api("/api/repositories/refresh", {"repository": "Owner/side", "branch": "alternate"})[0] == 200
+                        definition_release.set()
+                        assert pending.result(timeout=10)[0] == 200
+                elif arguments.case == "exact-post-put-sha":
+                    holds["definition"] = True
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        pending = pool.submit(api, "/api/repositories/save", save_input())
+                        assert definition_started.wait(5)
+                        holds["commit"] = definitions["app-main"]
+                        preview = pool.submit(api, "/api/repositories/workflow", {"repository": "Owner/app"})
+                        assert commit_started.wait(5)
+                        definition_release.set()
+                        saved = pending.result(timeout=5)  # must finish while the stale branch read is still held
+                        assert saved[0] == 200 and saved[1]["revision"] == definition_writes[-1][2], saved
+                        assert any(x[2] == "/repos/Owner/app/commits/" + saved[1]["revision"] for x in trace)
+                        commit_release.set()
+                        assert preview.result(timeout=10)[0] == 200
+                    holds["definition"], holds["commit"] = False, None
+                    for mode in ("missing", "no-sha", "bad-sha", "short-sha", "wrong-type"):
+                        put_response["mode"] = mode
+                        previous, offset = row("app"), len(trace)
+                        rejected = api("/api/repositories/save", save_input())
+                        assert rejected[0] == 503 and rejected[1]["github_committed"] is True, rejected
+                        put = next(i for i in range(offset, len(trace)) if trace[i][1] == "PUT")
+                        assert not any("/commits/" in x[2] for x in trace[put + 1:]), "missing identity caused a fallback read"
+                        assert row("app") == previous
+                else:
+                    if arguments.case == "status-delayed-approval":
+                        progress()
+                        assert not status_dispatches
+                        generation = api("/api/graph")[1]["generation"]
+                        commit_release.set()
+                        wait(lambda: len(status_dispatches) == 1, "latest status did not dispatch")
+                        assert status_dispatches[0]["inputs"]["generation"] == str(generation)
+                    else:
+                        wait(lambda: len(status_dispatches) == 2, "public build status did not dispatch")
+                    time.sleep(0.15)
+                    expected = len(status_dispatches)
+                    assert expected == (1 if arguments.case == "status-delayed-approval" else 2), "private commits dispatched status"
+                    progress(job=arguments.case == "status-delayed-approval")
+                    wait(lambda: len(status_dispatches) == expected + 1, "within-state progress lost public refresh")
+                    time.sleep(0.15)
+                    offset, generation = len(trace), api("/api/graph")[1]["generation"]
+                    with ThreadPoolExecutor(max_workers=8) as pool:
+                        replies = list(pool.map(lambda unused: report(first, job=arguments.case == "status-delayed-approval", status="in_progress"), range(8)))
+                    assert all(x[0] == 202 for x in replies)
+                    time.sleep(0.15)
+                    assert len(trace) == offset and api("/api/graph")[1]["generation"] == generation, "unchanged reports caused requests"
+            finish_boundary("review correction regression")
+        elif unconfirmed:
             assert api("/api/work/request", {"repository": "Owner/core", "tag": "v1.0.0"})[0] == 200
             wait(lambda: len(dispatches) == 1, "build did not dispatch")
             assert report(dispatches[0])[0] == 202 and report(dispatches[0], job=True)[0] == 202
@@ -573,7 +767,7 @@ def exercise(arguments):
                 endpoint = "/api/repositories/workflow"
                 query = {"repository": "Owner/core"}
                 status, preview = api(endpoint, query)
-                assert status == 200 and preview["blob_sha"] == blob_id(workflow)
+                assert status == 200 and preview["blob_sha"] == blob_id(workflow) and preview["content"] == workflow.decode()
                 assert api(endpoint, {**query, "write": True, "head": "stale", "blob_sha": preview["blob_sha"]})[0] == 409
                 assert not workflow_writes
                 assert api(endpoint, {**query, "write": True, "head": preview["head"], "blob_sha": preview["blob_sha"]})[1]["github_committed"] is False
@@ -823,6 +1017,7 @@ def exercise(arguments):
                 (root / "measurements.json").write_text(json.dumps(metrics, indent=2))
                 print("PASS synthetic full twenty-node chain", arguments.case, canonical({key: value for key, value in metrics.items() if key != "request_paths"}))
     finally:
+        definition_release.set()
         tags_release.set()
         commit_release.set()
         token_release.set()
@@ -834,6 +1029,10 @@ def exercise(arguments):
             server.server_close()
         if thread:
             thread.join(timeout=3)
+        if proxy:
+            proxy.shutdown()
+            proxy.server_close()
+            proxy_thread.join(timeout=3)
         lifecycle.stop(database)
         db_log.close()
 
@@ -842,5 +1041,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True)
     parser.add_argument("--directory", required=True)
-    parser.add_argument("--case", choices=("unconfirmed-dispatch", "unconfirmed-run", "retirement", "chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
+    parser.add_argument("--case", choices=("status-approval-recovery", "enrollment-progress", "save-progress", "same-row-put-race", "exact-post-put-sha", "status-delayed-approval", "unchanged-private-commits", "status-uncertain", "unconfirmed-dispatch", "unconfirmed-run", "retirement", "chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
     exercise(parser.parse_args())

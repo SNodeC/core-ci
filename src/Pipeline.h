@@ -3,7 +3,6 @@
 #include "Enrollment.h"
 #include "FeedProof.h"
 
-#include <optional>
 #include <set>
 
 namespace coreci {
@@ -52,7 +51,7 @@ namespace coreci {
         GraphStore& store;
         FeedProof& feeds;
         std::set<std::string> completionReads;
-        std::optional<std::uint64_t> refreshing;
-        std::uint64_t statusSent = UINT64_MAX;
+        bool refreshing = false;
+        Json statusSent;
     };
 } // namespace coreci

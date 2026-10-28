@@ -137,7 +137,7 @@ def exercise(args, root):
                 self.send_json(200, {"total_count": 0, "workflow_runs": []})
             elif self.path == "/repos/Owner/example/actions/runs/123/attempts/1":
                 self.send_json(404, {})
-            elif self.path == "/repos/Owner/example/commits/main":
+            elif self.path in ("/repos/Owner/example/commits/main", "/repos/Owner/example/commits/" + head):
                 self.send_json(200, {"sha": head, "commit": {"tree": {"sha": "c" * 40}}})
             elif self.path.startswith("/repos/Owner/example/tags?"):
                 self.send_json(200, [])

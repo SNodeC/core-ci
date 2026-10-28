@@ -131,6 +131,7 @@ int main(int argc, char* argv[]) {
                                     res->status(503).send(R"({"error":"graph authority is unavailable"})");
                                 } else {
                                     auto facts = graphStore->publicView();
+                                    facts["generation"] = graphStore->graph().at("generation");
                                     facts["feed"] = {{"repository", pipelineConfig->feedRepository},
                                                      {"repository_id", pipelineConfig->feedId},
                                                      {"branch", pipelineConfig->feedBranch}};
@@ -170,10 +171,8 @@ int main(int argc, char* argv[]) {
                                 res->type("application/json").send(graphStore->view().dump());
                             });
 
-                            graphStore->onChanged = [&](bool publicChange, bool repositoriesChanged) {
-                                if (publicChange) {
-                                    pipeline->refreshStatus();
-                                }
+                            graphStore->onChanged = [&](bool repositoriesChanged) {
+                                pipeline->refreshStatus();
                                 if (!eventReceivers.empty()) {
                                     const auto graph = graphStore->view().dump();
                                     for (const auto& response : eventReceivers) {
@@ -181,12 +180,10 @@ int main(int argc, char* argv[]) {
                                     }
                                 }
                                 if (repositoriesChanged && !eventReceivers.empty()) {
-                                    enrollment->list([&eventReceivers, sendEvent](const coreci::EnrollmentResult& result) {
-                                        const auto data = result.body.dump();
-                                        for (const auto& response : eventReceivers) {
-                                            sendEvent(response, result.status == 200 ? "repositories" : "unavailable", data);
-                                        }
-                                    });
+                                    const auto data = enrollment->list().dump();
+                                    for (const auto& response : eventReceivers) {
+                                        sendEvent(response, "repositories", data);
+                                    }
                                 }
                             };
 
@@ -209,15 +206,11 @@ int main(int argc, char* argv[]) {
                                     });
                                 });
                                 sendEvent(res, "graph", graphStore->view().dump());
-                                enrollment->list([res, sendEvent](const coreci::EnrollmentResult& result) {
-                                    sendEvent(res, result.status == 200 ? "repositories" : "unavailable", result.body.dump());
-                                });
+                                sendEvent(res, "repositories", enrollment->list().dump());
                             });
 
                             app.get("/api/repositories", [&] APPLICATION(req, res) {
-                                enrollment->list([res](const coreci::EnrollmentResult& result) {
-                                    res->status(result.status).type("application/json").send(result.body.dump());
-                                });
+                                res->type("application/json").send(enrollment->list().dump());
                             });
 
                             app.post("/api/repositories/save", [&] APPLICATION(req, res) {
