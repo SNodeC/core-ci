@@ -2902,3 +2902,18 @@ text center against its column heading: maximum delta0.008px. Both group titles 
 centered over two columns. core-ci/format-check build and diff checks pass. UI is now
 net+59 relative to7c5e68d; tests net+28; C++0. No behavior/data change. The preceding
 group-heading binary was transferred but not activated; deploy this complete correction.
+
+
+### Timing-column alignment live verification — 2026-10-28
+
+Deployed committed ef19a129cae76523ad8514f226b5569148d1c3c1, binary SHA256
+3b9ac12ad5fd0e2063af1b7f14732442ae089c5527b3584c1f1455db3989652a.
+Backup /var/backups/core-ci/ui-columns-20261028T103621Z; release
+/srv/core-ci/releases/ef19a12/. Service active PID222354, NRestarts0.
+Served UI assets match source; graph is byte-equivalent as JSON before/after,
+generation2100. Read-only Chrome verification on the live8080 UI measured all5
+column headings and all timestamp/Pending text centers: at most0.008px difference.
+Both Build/Publisher job titles remain centered over their two columns. Live checks
+and screenshot are retained under /tmp/codex/build/core-ci/ui-compact/live-*.
+No GitHub mutations, retries, config/database changes, push or merge. Unrelated
+hunks remain preserved; this append records deployment under existing commit authority.
