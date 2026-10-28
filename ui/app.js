@@ -78,6 +78,7 @@ function showExecution(id) {
     element("state-filter").value = "all";
     tab("work");
     renderWork();
+    element("execution-" + id)?.parentElement.previousElementSibling.scrollIntoView({block: "start", inline: "nearest"});
 }
 const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "short"});
 const timeFormat = new Intl.DateTimeFormat(undefined, {timeStyle: "medium", hourCycle: "h23"});

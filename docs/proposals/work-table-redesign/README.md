@@ -73,7 +73,7 @@ height rather than being hidden. Hover/focus and the expanded row use a subtle b
 The page uses a compact heading and summary, not oversized cards or large counters.
 
 Any number of executions can be expanded simultaneously. Closing one affects only that
-execution; dependency navigation adds its target to the open rows. Live updates retain open
+execution; dependency navigation opens its target and scrolls its summary into view. Live updates retain open
 rows and each visible technical disclosure independently. Filtering temporarily hides rows
 without clearing their expansion choices. All three timing headings share colour, size and weight.
 

@@ -3321,3 +3321,22 @@ fetch requests. It is DOM/logic coverage, not browser geometry. Probe/logs under
 changed production lines<=160 and git diff --check pass. Existing C++ unchanged, earlier
 format-check remains applicable. No live graph mutation/new build/tag/retry. Browser visual
 verification remains unavailable; cpmd stages will verify exact served assets and durable state.
+
+## Prerequisite navigation scroll — 2026-10-28
+
+Owner reports that prerequisite navigation opens the execution but does not move the view.
+Invariant: explicit prerequisite navigation reveals and scrolls to that exact execution's
+summary, preserving other open rows; SSE and ordinary disclosure changes must not scroll.
+Trace: dependency button -> showExecution -> clear filters/work tab -> renderWork. Added
+one native scrollIntoView after synchronous render, locating the summary via its existing
+panel ID. inline nearest preserves horizontal position where possible; missing graph targets
+are safely ignored. No new callback, state, timer, API or network mechanism.
+UI production+1/-0/net1, within approved redesign20–40 net-line bound (cumulative34).
+Repository tests0, C++/SQL/workflows/API0. Actual-app synthetic DOM probe reproduces old
+failure, then passes correct summary targeting after opening and after filtered already-open
+navigation, no scrolling from SSE/disclosure, missing-target handling and all24 simultaneous
+expansion checks. Native scrolling is observed through its DOM boundary; physical browser
+viewport movement remains unverified because browser access is unavailable. Probe/evidence:
+/tmp/codex/build/core-ci/prerequisite-navigation/{probe.cjs,before.log,after.log}.
+Node syntax, changed-line<=160 and diff checks pass. Continuing owner cpmd authorization
+for these Work-UI fixes; preserve unrelated working-tree documentation and deployment state.
