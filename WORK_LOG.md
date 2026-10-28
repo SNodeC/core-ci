@@ -3257,3 +3257,42 @@ Source assertions cover1224/1400/1712px layouts, colgroup semantics4/2/2/1 and u
 JS/C++ consumers. These are source/calculated checks, not browser-rendered proof. Browser
 reports no enabled apps/browsers. UI+4/-4/net0; tests0; changed lines<=160 and diff check pass.
 Continue existing owner authorization for commit/push/merge/deployment of this UI fix.
+
+## Fresh Work-page presentation design — 2026-10-28
+
+Owner requested a design from scratch, retaining all information, after rejecting the
+existing layout. Read current summary/detail rendering, data/SSE and existing UI fixture.
+Reviewed official GitLab Pajamas/GOV.UK/Carbon table guidance and Buildkite overview/detail
+patterns. Proposal and standalone synthetic HTML preview:
+docs/proposals/work-table-redesign/README.md and preview.html. Native seven-column table;
+each job has one identical inner Started/Finished grid, avoiding competing spanning widths.
+Bold package identity, restrained version/owner metadata, status text plus colour, quieter
+dates and stronger tabular times. All current evidence, prerequisites, logs, operator
+actions, missing-data distinctions and technical facts are mapped in the inventory.
+Rendered/visually inspected explicit SVG mockups at1440/1280 and expanded details; PNGs
+are drawings, not screenshots of real HTML. Six-row preview search/filter/expansion script
+passes node --check and contains no remote calls; browser runtime verification is pending.
+No production/test/controller/deployment changes, commit or restart. Existing unrelated
+working-tree changes preserved. Proposed implementation estimate+20–40 net UI lines,
++15–30 fixture lines, zero C++/SQL/workflow/API; explicit growth approval remains required.
+
+## Implement fresh Work-page presentation — 2026-10-28
+
+Owner's cpmd instruction authorizes implementation within the proposed UI/fixture bounds,
+then commit, push, merge and deployment. Replaced nine-column spanning layout with seven
+native columns and one shared job-pair grid in each job cell/header. Removed obsolete
+positional padding/width rules. Repository is a row header with bold basename/version and
+owner/rebuild metadata. State/known activity share the existing state formatter; no new
+execution state or data authority. All detail facts, conditional retirement/retry, logs,
+dependency navigation and SSE/selection behavior retained. Timestamp data/locale functions
+unchanged; presentation gives quieter dates and stronger centered times. Work-specific
+styles preserve narrow-window scrolling and existing light/dark variables.
+Production UI+57/-24/net33, fixture+16/-0/net16; no C++/SQL/API/workflow changes.
+Final Release core-ci build and format-check passed; node --check ui/app.js and Python AST
+parse passed; changed production lines<=160 and git diff --check pass. Existing public UI
+fixture serves actual assets and10 synthetic examples (all five states, unconfirmed,
+superseded, long identity), including graph and repository SSE updates. Native header/column
+checks pass. These HTTP/source checks are not browser rendering/interaction coverage.
+Evidence: /tmp/codex/build/core-ci/work-table-redesign/fixture-proof.json. Browser access
+still reports no enabled apps/browsers; requested enablement while continuing independent
+work. Authorized deployment will be reported with visual verification explicitly pending.

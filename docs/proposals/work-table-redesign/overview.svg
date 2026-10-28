@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="710" viewBox="0 0 1440 710">
+<style>text{font-family:DejaVu Sans,sans-serif}</style>
+<rect x="0" y="0" width="1440" height="710" rx="0" fill="#f6f8fb"/>
+<rect x="0" y="0" width="1440" height="58" rx="0" fill="#ffffff"/>
+<path d="M0 58H1440" stroke="#dfe5ed"/>
+<text x="60.0" y="36" font-size="17" fill="#17283e" font-weight="700" text-anchor="start">core-ci</text>
+<text x="160.0" y="36" font-size="13" fill="#285eb4" font-weight="600" text-anchor="start">Work</text>
+<text x="225.0" y="36" font-size="13" fill="#5e6d81" font-weight="400" text-anchor="start">Repositories</text>
+<path d="M160.0 57h34" stroke="#285eb4" stroke-width="2"/>
+<text x="1380.0" y="34" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="end">DESIGN PREVIEW · SAMPLE DATA</text>
+<text x="60.0" y="107" font-size="22" fill="#17283e" font-weight="700" text-anchor="start">Package work</text>
+<text x="60.0" y="132" font-size="12" fill="#5e6d81" font-weight="400" text-anchor="start">1 building   ·   1 publishing   ·   1 waiting   ·   1 failed</text>
+<rect x="1155.0" y="82" width="225" height="32" rx="5" fill="#ffffff" stroke="#ccd5e2"/>
+<text x="1168.0" y="103" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">Inspect assigned GitHub work</text>
+<text x="60.0" y="168" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">Find package or target</text>
+<rect x="60.0" y="176" width="310" height="34" rx="5" fill="#ffffff" stroke="#ccd5e2"/>
+<text x="72.0" y="197" font-size="12" fill="#78869a" font-weight="400" text-anchor="start">Package, version, distribution…</text>
+<text x="384.0" y="168" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">Show</text>
+<rect x="384.0" y="176" width="158" height="34" rx="5" fill="#ffffff" stroke="#ccd5e2"/>
+<text x="396.0" y="197" font-size="12" fill="#17283e" font-weight="400" text-anchor="start">All work</text>
+<text x="524.0" y="197" font-size="12" fill="#5e6d81" font-weight="400" text-anchor="start">⌄</text>
+<text x="1380.0" y="199" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="end">6 executions</text>
+<rect x="60.0" y="228" width="1320.0" height="444" rx="7" fill="#ffffff" stroke="#dfe5ed"/>
+<rect x="61.0" y="229" width="1318.0" height="59" rx="0" fill="#f0f3f8"/>
+<text x="104.0" y="262" font-size="12" fill="#40536e" font-weight="650" text-anchor="start">Package</text>
+<text x="536.0" y="262" font-size="12" fill="#40536e" font-weight="650" text-anchor="start">Target</text>
+<text x="692.0" y="262" font-size="12" fill="#40536e" font-weight="650" text-anchor="start">State</text>
+<text x="962.0" y="250" font-size="12" fill="#40536e" font-weight="700" text-anchor="middle">Build</text>
+<text x="922.0" y="273" font-size="10" fill="#62738b" font-weight="400" text-anchor="middle">Started</text>
+<text x="1002.0" y="273" font-size="10" fill="#62738b" font-weight="400" text-anchor="middle">Finished</text>
+<text x="1146.0" y="250" font-size="12" fill="#40536e" font-weight="700" text-anchor="middle">Publisher job</text>
+<text x="1106.0" y="273" font-size="10" fill="#62738b" font-weight="400" text-anchor="middle">Started</text>
+<text x="1186.0" y="273" font-size="10" fill="#62738b" font-weight="400" text-anchor="middle">Finished</text>
+<text x="1309.0" y="262" font-size="11" fill="#40536e" font-weight="650" text-anchor="middle">Publication verified</text>
+<path d="M60.0 288H1380.0" stroke="#dfe5ed"/>
+<text x="73.0" y="321" font-size="13" fill="#5b7090" font-weight="400" text-anchor="start">▸</text>
+<text x="104.0" y="313" font-size="14" fill="#17283e" font-weight="700" text-anchor="start">demo-join</text>
+<rect x="200.0" y="298" width="62" height="20" rx="4" fill="#edf1f6"/>
+<text x="208.0" y="312" font-size="10" fill="#43546c" font-weight="600" text-anchor="start">v2.1.8</text>
+<text x="104.0" y="333" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">VOC-Experiments · r264</text>
+<text x="536.0" y="313" font-size="12" fill="#17283e" font-weight="650" text-anchor="start">openwrt 25.12</text>
+<text x="536.0" y="333" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">x86_64 · apk</text>
+<rect x="692.0" y="297" width="81" height="22" rx="4" fill="#e8f5ee"/>
+<text x="700.0" y="312" font-size="8" fill="#176342" font-weight="400" text-anchor="start">●</text>
+<text x="711.0" y="312" font-size="11" fill="#176342" font-weight="600" text-anchor="start">Published</text>
+<text x="692.0" y="334" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Publication verified</text>
+<text x="922.0" y="310" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="922.0" y="329" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">21:06:26</text>
+<text x="1002.0" y="310" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1002.0" y="329" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">21:08:30</text>
+<text x="1106.0" y="310" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1106.0" y="329" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">21:10:05</text>
+<text x="1186.0" y="310" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1186.0" y="329" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">21:10:54</text>
+<text x="1309.0" y="310" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1309.0" y="329" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">21:11:19</text>
+<path d="M60.0 352H1380.0" stroke="#dfe5ed"/>
+<text x="73.0" y="385" font-size="13" fill="#5b7090" font-weight="400" text-anchor="start">▸</text>
+<text x="104.0" y="377" font-size="14" fill="#17283e" font-weight="700" text-anchor="start">demo-core</text>
+<rect x="200.0" y="362" width="62" height="20" rx="4" fill="#edf1f6"/>
+<text x="208.0" y="376" font-size="10" fill="#43546c" font-weight="600" text-anchor="start">v2.1.8</text>
+<text x="104.0" y="397" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">VOC-Experiments · r245</text>
+<text x="536.0" y="377" font-size="12" fill="#17283e" font-weight="650" text-anchor="start">debian trixie</text>
+<text x="536.0" y="397" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">amd64 · deb</text>
+<rect x="692.0" y="361" width="86" height="22" rx="4" fill="#eaf0ff"/>
+<text x="700.0" y="376" font-size="8" fill="#2756a5" font-weight="400" text-anchor="start">●</text>
+<text x="711.0" y="376" font-size="11" fill="#2756a5" font-weight="600" text-anchor="start">Publishing</text>
+<text x="692.0" y="398" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Publisher job running</text>
+<text x="922.0" y="374" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="922.0" y="393" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:54:54</text>
+<text x="1002.0" y="374" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1002.0" y="393" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:55:27</text>
+<text x="1106.0" y="374" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1106.0" y="393" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:57:20</text>
+<text x="1186.0" y="384" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1309.0" y="384" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<path d="M60.0 416H1380.0" stroke="#dfe5ed"/>
+<text x="73.0" y="449" font-size="13" fill="#5b7090" font-weight="400" text-anchor="start">▸</text>
+<text x="104.0" y="441" font-size="14" fill="#17283e" font-weight="700" text-anchor="start">demo-app</text>
+<rect x="200.0" y="426" width="62" height="20" rx="4" fill="#edf1f6"/>
+<text x="208.0" y="440" font-size="10" fill="#43546c" font-weight="600" text-anchor="start">v2.1.8</text>
+<text x="104.0" y="461" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">VOC-Experiments · r250</text>
+<text x="536.0" y="441" font-size="12" fill="#17283e" font-weight="650" text-anchor="start">fedora 43</text>
+<text x="536.0" y="461" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">x86_64 · rpm</text>
+<rect x="692.0" y="425" width="72" height="22" rx="4" fill="#eaf0ff"/>
+<text x="700.0" y="440" font-size="8" fill="#2756a5" font-weight="400" text-anchor="start">●</text>
+<text x="711.0" y="440" font-size="11" fill="#2756a5" font-weight="600" text-anchor="start">Building</text>
+<text x="692.0" y="462" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Build job running</text>
+<text x="922.0" y="438" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="922.0" y="457" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:58:36</text>
+<text x="1002.0" y="448" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1106.0" y="448" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1186.0" y="448" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1309.0" y="448" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<path d="M60.0 480H1380.0" stroke="#dfe5ed"/>
+<text x="73.0" y="513" font-size="13" fill="#5b7090" font-weight="400" text-anchor="start">▸</text>
+<text x="104.0" y="505" font-size="14" fill="#17283e" font-weight="700" text-anchor="start">demo-side</text>
+<rect x="200.0" y="490" width="62" height="20" rx="4" fill="#edf1f6"/>
+<text x="208.0" y="504" font-size="10" fill="#43546c" font-weight="600" text-anchor="start">v2.1.8</text>
+<text x="104.0" y="525" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">VOC-Experiments · r255</text>
+<text x="536.0" y="505" font-size="12" fill="#17283e" font-weight="650" text-anchor="start">openwrt 24.10</text>
+<text x="536.0" y="525" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">x86_64 · ipk</text>
+<rect x="692.0" y="489" width="66" height="22" rx="4" fill="#fff3dc"/>
+<text x="700.0" y="504" font-size="8" fill="#81530c" font-weight="400" text-anchor="start">●</text>
+<text x="711.0" y="504" font-size="11" fill="#81530c" font-weight="600" text-anchor="start">Waiting</text>
+<text x="692.0" y="526" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Needs demo-core</text>
+<text x="922.0" y="512" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1002.0" y="512" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1106.0" y="512" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1186.0" y="512" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<text x="1309.0" y="512" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Pending</text>
+<path d="M60.0 544H1380.0" stroke="#dfe5ed"/>
+<text x="73.0" y="577" font-size="13" fill="#5b7090" font-weight="400" text-anchor="start">▸</text>
+<text x="104.0" y="569" font-size="14" fill="#17283e" font-weight="700" text-anchor="start">demo-core</text>
+<rect x="200.0" y="554" width="62" height="20" rx="4" fill="#edf1f6"/>
+<text x="208.0" y="568" font-size="10" fill="#43546c" font-weight="600" text-anchor="start">v2.1.7</text>
+<text x="104.0" y="589" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">VOC-Experiments · r229</text>
+<text x="536.0" y="569" font-size="12" fill="#17283e" font-weight="650" text-anchor="start">openwrt 25.12</text>
+<text x="536.0" y="589" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">x86_64 · apk</text>
+<rect x="692.0" y="553" width="57" height="22" rx="4" fill="#fcebea"/>
+<text x="700.0" y="568" font-size="8" fill="#a62c32" font-weight="400" text-anchor="start">●</text>
+<text x="711.0" y="568" font-size="11" fill="#a62c32" font-weight="600" text-anchor="start">Failed</text>
+<text x="692.0" y="590" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Before the feed update</text>
+<text x="922.0" y="566" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="922.0" y="585" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:40:00</text>
+<text x="1002.0" y="566" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1002.0" y="585" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:41:18</text>
+<text x="1106.0" y="566" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1106.0" y="585" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:44:00</text>
+<text x="1186.0" y="566" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1186.0" y="585" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:45:02</text>
+<text x="1309.0" y="576" font-size="10" fill="#69778b" font-weight="400" text-anchor="middle">Not recorded</text>
+<path d="M60.0 608H1380.0" stroke="#dfe5ed"/>
+<text x="73.0" y="641" font-size="13" fill="#5b7090" font-weight="400" text-anchor="start">▸</text>
+<text x="104.0" y="633" font-size="14" fill="#17283e" font-weight="700" text-anchor="start">demo-join</text>
+<rect x="200.0" y="618" width="62" height="20" rx="4" fill="#edf1f6"/>
+<text x="208.0" y="632" font-size="10" fill="#43546c" font-weight="600" text-anchor="start">v2.1.7</text>
+<text x="104.0" y="653" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">VOC-Experiments · r244</text>
+<text x="536.0" y="633" font-size="12" fill="#17283e" font-weight="650" text-anchor="start">debian trixie</text>
+<text x="536.0" y="653" font-size="11" fill="#5e6d81" font-weight="400" text-anchor="start">arm64 · deb</text>
+<rect x="692.0" y="617" width="81" height="22" rx="4" fill="#e8f5ee"/>
+<text x="700.0" y="632" font-size="8" fill="#176342" font-weight="400" text-anchor="start">●</text>
+<text x="711.0" y="632" font-size="11" fill="#176342" font-weight="600" text-anchor="start">Published</text>
+<text x="692.0" y="654" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Publication verified</text>
+<text x="922.0" y="630" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="922.0" y="649" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:21:12</text>
+<text x="1002.0" y="630" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1002.0" y="649" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:21:47</text>
+<text x="1106.0" y="630" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1106.0" y="649" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:23:01</text>
+<text x="1186.0" y="630" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1186.0" y="649" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:23:29</text>
+<text x="1309.0" y="630" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="middle">28.10.2026</text>
+<text x="1309.0" y="649" font-size="12" fill="#17283e" font-weight="600" text-anchor="middle">20:24:02</text>
+<text x="60.0" y="686" font-size="10" fill="#5e6d81" font-weight="400" text-anchor="start">Design mockup · sample data · identical job pairs, quiet dates, emphasized times and package identities.</text>
+</svg>

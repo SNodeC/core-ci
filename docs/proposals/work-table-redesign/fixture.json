@@ -1,0 +1,122 @@
+[
+  {
+    "name": "demo-join",
+    "owner": "VOC-Experiments",
+    "version": "v2.1.8",
+    "revision": 264,
+    "target": "openwrt 25.12",
+    "arch": "x86_64",
+    "fmt": "apk",
+    "state": "Published",
+    "detail": "Publication verified",
+    "build": [
+      "21:06:26",
+      "21:08:30"
+    ],
+    "publish": [
+      "21:10:05",
+      "21:10:54"
+    ],
+    "verified": "21:11:19"
+  },
+  {
+    "name": "demo-core",
+    "owner": "VOC-Experiments",
+    "version": "v2.1.8",
+    "revision": 245,
+    "target": "debian trixie",
+    "arch": "amd64",
+    "fmt": "deb",
+    "state": "Publishing",
+    "detail": "Publisher job running",
+    "build": [
+      "20:54:54",
+      "20:55:27"
+    ],
+    "publish": [
+      "20:57:20",
+      "Pending"
+    ],
+    "verified": "Pending"
+  },
+  {
+    "name": "demo-app",
+    "owner": "VOC-Experiments",
+    "version": "v2.1.8",
+    "revision": 250,
+    "target": "fedora 43",
+    "arch": "x86_64",
+    "fmt": "rpm",
+    "state": "Building",
+    "detail": "Build job running",
+    "build": [
+      "20:58:36",
+      "Pending"
+    ],
+    "publish": [
+      "Pending",
+      "Pending"
+    ],
+    "verified": "Pending"
+  },
+  {
+    "name": "demo-side",
+    "owner": "VOC-Experiments",
+    "version": "v2.1.8",
+    "revision": 255,
+    "target": "openwrt 24.10",
+    "arch": "x86_64",
+    "fmt": "ipk",
+    "state": "Waiting",
+    "detail": "Needs demo-core",
+    "build": [
+      "Pending",
+      "Pending"
+    ],
+    "publish": [
+      "Pending",
+      "Pending"
+    ],
+    "verified": "Pending"
+  },
+  {
+    "name": "demo-core",
+    "owner": "VOC-Experiments",
+    "version": "v2.1.7",
+    "revision": 229,
+    "target": "openwrt 25.12",
+    "arch": "x86_64",
+    "fmt": "apk",
+    "state": "Failed",
+    "detail": "Before the feed update",
+    "build": [
+      "20:40:00",
+      "20:41:18"
+    ],
+    "publish": [
+      "20:44:00",
+      "20:45:02"
+    ],
+    "verified": "Not recorded"
+  },
+  {
+    "name": "demo-join",
+    "owner": "VOC-Experiments",
+    "version": "v2.1.7",
+    "revision": 244,
+    "target": "debian trixie",
+    "arch": "arm64",
+    "fmt": "deb",
+    "state": "Published",
+    "detail": "Publication verified",
+    "build": [
+      "20:21:12",
+      "20:21:47"
+    ],
+    "publish": [
+      "20:23:01",
+      "20:23:29"
+    ],
+    "verified": "20:24:02"
+  }
+]

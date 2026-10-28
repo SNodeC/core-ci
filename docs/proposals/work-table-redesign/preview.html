@@ -1,0 +1,197 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>core-ci · work-table design preview</title><style>* { box-sizing: border-box; }
+:root { color-scheme: light; --ink: #17283e; --muted: #5e6d81; --line: #dfe5ed; --accent: #285eb4; }
+body { margin: 0; background: #f6f8fb; color: var(--ink); font: 13px/1.4 system-ui,sans-serif; }
+.shell { max-width: 1384px; margin: auto; padding: 0 32px; }
+header { background: white; border-bottom: 1px solid var(--line); }
+.masthead { height: 58px; display: flex; align-items: center; gap: 24px; }
+.brand { font-size: 17px; font-weight: 750; } .nav { height: 100%; display: flex; gap: 24px; align-items: center; }
+.nav strong { height: 100%; display: grid; align-items: center; border-bottom: 2px solid var(--accent); color: var(--accent); }
+.preview-label { margin-left: auto; color: var(--muted); font-size: 11px; letter-spacing: .04em; }
+main { padding-top: 27px !important; } h1 { font-size: 22px; letter-spacing: -.4px; margin: 0; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.subtitle { color: var(--muted); margin: 5px 0 20px; }
+button, input, select { font: inherit; color: inherit; } button, input, select { border: 1px solid #ccd5e2; border-radius: 6px; background: white; }
+button { padding: 7px 11px; cursor: pointer; } button:disabled { cursor: default; color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.toolbar { display: flex; gap: 12px; align-items: end; margin-bottom: 18px; }
+label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; } input, select { padding: 7px 10px; height: 34px; }
+input { width: 310px; } .count { margin-left: auto; color: var(--muted); padding-bottom: 8px; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: white; }
+table { border-collapse: collapse; text-align: left; } .work { width: 100%; min-width: 1152px; table-layout: fixed; }
+col.toggle { width: 32px; } col.target { width: 156px; } col.status { width: 190px; } col.job { width: 184px; } col.verified { width: 142px; }
+.work > thead { background: #f0f3f8; } .work > thead th { height: 60px; padding: 8px 12px; color: #40536e; font-size: 12px; font-weight: 650; }
+.work > tbody > tr.summary > :is(th,td) { padding: 10px 12px; border-top: 1px solid var(--line); height: 64px; vertical-align: middle; }
+.work > tbody > tr.summary:hover { background: #f8faff; } .work > tbody > tr.selected { background: #eef4ff; }
+.work > tbody > tr.summary > th { font-weight: 400; } .identity { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.identity strong { font-size: 14px; font-weight: 700; } .version { font-size: 11px; font-weight: 600; color: #43546c; background: #edf1f6; padding: 1px 6px; border-radius: 4px; }
+.meta { color: var(--muted); font-size: 12px; margin-top: 4px; } .target-name { font-weight: 650; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 5px; font-size: 12px; font-weight: 650; }
+.badge::before { content: '●'; font-size: 8px; } .status-note { margin-top: 4px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.work > thead th.job-cell, .work > tbody > tr.summary > td.job-cell { padding-inline: 16px; text-align: center; }
+.job-title { display: block; margin-bottom: 7px; font-weight: 700; } .pair { display: grid; grid-template-columns: 72px 72px; gap: 8px; justify-content: center; }
+.pair-labels { color: #62738b; font-size: 10px; font-weight: 500; } .stamp { display: block; text-align: center; font-variant-numeric: tabular-nums; }
+.date { display: block; font-size: 11px; color: var(--muted); } .time { display: block; font-size: 13px; font-weight: 650; margin-top: 2px; }
+.pending { color: #69778b; font-size: 11px; font-weight: 400; } .verified-cell { text-align: center; }
+.work > tbody > tr.summary > td.disclosure { padding: 0 0 0 8px; } .disclosure button { padding: 3px; border: 0; background: none; color: #5b7090; }
+.detail-cell { padding: 0; border-top: 1px solid var(--line); background: #f8faff; }
+.detail-content { padding: 22px 24px 20px 44px; position: sticky; left: 0; max-width: calc(100vw - 68px); }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; } h2 { font-size: 13px; margin: 0 0 12px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; font-size: 12px; margin: 0 0 20px; } dt { color: var(--muted); } dd { margin: 0; }
+.timing-detail { width: 100%; font-size: 12px; margin-bottom: 18px; } .timing-detail th, .timing-detail td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); }
+.timing-detail thead { color: var(--muted); } .dependency { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding: 8px 0; }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; } .actions { display: flex; flex-wrap: wrap; gap: 18px; margin: 16px 0; font-size: 12px; }
+details { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 12px; } summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.footnote { color: var(--muted); font-size: 11px; margin: 14px 0 24px; } [hidden] { display: none !important; }
+@media(max-width:760px) { .shell { padding-inline: 16px; } .toolbar { flex-wrap: wrap; } .count { margin-left: 0; } .detail-grid { grid-template-columns: 1fr; } }
+</style></head><body>
+<header><div class="shell masthead"><span class="brand">core-ci</span><div class="nav"><strong>Work</strong><span>Repositories</span></div><span class="preview-label">DESIGN PREVIEW · SAMPLE DATA · NO CONNECTION</span></div></header>
+<main class="shell"><div class="heading"><h1>Package work</h1><button disabled title="Design preview; no controller is connected">Inspect assigned GitHub work</button></div>
+<p class="subtitle"><strong>1</strong> building · <strong>1</strong> publishing · <strong>1</strong> waiting · <strong>1</strong> failed</p>
+<div class="toolbar"><label>Find package or target<input id="search" placeholder="Package, version, distribution…"></label><label>Show<select id="filter"><option value="all">All work</option><option value="active">Active and failed</option><option value="failed">Failed</option><option value="published">Published</option></select></label><span class="count" id="count">6 executions</span></div>
+<div class="scroll" tabindex="0" role="region" aria-label="Package executions; scroll horizontally for all timing columns"><table class="work"><colgroup><col class="toggle"><col><col class="target"><col class="status"><col class="job"><col class="job"><col class="verified"></colgroup>
+<thead><tr><th aria-label="Details"></th><th scope="col">Package</th><th scope="col">Target</th><th scope="col">State</th><th scope="col" class="job-cell"><span class="job-title">Build</span><span class="pair pair-labels"><span>Started</span><span>Finished</span></span></th><th scope="col" class="job-cell"><span class="job-title">Publisher job</span><span class="pair pair-labels"><span>Started</span><span>Finished</span></span></th><th scope="col" class="verified-cell">Publication verified</th></tr></thead><tbody><tr class="summary" data-state="published"><td class="disclosure"><button aria-expanded="false" aria-controls="detail-0" aria-label="Details for demo-join openwrt 25.12">▸</button></td>
+ <th scope="row"><div class="identity"><strong title="VOC-Experiments/demo-join">demo-join</strong><span class="version">v2.1.8</span></div><div class="meta">VOC-Experiments · r264</div></th>
+ <td><div class="target-name">openwrt 25.12</div><div class="meta">x86_64 · apk</div></td><td><span class="badge" style="background:#e8f5ee;color:#176342">Published</span><div class="status-note">Publication verified</div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Build started 28 October 2026 21:06:26"><span class="date">28.10.2026</span><span class="time">21:06:26</span></time><time class="stamp" aria-label="Build finished 28 October 2026 21:08:30"><span class="date">28.10.2026</span><span class="time">21:08:30</span></time></div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Publisher started 28 October 2026 21:10:05"><span class="date">28.10.2026</span><span class="time">21:10:05</span></time><time class="stamp" aria-label="Publisher finished 28 October 2026 21:10:54"><span class="date">28.10.2026</span><span class="time">21:10:54</span></time></div></td><td class="verified-cell"><time class="stamp" aria-label="Publication verified 28 October 2026 21:11:19"><span class="date">28.10.2026</span><span class="time">21:11:19</span></time></td></tr>
+ <tr id="detail-0" hidden><td class="detail-cell" colspan="7"><div class="detail-content"><div class="detail-grid"><section><h2>Execution</h2><dl><dt>Activity</dt><dd>Publication verified</dd><dt>Selection</dt><dd>Automatic</dd></dl>
+ <h2>Timing</h2><table class="timing-detail"><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>
+ <tr><th>Build</th><td><time class="stamp" aria-label=" 28 October 2026 21:06:26"><span class="date">28.10.2026</span><span class="time">21:06:26</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 21:08:30"><span class="date">28.10.2026</span><span class="time">21:08:30</span></time></td><td>2 min 4 s</td></tr>
+ <tr><th>Publisher job</th><td><time class="stamp" aria-label=" 28 October 2026 21:10:05"><span class="date">28.10.2026</span><span class="time">21:10:05</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 21:10:54"><span class="date">28.10.2026</span><span class="time">21:10:54</span></time></td><td>0 min 49 s</td></tr></tbody></table>
+ <dl><dt>Publication verified</dt><dd><time class="stamp" aria-label=" 28 October 2026 21:11:19"><span class="date">28.10.2026</span><span class="time">21:11:19</span></time></dd><dt>Blockers / failure</dt><dd>No current blockers</dd></dl></section>
+ <section><h2>Prerequisite executions — current state</h2><div class="dependency"><a href="#" class="preview-link">demo-core · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div><div class="dependency"><a href="#" class="preview-link">demo-app · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div><div class="dependency"><a href="#" class="preview-link">demo-side · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div>
+ <h2 style="margin-top:22px">Hook-reported build summary</h2><dl><dt>Compilers</dt><dd>cc · Debian 14.2.0</dd><dt>Tests</dt><dd><strong>1 passed</strong> · 0 failed · 0 skipped</dd><dt>Coverage</dt><dd>Not recorded</dd><dt>Test report</dt><dd>Not recorded</dd></dl></section></div>
+ <div class="actions"><a href="#" class="preview-link">Build logs ↗</a><a href="#" class="preview-link">Publication logs ↗</a></div>
+ <details><summary>Source, configuration and execution identities</summary><pre>{
+  &quot;repository&quot;: &quot;VOC-Experiments/demo-join&quot;,
+  &quot;tag&quot;: &quot;v2.1.8&quot;,
+  &quot;revision&quot;: 264,
+  &quot;source_commit&quot;: &quot;sample-only-not-a-real-commit&quot;,
+  &quot;state&quot;: &quot;Published&quot;,
+  &quot;note&quot;: &quot;Design fixture only; production keeps the full current execution JSON.&quot;
+}</pre></details></div></td></tr><tr class="summary" data-state="publishing"><td class="disclosure"><button aria-expanded="false" aria-controls="detail-1" aria-label="Details for demo-core debian trixie">▸</button></td>
+ <th scope="row"><div class="identity"><strong title="VOC-Experiments/demo-core">demo-core</strong><span class="version">v2.1.8</span></div><div class="meta">VOC-Experiments · r245</div></th>
+ <td><div class="target-name">debian trixie</div><div class="meta">amd64 · deb</div></td><td><span class="badge" style="background:#eaf0ff;color:#2756a5">Publishing</span><div class="status-note">Publisher job running</div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Build started 28 October 2026 20:54:54"><span class="date">28.10.2026</span><span class="time">20:54:54</span></time><time class="stamp" aria-label="Build finished 28 October 2026 20:55:27"><span class="date">28.10.2026</span><span class="time">20:55:27</span></time></div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Publisher started 28 October 2026 20:57:20"><span class="date">28.10.2026</span><span class="time">20:57:20</span></time><span class="stamp pending" aria-label="Publisher finished Pending">Pending</span></div></td><td class="verified-cell"><span class="stamp pending" aria-label="Publication verified Pending">Pending</span></td></tr>
+ <tr id="detail-1" hidden><td class="detail-cell" colspan="7"><div class="detail-content"><div class="detail-grid"><section><h2>Execution</h2><dl><dt>Activity</dt><dd>Publisher job running</dd><dt>Selection</dt><dd>Automatic</dd></dl>
+ <h2>Timing</h2><table class="timing-detail"><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>
+ <tr><th>Build</th><td><time class="stamp" aria-label=" 28 October 2026 20:54:54"><span class="date">28.10.2026</span><span class="time">20:54:54</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 20:55:27"><span class="date">28.10.2026</span><span class="time">20:55:27</span></time></td><td>0 min 33 s</td></tr>
+ <tr><th>Publisher job</th><td><time class="stamp" aria-label=" 28 October 2026 20:57:20"><span class="date">28.10.2026</span><span class="time">20:57:20</span></time></td><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td>Pending</td></tr></tbody></table>
+ <dl><dt>Publication verified</dt><dd><span class="stamp pending" aria-label=" Pending">Pending</span></dd><dt>Blockers / failure</dt><dd>No current blockers</dd></dl></section>
+ <section><h2>Prerequisite executions — current state</h2><p class="meta">No prerequisites</p>
+ <h2 style="margin-top:22px">Hook-reported build summary</h2><dl><dt>Compilers</dt><dd>cc · Debian 14.2.0</dd><dt>Tests</dt><dd><strong>1 passed</strong> · 0 failed · 0 skipped</dd><dt>Coverage</dt><dd>Not recorded</dd><dt>Test report</dt><dd>Not recorded</dd></dl></section></div>
+ <div class="actions"><a href="#" class="preview-link">Build logs ↗</a><a href="#" class="preview-link">Publication logs ↗</a></div>
+ <details><summary>Source, configuration and execution identities</summary><pre>{
+  &quot;repository&quot;: &quot;VOC-Experiments/demo-core&quot;,
+  &quot;tag&quot;: &quot;v2.1.8&quot;,
+  &quot;revision&quot;: 245,
+  &quot;source_commit&quot;: &quot;sample-only-not-a-real-commit&quot;,
+  &quot;state&quot;: &quot;Publishing&quot;,
+  &quot;note&quot;: &quot;Design fixture only; production keeps the full current execution JSON.&quot;
+}</pre></details></div></td></tr><tr class="summary" data-state="building"><td class="disclosure"><button aria-expanded="false" aria-controls="detail-2" aria-label="Details for demo-app fedora 43">▸</button></td>
+ <th scope="row"><div class="identity"><strong title="VOC-Experiments/demo-app">demo-app</strong><span class="version">v2.1.8</span></div><div class="meta">VOC-Experiments · r250</div></th>
+ <td><div class="target-name">fedora 43</div><div class="meta">x86_64 · rpm</div></td><td><span class="badge" style="background:#eaf0ff;color:#2756a5">Building</span><div class="status-note">Build job running</div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Build started 28 October 2026 20:58:36"><span class="date">28.10.2026</span><span class="time">20:58:36</span></time><span class="stamp pending" aria-label="Build finished Pending">Pending</span></div></td>
+ <td class="job-cell"><div class="pair"><span class="stamp pending" aria-label="Publisher started Pending">Pending</span><span class="stamp pending" aria-label="Publisher finished Pending">Pending</span></div></td><td class="verified-cell"><span class="stamp pending" aria-label="Publication verified Pending">Pending</span></td></tr>
+ <tr id="detail-2" hidden><td class="detail-cell" colspan="7"><div class="detail-content"><div class="detail-grid"><section><h2>Execution</h2><dl><dt>Activity</dt><dd>Build job running</dd><dt>Selection</dt><dd>Automatic</dd></dl>
+ <h2>Timing</h2><table class="timing-detail"><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>
+ <tr><th>Build</th><td><time class="stamp" aria-label=" 28 October 2026 20:58:36"><span class="date">28.10.2026</span><span class="time">20:58:36</span></time></td><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td>Pending</td></tr>
+ <tr><th>Publisher job</th><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td>Pending</td></tr></tbody></table>
+ <dl><dt>Publication verified</dt><dd><span class="stamp pending" aria-label=" Pending">Pending</span></dd><dt>Blockers / failure</dt><dd>No current blockers</dd></dl></section>
+ <section><h2>Prerequisite executions — current state</h2><div class="dependency"><a href="#" class="preview-link">demo-core · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div>
+ <h2 style="margin-top:22px">Hook-reported build summary</h2><dl><dt>Compilers</dt><dd>cc · Debian 14.2.0</dd><dt>Tests</dt><dd><strong>1 passed</strong> · 0 failed · 0 skipped</dd><dt>Coverage</dt><dd>Not recorded</dd><dt>Test report</dt><dd>Not recorded</dd></dl></section></div>
+ <div class="actions"><a href="#" class="preview-link">Build logs ↗</a><a href="#" class="preview-link">Publication logs ↗</a></div>
+ <details><summary>Source, configuration and execution identities</summary><pre>{
+  &quot;repository&quot;: &quot;VOC-Experiments/demo-app&quot;,
+  &quot;tag&quot;: &quot;v2.1.8&quot;,
+  &quot;revision&quot;: 250,
+  &quot;source_commit&quot;: &quot;sample-only-not-a-real-commit&quot;,
+  &quot;state&quot;: &quot;Building&quot;,
+  &quot;note&quot;: &quot;Design fixture only; production keeps the full current execution JSON.&quot;
+}</pre></details></div></td></tr><tr class="summary" data-state="waiting"><td class="disclosure"><button aria-expanded="false" aria-controls="detail-3" aria-label="Details for demo-side openwrt 24.10">▸</button></td>
+ <th scope="row"><div class="identity"><strong title="VOC-Experiments/demo-side">demo-side</strong><span class="version">v2.1.8</span></div><div class="meta">VOC-Experiments · r255</div></th>
+ <td><div class="target-name">openwrt 24.10</div><div class="meta">x86_64 · ipk</div></td><td><span class="badge" style="background:#fff3dc;color:#81530c">Waiting</span><div class="status-note">Needs demo-core</div></td>
+ <td class="job-cell"><div class="pair"><span class="stamp pending" aria-label="Build started Pending">Pending</span><span class="stamp pending" aria-label="Build finished Pending">Pending</span></div></td>
+ <td class="job-cell"><div class="pair"><span class="stamp pending" aria-label="Publisher started Pending">Pending</span><span class="stamp pending" aria-label="Publisher finished Pending">Pending</span></div></td><td class="verified-cell"><span class="stamp pending" aria-label="Publication verified Pending">Pending</span></td></tr>
+ <tr id="detail-3" hidden><td class="detail-cell" colspan="7"><div class="detail-content"><div class="detail-grid"><section><h2>Execution</h2><dl><dt>Activity</dt><dd>Needs demo-core</dd><dt>Selection</dt><dd>Automatic</dd></dl>
+ <h2>Timing</h2><table class="timing-detail"><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>
+ <tr><th>Build</th><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td>Pending</td></tr>
+ <tr><th>Publisher job</th><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td><span class="stamp pending" aria-label=" Pending">Pending</span></td><td>Pending</td></tr></tbody></table>
+ <dl><dt>Publication verified</dt><dd><span class="stamp pending" aria-label=" Pending">Pending</span></dd><dt>Blockers / failure</dt><dd>Needs demo-core</dd></dl></section>
+ <section><h2>Prerequisite executions — current state</h2><div class="dependency"><a href="#" class="preview-link">demo-core · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div>
+ <h2 style="margin-top:22px">Hook-reported build summary</h2><dl><dt>Compilers</dt><dd>cc · Debian 14.2.0</dd><dt>Tests</dt><dd><strong>1 passed</strong> · 0 failed · 0 skipped</dd><dt>Coverage</dt><dd>Not recorded</dd><dt>Test report</dt><dd>Not recorded</dd></dl></section></div>
+ <div class="actions"><a href="#" class="preview-link">Build logs ↗</a><a href="#" class="preview-link">Publication logs ↗</a></div>
+ <details><summary>Source, configuration and execution identities</summary><pre>{
+  &quot;repository&quot;: &quot;VOC-Experiments/demo-side&quot;,
+  &quot;tag&quot;: &quot;v2.1.8&quot;,
+  &quot;revision&quot;: 255,
+  &quot;source_commit&quot;: &quot;sample-only-not-a-real-commit&quot;,
+  &quot;state&quot;: &quot;Waiting&quot;,
+  &quot;note&quot;: &quot;Design fixture only; production keeps the full current execution JSON.&quot;
+}</pre></details></div></td></tr><tr class="summary" data-state="failed"><td class="disclosure"><button aria-expanded="false" aria-controls="detail-4" aria-label="Details for demo-core openwrt 25.12">▸</button></td>
+ <th scope="row"><div class="identity"><strong title="VOC-Experiments/demo-core">demo-core</strong><span class="version">v2.1.7</span></div><div class="meta">VOC-Experiments · r229</div></th>
+ <td><div class="target-name">openwrt 25.12</div><div class="meta">x86_64 · apk</div></td><td><span class="badge" style="background:#fcebea;color:#a62c32">Failed</span><div class="status-note">Before the feed update</div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Build started 28 October 2026 20:40:00"><span class="date">28.10.2026</span><span class="time">20:40:00</span></time><time class="stamp" aria-label="Build finished 28 October 2026 20:41:18"><span class="date">28.10.2026</span><span class="time">20:41:18</span></time></div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Publisher started 28 October 2026 20:44:00"><span class="date">28.10.2026</span><span class="time">20:44:00</span></time><time class="stamp" aria-label="Publisher finished 28 October 2026 20:45:02"><span class="date">28.10.2026</span><span class="time">20:45:02</span></time></div></td><td class="verified-cell"><span class="stamp pending" aria-label="Publication verified Not recorded">Not recorded</span></td></tr>
+ <tr id="detail-4" hidden><td class="detail-cell" colspan="7"><div class="detail-content"><div class="detail-grid"><section><h2>Execution</h2><dl><dt>Activity</dt><dd>Before the feed update</dd><dt>Selection</dt><dd>Automatic</dd></dl>
+ <h2>Timing</h2><table class="timing-detail"><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>
+ <tr><th>Build</th><td><time class="stamp" aria-label=" 28 October 2026 20:40:00"><span class="date">28.10.2026</span><span class="time">20:40:00</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 20:41:18"><span class="date">28.10.2026</span><span class="time">20:41:18</span></time></td><td>1 min 18 s</td></tr>
+ <tr><th>Publisher job</th><td><time class="stamp" aria-label=" 28 October 2026 20:44:00"><span class="date">28.10.2026</span><span class="time">20:44:00</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 20:45:02"><span class="date">28.10.2026</span><span class="time">20:45:02</span></time></td><td>1 min 2 s</td></tr></tbody></table>
+ <dl><dt>Publication verified</dt><dd><span class="stamp pending" aria-label=" Not recorded">Not recorded</span></dd><dt>Blockers / failure</dt><dd>Before the feed update</dd></dl></section>
+ <section><h2>Prerequisite executions — current state</h2><p class="meta">No prerequisites</p>
+ <h2 style="margin-top:22px">Hook-reported build summary</h2><dl><dt>Compilers</dt><dd>cc · Debian 14.2.0</dd><dt>Tests</dt><dd><strong>1 passed</strong> · 0 failed · 0 skipped</dd><dt>Coverage</dt><dd>Not recorded</dd><dt>Test report</dt><dd>Not recorded</dd></dl></section></div>
+ <div class="actions"><a href="#" class="preview-link">Build logs ↗</a><a href="#" class="preview-link">Publication logs ↗</a><button disabled>Retry with a new rebuild revision</button></div>
+ <details><summary>Source, configuration and execution identities</summary><pre>{
+  &quot;repository&quot;: &quot;VOC-Experiments/demo-core&quot;,
+  &quot;tag&quot;: &quot;v2.1.7&quot;,
+  &quot;revision&quot;: 229,
+  &quot;source_commit&quot;: &quot;sample-only-not-a-real-commit&quot;,
+  &quot;state&quot;: &quot;Failed&quot;,
+  &quot;note&quot;: &quot;Design fixture only; production keeps the full current execution JSON.&quot;
+}</pre></details></div></td></tr><tr class="summary" data-state="published"><td class="disclosure"><button aria-expanded="false" aria-controls="detail-5" aria-label="Details for demo-join debian trixie">▸</button></td>
+ <th scope="row"><div class="identity"><strong title="VOC-Experiments/demo-join">demo-join</strong><span class="version">v2.1.7</span></div><div class="meta">VOC-Experiments · r244</div></th>
+ <td><div class="target-name">debian trixie</div><div class="meta">arm64 · deb</div></td><td><span class="badge" style="background:#e8f5ee;color:#176342">Published</span><div class="status-note">Publication verified</div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Build started 28 October 2026 20:21:12"><span class="date">28.10.2026</span><span class="time">20:21:12</span></time><time class="stamp" aria-label="Build finished 28 October 2026 20:21:47"><span class="date">28.10.2026</span><span class="time">20:21:47</span></time></div></td>
+ <td class="job-cell"><div class="pair"><time class="stamp" aria-label="Publisher started 28 October 2026 20:23:01"><span class="date">28.10.2026</span><span class="time">20:23:01</span></time><time class="stamp" aria-label="Publisher finished 28 October 2026 20:23:29"><span class="date">28.10.2026</span><span class="time">20:23:29</span></time></div></td><td class="verified-cell"><time class="stamp" aria-label="Publication verified 28 October 2026 20:24:02"><span class="date">28.10.2026</span><span class="time">20:24:02</span></time></td></tr>
+ <tr id="detail-5" hidden><td class="detail-cell" colspan="7"><div class="detail-content"><div class="detail-grid"><section><h2>Execution</h2><dl><dt>Activity</dt><dd>Publication verified</dd><dt>Selection</dt><dd>Automatic</dd></dl>
+ <h2>Timing</h2><table class="timing-detail"><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Duration</th></tr></thead><tbody>
+ <tr><th>Build</th><td><time class="stamp" aria-label=" 28 October 2026 20:21:12"><span class="date">28.10.2026</span><span class="time">20:21:12</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 20:21:47"><span class="date">28.10.2026</span><span class="time">20:21:47</span></time></td><td>0 min 35 s</td></tr>
+ <tr><th>Publisher job</th><td><time class="stamp" aria-label=" 28 October 2026 20:23:01"><span class="date">28.10.2026</span><span class="time">20:23:01</span></time></td><td><time class="stamp" aria-label=" 28 October 2026 20:23:29"><span class="date">28.10.2026</span><span class="time">20:23:29</span></time></td><td>0 min 28 s</td></tr></tbody></table>
+ <dl><dt>Publication verified</dt><dd><time class="stamp" aria-label=" 28 October 2026 20:24:02"><span class="date">28.10.2026</span><span class="time">20:24:02</span></time></dd><dt>Blockers / failure</dt><dd>No current blockers</dd></dl></section>
+ <section><h2>Prerequisite executions — current state</h2><div class="dependency"><a href="#" class="preview-link">demo-core · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div><div class="dependency"><a href="#" class="preview-link">demo-app · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div><div class="dependency"><a href="#" class="preview-link">demo-side · v2.1.8</a><span class="badge" style="background:#e8f5ee;color:#176342">Published</span></div>
+ <h2 style="margin-top:22px">Hook-reported build summary</h2><dl><dt>Compilers</dt><dd>cc · Debian 14.2.0</dd><dt>Tests</dt><dd><strong>1 passed</strong> · 0 failed · 0 skipped</dd><dt>Coverage</dt><dd>Not recorded</dd><dt>Test report</dt><dd>Not recorded</dd></dl></section></div>
+ <div class="actions"><a href="#" class="preview-link">Build logs ↗</a><a href="#" class="preview-link">Publication logs ↗</a></div>
+ <details><summary>Source, configuration and execution identities</summary><pre>{
+  &quot;repository&quot;: &quot;VOC-Experiments/demo-join&quot;,
+  &quot;tag&quot;: &quot;v2.1.7&quot;,
+  &quot;revision&quot;: 244,
+  &quot;source_commit&quot;: &quot;sample-only-not-a-real-commit&quot;,
+  &quot;state&quot;: &quot;Published&quot;,
+  &quot;note&quot;: &quot;Design fixture only; production keeps the full current execution JSON.&quot;
+}</pre></details></div></td></tr></tbody></table></div>
+<p class="footnote">Design fixture, not live CI. Search, filters and row expansion work locally. All remote and mutation actions are disabled.</p></main>
+<script>
+const summaries = [...document.querySelectorAll('tr.summary')];
+for (const row of summaries) {
+    const button = row.querySelector('button'), detail = row.nextElementSibling;
+    button.addEventListener('click', () => {
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', String(!open)); button.textContent = open ? '▸' : '▾';
+        detail.hidden = open; row.classList.toggle('selected', !open);
+    });
+}
+function filterRows() {
+    const query = document.getElementById('search').value.toLowerCase(), filter = document.getElementById('filter').value;
+    let count = 0;
+    for (const row of summaries) {
+        const matches = (filter === 'all' || filter === row.dataset.state || filter === 'active' && row.dataset.state !== 'published') && row.textContent.toLowerCase().includes(query);
+        row.hidden = !matches; row.nextElementSibling.hidden = !matches || row.querySelector('button').getAttribute('aria-expanded') !== 'true';
+        count += Number(matches);
+    }
+    document.getElementById('count').textContent = count + ' of 6 executions';
+}
+document.getElementById('search').addEventListener('input', filterRows);
+document.getElementById('filter').addEventListener('change', filterRows);
+for (const link of document.querySelectorAll('.preview-link')) { link.addEventListener('click', (event) => { event.preventDefault(); }); }
+</script></body></html>

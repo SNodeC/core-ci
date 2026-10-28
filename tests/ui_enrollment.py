@@ -95,6 +95,22 @@ def serve(directory):
                                        "state": "publishing", "activity": "publishing: publication run unconfirmed",
                                        "attempt": "assigned:7", "retirable": True,
                                        "publication_job": {}, "publication_run": None, "receipt": None})
+                        for index, state in enumerate(("waiting", "building"), 8):
+                            layout.append({**copy.deepcopy(sample), "id": state, "revision": index,
+                                           "state": state, "activity": state + ": " + ("waiting for prerequisites" if state == "waiting" else "in_progress"),
+                                           "build_job": {} if state == "waiting" else {
+                                               "status": "in_progress", "started_at": "2026-10-25T01:02:00Z"},
+                                           "build_run": None, "publication_job": {}, "publication_run": None, "receipt": None,
+                                           "prerequisites": ["assigned"] if state == "waiting" else [],
+                                           "blockers": ["Prerequisite publication unconfirmed"] if state == "waiting" else []})
+                        layout.append({**copy.deepcopy(sample), "id": "superseded", "revision": 10,
+                                       "state": "failed", "activity": "failed", "superseded_by": "recorded"})
+                        long_target = copy.deepcopy(base["matrix"][0])
+                        long_target.update(distribution="custom-distribution-with-long-name", suite="rolling-2026.10",
+                                           arch="architecture-name-with-long-suffix")
+                        layout.append({**copy.deepcopy(sample), "id": "long-identity", "revision": 11,
+                                       "repository": "Example-Organization-With-A-Long-Name/exceptionally-long-package-name",
+                                       "tag": "v123.456.789-preview.123", "target_row": long_target})
                         executions[:] = layout
                     generation += 1
                     condition.notify_all()
