@@ -68,8 +68,15 @@ snapshot alone does not determine dependencies.
 Automatic selection reads tags and chooses the highest numeric SemVer, including
 prereleases. Explicit requests can select older tags. Annotated tags are resolved to their
 commit. Where a tag notification supplies the expected tag object, a matching selected tag
-must still identify that object. Repository IDs, deployment pins and the graph generation
-are checked before committing a selection.
+must still identify that object. An automatic push also supplies a minimum tag, so a shared
+tag-list response cannot hide that notification's newer version. Explicit requests still
+select exactly the requested tag.
+
+Before committing, selection checks the enrollment identity and branch, deployment pins and
+current namespaces. It rejects a newer or incomparable source selection created while its
+reads were outstanding. Ordinary job progress and retries do not invalidate those reads.
+An explicit older root version is allowed; conflicting equal-version identities are not.
+A real competing-source conflict is reported without automatic reselection.
 
 Source reads overlap. Selection reports unreadable repositories and remains blocked when
 a newly selected definition is unknown. It does not silently omit that repository. The
@@ -83,8 +90,11 @@ prerequisite execution is an explicit error; requesting a dependent does not aut
 build its ancestors. A definition introducing a prerequisite is evaluated from its selected
 bytes, even when the enrollment snapshot did not mention that relationship.
 
-A new automatic selection supersedes only older waiting automatic selections. Assigned
-work and retained history remain intact. Execution identities include immutable source,
+A new selection supersedes only older waiting automatic selections. The comparison includes
+each node's own source and all transitive prerequisite sources shared by both input closures.
+A newer or incomparable old input preserves that waiting work, including after an explicit
+older request. A dependency removed by a new definition does not itself prevent supersession.
+Assigned work and retained history remain intact. Execution identities include immutable source,
 target and prerequisite relationships. Rebuild revisions distinguish attempts and package
 versions; an explicit retry keeps the original immutable inputs.
 
@@ -196,11 +206,21 @@ remain unmeasured. The schema is fresh: there is no importer or migration from a
 An existing feed also requires an operator-reviewed rebuild-revision seed above retained
 versions before a fresh graph can safely publish into that namespace.
 
-Restoration keeps assigned work and exact identities. Explicit reconciliation reads the
+Restoration keeps exact identities. Startup reconciliation fails an assigned attempt only
+when there is no committed stage preflight, dispatch identity or bound run: this proves the
+workflow was never submitted. That failure permits an explicit retry with a new revision.
+A committed preflight without a known run remains uncertain and is never redispatched.
+Ordinary operator reconciliation cannot cancel a live preflight. Reconciliation reads the
 assigned attempt-one run/jobs and applies their facts through the same validation path.
 An unknown dispatch can search for exactly one matching controller-actor run; ambiguous or
 inaccessible evidence preserves the assignment. UI reruns cannot replace attempt-one evidence
 or authorize a rerun worker to mutate the feed.
+
+The installed MariaDB client has a separately confirmed recovery limitation: an immediate
+reconnection failure can discard a queued command without delivering its error callback.
+The controller database FIFO then remains blocked even after the server returns; a process
+restart is required. The current controller does not work around that dependency defect.
+Resolving it needs a separately scoped framework change before recovery acceptance.
 
 The accepted crash boundary remains: a tag notification acknowledged before its selection
 was persisted requires explicit request/rescan or redelivery. There is no durable webhook inbox.

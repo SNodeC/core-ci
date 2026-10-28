@@ -26,6 +26,14 @@ namespace coreci {
                 }
             });
     }
+    void Pipeline::fail(const std::string& id, const std::string& attempt, const std::string& reason) {
+        change(
+            [=](Json& state) {
+                graph::failed(state.at("executions").at(id), attempt, reason);
+                return Json{{"execution", id}};
+            },
+            log);
+    }
     void Pipeline::request(
         const std::string& repository, const std::string& tag, bool automatic, const Callback& callback, const std::string& expectedTag) {
         const Version version(tag.empty() ? "0.0.0" : tag);
@@ -39,34 +47,38 @@ namespace coreci {
         };
         const auto selection = std::make_shared<Selection>();
         selection->pending = enrolled.size();
-        const auto generation = store.graph().at("generation");
+        const auto since = store.graph().at("next_revision").get<std::uint64_t>();
         for (const auto& [name, row] : enrolled.items()) {
-            sources.select(row.at("repository"), name == root && !automatic ? tag : "", [=, this](const SourceResult& result) {
-                try {
-                    require(result.error.empty(), result.error);
-                    auto selected = result.source;
-                    require(selected.at("repository_id") == row.at("id"), "enrolled repository ID changed");
-                    require(name != root || expectedTag.empty() || selected.at("tag") != tag ||
-                                selected.at("tag_object_sha") == expectedTag,
-                            "tag changed after notification");
-                    selected["deployment"] = config.deployment(app, github, row.at("branch"));
-                    selection->sources[name] = selected;
-                } catch (const std::exception& error) {
-                    selection->errors[name] = error.what();
-                }
-                if (--selection->pending == 0) {
-                    if (!selection->errors.empty()) {
-                        callback({503, {{"error", "selection blocked by unreadable repository"}, {"repositories", selection->errors}}});
-                    } else {
-                        change(
-                            [=](Json& state) {
-                                require(state.at("generation") == generation, "graph changed during source selection");
-                                return Json{{"created", graph::select(state, root, selection->sources, !automatic)}};
-                            },
-                            callback);
+            sources.select(
+                row.at("repository"),
+                name == root && !automatic ? tag : "",
+                [=, this](const SourceResult& result) {
+                    try {
+                        require(result.error.empty(), result.error);
+                        auto selected = result.source;
+                        require(selected.at("repository_id") == row.at("id"), "enrolled repository ID changed");
+                        require(name != root || expectedTag.empty() || selected.at("tag") != tag ||
+                                    selected.at("tag_object_sha") == expectedTag,
+                                "tag changed after notification");
+                        selected["deployment"] = config.deployment(app, github, row.at("branch"));
+                        selection->sources[name] = selected;
+                    } catch (const std::exception& error) {
+                        selection->errors[name] = error.what();
                     }
-                }
-            });
+                    if (--selection->pending == 0) {
+                        if (!selection->errors.empty()) {
+                            callback({503, {{"error", "selection blocked by unreadable repository"}, {"repositories", selection->errors}}});
+                        } else {
+                            change(
+                                [=](Json& state) {
+                                    require(state.at("repositories") == enrolled, "enrollment changed during source selection");
+                                    return Json{{"created", graph::select(state, root, selection->sources, !automatic, since)}};
+                                },
+                                callback);
+                        }
+                    }
+                },
+                name == root && automatic ? tag : "");
         }
     }
     void Pipeline::retry(const std::string& execution, const Callback& callback) {
@@ -93,18 +105,13 @@ namespace coreci {
                 workflow.at("path"),
                 [=, this](const SourceResult& proof) {
                     if (!proof.error.empty() || proof.blobSha != workflow.at("blob_sha").get<std::string>()) {
-                        change(
-                            [=](Json& state) {
-                                graph::failed(
-                                    state.at("executions").at(id), attemptId, "approved dispatch workflow is unavailable or changed");
-                                return Json{{"execution", id}};
-                            },
-                            log);
+                        fail(id, attemptId, "approved dispatch workflow is unavailable or changed");
                     } else {
                         store.change(
                             [=](Json& state) {
                                 auto& attempt = state.at("executions").at(id).at("attempts").back();
-                                require(attempt.at("id") == attemptId, "dispatch attempt changed before preflight commit");
+                                require(attempt.at("id") == attemptId && attempt.at("state") == (publication ? "publishing" : "building"),
+                                        "dispatch attempt changed before preflight commit");
                                 attempt["preflight"][publication ? "publication" : "build"] = {{"commit", proof.source.at("commit")},
                                                                                                {"blob_sha", proof.blobSha}};
                                 return graph::inputs(state.at("executions").at(id), publication);
@@ -140,14 +147,7 @@ namespace coreci {
                                                         }
                                                     });
                                             } else if (!response.submitted || (response.status >= 400 && !response.uncertain())) {
-                                                change(
-                                                    [=](Json& state) {
-                                                        graph::failed(state.at("executions").at(id),
-                                                                      attemptId,
-                                                                      "GitHub definitively rejected dispatch");
-                                                        return Json{{"execution", id}};
-                                                    },
-                                                    log);
+                                                fail(id, attemptId, "GitHub definitively rejected dispatch");
                                             } else {
                                                 log({503,
                                                      {{"error", "dispatch outcome is uncertain; assignment retained"}, {"execution", id}}});
@@ -316,14 +316,7 @@ namespace coreci {
                                          evidence.value("job_status", "") == "completed" &&
                                          evidence.value("job_conclusion", "") == "success";
             if ((!publication && failedRun) || (publication && skippedPush)) {
-                change(
-                    [=](Json& state) {
-                        graph::failed(state.at("executions").at(id),
-                                      attempt.at("id"),
-                                      publication ? "verified publication failure before feed update" : "verified build failure");
-                        return Json{{"execution", id}};
-                    },
-                    log);
+                fail(id, attempt.at("id"), publication ? "verified publication failure before feed update" : "verified build failure");
             } else if ((publication && terminalRun && evidence.value("job_status", "") == "completed") ||
                        (!publication && successfulBuild && attempt.at("build_result").is_null())) {
                 completionReads.insert(key);
@@ -527,35 +520,41 @@ namespace coreci {
             read(runId);
         }
     }
-    void Pipeline::reconcile(const Callback& callback) {
-        auto ids = std::vector<std::string>();
-        for (const auto& [id, node] : store.graph().at("executions").items()) {
-            const auto& attempt = node.at("attempts").back();
-            if (attempt.at("state") == "publishing" || (attempt.at("state") == "building" && attempt.at("build_result").is_null())) {
-                ids.push_back(id);
-            }
-        }
-        const auto pending = std::make_shared<std::size_t>(ids.size());
-        if (ids.empty()) {
-            change(
-                [](Json&) {
-                    return Json{{"reconciled", 0}};
-                },
-                callback);
-        } else {
-            for (const auto& id : ids) {
-                inspect(id, [=, this](const PipelineResult& result) {
-                    log(result);
-                    if (--*pending == 0) {
-                        change(
-                            [=](Json&) {
-                                return Json{{"reconciled", ids.size()}};
-                            },
-                            callback);
+    void Pipeline::reconcile(bool restored, const Callback& callback) {
+        change(
+            [restored](Json& state) {
+                auto ids = Json::array();
+                for (auto& [id, node] : state.at("executions").items()) {
+                    const auto& attempt = node.at("attempts").back();
+                    const bool publication = attempt.at("state") == "publishing";
+                    if (publication || (attempt.at("state") == "building" && attempt.at("build_result").is_null())) {
+                        const auto stage = publication ? "publication" : "build";
+                        if (restored && !attempt.value("preflight", Json::object()).contains(stage) &&
+                            attempt.value("dispatch", Json::object()).value(stage, Json()).is_null() &&
+                            attempt.at(publication ? "publication_run" : "build_run").is_null()) {
+                            graph::failed(node, attempt.at("id"), "workflow not submitted; dispatch preflight absent");
+                        } else {
+                            ids.push_back(id);
+                        }
                     }
-                });
-            }
-        }
+                }
+                return ids;
+            },
+            [this, callback](const PipelineResult& result) {
+                const auto pending = std::make_shared<std::size_t>(result.body.size());
+                if (result.status != 200 || result.body.empty()) {
+                    callback(result.status == 200 ? PipelineResult{200, {{"reconciled", 0}}} : result);
+                } else {
+                    for (const auto& id : result.body) {
+                        inspect(id, [pending, callback, count = result.body.size()](const PipelineResult& observed) {
+                            log(observed);
+                            if (--*pending == 0) {
+                                callback({200, {{"reconciled", count}}});
+                            }
+                        });
+                    }
+                }
+            });
     }
     void Pipeline::refreshStatus() {
         const auto generation = store.graph().at("generation").get<std::uint64_t>();

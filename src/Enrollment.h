@@ -18,7 +18,7 @@ namespace coreci {
         void workflow(const Json& input, const Callback& callback);
 
     private:
-        void persist(const Json& row, std::uint64_t generation, const Callback& callback, const Json& outcome);
+        void persist(const Json& row, std::uint64_t generation, const Callback& callback);
         GitHub& github;
         GraphStore& store;
         SourceReader& sources;

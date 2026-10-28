@@ -47,6 +47,7 @@ namespace coreci::test {
                 {"repository_id", repository++},
                 {"tag", "v2.1.3"},
                 {"commit", std::string(40, 'a')},
+                {"tag_object_sha", std::string(40, 'a')},
                 {"definition_revision", std::string(40, 'a')},
                 {"definition_blob_sha", std::string(40, 'b')},
                 {"deployment", {{"worker", {{"tooling_sha", std::string(40, 'c')}}}, {"feed", {{"repository", "Owner/packages"}}}}},

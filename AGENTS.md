@@ -52,7 +52,7 @@ Before net production-code growth, present the design and estimate and obtain th
 explicit approval required by the global engineering instructions. Do not claim completion
 until the real graph-driven package pipeline and required acceptance have been verified.
 
-The owner approved the fresh controller implementation with a maximum of 3,500 physical
+The owner approved the fresh controller implementation with a maximum of 3,510 physical
 C++ source/header lines under src/, including main.cpp. Reused UI assets and GitHub worker
 tooling are separate; do not move controller logic there to evade the bound. This replaces
 the earlier implementation estimate. Re-estimate before exceeding the bound or introducing

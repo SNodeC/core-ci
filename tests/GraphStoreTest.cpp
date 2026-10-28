@@ -91,7 +91,8 @@ int main(int argc, char* argv[]) {
                     } else {
                         graph->change(
                             [](Json& state) {
-                                coreci::graph::select(state, "core", coreci::test::sources(), false);
+                                coreci::graph::select(
+                                    state, "core", coreci::test::sources(), false, state.at("next_revision").get<std::uint64_t>());
                                 return coreci::graph::advance(state);
                             },
                             [&](const auto& result, const Json& ready) {

@@ -17,7 +17,7 @@ namespace coreci {
         explicit SourceReader(GitHub& github)
             : github(github) {
         }
-        void select(const std::string& repository, const std::string& tag, const Callback& callback);
+        void select(const std::string& repository, const std::string& tag, const Callback& callback, const std::string& floor = "");
         void definition(const std::string& repository, const std::string& ref, const Callback& callback);
         void file(const std::string& repository,
                   const std::string& ref,

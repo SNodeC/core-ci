@@ -41,19 +41,19 @@ namespace coreci {
             },
             reading->publicRepository);
     }
-    void SourceReader::select(const std::string& repository, const std::string& tag, const Callback& callback) {
+    void SourceReader::select(const std::string& repository, const std::string& tag, const Callback& callback, const std::string& floor) {
         try {
             const Version version(tag.empty() ? "0.0.0" : tag);
             auto reading = std::make_shared<Reading>();
             reading->repository = repository;
-            reading->tag = tag;
+            reading->tag = tag.empty() ? floor : tag;
             reading->callback = callback;
-            read(reading, "", [this, reading](const GitHubResult& result) {
+            read(reading, "", [this, reading, tag](const GitHubResult& result) {
                 require(result.body.at("id") == github.repositoryId(reading->repository), "repository ID differs from enrollment/grant");
                 reading->result.source = {{"repository", reading->repository},
                                           {"repository_id", result.body.at("id")},
                                           {"name", reading->repository.substr(reading->repository.find('/') + 1)}};
-                if (reading->tag.empty()) {
+                if (tag.empty()) {
                     tags(reading);
                 } else {
                     reference(reading);

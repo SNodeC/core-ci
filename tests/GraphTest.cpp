@@ -71,15 +71,110 @@ namespace {
             },
             "conflicting committed receipt was accepted");
     }
+    void selectionBoundaries() {
+        auto original = coreci::test::sources();
+        for (auto& source : original) {
+            source["tag"] = "v1.0.0";
+        }
+        original["join"]["definition"]["depends_on"] = Json::array({"app"});
+        const auto changed = [](Json sources, const std::string& name, const std::string& tag, char commit) {
+            sources[name]["tag"] = tag;
+            for (const auto* key : {"commit", "definition_revision", "tag_object_sha"}) {
+                sources[name][key] = std::string(40, commit);
+            }
+            return sources;
+        };
+        const auto higher = changed(original, "core", "v2.0.0", '2');
+        for (const bool explicitRequest : {false, true}) {
+            auto state = graph::empty();
+            const auto newest = graph::select(state, "core", higher, false, 1);
+            graph::select(state, "core", original, explicitRequest, state.at("next_revision"));
+            for (const auto& id : newest) {
+                check(state.at("executions").at(id.get<std::string>()).at("superseded_by") == "",
+                      "older root or transitive input superseded a newer automatic selection");
+            }
+            const auto laterJoin = changed(original, "join", "v2.0.0", '3');
+            graph::select(state, "join", laterJoin, false, state.at("next_revision"));
+            for (const auto& id : newest) {
+                check(state.at("executions").at(id.get<std::string>()).at("superseded_by") == "",
+                      "later automatic dependent superseded a transitively newer input");
+            }
+        }
+        auto progressing = graph::empty();
+        const auto older = graph::select(progressing, "core", original, false, 1);
+        graph::select(progressing, "core", higher, false, progressing.at("next_revision"));
+        for (const auto& id : older) {
+            check(progressing.at("executions").at(id.get<std::string>()).at("superseded_by") != "",
+                  "newer transitive inputs did not supersede older waiting automatic work");
+        }
+        auto removal = graph::empty();
+        const auto retained = graph::select(removal, "core", original, false, 1);
+        auto independent = changed(original, "app", "v2.0.0", '2');
+        independent["app"]["definition"]["depends_on"] = Json::array();
+        graph::select(removal, "app", independent, false, removal.at("next_revision"));
+        for (const auto& id : retained) {
+            const auto& node = removal.at("executions").at(id.get<std::string>());
+            if (node.at("source").at("name") == "app" || node.at("source").at("name") == "join") {
+                check(node.at("superseded_by") != "", "legitimate dependency removal prevented supersession");
+            }
+        }
+        auto moved = graph::empty();
+        const auto prior = graph::select(moved, "core", original, false, 1);
+        const auto sameVersion = changed(original, "core", "v1.0.0", '2');
+        graph::select(moved, "core", sameVersion, false, moved.at("next_revision"));
+        for (const auto& id : prior) {
+            check(moved.at("executions").at(id.get<std::string>()).at("superseded_by") == "",
+                  "incomparable same-version source identity superseded retained work");
+        }
+        auto competing = graph::empty();
+        graph::select(competing, "core", original, false, 1);
+        const auto since = competing.at("next_revision").get<std::uint64_t>();
+        const auto newApp = changed(original, "app", "v2.0.0", '2');
+        graph::select(competing, "app", newApp, false, since);
+        const auto before = competing;
+        rejects(
+            [&] {
+                graph::select(competing, "core", original, false, since);
+            },
+            "a newly committed higher non-root source did not reject stale selection");
+        check(competing == before, "stale selection changed graph before rejection");
+        graph::select(competing, "core", original, false, competing.at("next_revision"));
+        auto explicitOlder = graph::empty();
+        graph::select(explicitOlder, "core", higher, false, 1);
+        check(graph::select(explicitOlder, "core", original, true, 1).size() == 20,
+              "intentional explicit older root was rejected as stale");
+        auto concurrentMove = graph::empty();
+        graph::select(concurrentMove, "core", sameVersion, false, 1);
+        rejects(
+            [&] {
+                graph::select(concurrentMove, "core", original, true, 1);
+            },
+            "explicit root bypassed same-version identity conflict after reads began");
+        auto evidence = graph::empty();
+        graph::select(evidence, "core", original, false, 1);
+        const auto assigned = graph::advance(evidence);
+        auto& node = evidence.at("executions").at(assigned.front().at("execution").get<std::string>());
+        const auto began = evidence.at("next_revision").get<std::uint64_t>();
+        graph::observe(node, node.at("attempts").back().at("id"), false, run(99), {{"started_at", "2026-10-27T10:00:00Z"}});
+        rejects(
+            [&] {
+                graph::observe(node, node.at("attempts").back().at("id"), false, run(99), {{"started_at", "2026-10-27T10:01:00Z"}});
+            },
+            "conflicting immutable job timestamp was silently replaced");
+        graph::failed(node, node.at("attempts").back().at("id"), "verified test failure");
+        graph::retry(evidence, node.at("id"));
+        check(graph::select(evidence, "core", original, false, began).empty(), "evidence or retry invalidated source selection");
+    }
 } // namespace
 
 int main(int argc, char* argv[]) {
     int result = 0;
     try {
+        selectionBoundaries();
         const auto selected = coreci::test::sources();
         auto state = graph::empty();
         const auto start = std::chrono::steady_clock::now();
-        const auto created = graph::select(state, "core", selected, false);
+        const auto created = graph::select(state, "core", selected, false, state.at("next_revision").get<std::uint64_t>());
         check(created.size() == 20, "full selection must contain all twenty targets");
         auto ready = graph::advance(state);
         check(ready.size() == 5, "all five independent roots must be assigned together");
@@ -133,7 +228,8 @@ int main(int argc, char* argv[]) {
             publish(state.at("executions").at(dispatch.at("execution").get<std::string>()), runId++);
         }
         check(graph::advance(state).empty(), "completed graph dispatched replacement work");
-        check(graph::select(state, "core", selected, false).empty(), "unchanged selection created work");
+        check(graph::select(state, "core", selected, false, state.at("next_revision").get<std::uint64_t>()).empty(),
+              "unchanged selection created work");
         const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::cout << "Synthetic in-memory twenty-target graph: " << elapsed << " ms (no HTTP or database time)\n";
 
@@ -163,21 +259,21 @@ int main(int argc, char* argv[]) {
         auto broken = graph::empty();
         rejects(
             [&] {
-                graph::select(broken, "app", selected, true);
+                graph::select(broken, "app", selected, true, broken.at("next_revision").get<std::uint64_t>());
             },
             "missing prerequisite must fail explicitly, not trigger an autobuild");
         auto cyclic = selected;
         cyclic["core"]["definition"]["depends_on"] = {"join"};
         rejects(
             [&] {
-                graph::select(broken, "core", cyclic, false);
+                graph::select(broken, "core", cyclic, false, broken.at("next_revision").get<std::uint64_t>());
             },
             "dependency cycle accepted");
 
         auto oversized = selected;
         oversized["core"]["definition"]["title"] = std::string(70000, 'x');
         auto bounded = graph::empty();
-        graph::select(bounded, "core", oversized, false);
+        graph::select(bounded, "core", oversized, false, bounded.at("next_revision").get<std::uint64_t>());
         check(graph::advance(bounded).empty(), "oversized assignments must remain unassigned");
         for (const auto& [id, node] : bounded.at("executions").items()) {
             if (node.at("source").at("name") == "core") {
@@ -195,7 +291,7 @@ int main(int argc, char* argv[]) {
             },
             "invalid prerelease accepted");
         auto retries = graph::empty();
-        graph::select(retries, "core", selected, true);
+        graph::select(retries, "core", selected, true, retries.at("next_revision").get<std::uint64_t>());
         auto roots = graph::advance(retries);
         for (const auto& work : roots) {
             build(retries.at("executions").at(work.at("execution").get<std::string>()), runId++);
@@ -218,7 +314,7 @@ int main(int argc, char* argv[]) {
         for (auto& [name, source] : upgraded.items()) {
             source["deployment"]["worker"]["tooling_sha"] = std::string(40, 'f');
         }
-        graph::select(retries, "core", upgraded, true);
+        graph::select(retries, "core", upgraded, true, retries.at("next_revision").get<std::uint64_t>());
         graph::retry(retries, retryId);
         graph::advance(retries);
         const auto& retried = retries.at("executions").at(retryId).at("attempts").back();
@@ -241,10 +337,10 @@ int main(int argc, char* argv[]) {
         check(retryNode.at("attempts").back() == currentBefore, "historical evidence changed the current retry");
 
         auto supersession = graph::empty();
-        graph::select(supersession, "core", selected, false);
+        graph::select(supersession, "core", selected, false, supersession.at("next_revision").get<std::uint64_t>());
         const auto firstRoots = graph::advance(supersession);
         const auto frozen = supersession.at("executions").at(firstRoots.front().at("execution").get<std::string>());
-        graph::select(supersession, "core", upgraded, false);
+        graph::select(supersession, "core", upgraded, false, supersession.at("next_revision").get<std::uint64_t>());
         check(supersession.at("executions").at(frozen.at("id").get<std::string>()) == frozen, "new selection rewrote assigned work");
         unsigned int superseded = 0;
         for (const auto& [id, node] : supersession.at("executions").items()) {
@@ -264,7 +360,7 @@ int main(int argc, char* argv[]) {
                 graph::validateSources(conflictingNamespace, state.at("executions"));
             },
             "selected history released its package namespace");
-        graph::select(state, "core", upgraded, false);
+        graph::select(state, "core", upgraded, false, state.at("next_revision").get<std::uint64_t>());
         for (const auto& [id, node] : publishedBefore.at("executions").items()) {
             check(state.at("executions").at(id) == node, "new source selection changed retained publications");
         }
@@ -278,8 +374,8 @@ int main(int argc, char* argv[]) {
         smallSource["definition"]["package"] = "small";
         quoted["small"] = smallSource;
         auto mixed = graph::empty();
-        graph::select(mixed, "core", quoted, false);
-        graph::select(mixed, "small", quoted, false);
+        graph::select(mixed, "core", quoted, false, mixed.at("next_revision").get<std::uint64_t>());
+        graph::select(mixed, "small", quoted, false, mixed.at("next_revision").get<std::uint64_t>());
         check(graph::advance(mixed).size() == 5, "oversized full dispatch payload blocked independent roots");
         for (const auto& [id, node] : mixed.at("executions").items()) {
             if (node.at("source").at("name") == "core") {
@@ -288,7 +384,7 @@ int main(int argc, char* argv[]) {
             }
         }
         auto publicationBound = graph::empty();
-        graph::select(publicationBound, "core", selected, false);
+        graph::select(publicationBound, "core", selected, false, publicationBound.at("next_revision").get<std::uint64_t>());
         roots = graph::advance(publicationBound);
         auto& large = publicationBound.at("executions").at(roots.at(0).at("execution").get<std::string>());
         auto& largeAttempt = large.at("attempts").back();

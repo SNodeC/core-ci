@@ -2509,3 +2509,121 @@ Claude. Stage only the fresh-controller implementation, its current architecture
 and test changes, and the fresh-controller work-log entries. Preserve unrelated monitoring,
 deployment and review hunks unstaged. Request a read-only detailed review of the exact
 pushed commit. This stage does not merge or activate the rewrite.
+
+
+### Fresh-controller review corrections — 2026-10-28
+
+Workspace: `/home/voc/projects/snodec/core-ci`, `rewrite/slim-graph-controller`,
+HEAD `e34748a0cda0dc07cdf674974cedba440ca65a16`. The prior review checkpoint is
+committed and pushed; these corrections are uncommitted. Preserve the unrelated dirty
+operational/deployment hunks and existing review records. No additional checkout exists.
+Owner explicitly approved a maximum of **3,510 physical controller C++ lines** after the
+fully formatted agreed correction measured that size. AGENTS.md records that bound.
+
+Claude and Codex agreed the source-level correction prompt after checking counterexamples,
+framework ownership and local probes. Read-only dialogue, final agreement and implementing
+prompt are retained under `/tmp/codex/build/core-ci/slim-controller/claude-*`; the correction
+diff, final review, commands and results are under `/tmp/codex/build/core-ci/slim-corrections/`.
+Those task directories are temporary evidence, removable after review/acceptance when unused.
+No discarded implementation was recovered.
+
+Invariant: derive selections against current graph authority, preserve newer/incomparable
+immutable source inputs, and distinguish provably unsubmitted work from uncertain dispatch.
+No controller runner reservation, publication admission cap, state, timer or queue was added.
+
+- D1: selection captures existing `next_revision`, checks current enrollment/branch equality,
+  and rejects newer/incomparable sources created during its reads. Job evidence and explicit
+  retries do not invalidate those reads. Explicit older root versions remain supported;
+  conflicting equal-version identities remain rejected. Current namespace validation and
+  exact prerequisite lookup remain authoritative. Real competing source selections report
+  409, without automatic retry/reselection; lossless competing-tag delivery is not claimed.
+- Supersession: compare all shared transitive source inputs, not only the node's own tag or
+  direct prerequisites. An explicit older chain and later automatic dependent cannot discard
+  waiting work with newer inputs. Dependency removal remains supported. Lookup still chooses
+  the newest-revision matching prerequisite; this correction does not introduce a new policy.
+- N1: automatic root notifications supply a pushed-tag floor while still reading tags. Two
+  pushes sharing a stale listing cannot silently lose the newer pushed tag. Explicit exact
+  tags, backport/highest-version selection, expected tag-object checks and non-SemVer rejection
+  retain their contracts.
+- D3: startup reconciliation alone fails an assigned stage with no committed preflight,
+  raw dispatch identity or bound run. Committed preflight remains uncertain. Ordinary operator
+  reconciliation cannot cancel live preflight. Preflight commit checks both attempt and stage
+  before dispatch. No mutation is replayed. Reconciliation uses the existing lazy change and
+  removes its trailing no-op write.
+- H1: coverage only. Null queued timestamp followed by stable running/completed timestamps
+  succeeds; conflicting nonnull timestamps still reject. Real GitHub changing this timestamp
+  remains unproven; no production relaxation was introduced.
+- D2 retains block-and-report for unreadable/missing source definitions. H2 retains uncertainty
+  for empty job/step evidence. H3's dispatch concern and H5's ownership concern were withdrawn
+  after source/API checks. H4 retains definite zero-row CAS rejection; H6 retains the completion
+  exception uncertainty latch. One-page cold run search, schema and status-refresh policy stay.
+
+Reductions replace repeated bootstrap teardown, enrollment completion and failed-transition
+closures; the unused Enrollment::persist argument is removed. Main's completion factory has
+main lifetime, rather than capturing a local startup callback object.
+
+Focused verification (local synthetic GitHub, real isolated MariaDB; no live acceptance):
+
+```
+cmake -S . -B build/codex/slim-controller -DCORE_CI_TEST_DIRECTORY=/tmp/codex/build/core-ci/slim-corrections/tests
+cmake --build build/codex/slim-controller -j4
+cmake --build build/codex/slim-controller --target format-check
+ctest --test-dir build/codex/slim-controller --output-on-failure -j4 -R '^(lifecycle-|enrollment-|database-|persistence-|graph-state-|source-selection-|pipeline-)'
+git diff --check
+```
+
+Build, formatting and whitespace checks pass. All **48 selected checks pass** (91.09 s),
+including all 24 independent pipeline cases; 13 pipeline cases are new. Graph boundary tests
+retain existing assertions and add stale-source, transitive-input and timestamp coverage.
+The first restart-fixture run exposed graceful shutdown resolving blocked callbacks; the
+crash tests now kill only their disposable controller at the held boundary, then restart
+from its real durable database. All four corrected build/publication crash cases pass.
+No test was weakened to accept controller behavior.
+
+The final local normal twenty-node chain records **569 outgoing requests**, 16 token mints,
+20 artifact reads and 106 status dispatches. Eight unchanged notifications cause **zero**
+outgoing requests, including status/token work. The prior 599-request normal-chain result
+is a baseline, not an equivalent live benchmark; asynchronous coalescing changes totals and
+this difference is not a claimed speedup. In-memory graph traversal measured 41.1854 ms,
+excluding HTTP/database/runner/Pages latency. Status cost and retained-history scaling remain
+acceptance items. No 10–20x speedup or subsecond end-to-end acceptance is asserted.
+
+N2 is a separately **confirmed installed-dependency recovery defect**, not corrected here.
+A local probe with the exact e34748a binary stopped its isolated external MariaDB: status
+answered in 0.0035 s beforehand, timed out at 2 s during absence and still timed out after
+SQL was independently ready again. In-memory graph reads remained available. Installed
+SNode.C's MariaDBConnection immediate reconnect failure leaves `connected=false`; destruction
+then deletes queued commands without command-error callbacks. The controller FIFO cannot
+complete its head. A process restart is required. Probe source/result:
+`/tmp/codex/build/core-ci/slim-controller/corrections/database-disappearance.py` and
+`corrections/n2/results.json`. Framework correction or an application workaround needs
+separate scope; no framework edit, hidden recovery mechanism or automatic replay was made.
+
+Accounting against e34748a: controller C++ +167/-155, **net +12**, total **3,510**;
+CMake test registration +13/-0; tests +514/-218, **net +296**. Reused UI embedding remains
+11 separate unchanged lines. Against the fresh rewrite base 7a38f93: C++ +2209/-4445,
+net -2236; build/schema +90/-111, net -21; tests +1669/-1836, net -167.
+Documentation accounting is separate; unrelated 682 work-log lines are not these corrections.
+Build identity is HEAD plus dirty production diff SHA-256
+`b6ade475e46b60a1f3b8d079de318314c03e49d2b521a7571a0b4bb273d72e2d`;
+`slim-corrections/accounting.json` records the classification and counts.
+
+No correction commit, push, merge, deployment, live restart or GitHub trigger occurred.
+Production SNodeC resources, live database, ports/TLS/listeners, tags, trusted keys, feeds and
+previously published bytes were untouched. Private directories remain uninspected/preserved.
+Live pipeline/signing/client/UI/status acceptance and the N2 recovery gate remain outstanding.
+
+Final read-only Claude review confirms plan adherence and reports no concrete code defects;
+see `slim-corrections/claude-final.md`. It independently read the final diff, affected source,
+tests and 48/48 result. Observable error-path difference: reconcile does not inspect when
+its initial graph change fails; that definite error is reported. The latched-mutation route
+remains rejected by existing middleware. Reviewer agreement is not live acceptance.
+
+### Fresh-controller sandbox deployment authorization — 2026-10-28
+
+Owner explicitly authorized committing, pushing and deploying the corrected rewrite on
+core.vchrist.at, followed by real VOC-Experiments sandbox testing. This does not merge main
+or authorize production SNodeC resource changes. Preserve the existing database/history,
+keys, package bytes and listener settings. Current service has no assigned build/publication:
+its public graph reports 127 published, 17 failed and 16 waiting executions. Capture that
+checkpoint before cutover. The fresh schema uses a separate database, not a schema overwrite.

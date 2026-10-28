@@ -292,6 +292,19 @@ if(BUILD_TESTING)
         overlap
         workflow
         changed
+        selection-progress
+        shared-tags
+        backport
+        explicit-tag
+        non-semver
+        enrollment-race
+        crossing-selections
+        preflight-build-absent
+        preflight-build-known
+        preflight-publish-absent
+        preflight-publish-known
+        preflight-live
+        queued-job
     )
         add_test(
             NAME pipeline-${case}

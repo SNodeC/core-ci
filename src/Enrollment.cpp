@@ -14,7 +14,7 @@ namespace coreci {
         }
         callback({200, {{"repositories", rows}}});
     }
-    void Enrollment::persist(const Json& row, std::uint64_t generation, const Callback& callback, const Json& outcome) {
+    void Enrollment::persist(const Json& row, std::uint64_t generation, const Callback& callback) {
         store.change(
             [row, generation](Json& state) {
                 require(state.at("generation") == generation, "graph changed while editing enrollment");
@@ -25,8 +25,8 @@ namespace coreci {
                 graph::validateSources(state.at("repositories"), state.at("executions"));
                 return Json{{"repository", row.at("repository")}, {"new_enrollment", fresh}};
             },
-            [callback, outcome, row](const DatabaseResult& result, const Json& enrolled) {
-                auto body = outcome;
+            [callback, row](const DatabaseResult& result, const Json& enrolled) {
+                auto body = Json::object();
                 if (result.error.empty()) {
                     body.update(row);
                     body.update(enrolled);
@@ -59,8 +59,7 @@ namespace coreci {
                                  {"blob_sha", result.blobSha},
                                  {"definition", result.source.at("definition")}},
                                 generation,
-                                callback,
-                                Json::object());
+                                callback);
                     }
                 });
             }

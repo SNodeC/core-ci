@@ -9,7 +9,7 @@ namespace coreci {
         Json empty();
         Json coordinates(const Json& target);
         std::vector<std::string> validateSources(const Json& sources, const Json& executions = Json::object());
-        Json select(Json& state, const std::string& root, const Json& sources, bool explicitRequest);
+        Json select(Json& state, const std::string& root, const Json& sources, bool explicitRequest, std::uint64_t since);
         Json advance(Json& state);
         void retry(Json& state, const std::string& id);
         void observe(Json& node, const std::string& attempt, bool publication, const Json& run, const Json& facts);

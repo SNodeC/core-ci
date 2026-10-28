@@ -1,5 +1,7 @@
 #include "Graph.h"
 
+#include "Version.h"
+
 #include <algorithm>
 #include <ctime>
 #include <functional>
@@ -11,6 +13,27 @@
 namespace coreci {
     namespace graph {
         namespace {
+            bool newer(const Json& a, const Json& b) {
+                const auto order = Version(a.at("tag")).compare(Version(b.at("tag")));
+                return order > 0 || (order == 0 && (a.at("tag") != b.at("tag") || a.at("tag_object_sha") != b.at("tag_object_sha") ||
+                                                    a.at("commit") != b.at("commit")));
+            }
+
+            Json closure(const Json& state, const Json& node) {
+                auto result = Json::array();
+                std::set<std::string> visited;
+                std::function<void(const Json&)> visit = [&](const Json& input) {
+                    if (visited.insert(input.at("id")).second) {
+                        result.push_back(input.at("source"));
+                        for (const auto& id : input.at("prerequisites")) {
+                            visit(state.at("executions").at(id.get<std::string>()));
+                        }
+                    }
+                };
+                visit(node);
+                return result;
+            }
+
             Json waiting(Json& state, const std::string& id) {
                 const auto revision = state.at("next_revision").get<std::uint64_t>();
                 require(revision > 0 && revision < UINT64_MAX, "rebuild revision exhausted");
@@ -145,8 +168,18 @@ namespace coreci {
             return order;
         }
 
-        Json select(Json& state, const std::string& root, const Json& sources, bool explicitRequest) {
+        Json select(Json& state, const std::string& root, const Json& sources, bool explicitRequest, std::uint64_t since) {
             require(sources.contains(root), "requested repository has no selected source");
+            for (const auto& execution : state.at("executions")) {
+                const auto& source = execution.at("source");
+                const auto name = source.at("name").get<std::string>();
+                if (execution.at("attempts").front().at("revision") >= since && sources.contains(name)) {
+                    require(
+                        !newer(source, sources.at(name)) ||
+                            (explicitRequest && name == root && Version(source.at("tag")).compare(Version(sources.at(name).at("tag"))) > 0),
+                        "newer source selection committed during source selection: " + name);
+                }
+            }
             const auto order = validateSources(sources, state.at("executions"));
             std::set<std::string> affected{root};
             for (const auto& name : order) {
@@ -209,12 +242,21 @@ namespace coreci {
                                       {"automatic", name != root || !explicitRequest},
                                       {"superseded_by", ""},
                                       {"attempts", {waiting(state, id)}}};
+                            const auto inputs = closure(state, node);
                             for (auto& [previousId, previous] : state.at("executions").items()) {
                                 if (previous.at("automatic") && previous.at("superseded_by") == "" &&
                                     previous.at("attempts").back().at("state") == "waiting" &&
                                     previous.at("source").at("repository_id") == source.at("repository_id") &&
                                     coordinates(previous.at("target_row")) == coordinates(target)) {
-                                    previous["superseded_by"] = id;
+                                    bool older = true;
+                                    for (const auto& prior : closure(state, previous)) {
+                                        for (const auto& next : inputs) {
+                                            older = older && (prior.at("name") != next.at("name") || !newer(prior, next));
+                                        }
+                                    }
+                                    if (older) {
+                                        previous["superseded_by"] = id;
+                                    }
                                 }
                             }
                             acceptedRoot = acceptedRoot || name == root;
