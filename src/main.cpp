@@ -72,10 +72,10 @@ int main(int argc, char* argv[]) {
     };
     bool initialConnection = true;
     std::list<std::shared_ptr<express::Response>> eventReceivers;
-    const auto sendEvent = [](const auto& response, const std::string& event, const nlohmann::json& data) {
+    const auto sendEvent = [](const auto& response, const std::string& event, const std::string& data) {
         if (response->isConnected()) {
             response->sendFragment("event:" + event);
-            response->sendFragment("data:" + data.dump());
+            response->sendFragment("data:" + data);
             response->sendFragment();
         }
     };
@@ -175,15 +175,16 @@ int main(int argc, char* argv[]) {
                                     pipeline->refreshStatus();
                                 }
                                 if (!eventReceivers.empty()) {
-                                    const auto graph = graphStore->view();
+                                    const auto graph = graphStore->view().dump();
                                     for (const auto& response : eventReceivers) {
                                         sendEvent(response, "graph", graph);
                                     }
                                 }
                                 if (repositoriesChanged && !eventReceivers.empty()) {
                                     enrollment->list([&eventReceivers, sendEvent](const coreci::EnrollmentResult& result) {
+                                        const auto data = result.body.dump();
                                         for (const auto& response : eventReceivers) {
-                                            sendEvent(response, result.status == 200 ? "repositories" : "unavailable", result.body);
+                                            sendEvent(response, result.status == 200 ? "repositories" : "unavailable", data);
                                         }
                                     });
                                 }
@@ -207,9 +208,9 @@ int main(int argc, char* argv[]) {
                                         return response.get() == receiver;
                                     });
                                 });
-                                sendEvent(res, "graph", graphStore->view());
+                                sendEvent(res, "graph", graphStore->view().dump());
                                 enrollment->list([res, sendEvent](const coreci::EnrollmentResult& result) {
-                                    sendEvent(res, result.status == 200 ? "repositories" : "unavailable", result.body);
+                                    sendEvent(res, result.status == 200 ? "repositories" : "unavailable", result.body.dump());
                                 });
                             });
 

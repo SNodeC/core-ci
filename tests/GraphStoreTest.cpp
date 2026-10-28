@@ -2,6 +2,7 @@
 
 #include "GraphFixtures.h"
 
+#include <chrono>
 #include <core/SNodeC.h>
 #include <iostream>
 #include <utils/Config.h>
@@ -38,12 +39,27 @@ int main(int argc, char* argv[]) {
             passed = passed && read.error.empty() && read.rows.size() == 1 && read.rows.front() == graph->graph();
             const auto view = graph->view();
             const auto projection = graph->publicView();
+            for (const auto& row : view.at("executions")) {
+                for (const auto* hidden : {"assignment", "build_result", "preflight", "dispatch"}) {
+                    passed = passed && !row.contains(hidden);
+                }
+                passed =
+                    passed && row.at("receipt") == graph->graph().at("executions").at(row.at("id")).at("attempts").back().at("receipt");
+            }
             passed = passed && view.at("executions").size() == 20 && projection.at("projects").size() == 4;
             passed = passed && graph->graph().at("generation") == 13;
             for (const auto& row : projection.at("executions")) {
                 passed = passed && row.contains("coordinates") && row.contains("build_job") && row.contains("publication_verified_utc");
             }
             passed = passed && notifications == (config->mode == "apply" ? 13u : 0u);
+            std::cout << "VIEWS " << Json{{"graph", view}, {"public", projection}}.dump() << '\n';
+            const auto started = std::chrono::steady_clock::now();
+            std::size_t bytes = 0;
+            for (unsigned int index = 0; index < 100; ++index) {
+                bytes += graph->view().dump().size() + graph->publicView().dump().size();
+            }
+            const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            std::cout << "VIEW_BENCH " << elapsed << " ms " << bytes << " bytes\n";
             graph.reset();
             database.reset();
             client.reset();

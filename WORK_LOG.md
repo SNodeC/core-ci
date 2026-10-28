@@ -3061,3 +3061,93 @@ unrelated existing documentation hunks remain unstaged. No deployment or live re
 
 Final receiver-change verification: all nine selected graph/store/pipeline checks pass
 (12.81s), including cold/recovery, unchanged-burst coverage and retirement cases.
+
+## 2026-10-28 — Agreed performance correction, local implementation
+
+Owner instruction: obtain Claude's implementation prompt and use it to improve the agreed
+controller/SDK path. Applied the quoted bounds (+5 C++, +25 Python, +330 YAML, +110 tests)
+and disclosed artifact cost; no commit, push, deployment, restart or live trigger performed.
+Canonical checkout remains `/home/voc/projects/snodec/core-ci`, owned branch
+`rewrite/slim-graph-controller`, HEAD `a568290a96ad27b04736d4c2de38d6ad2a116d86`.
+Fetched remote main read-only: `d88ae51d5d6cfc3466c1143a1123789d7d8f5559`; its starting
+production files match. Remote default is main; no open PR returned. Unrelated dirty docs
+were preserved. Private directories were not inspected or changed.
+
+Invariant: one authoritative graph/Database FIFO and unchanged exact assignments, publication
+proof, callback order and uncertainty. Reduce copying rather than adding another authority:
+GraphStore skips copying already-hidden fields; SSE dumps once per broadcast; SQL encoding
+reserves its full output and appends the suffix in place. Release build replaces Debug only
+in the local comparison, not the running deployment. C++ totals 3,576 lines; AGENTS records
+the accepted bound. No scheduling, status policy, polling, cache or state was added.
+
+SDK handoff uses one existing validation bundle: packages/ plus an OpenWrt-only sdk.archive.
+The single SDK preparer supports its existing download callers and a supplied regular-file
+archive, independently verifies official metadata/full SHA, then retains every extraction,
+target, compiler/staging and package/signature check. Four flushed messages expose phase
+boundaries. Missing OpenWrt prepare input fails before identity requests/key files. Native
+ignores the argument; push/confirm do not require it.
+
+Claude supplied the prompt and reviewed implementation. Joint review corrected nested bundle
+parent creation at its wrapper owner and the final SQL-buffer copy. The canonical unrendered
+publication template is `deployment/source/core-ci-publish-bundle.yml.in`; existing renderer
+now accepts an optional template, sharing its exact pin replacement/blob calculation. This
+replaces a /tmp-only draft and ad-hoc publication rendering. Existing pinned publication,
+status, build, source and Pages workflow files stay byte-identical. Real new pins/source
+aliases require the later tooling commit. No guessed commit or GitHub write occurred.
+The new static test initially used an undefined unqualified `run`; corrected to
+`contract.output([sys.executable, ...])`, with rendered blob identity asserted and the final
+test passing. No production workaround was needed.
+
+Build: `build/codex/speed-release`, Ninja Release/GCC 16.2.0/installed public SNode.C 2.1.0.
+Temporary fixtures/caches/evidence: `/tmp/codex/build/core-ci/speed-correction/`.
+All 21 linked SNode.C library identities recorded; no dependencies changed.
+Baseline Release binary: d11ad94713df7f13f956e3f04256e0351215da8b1c787433ea21bb0c0bd3a469.
+Final Release binary: 9f19d395ca63ea126d1f686ecc6c2716e019613a523d18d5a934f855d1034203.
+Final production/test diff plus new template hash:
+1031ab11af0242cbd8e4befcc2ae4227445b8dc98bbdefea53e32f3bd9913df4.
+
+Local real-MariaDB/synthetic twenty-target graph, fifty timed GETs after warmup:
+Debug / unchanged Release / corrected Release graph medians 12.196 / 4.777 / 4.329 ms;
+public-status medians 7.358 / 2.538 / 2.014 ms. Exact byte parity for management graph,
+public status and initial graph/repository SSE across all three binaries. These are local
+HTTP timings, not live controller critical-path measurements or end-to-end CI speedup.
+
+Verification: initial nine selected checks passed; unchanged production C++ baseline saved
+before edits (worker subprocesses used the working tree, not an immutable worker baseline).
+Thirteen focused checks passed: graph-state-boundaries, persistence-graph, pipeline-chain,
+pipeline-large-indexes, lifecycle-sse-heartbeat, enrollment-boundaries, database-writes,
+database-failures, database-lost-ack, openwrt-archive-boundaries, worker-package-boundaries,
+worker-provenance-boundaries, worker-environment-boundaries. After final SQL changes the
+seven affected checks passed again; final renderer test passed after its correction.
+Actual commands, logs and limits: `docs/reports/controller-speedup-local.md` and task evidence.
+Canonical format-check and diff whitespace checks pass; changed production lines <=160.
+Existing enrollment tests cover two receivers, initial events, repository/graph changes and
+reconnects. SDK tests include missing/invalid/type/size/hash input, no second archive curl,
+unchanged input bytes and identical facts. Final synthetic chain: 796 outgoing requests,
+including 16 token mints, 20 artifact reads and 175 derivative status dispatches. Duplicate
+unchanged burst remains zero requests. Status churn is not changed or claimed improved.
+
+Accounting vs starting HEAD: controller 16 added/11 removed = +5; Python including renderer
+41/21 = +20; new YAML 180/0 = +180; tests 99/3 = +96. Documentation separate. Bounds respected.
+Additional artifact contents approximately 2.03 GiB per comparable session, seven-day retention,
+roughly twice that upload/download traffic plus publisher disk copy; net live gain unmeasured.
+
+Remaining stages: commit/push/rollout authority, actual tooling pins and aliases/common feed
+exclusion verification, configuration/restart, explicit new core selection before dependents,
+and sandbox SDK/controller/status/Pages comparison. Existing sandbox authority is preserved;
+no blanket activation blocker added. No assumption another performance fix must follow.
+Synthetic fixtures stopped; retain evidence for review/comparison, then clean up. Persistent
+Release build retained. Running core.vchrist.at service and settled assignments unchanged.
+
+Claude's final read-only confirmation is saved as speed-correction/claude-confirmed.json:
+“The last concrete defect is fixed, and I have no remaining engineering disagreement.”
+No owner acceptance or live performance acceptance is inferred from that review.
+
+## 2026-10-28 — Performance correction commit and merge authorization
+
+Owner explicitly requested commit, push and merge. Rechecked origin/main d88ae51 and the
+reviewed production/test diff hash 1031ab11af0242cbd8e4befcc2ae4227445b8dc98bbdefea53e32f3bd9913df4
+against the validated Release binary. Both are unchanged. Reused the passing focused checks
+without repeating them. Stage only this correction's source, tests, template, report, AGENTS
+cap and appended task log; unrelated documentation/log hunks remain local. No deployment,
+restart, live tag or VOC-Experiments workflow activation is part of this stage.

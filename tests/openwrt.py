@@ -1,6 +1,7 @@
 """Local archive/control boundaries only; SDK execution and signatures require real GitHub acceptance."""
 
 import io
+from contextlib import redirect_stdout
 import os
 from pathlib import Path
 import shutil
@@ -73,6 +74,32 @@ def preparation(root):
             assert staging == Path("staging")
             assert resolved["toolchain"]["compiler_sha256"] == contract.file_hash(compiler)
             assert resolved["toolchain"]["triple"] == "configured-linux"
+            original_hash = contract.file_hash(archive)
+            messages = io.StringIO()
+            with patch.object(environment, "sdk", return_value=expected) as metadata, patch.object(
+                sdk.subprocess, "run", wraps=original_run
+            ) as executed, redirect_stdout(messages):
+                supplied = {**expected}
+                second, other_staging = sdk.prepare(target, supplied, root / "supplied", archive)
+                assert supplied == resolved and other_staging == staging
+                assert (second / ".config").is_file() and contract.file_hash(archive) == original_hash
+                assert metadata.call_count == 1 and not any(call.args[0][0] == "curl" for call in executed.call_args_list)
+            assert messages.getvalue().splitlines() == ["SDK metadata start", "SDK metadata verified",
+                                                       "SDK archive verified", "SDK extraction completed"]
+            link = root / "linked-sdk"
+            link.symlink_to(archive)
+            oversized = root / "oversized-sdk"
+            with oversized.open("wb") as sparse:
+                sparse.truncate(1024**3 + 1)
+            with patch.object(sdk, "extract", side_effect=AssertionError("invalid SDK extracted")), patch.object(
+                sdk.shutil, "copyfile", side_effect=AssertionError("invalid SDK copied")
+            ):
+                for index, invalid in enumerate((link, fixture, oversized, root / "missing-sdk")):
+                    rejects(lambda: sdk.prepare(target, expected, root / ("invalid-supplied-" + str(index)), invalid))
+            corrupted = root / "corrupted-sdk"
+            corrupted.write_bytes(b"not the official archive")
+            with patch.object(sdk, "extract", side_effect=AssertionError("wrong hash extracted")):
+                rejects(lambda: sdk.prepare(target, expected, root / "wrong-supplied", corrupted))
         assert os.umask(0o077) == 0o077, "SDK configuration changed its parent's restrictive umask"
     finally:
         os.umask(mask)
