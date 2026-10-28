@@ -91,9 +91,9 @@ int main(int argc, char* argv[]) {
                 } else if (state.connected && std::exchange(initialConnection, false)) {
                     snode::log::application().info() << "Initial MariaDB connection established";
 
-                    enrollment->restore([&](const coreci::EnrollmentResult& restored) {
-                        if (restored.status != 200) {
-                            snode::log::application().error() << "Database schema/configuration failed: " << restored.body.dump();
+                    graphStore->restore([&](const coreci::DatabaseResult& restored) {
+                        if (!restored.error.empty()) {
+                            snode::log::application().error() << "Database schema/configuration failed: " << restored.error;
                             pipeline.reset();
                             enrollment.reset();
                             graphStore.reset();
@@ -134,7 +134,11 @@ int main(int argc, char* argv[]) {
                                 res->set("X-Content-Type-Options", "nosniff");
                                 res->set("Content-Security-Policy",
                                          "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
-                                if (req->method == "POST" && req->get("Content-Type").find("application/json") != 0) {
+                                if (req->method == "POST" && !store->mutationsAllowed()) {
+                                    res->status(503)
+                                        .type("application/json")
+                                        .send(R"({"error":"database mutation authority unavailable","uncertain":true})");
+                                } else if (req->method == "POST" && req->get("Content-Type").find("application/json") != 0) {
                                     res->status(403).send(R"({"error":"configuration writes require JSON"})");
                                 } else {
                                     next();
@@ -155,8 +159,8 @@ int main(int argc, char* argv[]) {
                                 res->type("application/json").send(graphStore->view().dump());
                             });
 
-                            graphStore->onChanged = [&](bool committed, bool repositoriesChanged) {
-                                if (committed) {
+                            graphStore->onChanged = [&](bool publicChange, bool repositoriesChanged) {
+                                if (publicChange) {
                                     pipeline->refreshStatus();
                                 }
                                 const auto receivers = eventReceivers;
@@ -336,9 +340,9 @@ int main(int argc, char* argv[]) {
             });
 
         store = std::make_unique<coreci::Database>(*database);
-        graphStore = std::make_unique<coreci::GraphStore>(*store, pipelineConfig->publicationLimit);
-        enrollment = std::make_unique<coreci::Enrollment>(*store, github, *graphStore, sources, *pipelineConfig);
-        pipeline = std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, *enrollment, *graphStore, feeds);
+        graphStore = std::make_unique<coreci::GraphStore>(*store);
+        enrollment = std::make_unique<coreci::Enrollment>(github, *graphStore, sources, *pipelineConfig);
+        pipeline = std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, *graphStore, feeds);
 
         if (databaseConfig->mode == "managed") {
             managed = std::make_unique<coreci::ManagedDatabase>();

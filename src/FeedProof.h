@@ -1,31 +1,19 @@
-#ifndef CORE_CI_FEED_PROOF_H
-#define CORE_CI_FEED_PROOF_H
+#pragma once
 
-#include "Graph.h"
 #include "PipelineConfig.h"
-#include "SourceReader.h"
 
 namespace coreci {
-    struct FeedResult {
-        nlohmann::json receipt;
-        std::string error;
-    };
-
     class FeedProof {
     public:
-        using Callback = std::function<void(const FeedResult&)>;
+        using Callback = std::function<void(const SourceResult&)>;
         FeedProof(const PipelineConfig& config, GitHub& github, SourceReader& sources);
         void configure();
-        void verify(const Node& node, const Callback& callback);
+        void verify(const Json& node, const Callback& callback);
 
     private:
-        void
-        read(const Node& node, const std::string& revision, const std::string& rootTree, const std::string& path, const Callback& callback);
         const PipelineConfig& config;
         GitHub& github;
         SourceReader& sources;
-        HttpClient http;
+        HttpClient http{"feed-http"};
     };
 } // namespace coreci
-
-#endif

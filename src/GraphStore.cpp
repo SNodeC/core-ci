@@ -3,362 +3,117 @@
 #include "Version.h"
 
 #include <algorithm>
-#include <exception>
 
 namespace coreci {
-    namespace {
-        std::string document(const nlohmann::json& json) {
-            return json.is_null() ? "NULL" : Database::text(json.dump());
-        }
-
-        void reserveNamespace(std::vector<DatabaseStatement>& statements, const SelectedDefinition& definition) {
-            const auto id = std::to_string(definition.repositoryId);
-            const auto package = Database::text(definition.document.at("package").get<std::string>());
-            statements.push_back({"DELETE FROM namespace_claims WHERE repository_id=" + id + " AND namespace=" + package, std::nullopt});
-            statements.push_back({"INSERT INTO namespace_claims(namespace,repository_id,definition_revision) SELECT " + package + "," + id +
-                                      "," + Database::text(definition.revision) +
-                                      " WHERE NOT EXISTS (SELECT 1 FROM namespace_claims WHERE repository_id<>" + id +
-                                      " AND (namespace=" + package + " OR LEFT(namespace,CHAR_LENGTH(" + package + ")+1)=CONCAT(" +
-                                      package + ",'-')" + " OR LEFT(" + package + ",CHAR_LENGTH(namespace)+1)=CONCAT(namespace,'-')))",
-                                  1});
-        }
-
-        std::string attemptValues(const Attempt& attempt) {
-            return Database::text(attempt.state) + "," + document(attempt.assignment) + "," + document(attempt.buildRun) + "," +
-                   document(attempt.buildResult) + "," + document(attempt.publicationRun) + "," + document(attempt.receipt) + "," +
-                   document(attempt.evidence) + "," + Database::text(attempt.failure);
-        }
-    } // namespace
-
-    GraphStore::GraphStore(Database& database, unsigned int publicationLimit)
-        : database(database)
-        , state(publicationLimit) {
-    }
-
-    const Graph& GraphStore::graph() const {
-        return state;
-    }
-
-    std::string GraphStore::guard(std::uint64_t nextRevision, std::uint64_t expectedGeneration) const {
-        return "UPDATE graph_revision SET generation=generation+1,next_revision=" + std::to_string(nextRevision) +
-               " WHERE id=1 AND generation=" + std::to_string(expectedGeneration) +
-               " AND next_revision=" + std::to_string(state.nextRebuildRevision());
-    }
-
     void GraphStore::restore(const Database::Callback& callback) {
-        const auto restoring = std::make_shared<Restoring>();
-        restoring->callback = callback;
-        database.query("SELECT JSON_OBJECT('generation',generation,'next_revision',next_revision) FROM graph_revision WHERE id=1",
-                       [this, restoring](const DatabaseResult& result) {
-                           if (!result.error.empty() || result.rows.size() != 1) {
-                               restoring->callback({{}, "graph schema/revision is unavailable", false});
-                           } else {
-                               try {
-                                   restoring->generation = result.rows.front().at("generation").get<std::uint64_t>();
-                                   restoring->nextRevision = result.rows.front().at("next_revision").get<std::uint64_t>();
-                                   readNodes(restoring);
-                               } catch (const std::exception& error) {
-                                   restoring->callback({{}, error.what(), false});
-                               }
-                           }
-                       });
-    }
-
-    void GraphStore::readNodes(const std::shared_ptr<Restoring>& restoring) {
-        database.query("SELECT JSON_OBJECT('id',e.id,'source',JSON_EXTRACT(e.source,'$'),'target',JSON_EXTRACT(e.target,'$'),"
-                       "'cause',JSON_EXTRACT(e.cause,'$'),'automatic',e.automatic,'superseded_by',e.superseded_by,"
-                       "'definition',JSON_EXTRACT(d.document,'$'),'blob_sha',d.blob_sha) FROM executions e JOIN definitions d "
-                       "ON d.repository_id=e.repository_id AND d.revision=e.definition_revision",
-                       [this, restoring](const DatabaseResult& result) {
-                           if (!result.error.empty()) {
-                               restoring->callback(result);
-                           } else {
-                               try {
-                                   for (const auto& row : result.rows) {
-                                       Node node;
-                                       node.id = row.at("id").get<std::string>();
-                                       node.source = row.at("source");
-                                       node.target = row.at("target");
-                                       node.cause = row.at("cause");
-                                       node.automatic = row.at("automatic").get<int>() != 0;
-                                       node.supersededBy =
-                                           row.at("superseded_by").is_null() ? "" : row.at("superseded_by").get<std::string>();
-                                       Graph::verifyDefinition(node, row.at("definition"), row.at("blob_sha").get<std::string>());
-                                       restoring->nodes.emplace(node.id, std::move(node));
-                                   }
-                                   readEdges(restoring);
-                               } catch (const std::exception& error) {
-                                   restoring->callback({{}, error.what(), false});
-                               }
-                           }
-                       });
-    }
-
-    void GraphStore::readEdges(const std::shared_ptr<Restoring>& restoring) {
-        database.query(
-            "SELECT JSON_OBJECT('execution',execution_id,'prerequisite',prerequisite_id) FROM prerequisites ORDER BY execution_id,position",
-            [this, restoring](const DatabaseResult& result) {
-                if (!result.error.empty()) {
-                    restoring->callback(result);
-                } else {
-                    try {
-                        for (const auto& row : result.rows) {
-                            restoring->nodes.at(row.at("execution").get<std::string>())
-                                .prerequisites.push_back(row.at("prerequisite").get<std::string>());
-                        }
-                        readAttempts(restoring);
-                    } catch (const std::exception& error) {
-                        restoring->callback({{}, error.what(), false});
-                    }
-                }
-            });
-    }
-
-    void GraphStore::readAttempts(const std::shared_ptr<Restoring>& restoring) {
-        database.query(
-            "SELECT JSON_OBJECT('id',id,'execution',execution_id,'revision',revision,'state',state,"
-            "'assignment',JSON_EXTRACT(assignment,'$'),'build_run',JSON_EXTRACT(build_run,'$'),"
-            "'build_result',JSON_EXTRACT(build_result,'$'),'publication_run',JSON_EXTRACT(publication_run,'$'),"
-            "'receipt',JSON_EXTRACT(receipt,'$'),'evidence',JSON_EXTRACT(evidence,'$'),'failure',failure) FROM attempts ORDER BY revision",
-            [this, restoring](const DatabaseResult& result) {
-                if (!result.error.empty()) {
-                    restoring->callback(result);
-                } else {
-                    try {
-                        for (const auto& row : result.rows) {
-                            Attempt attempt;
-                            attempt.id = row.at("id").get<std::string>();
-                            attempt.revision = row.at("revision").get<std::uint64_t>();
-                            attempt.state = row.at("state").get<std::string>();
-                            attempt.assignment = row.at("assignment");
-                            attempt.buildRun = row.at("build_run");
-                            attempt.buildResult = row.at("build_result");
-                            attempt.publicationRun = row.at("publication_run");
-                            attempt.receipt = row.at("receipt");
-                            attempt.evidence = row.at("evidence");
-                            attempt.failure = row.at("failure").get<std::string>();
-                            restoring->nodes.at(row.at("execution").get<std::string>()).attempts.push_back(std::move(attempt));
-                        }
-                        std::vector<Node> nodes;
-                        for (const auto& [id, node] : restoring->nodes) {
-                            nodes.push_back(node);
-                        }
-                        state.restore(nodes, restoring->nextRevision);
-                        generation = restoring->generation;
-                        restoring->callback({});
-                    } catch (const std::exception& error) {
-                        restoring->callback({{}, error.what(), false});
-                    }
-                }
-            });
-    }
-
-    std::uint64_t GraphStore::getGeneration() const {
-        return generation;
-    }
-
-    void GraphStore::enroll(const std::string& name,
-                            const std::string& repository,
-                            const std::string& branch,
-                            const SelectedDefinition& definition,
-                            std::uint64_t expectedGeneration,
-                            const Database::Callback& callback) {
-        database.write(
-            [this, name, repository, branch, definition, expectedGeneration]() {
-                const auto id = std::to_string(definition.repositoryId);
-                const auto revision = Database::text(definition.revision);
-                std::vector<DatabaseStatement> statements{
-                    {guard(state.nextRebuildRevision(), expectedGeneration), 1},
-                    {"INSERT INTO repositories(github_id,name,full_name,editing_ref,configuration_revision) VALUES (" + id + "," +
-                         Database::text(name) + "," + Database::text(repository) + "," + Database::text(branch) + "," + revision +
-                         ") ON DUPLICATE KEY UPDATE "
-                         "github_id=IF(name=VALUES(name) AND full_name=VALUES(full_name) AND editing_ref=VALUES(editing_ref),github_id,0),"
-                         "configuration_revision=VALUES(configuration_revision)",
-                     std::nullopt},
-                    {"INSERT INTO definitions(repository_id,revision,blob_sha,document) VALUES (" + id + "," + revision + "," +
-                         Database::text(definition.blobSha) + "," + document(definition.document) +
-                         ") ON DUPLICATE KEY UPDATE revision=VALUES(revision)",
-                     std::nullopt}};
-                reserveNamespace(statements, definition);
-                return statements;
-            },
-            [this, callback](const DatabaseResult& result) {
-                if (result.error.empty()) {
-                    ++generation;
-                }
-                callback(result);
-                if (onChanged) {
-                    onChanged(result.error.empty(), result.error.empty());
-                }
-            });
-    }
-
-    void GraphStore::commit(const Derive& derive, const CommitCallback& callback) {
-        const auto prepared = std::make_shared<std::optional<GraphChange>>();
-        database.write(
-            [this, derive, prepared]() {
-                const auto change = derive(state);
-                state.validate(change);
-                std::vector<DatabaseStatement> result;
-                const bool unchanged = change.nextRevision == state.nextRebuildRevision() && change.definitions.empty() &&
-                                       std::all_of(change.nodes.begin(), change.nodes.end(), [&](const auto& node) {
-                                           return state.nodes().contains(node.id) && state.node(node.id) == node;
-                                       });
-                if (!unchanged) {
-                    std::vector<DatabaseStatement> statements{{guard(change.nextRevision, generation), 1}};
-                    for (const auto& selected : change.definitions) {
-                        const auto id = std::to_string(selected.repositoryId);
-                        statements.push_back({"INSERT INTO definitions(repository_id,revision,blob_sha,document) SELECT " + id + "," +
-                                                  Database::text(selected.revision) + "," + Database::text(selected.blobSha) + "," +
-                                                  document(selected.document) +
-                                                  " WHERE NOT EXISTS (SELECT 1 FROM definitions WHERE repository_id=" + id +
-                                                  " AND revision=" + Database::text(selected.revision) + ")",
-                                              std::nullopt});
-                        reserveNamespace(statements, selected);
-                    }
-                    for (const auto& node : change.nodes) {
-                        if (!state.nodes().contains(node.id)) {
-                            statements.push_back(
-                                {"INSERT INTO executions(id,repository_id,definition_revision,source,target,cause,automatic) VALUES (" +
-                                     Database::text(node.id) + "," + std::to_string(node.source.at("repository_id").get<std::uint64_t>()) +
-                                     "," + Database::text(node.source.at("definition_revision").get<std::string>()) + "," +
-                                     document(node.source) + "," + document(node.target) + "," + document(node.cause) + "," +
-                                     (node.automatic ? "1" : "0") + ")",
-                                 1});
-                        }
-                    }
-                    for (const auto& node : change.nodes) {
-                        const auto previous = state.nodes().find(node.id);
-                        if (previous == state.nodes().end()) {
-                            for (std::size_t index = 0; index < node.prerequisites.size(); ++index) {
-                                statements.push_back({"INSERT INTO prerequisites(execution_id,prerequisite_id,position) VALUES (" +
-                                                          Database::text(node.id) + "," + Database::text(node.prerequisites[index]) + "," +
-                                                          std::to_string(index) + ")",
-                                                      1});
-                            }
-                        }
-                        if (previous != state.nodes().end() && previous->second.automatic != node.automatic) {
-                            statements.push_back(
-                                {"UPDATE executions SET automatic=0 WHERE id=" + Database::text(node.id) + " AND automatic=1", 1});
-                        }
-                        if (!node.supersededBy.empty() &&
-                            (previous == state.nodes().end() || previous->second.supersededBy != node.supersededBy)) {
-                            statements.push_back({"UPDATE executions SET superseded_by=" + Database::text(node.supersededBy) +
-                                                      " WHERE id=" + Database::text(node.id) + " AND superseded_by IS NULL",
-                                                  1});
-                        }
-                        for (const auto& attempt : node.attempts) {
-                            const Attempt* old = nullptr;
-                            if (previous != state.nodes().end()) {
-                                for (const auto& candidate : previous->second.attempts) {
-                                    if (candidate.id == attempt.id) {
-                                        old = &candidate;
-                                    }
-                                }
-                            }
-                            if (old == nullptr) {
-                                statements.push_back(
-                                    {"INSERT INTO "
-                                     "attempts(id,execution_id,revision,state,assignment,build_run,build_result,publication_run,"
-                                     "receipt,evidence,failure) VALUES (" +
-                                         Database::text(attempt.id) + "," + Database::text(node.id) + "," +
-                                         std::to_string(attempt.revision) + "," + attemptValues(attempt) + ")",
-                                     1});
-                            } else if (*old != attempt) {
-                                statements.push_back(
-                                    {"UPDATE attempts SET state=" + Database::text(attempt.state) +
-                                         ",assignment=" + document(attempt.assignment) + ",build_run=" + document(attempt.buildRun) +
-                                         ",build_result=" + document(attempt.buildResult) +
-                                         ",publication_run=" + document(attempt.publicationRun) + ",receipt=" + document(attempt.receipt) +
-                                         ",evidence=" + document(attempt.evidence) + ",failure=" + Database::text(attempt.failure) +
-                                         " WHERE id=" + Database::text(attempt.id) + " AND state=" + Database::text(old->state),
-                                     1});
-                            }
-                        }
-                    }
-                    *prepared = change;
-                    result = std::move(statements);
-                }
-                return result;
-            },
-            [this, prepared, callback](const DatabaseResult& result) {
-                const bool changed = result.error.empty() && prepared->has_value();
-                if (changed) {
-                    state.apply(**prepared);
-                    ++generation;
-                }
-                callback(result, changed ? &**prepared : nullptr);
-                if (onChanged && (changed || (!result.error.empty() && !result.preparationFailed))) {
-                    onChanged(changed, false);
-                }
-            });
-    }
-
-    nlohmann::json GraphStore::view() const {
-        nlohmann::json nodes = nlohmann::json::array();
-        for (const auto& [id, node] : state.nodes()) {
-            const auto& attempt = node.attempts.back();
-            std::string activity =
-                !node.supersededBy.empty()                                      ? "superseded"
-                : attempt.state == "building" && !attempt.buildResult.is_null() ? "build complete; waiting for publication"
-                : attempt.state == "building" && attempt.buildRun.is_null()     ? "build assigned; awaiting GitHub run identity"
-                                                                                : attempt.state;
-            auto buildJob = attempt.buildResult.is_object() ? attempt.buildResult.value("build_job", nlohmann::json()) : nlohmann::json();
-            if (attempt.evidence.contains("build")) {
-                buildJob = attempt.evidence.at("build");
-            } else if (buildJob.is_object()) {
-                buildJob["status"] = "completed";
-                const auto& artifact = attempt.buildResult.at("artifacts").at(0);
-                if (artifact.contains("job_id")) {
-                    buildJob["job_id"] = artifact.at("job_id");
+        database.query("SELECT document FROM graph_state WHERE id=1", [this, callback](const DatabaseResult& read) {
+            auto result = read;
+            if (result.error.empty()) {
+                try {
+                    require(result.rows.size() == 1, "missing graph state; provision the database before starting");
+                    const auto& restored = result.rows.front();
+                    require(restored.at("executions").is_object() && restored.at("repositories").is_object() &&
+                                restored.at("next_revision").get<std::uint64_t>() > 0 && restored.at("generation").is_number_unsigned(),
+                            "invalid stored graph document");
+                    state = restored;
+                } catch (const std::exception& error) {
+                    result.error = error.what();
                 }
             }
-            const bool publishing = attempt.state == "publishing";
-            const auto phase = attempt.evidence.value(publishing ? "publication" : "build", nlohmann::json::object());
-            if ((attempt.state == "building" && attempt.buildResult.is_null()) || publishing) {
-                const auto status = phase.value("status", "");
-                activity =
-                    std::string(publishing ? "publication " : "build ") + (status == "queued"        ? "queued on GitHub"
-                                                                           : status == "in_progress" ? "running"
-                                                                           : status == "completed"   ? "complete; verifying results"
-                                                                           : status.empty() ? "assigned; awaiting verified GitHub status"
-                                                                                            : "waiting on GitHub (" + status + ")");
+            callback(result);
+        });
+    }
+
+    void GraphStore::change(const std::function<Json(Json&)>& apply, const Callback& callback) {
+        struct Change {
+            Json next;
+            Json result;
+        };
+        const auto change = std::make_shared<Change>();
+        database.write(
+            [this, apply, change] {
+                change->next = state;
+                change->result = apply(change->next);
+                std::string sql;
+                if (change->next != state) {
+                    change->next["generation"] = state.at("generation").get<std::uint64_t>() + 1;
+                    sql = "UPDATE graph_state SET document=" + Database::text(change->next.dump()) +
+                          " WHERE id=1 AND JSON_VALUE(document,'$.generation')=" + state.at("generation").dump();
+                }
+                return sql;
+            },
+            [this, change, callback](const DatabaseResult& result) {
+                const bool committed = result.error.empty() && change->next != state;
+                const bool repositories = committed && change->next.at("repositories") != state.at("repositories");
+                bool publicChange = false;
+                if (committed) {
+                    auto before = publicView(state);
+                    auto after = publicView(change->next);
+                    before["generation"] = after.at("generation");
+                    publicChange = before != after;
+                    state = std::move(change->next);
+                }
+                callback(result, change->result);
+                if (onChanged && (committed || result.uncertain)) {
+                    onChanged(publicChange, repositories);
+                }
+            });
+    }
+
+    Json GraphStore::view() const {
+        return view(state);
+    }
+    Json GraphStore::view(const Json& state) const {
+        auto executions = Json::array();
+        for (const auto& [id, node] : state.at("executions").items()) {
+            const auto& attempt = node.at("attempts").back();
+            const auto& source = node.at("source");
+            Json row = attempt;
+            row["id"] = id;
+            row["attempt"] = attempt.at("id");
+            row["target"] = node.at("target_row").at("id");
+            for (const auto* key : {"target_row", "prerequisites", "automatic", "superseded_by"}) {
+                row[key] = node.at(key);
             }
-            nodes.push_back({{"id", id},
-                             {"label", Graph::label(node)},
-                             {"repository", node.source.at("repository")},
-                             {"tag", node.source.at("tag")},
-                             {"source_commit", node.source.at("commit")},
-                             {"definition_revision", node.source.at("definition_revision")},
-                             {"target", node.target.at("id")},
-                             {"target_row", node.target},
-                             {"state", attempt.state},
-                             {"activity", activity},
-                             {"revision", attempt.revision},
-                             {"attempt", attempt.id},
-                             {"prerequisites", node.prerequisites},
-                             {"blockers", state.blockers(id)},
-                             {"failure", attempt.failure},
-                             {"build_run", attempt.buildRun},
-                             {"build_job", buildJob},
-                             {"publication_job", attempt.evidence.value("publication", nlohmann::json::object())},
-                             {"evidence", attempt.evidence},
-                             {"publication_run", attempt.publicationRun},
-                             {"receipt", attempt.receipt},
-                             {"superseded_by", node.supersededBy},
-                             {"automatic", node.automatic}});
+            for (const auto* key : {"repository", "tag", "definition_revision", "package", "title"}) {
+                row[key] = source.at(key);
+            }
+            row["source_commit"] = source.at("commit");
+            row["label"] = attempt.at("assignment").is_null() ? source.at("title") : attempt.at("assignment").at("label");
+            row["blockers"] = graph::blockers(state, node);
+            row["build_job"] = attempt.at("evidence").value("build", Json::object());
+            row["publication_job"] = attempt.at("evidence").value("publication", Json::object());
+            for (const auto* key : {"build_job", "publication_job"}) {
+                if (row.at(key).contains("job_status")) {
+                    row[key]["status"] = row.at(key).at("job_status");
+                }
+            }
+            row["activity"] = attempt.at("state");
+            const auto stage = attempt.at("state").get<std::string>();
+            if (stage == "building" || stage == "publishing") {
+                const auto& facts = row.at(stage == "building" ? "build_job" : "publication_job");
+                row["activity"] = stage + ": " + facts.value("status", "assigned; awaiting GitHub status");
+                if (stage == "building" && !attempt.at("build_result").is_null()) {
+                    row["activity"] = "build complete; waiting for publication";
+                }
+            }
+            for (const auto* key : {"assignment", "build_result", "preflight", "dispatch"}) {
+                row.erase(key);
+            }
+            executions.push_back(std::move(row));
         }
-        return {{"generation", generation}, {"mutations_allowed", database.mutationsAllowed()}, {"executions", nodes}};
+        return {{"generation", state.at("generation")}, {"mutations_allowed", database.mutationsAllowed()}, {"executions", executions}};
     }
 
-    nlohmann::json GraphStore::publicView() const {
-        auto executions = nlohmann::json::array();
-        std::map<std::string, nlohmann::json> projects;
-        const auto snapshot = view();
+    Json GraphStore::publicView() const {
+        return publicView(state);
+    }
+    Json GraphStore::publicView(const Json& state) const {
+        auto projects = Json::object();
+        auto executions = Json::array();
+        const auto snapshot = view(state);
         for (const auto& row : snapshot.at("executions")) {
-            const auto& node = state.node(row.at("id").get<std::string>());
-            const auto& target = node.target;
-            auto item = nlohmann::json::object();
+            Json item;
             for (const auto* key : {"id",
                                     "repository",
                                     "tag",
@@ -372,53 +127,41 @@ namespace coreci {
                                     "prerequisites",
                                     "blockers",
                                     "failure",
-                                    "superseded_by"}) {
+                                    "superseded_by",
+                                    "package",
+                                    "build_job",
+                                    "publication_job"}) {
                 item[key] = row.at(key);
             }
-            item["coordinates"] = {{"distribution", target.at("distribution")},
-                                   {"suite", target.at("suite")},
-                                   {"arch", target.at("arch")},
-                                   {"format", target.at("build").at("format")}};
-            item["package"] = node.source.at("package");
-            item["build_url"] = row.at("build_run").is_null() ? nlohmann::json() : row.at("build_run").at("html_url");
-            for (const auto* phase : {"build_job", "publication_job"}) {
-                item[phase] = nlohmann::json::object();
-                const auto& evidence = row.at(phase);
-                for (const auto* key : {"run_id", "status", "job_id", "job_status", "started_at", "completed_at", "conclusion"}) {
-                    if (evidence.is_object() && evidence.contains(key)) {
-                        item[phase][key] = evidence.at(key);
-                    }
-                }
+            item["coordinates"] = Json::object();
+            for (const auto* key : {"distribution", "suite", "arch"}) {
+                item["coordinates"][key] = row.at("target_row").at(key);
             }
+            item["coordinates"]["format"] = row.at("target_row").at("build").at("format");
+            item["build_url"] = row.at("build_run").is_null() ? Json() : row.at("build_run").at("html_url");
             item["build_job_url"] = nullptr;
-            const auto& attempt = node.attempts.back();
-            const auto& buildJob = item.at("build_job");
-            if (buildJob.contains("job_id") && !attempt.buildRun.is_null()) {
-                item["build_job_url"] = attempt.buildRun.at("html_url").get<std::string>() + "/job/" +
-                                        std::to_string(buildJob.at("job_id").get<std::uint64_t>());
+            if (!item.at("build_url").is_null() && row.at("build_job").contains("job_id")) {
+                item["build_job_url"] = item.at("build_url").get<std::string>() + "/job/" + row.at("build_job").at("job_id").dump();
             }
-            item["publication_verified_utc"] =
-                attempt.receipt.is_object() ? attempt.receipt.value("publication_verified_utc", nlohmann::json()) : nlohmann::json();
-            executions.push_back(item);
+            item["publication_verified_utc"] = row.at("receipt").is_null() ? Json() : row.at("receipt").at("publication_verified_utc");
             const auto repository = item.at("repository").get<std::string>();
             if (!projects.contains(repository)) {
-                projects[repository] = {
-                    {"repository", repository}, {"title", node.source.at("title")}, {"versions", nlohmann::json::array()}};
+                projects[repository] = {{"repository", repository}, {"title", row.at("title")}, {"versions", Json::array()}};
             }
             auto& versions = projects.at(repository).at("versions");
-            if (std::find(versions.begin(), versions.end(), item.at("tag")) == versions.end()) {
-                versions.push_back(item.at("tag"));
+            if (std::find(versions.begin(), versions.end(), row.at("tag")) == versions.end()) {
+                versions.push_back(row.at("tag"));
             }
+            executions.push_back(std::move(item));
         }
-        auto ordered = nlohmann::json::array();
-        for (auto& [repository, project] : projects) {
+        auto ordered = Json::array();
+        for (auto& [repository, project] : projects.items()) {
             auto& versions = project.at("versions");
-            std::stable_sort(versions.begin(), versions.end(), [](const auto& left, const auto& right) {
-                const int comparison = Version(left.template get<std::string>()).compare(Version(right.template get<std::string>()));
-                return comparison != 0 ? comparison > 0 : left > right;
+            std::sort(versions.begin(), versions.end(), [](const Json& left, const Json& right) {
+                return Version(left.get<std::string>()).compare(Version(right.get<std::string>())) > 0;
             });
             ordered.push_back(project);
         }
-        return {{"schema", 1}, {"generation", generation}, {"projects", ordered}, {"executions", executions}};
+        return {{"schema", 1}, {"generation", state.at("generation")}, {"projects", ordered}, {"executions", executions}};
     }
 } // namespace coreci

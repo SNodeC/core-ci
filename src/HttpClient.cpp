@@ -1,36 +1,34 @@
 #include "HttpClient.h"
 
+#include "Error.h"
+
 #include <algorithm>
 #include <arpa/inet.h>
 #include <charconv>
-#include <core/SNodeC.h>
 #include <openssl/ssl.h>
-#include <stdexcept>
 #include <utility>
 #include <web/http/ConfigHttpParser.h>
 #include <web/http/client/ConfigHTTP.h>
 
 namespace coreci {
-    HttpClient::HttpClient(const std::string& instance, const std::string& fixedPeer)
-        : fixedPeer(fixedPeer)
+    HttpClient::HttpClient(const std::string& name, const std::string& initialPeer)
+        : peer(initialPeer)
         , client(
-              instance,
-              [this](const std::shared_ptr<web::http::client::MasterRequest>& request) {
+              name,
+              [this](const auto& request) {
                   const auto operation = find(request->getSocketContext()->getSocketConnection()->getConnectionId());
                   if (operation) {
                       operation->master = request;
                       request->method = operation->method;
                       request->url = operation->path;
-                      request->set("User-Agent", "core-ci");
-                      request->set("Accept-Encoding", "identity");
-                      request->set("Connection", "close");
+                      request->set("User-Agent", "core-ci").set("Connection", "close").set("Accept-Encoding", "identity");
                       for (const auto& [key, value] : operation->headers) {
                           request->set(key, value);
                       }
                       operation->result.submitted = true;
-                      const bool queued = request->send(
+                      const bool sent = request->send(
                           operation->body,
-                          [operation](const auto&, const std::shared_ptr<web::http::client::Response>& response) {
+                          [operation](const auto&, const auto& response) {
                               const auto& status = response->statusCode;
                               const auto parsed = std::from_chars(status.data(), status.data() + status.size(), operation->result.status);
                               if (parsed.ec != std::errc{} || parsed.ptr != status.data() + status.size() ||
@@ -38,63 +36,58 @@ namespace coreci {
                                   operation->result.status = 0;
                                   operation->result.error = "HTTPS response has an invalid status";
                               } else {
-                                  operation->result.headers = response->headers;
                                   operation->result.body.assign(response->body.begin(), response->body.end());
                               }
                           },
                           [operation](const auto&, const std::string&) {
-                              operation->result.error =
-                                  "HTTPS response could not be parsed within configured bounds; outcome may be unknown";
+                              operation->result.error = "HTTPS response parsing failed; submitted outcome is unknown";
                               if (const auto master = operation->master.lock()) {
                                   master->disconnect();
                               }
                           });
-                      if (!queued) {
-                          operation->result.error = "HTTPS connection ended before request submission";
+                      if (!sent) {
+                          operation->result.error = "HTTPS request submission failed; preserve its assignment";
                           request->disconnect();
                       }
                   } else {
                       request->disconnect();
                   }
               },
-              [this](const std::shared_ptr<web::http::client::MasterRequest>& request) {
-                  const auto found = std::find_if(requests.begin(), requests.end(), [&](const auto& operation) {
+              [this](const auto& request) {
+                  // MasterRequest has already detached its socket context at this hook.
+                  const auto found = std::find_if(operations.begin(), operations.end(), [&](const auto& operation) {
                       return operation->master.lock() == request;
                   });
-                  if (found != requests.end()) {
+                  if (found != operations.end()) {
                       const auto operation = *found;
                       deliver(operation);
                   }
               }) {
-        auto* options = static_cast<net::config::ConfigInstance*>(client.getConfig());
-        options->setConfigurable(
-            options->addOptionVariable("--max-in-flight", maximum, "Concurrent HTTPS operations", "uint", 8u, CLI::Range(1u, 16u)), true);
-        client.getConfig()->Remote::setHost(fixedPeer.empty() ? "localhost" : fixedPeer)->setPort(443);
-        client.getConfig()->Tls::setSni(fixedPeer.empty() ? "localhost" : fixedPeer);
+        client.getConfig()->Remote::setHost(peer)->setPort(443);
+        client.getConfig()->Tls::setSni(peer);
         client.getConfig()->Tls::setCaCertDirUseDefault();
         client.getConfig()->Tls::setCaCertAcceptUnknown(false);
         client.getConfig()->setRetry(false);
         client.getConfig()->setReconnect(false);
-        client.getConfig()
-            ->net::config::ConfigInstance::getSubCommand<web::http::client::ConfigHTTP>()
-            ->getParserConfig()
-            ->setMaximumBodyBytes(2 * 1024 * 1024);
+        auto* config = static_cast<net::config::ConfigInstance*>(client.getConfig());
+        config->setConfigurable(
+            config->addOptionVariable("--max-in-flight", maximum, "Concurrent HTTP operations", "uint", 8u, CLI::Range(1u, 16u)), true);
+        config->getSubCommand<web::http::client::ConfigHTTP>()->getParserConfig()->setMaximumBodyBytes(2 * 1024 * 1024);
         client.setOnConnect([this](auto* connection) {
             const auto operation = std::exchange(connecting, nullptr);
-            if (operation && std::find(requests.begin(), requests.end(), operation) != requests.end()) {
-                operation->connectionId = connection->getConnectionId();
-                // This framework callback precedes SSL_new; set verification on its SSL context.
-                SSL_CTX* context = client.getConfig()->getSslCtx();
-                unsigned char address[16]{};
-                const bool ip = ::inet_pton(AF_INET, operation->host.c_str(), address) == 1 ||
-                                ::inet_pton(AF_INET6, operation->host.c_str(), address) == 1;
+            if (operation) {
+                operation->id = connection->getConnectionId();
+                auto* context = client.getConfig()->getSslCtx();
+                unsigned char address[16];
+                const bool ip = ::inet_pton(AF_INET, peer.c_str(), address) == 1 || ::inet_pton(AF_INET6, peer.c_str(), address) == 1;
                 int verified = 0;
-                if (context != nullptr) {
+                if (context) {
                     SSL_CTX_set_verify(context, SSL_VERIFY_PEER, nullptr);
-                    X509_VERIFY_PARAM_set1_host(SSL_CTX_get0_param(context), nullptr, 0);
-                    X509_VERIFY_PARAM_set1_ip(SSL_CTX_get0_param(context), nullptr, 0);
-                    verified = ip ? X509_VERIFY_PARAM_set1_ip_asc(SSL_CTX_get0_param(context), operation->host.c_str())
-                                  : X509_VERIFY_PARAM_set1_host(SSL_CTX_get0_param(context), operation->host.c_str(), 0);
+                    auto* parameters = SSL_CTX_get0_param(context);
+                    X509_VERIFY_PARAM_set1_host(parameters, nullptr, 0);
+                    X509_VERIFY_PARAM_set1_ip(parameters, nullptr, 0);
+                    verified = ip ? X509_VERIFY_PARAM_set1_ip_asc(parameters, peer.c_str())
+                                  : X509_VERIFY_PARAM_set1_host(parameters, peer.c_str(), 0);
                 }
                 if (verified != 1) {
                     connection->close();
@@ -110,88 +103,43 @@ namespace coreci {
         });
     }
 
-    void HttpClient::configure() {
-        if (client.getConfig()->getRetry() || client.getConfig()->getReconnect()) {
-            throw std::runtime_error("controller HTTPS operations require framework retry and reconnect to remain disabled");
+    void HttpClient::configure(const std::string& host, unsigned int port) {
+        require(operations.empty() && !client.getConfig()->getRetry() && !client.getConfig()->getReconnect(),
+                "configure HTTP origins before requests, with replay disabled");
+        if (!host.empty()) {
+            peer = host;
+            client.getConfig()->Remote::setHost(peer)->setPort(port);
+            client.getConfig()->Remote::renew();
         }
-        if (fixedPeer.empty() && (client.getConfig()->Remote::getHost() != "localhost" || client.getConfig()->Remote::getPort() != 443)) {
-            throw std::runtime_error("dynamic HTTPS endpoints come from approved origins, not the HTTP instance's remote options");
-        }
-    }
-
-    void HttpClient::request(const std::string& host,
-                             unsigned int port,
-                             const std::string& method,
-                             const std::string& path,
-                             const web::http::CiStringMap<std::string>& headers,
-                             const std::string& body,
-                             const Callback& callback) {
-        if (core::SNodeC::state() == core::State::STOPPING) {
-            callback({0, {}, "", "HTTPS request was not submitted during shutdown"});
-        } else if (host.empty() || port == 0 || port > 65535 || path.empty() || path.front() != '/' ||
-                   (!fixedPeer.empty() && (host != fixedPeer || port != 443))) {
-            callback({0, {}, "", "HTTPS endpoint differs from the configured service"});
-        } else {
-            auto operation = std::make_shared<Operation>();
-            operation->host = host;
-            operation->port = port;
-            operation->method = method;
-            operation->path = path;
-            operation->headers = headers;
-            operation->body = body;
-            operation->callback = callback;
-            requests.push_back(operation);
-            pump();
-        }
-    }
-
-    void HttpClient::connect(const std::shared_ptr<Operation>& operation) {
-        operation->started = true;
+        client.getConfig()->Tls::setSni(peer);
         client.getConfig()->net::config::ConfigInstance::getSubCommand<web::http::client::ConfigHTTP>()->setHostHeader(
-            operation->host + (operation->port == 443 ? "" : ":" + std::to_string(operation->port)));
-        if (fixedPeer.empty()) {
-            if (client.getConfig()->Remote::getHost() != operation->host || client.getConfig()->Remote::getPort() != operation->port) {
-                client.getConfig()->Remote::setHost(operation->host)->setPort(operation->port);
-                client.getConfig()->Remote::renew();
-            }
-            client.getConfig()->Tls::setSni(operation->host);
-        }
-        auto flow = client.connect([this, operation](const auto&, const core::socket::State& state) {
-            if (state == core::socket::State::OK) {
-                operation->result.error.clear();
-                connecting = operation;
-            } else if (state == core::socket::State::DISABLED) {
-                operation->result.error = "HTTPS client instance is disabled; request was not submitted";
-                finish(operation);
-            } else {
-                operation->result.error = "HTTPS connection failed; request outcome may be unknown";
-            }
-        });
-        if (std::find(requests.begin(), requests.end(), operation) != requests.end()) {
-            operation->flow = flow;
-            flow->setOnFlowTerminated([this, weak = std::weak_ptr<Operation>(operation)](auto*) {
-                if (const auto current = weak.lock(); current && current->connectionId == 0) {
-                    finish(current);
-                }
-            });
-            if (flow->isTerminated()) {
-                finish(operation);
-            }
-        } else {
-            flow->terminateFlow();
-        }
+            peer + (port == 443 ? "" : ":" + std::to_string(port)));
     }
 
-    std::shared_ptr<HttpClient::Operation> HttpClient::find(std::uint64_t connectionId) const {
-        const auto found = std::find_if(requests.begin(), requests.end(), [connectionId](const auto& operation) {
-            return operation->connectionId == connectionId;
+    std::shared_ptr<HttpClient::Operation> HttpClient::find(std::uint64_t id) const {
+        const auto found = std::find_if(operations.begin(), operations.end(), [id](const auto& operation) {
+            return operation->id == id;
         });
-        return found == requests.end() ? nullptr : *found;
+        return found == operations.end() ? nullptr : *found;
+    }
+
+    void HttpClient::request(
+        const std::string& method, const std::string& path, const Headers& headers, const std::string& body, const Callback& callback) {
+        require(!path.empty() && path.front() == '/' && path.find_first_of("\r\n") == std::string::npos, "invalid HTTP path");
+        auto operation = std::make_shared<Operation>();
+        operation->method = method;
+        operation->path = path;
+        operation->headers = headers;
+        operation->body = body;
+        operation->callback = callback;
+        operations.push_back(operation);
+        pump();
     }
 
     void HttpClient::deliver(const std::shared_ptr<Operation>& operation) {
         if (operation->result.status == 0 && operation->result.error.empty()) {
-            operation->result.error = "HTTPS disconnected without a verified response; request outcome is unknown";
+            operation->result.error =
+                operation->result.submitted ? "HTTPS response lost; outcome unknown" : "HTTPS request was not submitted";
         }
         if (const auto callback = std::exchange(operation->callback, nullptr)) {
             callback(operation->result);
@@ -199,10 +147,10 @@ namespace coreci {
     }
 
     void HttpClient::finish(const std::shared_ptr<Operation>& operation) {
-        const auto found = std::find(requests.begin(), requests.end(), operation);
-        if (found != requests.end()) {
+        const auto found = std::find(operations.begin(), operations.end(), operation);
+        if (found != operations.end()) {
             const auto owned = *found;
-            requests.erase(found);
+            operations.erase(found);
             deliver(owned);
             pump();
         }
@@ -213,24 +161,37 @@ namespace coreci {
             pumping = true;
             bool available = true;
             while (available) {
-                const auto next = std::find_if(requests.begin(), requests.end(), [](const auto& operation) {
-                    return !operation->started;
+                const auto next = std::find_if(operations.begin(), operations.end(), [](const auto& operation) {
+                    return !operation->flow;
                 });
-                const auto active = std::count_if(requests.begin(), requests.end(), [](const auto& operation) {
-                    return operation->started;
+                const auto active = std::count_if(operations.begin(), operations.end(), [](const auto& operation) {
+                    return bool(operation->flow);
                 });
-                available = next != requests.end();
+                available = next != operations.end() && active < maximum;
                 if (available) {
                     const auto operation = *next;
                     if (core::SNodeC::state() == core::State::STOPPING) {
                         operation->result.error = "HTTPS request was not submitted during shutdown";
                         finish(operation);
                     } else {
-                        available = active < maximum && (!fixedPeer.empty() || active == 0 ||
-                                                         (client.getConfig()->Remote::getHost() == operation->host &&
-                                                          client.getConfig()->Remote::getPort() == operation->port));
-                        if (available) {
-                            connect(operation);
+                        operation->flow = client.connect([this, operation](const auto&, const core::socket::State& state) {
+                            if (state == core::socket::State::OK) {
+                                operation->result.error.clear();
+                                connecting = operation;
+                            } else if (state == core::socket::State::DISABLED) {
+                                operation->result.error = "HTTPS instance disabled; request was not submitted";
+                                finish(operation);
+                            } else {
+                                operation->result.error = "HTTPS connection failed before request submission";
+                            }
+                        });
+                        operation->flow->setOnFlowTerminated([this, weak = std::weak_ptr<Operation>(operation)](auto*) {
+                            if (const auto current = weak.lock(); current && current->id == 0) {
+                                finish(current);
+                            }
+                        });
+                        if (operation->flow->isTerminated()) {
+                            finish(operation);
                         }
                     }
                 }

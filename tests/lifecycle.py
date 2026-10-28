@@ -91,10 +91,7 @@ def exercise(args):
         assert "8443" in enabled.stdout and "--cert-key" in enabled.stdout
         parser_help = subprocess.run([args.executable, "--config-file", str(config), "webhook", "--disabled=false", "http", "parser", "--help"], capture_output=True, text=True, timeout=5)
         assert "--maximum-body-bytes" in parser_help.stdout and "2097152" in parser_help.stdout
-        for limit in (0, 33):
-            invalid = subprocess.run([args.executable, "--config-file", str(config), "pipeline", "--publication-limit", str(limit)],
-                                     capture_output=True, text=True, timeout=5)
-            assert invalid.returncode != 0 and "range" in invalid.stdout + invalid.stderr
+        assert "--publication-limit" not in root.stdout, "removed admission cap remains configurable"
         assert "Initial MariaDB connection established" not in root.stdout + root.stderr
     else:
         datadir = directory / "data"

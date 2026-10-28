@@ -2222,3 +2222,290 @@ proposed. Commit/push/merge remain separate authorization stages.
   for these documentation-only additions. Merge authority does not activate deployment.
 - Installation, live restart, sandbox alias rollout and mixed-generation lock proof remain
   separate. No production SNodeC workflow, credential, key, tag, feed or deployed state changes.
+
+## Slim controller fresh implementation — source foundation
+
+Owner instructions: start a fresh controller on a new branch, with at most
+2,000 production lines including bootstrap; preserve the publication pipeline's
+functionality, reuse `main.cpp` unchanged, and reuse the web UI unchanged.
+The controller remains an externally driven, persisted dependency graph: apply
+events, traverse eligible nodes, commit assignments, then dispatch GitHub work.
+GitHub owns runner capacity and serial feed mutations. No separate scheduler.
+
+Branch: `rewrite/slim-graph-controller`, based on `7a38f93293666176c3387b8ff119b5c2c0ab6b94`,
+which matched remote `main` when checked. Existing unrelated documentation edits
+were carried intact. The initial attempt to branch from the stale local `main`
+was refused by Git; no files were overwritten.
+
+Removed the previous controller implementation under `src/`, retaining
+`src/main.cpp` byte-for-byte and its UI asset-generation template. The existing
+UI, GitHub worker tooling/workflows, tests and build/format infrastructure remain
+as inputs and behavioral contracts for reconstruction. Private directories and
+keys were not opened, listed, removed or changed. No deployed controller or
+database was touched. The removed implementation remains in the base commit.
+
+This is a source foundation, not a functioning replacement. Bootstrap dependency
+implementations and their build/test wiring still require reconstruction; the
+checkout is intentionally not buildable at this point. No build, functional
+verification, commit, push or deployment is claimed. The 2,000-line ceiling is
+for the complete replacement controller, not a claim about this incomplete tree.
+
+Owner performance boundary: the complete four-project sandbox matrix must incur
+at most one second of controller-added delay, not one second per node or event.
+Millisecond local reaction is the target. Measure local graph derivation, durable
+assignment, ready-work dispatch and controller scheduling gaps; distinguish these
+from externally awaited GitHub evidence/API responses, runner queues, execution,
+feed writes and Pages propagation. External waits must not serialize independent
+ready work. No minute-scale controller delay is acceptable. This is an acceptance
+requirement, not a measured result or an end-to-end GitHub duration guarantee.
+
+
+## Fresh controller implementation checkpoint
+
+The owner approved raising the complete controller C++ source/header ceiling from
+2,000 to 2,600 lines, including the reused bootstrap, after the remaining GitHub,
+recovery and UI contracts were estimated. This authorizes the revised bound; it
+does not authorize deployment or dropping publication functionality. Main, UI,
+worker workflows/tooling and private files remain unchanged.
+
+New code uses the installed SNode.C asynchronous MariaDB API and its existing
+one-event-loop lifecycle. Graph changes derive at the front of the database FIFO,
+write one conditional autocommitted graph-document update, apply only after
+acknowledgement, then deliver the execution continuation before derivative UI
+notification. The fresh schema is in sql/graph.sql; it is not a migration and has
+not been applied to an existing or live database. The existing schema and all live
+data remain untouched. New storage requires explicit deployment/data planning
+before any future activation.
+
+Focused local checks under /tmp/codex/build/core-ci/slim-controller/ passed:
+- DatabaseBoundary.cpp: twelve queued writes plus a callback-enqueued thirteenth
+  derive against the already-applied state; definite SQL, conditional and
+  preparation failures leave later writes usable; no-op handling; teardown from
+  the final read callback. Two independent isolated real-MariaDB fixtures.
+- SlimGraphTest.cpp: four synthetic projects/five targets, root -> app/side -> join
+  publication dependencies, every eligible publication admitted, no replay of
+  assigned work, delayed/duplicate and attempt-two rejection, explicit missing
+  prerequisite/cycle errors, oversized assignment blocker, SemVer cases. The
+  generated assignment passed the unchanged Python worker contract.
+- GraphPersistenceBoundary.cpp: real MariaDB stores the twenty-node graph, applies
+  twelve overlapping progress changes without lost updates, suppresses unchanged
+  advancement, rejects a failed derivation without partial storage, restores in a
+  fresh process without replacement assignments, and exposes UI/public projections.
+  Missing-schema startup failure/teardown checked independently.
+
+These are isolated local checks, not complete controller, HTTP/SSE or GitHub
+acceptance. The in-memory traversal measured 40.6841 ms in the Debug diagnostic;
+this excludes MariaDB and HTTP and is not a full-controller latency claim.
+The repository application build remains incomplete while adapters/bootstrap
+dependencies are reconstructed. No commit, push, restart or activation performed.
+
+
+## Slim controller: verification and line-budget checkpoint
+
+Checkout /home/voc/projects/snodec/core-ci, branch rewrite/slim-graph-controller,
+HEAD 7a38f93293666176c3387b8ff119b5c2c0ab6b94 plus the uncommitted rewrite.
+The owner-approved maximum remains 2,600 physical C++ source/header lines,
+including bootstrap. Current src/*.cpp and src/*.h total: 2,349. This is an
+incomplete application; the remaining 251 lines cannot be reported as sufficient
+for the missing publication pipeline. The earlier estimate was too low.
+
+The invariant remains one durable graph: derive each mutation against the latest
+applied state, commit dispatch assignments before HTTP, overlap independent ready
+work, and satisfy dependency edges only from verified publication. No application
+scheduler, persisted ready queue, replacement dispatch or admission reservation is
+being added.
+
+Fresh checks after the Crypto extraction and five-target fixture update:
+- The slim-graph-test diagnostic passed: synthetic in-memory twenty-target traversal
+  36.3675 ms, excluding all MariaDB and HTTP time.
+- tests/database_boundary.py --case graph passed against graph-persistence-boundary
+  in a new isolated real-MariaDB fixture at
+  /tmp/codex/build/core-ci/slim-controller/graph-final. This includes restoration
+  in a fresh process without replacement assignments.
+- Fourteen independently executed tests/github_transport.py cases passed against
+  slim-github-test: parallel, parallel-single, wrong-hostname, wrong-ca,
+  token-rejected, token-lost-response, expired-token, mutation-lost-response,
+  lost-response, disabled, capacity-zero, capacity-seventeen, shutdown, token-reuse.
+  Synthetic concurrent request peaks were 7 with capacity 8 and 1 with capacity 1;
+  neither is a live throughput result. Reports are under the permitted temporary
+  slim-controller directory, including transport-results.json.
+- SourceReader.cpp compiled with -Wall -Wextra -Wpedantic through the temporary
+  slim-source-check object target. This is compilation only, not source-selection
+  or definition-validation acceptance.
+- The preceding local TLS success check passed after correcting request teardown
+  correlation. SNode.C clears the request socket context before its HTTP disconnect
+  hook; correlation now uses the existing weak request identity. The earlier local
+  diagnostic crash did not involve a deployed controller.
+- Managed MariaDB startup, initial database failure, and owned-child startup failure
+  had separate passing isolated checks. They are not complete application startup
+  acceptance.
+
+Current source still lacks complete configuration, enrollment/editor integration,
+workflow dispatch/binding, webhook/reconciliation application, artifact completion,
+public-status dispatch and independent receipt/HTTPS publication proof. Definition
+validation and graph/UI contracts also need completion. The root application is
+not buildable, and the original pipeline tests do not validate this replacement.
+The unchanged bootstrap still contains the obsolete publication-limit constructor
+argument; it must be removed as wiring, rather than retained as a dummy setting.
+No such bootstrap change has been made.
+
+Re-estimate for the current approach, before any further production additions:
+configuration 120-160 lines; enrollment/editor integration 180-250; independent
+publication proof 100-150; dispatch/webhook/reconciliation/artifact/status orchestration
+650-850; remaining interface declarations 70-100. These are unimplemented estimates,
+not measured code. Consolidation may remove approximately 100-200 existing lines;
+it does not account for the missing 1,120-1,510 lines. A realistic revised upper
+bound for this approach is 3,800 total lines. It is NOT approved. Do not exceed
+2,600, drop functionality, compress formatting, or move controller logic elsewhere
+to conceal the count. A larger bound or a substantially different reviewed design
+is required before this approach can be completed.
+
+Whole-document persistence currently copies and rewrites the retained graph on a
+change. The small synthetic fixture does not establish its scaling with accumulated
+history. No complete-controller latency, SSE, Pages, GitHub execution or publication
+acceptance is claimed. The new schema has only been provisioned in isolated fixtures.
+
+Relative to HEAD, including explicit new task files: C++ production +1,192/-4,589,
+net -3,397; tests +710/-4, net +706. sql/graph.sql is separate fresh-schema work.
+These reductions include missing implementation and are NOT a completed simplification
+claim. Preexisting documentation changes remain separate. Main, UI assets and the
+original GraphFixtures.h remain byte-identical to HEAD. git diff --check passed.
+Private directories were not opened, listed or changed. No commit, push, merge,
+installation, restart, live database change or GitHub mutation was performed.
+
+## Fresh controller: approved 3,500-line implementation checkpoint
+
+Owner approval: “OK 3500 lines are approved.” The implementation remains on
+`rewrite/slim-graph-controller` in `/home/voc/projects/snodec/core-ci`, based on
+`7a38f93293666176c3387b8ff119b5c2c0ab6b94`. No branch switch, additional checkout,
+commit, push, merge, installation, restart or GitHub mutation was performed here.
+Preexisting README, deployment and work-log hunks were preserved. The new architecture
+and deployment edits describe this source; existing live deployment evidence does not
+validate it.
+
+Measured controller size: **3,498 physical src/*.cpp and src/*.h lines**, including
+main.cpp and blank lines. The unchanged 11-line UiAssets.h.in embedding template is
+separate, as are reused HTML/CSS/JavaScript and unchanged worker tooling. No controller
+logic was moved into those exclusions. main.cpp retains bootstrap/routes/lifetime,
+with constructor wiring, direct GraphStore restoration, the existing database-authority
+POST boundary and the derivative public-change callback adjusted for this implementation.
+Graph restoration no longer forwards through Enrollment. AGENTS.md records the new bound.
+
+Invariant: one durable graph authority; derive against acknowledged state at the front
+of the Database FIFO; commit dispatch authority before its HTTP mutation. Every eligible
+build/publication is admitted in rebuild-revision order without a publication quota or
+reserved runners. Exact published prerequisites alone release edges. GitHub controls runner
+capacity and exclusive feed-mutating jobs. No controller scheduler, polling timer, package
+processing or uncertain mutation replay was added. The reused SSE heartbeat remains.
+
+The fresh MariaDB schema uses one conditional autocommitted graph-document UPDATE. Lost
+acknowledgement stops further producers until explicit restoration; failed derivation and
+definite SQL rejection do not apply state. This deliberately has no migration/importer.
+Whole-document copying/rewriting cost with large retained history is not measured. Do not
+claim arbitrary history scaling or a live latency target from small local fixtures.
+
+Source definitions are read at selected immutable revisions, including newly introduced
+prerequisites absent from enrollment snapshots. An unreadable unknown repository blocks
+and is reported. Selection/deployment/generation guards, namespace ownership including
+selected history, SemVer, explicit older requests, exact retry inputs, oversized payload
+blockers, immutable run binding and uncertainty remain exercised at public boundaries.
+A recursive regular-file Git-tree lookup replaces repeated path walks. Its explicit bounds
+are 20,000 entries and the HTTP client's 2 MB response bound; truncated/oversized repositories
+are rejected. Large-tree compatibility remains an acceptance limit, not a proven property.
+
+Webhook and attempt-one reconciliation facts share application/validation. Bound unchanged
+progress does no HTTP work. Build completion coalesces its artifact-list read through durable
+acceptance. Publication waits for terminal workflow and publisher evidence; skipped push/job
+fails without feed reads, while possible push needs committed receipt and HTTPS proof.
+The exact unevaluated publisher label is accepted only for a verified skipped job. Successful
+or running jobs with that unevaluated label cannot authorize a writer.
+
+Verification used GCC 16.2 Debug, installed public SNode.C targets and OpenSSL 3.6.5:
+
+- `cmake -S . -B build/codex/slim-controller -DBUILD_TESTING=ON -DCORE_CI_TEST_DIRECTORY=/tmp/codex/build/core-ci/slim-controller/final-tests`
+- `cmake --build build/codex/slim-controller -j4`: passed. The final fixture-header consolidation
+  also rebuilt successfully (final-build-4.log). Compiler temporary/build artifacts stayed in
+  the permitted build directories. Root application and registered test targets build.
+- `ctest --test-dir build/codex/slim-controller --output-on-failure -j4 -R '^(lifecycle-|enrollment-boundaries$|database-|persistence-|graph-state-boundaries$|definitions-and-versions$|github-transport-|source-selection-|pipeline-)'`:
+  51/51 passed in 96.73 s, including the idle SSE heartbeat. No worker/package/full suite ran.
+- Following the skipped-job correction and direct restoration wiring, the affected eight
+  startup cases, enrollment and eleven pipeline cases passed: 20/20 in 40.43 s.
+- Fixture reuse/consolidation then passed database, persistence, graph and all eleven pipeline
+  cases: 17/17 in 34.59 s. These use a distinct disposable fixture directory per invocation;
+  rerunning CTest no longer fails because a previous fixture directory exists.
+- `cmake --build build/codex/slim-controller --target format-check`: passed. Canonical formatting
+  files match ~/.codex/formatting byte-for-byte; changed production lines are <=160 characters.
+  `git diff --check` passed. Logs are in `/tmp/codex/build/core-ci/slim-controller/`.
+
+Tests were ported to the fresh Json graph and SQL boundary rather than retaining production
+compatibility shims. The canonical GraphFixtures/GraphTest/GraphStoreTest and pipeline.py
+cover the current APIs. New DatabaseBoundary plus database_boundary.py covers callback ordering,
+no-op/rejected derivation drain, definite failures, lost successful UPDATE acknowledgement and
+server-side no-replay verification. Redundant early lifecycle diagnostic sources were moved to
+the permitted temporary diagnostics directory; registered main lifecycle tests cover those
+boundaries. Obsolete schema-specific START/ROLLBACK and normalized-table assertions do not
+apply to the single-statement schema; they are not claimed as coverage. A database-locked
+competing-bind race, delayed status-approval stress and sanitizer shutdown checks have not been
+reproduced for this rewrite; ordinary concurrent facts, artifact overlap, transport shutdown,
+restart and restoration checks do not stand in for those specific diagnostics.
+
+Synthetic whole-chain evidence: all 20 nodes, 40 build/publication dispatches, all five target
+families, both run/job orders, exact inputs, commit-before-dispatch, independent publishers,
+one artifact lookup per successful build, source-read failures, explicit retry after missing/
+expired artifacts or skipped push, inaccessible/tampered receipt uncertainty, recovery,
+workflow preview/install/CAS, changed run-commit proof, and restart without replacement.
+The eight unchanged notification burst produced **zero outgoing requests**, including tokens
+and derivative status work, in every pipeline case.
+
+The latest normal chain recorded **599 total outgoing requests**, including **16 token
+requests, 20 artifact reads and 117 status dispatches**. Request-path counters include status
+approval reads, execution dispatches, feed Git proof and public HTTPS. Totals vary with
+asynchronous coalescing. Derivative status work is still substantial: this is not a claim
+that request cost is minimal or that the 10–20x expected speedup is achieved. Synthetic runs
+complete in approximately 10–13 s with a local mock, not real GitHub runner/Pages latency.
+No live throughput, exact eligibility-to-commit latency, signing or client acceptance is
+claimed. The former 1,914-connection partial session is not an equivalent benchmark.
+
+Official API references used to settle the current evidence/dispatch contracts:
+
+- https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+- https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt
+- https://docs.github.com/en/rest/actions/artifacts?apiVersion=2026-03-10
+- https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app
+- https://docs.github.com/en/webhooks/webhook-events-and-payloads
+- https://docs.github.com/en/rest/git/trees#get-a-tree
+- https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
+
+The dispatch-input limit is 65,535 characters; this controller conservatively bounds the
+serialized inputs object in bytes and the assignment separately. The ref wrapper is not
+included in that official input limit. Artifact identity still uses the independent agreed
+REST listing, not a custom callback. Installed SNode.C HTTP request/FlowController/SocketContext
+and MariaDB command lifecycle interfaces, src/apps HTTP/database examples and MQTTSuite
+ownership examples were inspected. They required no framework change.
+
+Remaining activation gates: review the fresh schema and retained-feed rebuild seed; preserve
+and resolve existing live assignments without replacement; validate real GitHub feed-lock
+exclusion, signed integrated publication, client installation, UI/SSE and status/Pages timing;
+measure controller-local latency and status-request cost separately. The source has not been
+activated on core.vchrist.at. Its database, ports, TLS, webhooks, tags, keys and feed bytes
+were untouched. UI assets are byte-identical. Private directories were neither read nor
+listed, and remain preserved; /secrets/ was added to .gitignore.
+
+Build identity and exact source/test accounting are recorded in
+`/tmp/codex/build/core-ci/slim-controller/accounting.json` (HEAD plus dirty production diff
+SHA-256, including explicit new source files). Temporary logs/fixtures remain there for review;
+remove them after acceptance when no process uses them. Documentation accounting includes
+preexisting unrelated dirty hunks and must not be treated as solely this task's additions.
+
+Final implementation accounting relative to HEAD (including explicit new files): controller
+C++ +2133/-4381, net -2248; CMake/schema +77/-111,
+net -34; tests +1380/-1843, net -463.
+The production diff SHA-256 is `4343de7845e9728d2b111379b6cf96d924cc18b136d0a8c644ecb6a4a2df34c3`.
+
+### Publish the fresh controller review branch
+
+Owner explicitly authorized committing on the current branch, pushing it and notifying
+Claude. Stage only the fresh-controller implementation, its current architecture/schema
+and test changes, and the fresh-controller work-log entries. Preserve unrelated monitoring,
+deployment and review hunks unstaged. Request a read-only detailed review of the exact
+pushed commit. This stage does not merge or activate the rewrite.

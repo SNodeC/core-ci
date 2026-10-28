@@ -72,7 +72,7 @@ For a change to selection, dispatch or worker evidence, relevant focused checks 
 
 ```sh
 ctest --test-dir build/codex/debug --output-on-failure \
-  -R '^(graph-state-boundaries|pipeline-boundaries|worker-environment-boundaries|worker-provenance-boundaries)$'
+  -R '^(graph-state-boundaries|pipeline-.*|worker-environment-boundaries|worker-provenance-boundaries)$'
 ```
 
 Pipeline tests use real isolated MariaDB with synthetic GitHub/HTTPS services. Those are
@@ -90,6 +90,8 @@ If the controller crashes before a new tag selection reaches MariaDB, the operat
 explicitly rescan/request the tag or redeliver the notification. This accepted boundary does
 not have a durable notification inbox.
 
-The sandbox has real five-target build, signing, publication and package-client evidence.
-Its current deployment details and remaining operational checks are documented separately;
-they are not a claim that every production deployment is configured or accepted.
+This source branch contains a fresh controller implementation. Its 20-node pipeline checks
+use isolated MariaDB and synthetic GitHub/HTTPS endpoints. The rewrite has not been deployed
+or accepted through a real signed package publication. Existing sandbox deployment evidence
+does not validate this binary. See the architecture guide for its persistence and activation
+limits.

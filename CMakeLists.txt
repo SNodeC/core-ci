@@ -18,9 +18,7 @@ find_package(
                http-server-express-tls-in http-client net-in-stream-tls
 )
 
-add_library(
-    core-ci-domain STATIC src/Definition.cpp src/Version.cpp src/Graph.cpp
-)
+add_library(core-ci-domain STATIC src/Crypto.cpp src/Version.cpp src/Graph.cpp)
 target_link_libraries(
     core-ci-domain PUBLIC nlohmann_json::nlohmann_json OpenSSL::Crypto
 )
@@ -39,7 +37,6 @@ add_executable(
     src/Enrollment.cpp
     src/GraphStore.cpp
     src/SourceReader.cpp
-    src/HttpsUrl.cpp
     src/PipelineConfig.cpp
     src/Pipeline.cpp
     src/FeedProof.cpp
@@ -108,6 +105,10 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(CORE_CI_TEST_DIRECTORY
+        "${PROJECT_BINARY_DIR}/tests"
+        CACHE PATH "Root for isolated test fixtures"
+    )
     foreach(
         case
         help
@@ -125,7 +126,7 @@ if(BUILD_TESTING)
             COMMAND
                 ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/lifecycle.py
                 --executable $<TARGET_FILE:core-ci> --directory
-                ${PROJECT_BINARY_DIR}/tests/${case} --case ${case}
+                ${CORE_CI_TEST_DIRECTORY}/${case} --case ${case}
         )
         set_tests_properties(lifecycle-${case} PROPERTIES TIMEOUT 45)
     endforeach()
@@ -136,15 +137,13 @@ if(BUILD_TESTING)
         COMMAND
             ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/enrollment.py
             --executable $<TARGET_FILE:core-ci> --directory
-            ${PROJECT_BINARY_DIR}/tests/enrollment --graph-executable
-            $<TARGET_FILE:graph-store-test>
+            ${CORE_CI_TEST_DIRECTORY}/enrollment
     )
     set_tests_properties(enrollment-boundaries PROPERTIES TIMEOUT 75)
 
     add_executable(
-        graph-store-test
-        tests/GraphStoreTest.cpp src/Database.cpp src/DatabaseConfig.cpp
-        src/PrivateFile.cpp src/GraphStore.cpp
+        graph-store-test tests/GraphStoreTest.cpp src/Database.cpp
+                         src/GraphStore.cpp
     )
     target_include_directories(graph-store-test PRIVATE src)
     target_link_libraries(
@@ -153,20 +152,46 @@ if(BUILD_TESTING)
 
     add_executable(graph-test tests/GraphTest.cpp)
     target_link_libraries(graph-test PRIVATE core-ci-domain)
-    foreach(fault start rollback)
+    add_executable(
+        database-boundary tests/DatabaseBoundary.cpp src/Database.cpp
+    )
+    target_include_directories(database-boundary PRIVATE src)
+    target_link_libraries(
+        database-boundary PRIVATE snodec::db-mariadb
+                                  nlohmann_json::nlohmann_json
+    )
+    foreach(case writes failures lost-ack)
         add_test(
-            NAME database-${fault}-failure
+            NAME database-${case}
             COMMAND
-                ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/enrollment.py
-                --executable $<TARGET_FILE:core-ci> --directory
-                ${PROJECT_BINARY_DIR}/tests/${fault} --fault ${fault}
+                ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/database_boundary.py --executable
+                $<TARGET_FILE:database-boundary> --directory
+                ${CORE_CI_TEST_DIRECTORY}/db-${case} --case ${case}
         )
-        set_tests_properties(database-${fault}-failure PROPERTIES TIMEOUT 30)
+        set_tests_properties(database-${case} PROPERTIES TIMEOUT 30)
+    endforeach()
+    foreach(case graph graph-missing)
+        add_test(
+            NAME persistence-${case}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/database_boundary.py --executable
+                $<TARGET_FILE:graph-store-test> --directory
+                ${CORE_CI_TEST_DIRECTORY}/persist-${case} --case ${case}
+        )
+        set_tests_properties(persistence-${case} PROPERTIES TIMEOUT 30)
     endforeach()
     add_test(NAME graph-state-boundaries COMMAND graph-test)
 
-    add_executable(definition-test tests/DefinitionTest.cpp)
-    target_link_libraries(definition-test PRIVATE core-ci-domain)
+    add_executable(
+        definition-test tests/DefinitionTest.cpp src/SourceReader.cpp
+                        src/GitHub.cpp src/HttpClient.cpp src/PrivateFile.cpp
+    )
+    target_link_libraries(
+        definition-test PRIVATE core-ci-domain snodec::http-client
+                                snodec::net-in-stream-tls OpenSSL::SSL
+    )
     add_test(NAME definitions-and-versions
              COMMAND definition-test
                      ${PROJECT_SOURCE_DIR}/deployment/sandbox/definitions
@@ -178,6 +203,7 @@ if(BUILD_TESTING)
         github-test tests/GitHubTest.cpp src/GitHub.cpp src/HttpClient.cpp
                     src/PrivateFile.cpp
     )
+    target_sources(github-test PRIVATE src/Crypto.cpp)
     target_include_directories(github-test PRIVATE src)
     target_link_libraries(
         github-test
@@ -209,7 +235,7 @@ if(BUILD_TESTING)
                 ${Python3_EXECUTABLE}
                 ${PROJECT_SOURCE_DIR}/tests/github_transport.py --executable
                 $<TARGET_FILE:github-test> --directory
-                ${PROJECT_BINARY_DIR}/tests/github-${case} --case ${case}
+                ${CORE_CI_TEST_DIRECTORY}/github-${case} --case ${case}
         )
         set_tests_properties(github-transport-${case} PROPERTIES TIMEOUT 25)
     endforeach()
@@ -246,21 +272,36 @@ if(BUILD_TESTING)
                 ${Python3_EXECUTABLE}
                 ${PROJECT_SOURCE_DIR}/tests/source_selection.py --executable
                 $<TARGET_FILE:source-reader-test> --directory
-                ${PROJECT_BINARY_DIR}/tests/source-${case} --case ${case}
+                ${CORE_CI_TEST_DIRECTORY}/source-${case} --case ${case}
         )
         set_tests_properties(source-selection-${case} PROPERTIES TIMEOUT 30)
     endforeach()
 endif()
 
 if(BUILD_TESTING)
-    add_test(
-        NAME pipeline-boundaries
-        COMMAND
-            ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/pipeline.py
-            --executable $<TARGET_FILE:core-ci> --directory
-            ${PROJECT_BINARY_DIR}/tests/pipeline
+    foreach(
+        case
+        chain
+        cold
+        recovery
+        skip
+        skip-job
+        missing
+        expired
+        sources
+        overlap
+        workflow
+        changed
     )
-    set_tests_properties(pipeline-boundaries PROPERTIES TIMEOUT 75)
+        add_test(
+            NAME pipeline-${case}
+            COMMAND
+                ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/pipeline.py
+                --executable $<TARGET_FILE:core-ci> --directory
+                ${CORE_CI_TEST_DIRECTORY}/pipeline-${case} --case ${case}
+        )
+        set_tests_properties(pipeline-${case} PROPERTIES TIMEOUT 90)
+    endforeach()
 endif()
 
 if(BUILD_TESTING)
@@ -268,25 +309,25 @@ if(BUILD_TESTING)
         NAME sandbox-hook-boundaries
         COMMAND
             ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/sandbox_hooks.py
-            ${PROJECT_BINARY_DIR}/tests/sandbox-hooks
+            ${CORE_CI_TEST_DIRECTORY}/sandbox-hooks
     )
     set_tests_properties(sandbox-hook-boundaries PROPERTIES TIMEOUT 120)
     add_test(
         NAME openwrt-archive-boundaries
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/openwrt.py
-                ${PROJECT_BINARY_DIR}/tests/openwrt
+                ${CORE_CI_TEST_DIRECTORY}/openwrt
     )
     add_test(
         NAME worker-environment-boundaries
         COMMAND
             ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/worker_environment.py
-            ${PROJECT_BINARY_DIR}/tests/worker-environment
+            ${CORE_CI_TEST_DIRECTORY}/worker-environment
     )
     add_test(
         NAME worker-package-boundaries
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/worker.py
-                --directory ${PROJECT_BINARY_DIR}/tests/worker
+                --directory ${CORE_CI_TEST_DIRECTORY}/worker
     )
     set_tests_properties(worker-package-boundaries PROPERTIES TIMEOUT 120)
     add_test(
@@ -294,7 +335,7 @@ if(BUILD_TESTING)
         COMMAND
             ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/worker_provenance.py --directory
-            ${PROJECT_BINARY_DIR}/tests/worker-provenance
+            ${CORE_CI_TEST_DIRECTORY}/worker-provenance
     )
     set_tests_properties(worker-provenance-boundaries PROPERTIES TIMEOUT 15)
 endif()

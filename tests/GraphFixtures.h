@@ -1,45 +1,64 @@
-#ifndef CORE_CI_GRAPH_FIXTURES_H
-#define CORE_CI_GRAPH_FIXTURES_H
+#pragma once
 
 #include "Graph.h"
 
-namespace graph_fixture {
-    inline nlohmann::json source(const std::string& name, std::uint64_t id, const std::vector<std::string>& dependencies) {
-        nlohmann::json matrix = nlohmann::json::array();
-        for (const auto* arch : {"first", "second"}) {
-            const std::string row = std::string("target-") + arch;
-            matrix.push_back({{"id", row},
+namespace coreci::test {
+    inline Json sources() {
+        auto result = Json::object();
+        unsigned int repository = 1;
+        for (const auto* name : {"core", "app", "side", "join"}) {
+            auto dependencies = Json::array();
+            if (std::string(name) != "core") {
+                dependencies.push_back("core");
+            }
+            if (std::string(name) == "join") {
+                dependencies.push_back("app");
+                dependencies.push_back("side");
+            }
+            auto matrix = Json::array();
+            for (const auto* arch : {"amd64", "arm64"}) {
+                matrix.push_back({{"id", std::string("debian-") + arch},
+                                  {"family", "native"},
+                                  {"distribution", "debian"},
+                                  {"suite", "trixie"},
+                                  {"arch", arch},
+                                  {"runner", "ubuntu-latest"},
+                                  {"build", {{"format", "deb"}, {"platform", std::string("linux/") + arch}, {"image", "debian:trixie"}}}});
+            }
+            matrix.push_back({{"id", "fedora"},
                               {"family", "native"},
-                              {"distribution", "configured"},
-                              {"suite", "series"},
-                              {"arch", arch},
-                              {"runner", "configured-runner"},
-                              {"build", {{"image", "configured:tag"}, {"platform", std::string("linux/") + arch}, {"format", "deb"}}}});
+                              {"distribution", "fedora"},
+                              {"suite", "43"},
+                              {"arch", "x86_64"},
+                              {"runner", "ubuntu-latest"},
+                              {"build", {{"format", "rpm"}, {"platform", "linux/amd64"}, {"image", "fedora:43"}}}});
+            for (const auto& [release, format] : {std::pair{"24.10", "ipk"}, std::pair{"25.12", "apk"}}) {
+                matrix.push_back({{"id", std::string("openwrt-") + format},
+                                  {"family", "openwrt"},
+                                  {"distribution", "openwrt"},
+                                  {"suite", release},
+                                  {"arch", "x86_64"},
+                                  {"runner", "ubuntu-latest"},
+                                  {"build", {{"format", format}, {"target", "x86/64"}}}});
+            }
+            result[name] = {
+                {"name", name},
+                {"repository", std::string("Owner/") + name},
+                {"repository_id", repository++},
+                {"tag", "v2.1.3"},
+                {"commit", std::string(40, 'a')},
+                {"definition_revision", std::string(40, 'a')},
+                {"definition_blob_sha", std::string(40, 'b')},
+                {"deployment", {{"worker", {{"tooling_sha", std::string(40, 'c')}}}, {"feed", {{"repository", "Owner/packages"}}}}},
+                {"definition",
+                 {{"schema", 1},
+                  {"title", name},
+                  {"package", name},
+                  {"depends_on", dependencies},
+                  {"build", {{"native", "ci/build.sh"}, {"openwrt", "ci/openwrt.sh"}}},
+                  {"matrix", matrix}}}};
         }
-        return {
-            {"name", name},
-            {"repository", "Owner/" + name},
-            {"repository_id", id},
-            {"tag", "v1.0.0"},
-            {"commit", std::string(40, 'a')},
-            {"definition_revision", std::string(40, 'a')},
-            {"definition_blob_sha", std::string(40, 'b')},
-            {"definition",
-             {{"schema", 1},
-              {"title", name},
-              {"package", name + "pkg"},
-              {"depends_on", dependencies},
-              {"build", {{"native", "ci/native.sh"}}},
-              {"matrix", matrix}}},
-            {"deployment",
-             {{"worker", {{"repository_id", 1000}, {"repository", "Owner/worker"}, {"tooling_sha", std::string(40, 'd')}}},
-              {"source_workflow", {{"path", ".github/workflows/core-ci-build.yml"}, {"ref", "main"}, {"blob_sha", std::string(40, 'c')}}},
-              {"publication_workflow",
-               {{"path", ".github/workflows/core-ci-publish.yml"}, {"ref", "main"}, {"blob_sha", std::string(40, 'd')}}},
-              {"controller_app_bot_id", 42},
-              {"feed", {{"repository", "Owner/feed"}, {"repository_id", 2000}, {"branch", "main"}}}}}};
+        return result;
     }
 
-} // namespace graph_fixture
-
-#endif
+} // namespace coreci::test

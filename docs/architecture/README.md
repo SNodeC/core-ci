@@ -1,518 +1,227 @@
 # Architecture and algorithms
 
-[Documentation guide](../README.md) · [Extension guide](../extensions/README.md) ·
-[Deployment and operations](../deployment/README.md)
+core-ci is an externally driven graph controller. GitHub owns the source definitions and
+runs the package work; MariaDB owns the durable selections and execution evidence. A
+notification or explicit operator request applies facts to that graph, traverses eligible
+work and dispatches it to GitHub. The web interface displays the same graph.
 
-core-ci maintains a small dependency graph whose nodes are package executions. It does not
-interpret an arbitrary workflow language. Its decisions are concrete: which source and target
-to select, which prerequisite executions belong to that selection, whether a node may build,
-and whether a reported publication is sufficiently verified to release its dependents.
+The governing rule is simple: **dispatch independent eligible work, and release a dependency
+only after its exact prerequisite package publication is verified.** Actual feed mutations
+are serialized by the trusted GitHub workflows. The controller reserves no runners and has
+no publication-admission quota.
 
-## Contents
+This document describes the source implementation. Its local checks use real isolated
+MariaDB and synthetic GitHub services. Real GitHub builds, signing, feed exclusion and
+public-page timing have not yet accepted this rewrite.
 
-- [1. The four ownership boundaries](#1-the-four-ownership-boundaries)
-- [2. Process lifecycle and callback ownership](#2-process-lifecycle-and-callback-ownership)
-- [3. Enrollment and authoritative configuration](#3-enrollment-and-authoritative-configuration)
-- [4. Selecting a source version](#4-selecting-a-source-version)
-- [5. Building the affected graph](#5-building-the-affected-graph)
-- [6. Eligibility and the five states](#6-eligibility-and-the-five-states)
-- [7. Dispatching a build and recording evidence](#7-dispatching-a-build-and-recording-evidence)
-- [8. Publication is a separate trust boundary](#8-publication-is-a-separate-trust-boundary)
-- [9. Notifications, reruns and recovery](#9-notifications-reruns-and-recovery)
-- [10. Persistence, names and observability](#10-persistence-names-and-observability)
-- [11. HTTP interfaces and their callers](#11-http-interfaces-and-their-callers)
+## Ownership and process lifetime
 
-## 1. The four ownership boundaries
+| Component | Responsibility |
+| --- | --- |
+| `main.cpp` | Register configuration and HTTP instances, initialize SNode.C once, own database/application lifetime, register routes and SSE |
+| `ManagedDatabase` and `DatabaseConfig` | Optional owned MariaDB process and explicit connection settings |
+| `Database` | One FIFO of asynchronous reads and lazy writes; preserve uncertain write outcomes |
+| `GraphStore` | One applied graph, restoration, durable graph changes and public/UI projections |
+| `graph` functions | Definition relationships, immutable selections, eligibility, assignments and monotonic evidence transitions |
+| `SourceReader` and `Enrollment` | Authoritative Git definitions, package namespaces, previews and guarded edits |
+| `Pipeline` | GitHub proof, dispatch, standard notifications, artifact completion, reconciliation and derivative status dispatch |
+| `GitHub`, `HttpClient` and `FeedProof` | Scoped authentication, bounded asynchronous transport and independent committed/public receipt proof |
 
-```mermaid
-flowchart LR
-    UI[Local browser UI] --> Controller[SNode.C controller]
-    Controller <--> DB[(MariaDB)]
-    Controller -->|read definitions and dispatch| Sources[Source repositories]
-    Sources -->|call pinned reusable workflow| Worker[Trusted worker repository]
-    Worker -->|verified signed publication| Feed[Feed repository and HTTPS]
-    Sources -->|signed notifications| Controller
-    Worker -->|signed notifications| Controller
-    Clients[Package clients] --> Feed
-```
+There is one framework event loop and no controller worker thread, polling timer or ready
+queue. Network and database operations complete through callbacks. Successive dependent HTTP
+reads remain ordered because each supplies an identity needed by the next; independent
+reads and dispatches overlap.
 
-The controller owns decisions and persistence. Source repositories own their definitions and
-project hooks. Trusted worker code owns the reusable build contract and privileged publication.
-The feed owns retained public package bytes and verification material. Keeping these roles
-separate means a source hook can compile its project without gaining the ability to sign or
-publish another project's packages.
-
-MariaDB is authoritative for enrollment and execution state. It is not a second configuration
-editor: build definitions are authoritative GitHub files at recorded commits. The database
-retains those immutable definitions so execution evidence can be restored and checked.
-
-## 2. Process lifecycle and callback ownership
-
-The application uses one SNode.C event loop. Configuration options and named instances are
-registered before `core::SNodeC::init()`. Initialization runs once. The database ownership mode
-is explicit, and the initial connection is established with `MariaDBClient::connect()`.
-
-Only initial database success starts schema/enrollment restoration, application routes and
-listeners. Initial failure logs and releases resources without opening a listener. Main ends
-with `core::SNodeC::start()`. There is no application startup polling, retry thread, next-tick
-startup mechanism or explicit application exit framework.
+Configuration and named instances are registered before `SNodeC::init()`. Managed mode
+starts its owned server and connects when readiness is reported. Unmanaged mode connects
+to an externally managed server without controlling its lifecycle. The initial successful
+connection restores the graph before listeners start. An initial connection or restoration
+failure releases application resources without opening those listeners. `main` ends by
+returning `SNodeC::start()`.
 
 ```mermaid
 sequenceDiagram
     participant Main
-    participant Framework as SNode.C
     participant DB as MariaDB
-    Main->>Main: Register options and named instances
-    Main->>Framework: init once
-    opt Managed database mode
-        Main->>DB: Start owned private server
-        DB-->>Main: Native readiness notification
-    end
-    Main->>DB: Explicit asynchronous connect
-    Main->>Framework: start event loop
-    alt Initial connection and restore succeed
-        DB-->>Main: Connected and schema restored
-        Main->>Main: Register application routes and listen
-    else Initial connection or restore fails
-        DB-->>Main: Failure callback
+    participant Store as GraphStore
+    participant HTTP as HTTP listeners
+    Main->>DB: Explicit initial connect
+    DB-->>Main: Connected
+    Main->>Store: Restore graph
+    Store->>DB: Read graph_state
+    DB-->>Store: Durable document
+    Store-->>Main: Restoration result
+    alt Success
+        Main->>HTTP: Register routes and listen
+    else Failure
         Main->>Main: Log and release startup resources
-        Note over Main,Framework: No listener or pending application startup work
     end
 ```
 
-Requests and transaction contexts are retained by callback-owned objects while asynchronous
-operations are outstanding. The HTTP helper overlaps up to eight operations for the current
-origin, retaining each request until its transport closes. An origin change waits for active
-transports to drain. Independent enrolled-source reads share this bounded transport capacity;
-selection waits for all required results and reports failures in enrollment order.
-The database wrapper serializes complete transactions on its connection. A graph mutation is
-derived only at the front of that existing FIFO, against already applied state. Commit success
-applies the graph and advances its generation before releasing the FIFO; its execution
-continuation runs before derivative status/SSE notification. No transaction waits for HTTP.
-These transient ownership FIFOs are not a persisted queue of ready graph work. Later database commands use
-SNode.C's lazy connection establishment after the connection disappears. They do not replay
-an operation whose mutation outcome is unknown.
+## Selecting versions and relationships
 
-Implementation: [main.cpp](../../src/main.cpp), [Database.cpp](../../src/Database.cpp),
-[HttpClient.cpp](../../src/HttpClient.cpp), [ManagedDatabase.cpp](../../src/ManagedDatabase.cpp).
+An enrolled repository identifies its GitHub repository ID and dispatch branch. Its
+`ci/packages.json` defines package names, prerequisite repositories, build hooks and target
+rows. The controller reads selected definitions at immutable commits; the enrollment
+snapshot alone does not determine dependencies.
 
-## 3. Enrollment and authoritative configuration
+Automatic selection reads tags and chooses the highest numeric SemVer, including
+prereleases. Explicit requests can select older tags. Annotated tags are resolved to their
+commit. Where a tag notification supplies the expected tag object, a matching selected tag
+must still identify that object. Repository IDs, deployment pins and the graph generation
+are checked before committing a selection.
 
-Enrollment associates an explicitly authorized GitHub repository ID with a unique repository
-name and editing ref. A name alone cannot grant access. The controller checks returned GitHub
-IDs against server-side grants, then reads or conditionally commits `ci/packages.json`.
+Source reads overlap. Selection reports unreadable repositories and remains blocked when
+a newly selected definition is unknown. It does not silently omit that repository. The
+selected definitions are validated together for cycles, missing prerequisites, matching
+package coordinates and package namespace conflicts. Retained selected executions also
+reserve their package namespaces.
 
-The UI's editing branch determines where configuration edits are committed. The definition
-used by a build is read at its selected source commit. Saving JSON on a branch therefore does
-not silently replace the definition or hooks in an existing execution.
+Traversal includes the requested project and its affected dependents. Prerequisites outside
+that affected set need an existing execution at the selected source and target. Missing
+prerequisite execution is an explicit error; requesting a dependent does not automatically
+build its ancestors. A definition introducing a prerequisite is evaluated from its selected
+bytes, even when the enrollment snapshot did not mention that relationship.
 
-```mermaid
-sequenceDiagram
-    actor Owner
-    participant UI as Local UI
-    participant C as Controller
-    participant GH as GitHub source repository
-    participant DB as MariaDB
-    Owner->>UI: Enroll repository or edit definition
-    UI->>C: Read committed definition
-    C->>GH: Verify repository ID and read file/blob
-    GH-->>C: Content, blob and commit identity
-    C-->>UI: Definition and committed revision
-    Owner->>UI: Save reviewed edit
-    UI->>C: Definition and expected current blob
-    C->>C: Validate schema and graph compatibility
-    C->>GH: Conditional file commit
-    alt GitHub commit succeeds
-        GH-->>C: New immutable commit
-        C->>DB: Persist enrollment/configuration reference
-        C-->>UI: GitHub committed revision and database outcome
-    else Rejected or uncertain GitHub write
-        GH-->>C: Error or unavailable response
-        C-->>UI: Accurate failure or uncertainty
-        Note over UI,C: Read current GitHub state before deciding what to do next
-    end
-```
+A new automatic selection supersedes only older waiting automatic selections. Assigned
+work and retained history remain intact. Execution identities include immutable source,
+target and prerequisite relationships. Rebuild revisions distinguish attempts and package
+versions; an explicit retry keeps the original immutable inputs.
 
-A new enrollment immediately requests its highest semantic-version tag if one exists. No
-semantic-version tag means there is no source selection to build. Workflow installation is a
-separate preview/commit action; a JSON save does not implicitly write workflow files.
+## Traversal and dispatch
 
-Implementation: [Enrollment.cpp](../../src/Enrollment.cpp),
-[Definition.cpp](../../src/Definition.cpp), [SourceReader.cpp](../../src/SourceReader.cpp).
+The durable states are `waiting`, `building`, `publishing`, `published` and `failed`.
+A successful build has a verified build result within `building` until publication is
+assigned. Queued/running/completed job evidence supplies additional progress within a state.
 
-## 4. Selecting a source version
-
-An explicit request selects exactly its requested tag, including an older version. An automatic
-dependent selection chooses the highest numeric SemVer, including prereleases. Neither path
-substitutes the default branch or the last published package version.
-
-The algorithm enumerates tags, ignores non-SemVer names and compares major/minor/patch as
-numbers. Numeric prerelease identifiers sort numerically and before nonnumeric identifiers;
-a final release sorts after its prereleases. Numeric strings are compared without converting
-arbitrarily large version components to machine integers. Build metadata does not change
-SemVer precedence. If different tags share the highest precedence, automatic selection is
-ambiguous and an exact tag must be requested.
-
-After choosing a tag, core-ci resolves its Git object, peels annotated tags to a commit, and
-reads the definition and source hook paths at that commit. Tag-object identity is retained as
-well as the commit. A moved tag creates another selection; it cannot alter assigned inputs.
-Tag references containing `+` are encoded correctly when used in REST paths.
-
-A selection reads the enrolled repositories' selected definitions to discover affected
-relationships. An unreadable selected definition can conceal a dependent relationship; it
-blocks the request and identifies the repository. An older cached definition is not substituted
-for an unreadable newly selected version.
-
-Implementation: [Version.cpp](../../src/Version.cpp), [SourceReader.cpp](../../src/SourceReader.cpp),
-[Pipeline::readSources](../../src/Pipeline.cpp).
-
-## 5. Building the affected graph
-
-There are two levels to the model. Repository definitions declare dependencies. The execution
-graph then resolves those relationships for concrete source selections and compatible target
-rows. An execution contains its immutable source, target, prerequisite execution IDs and an
-ordered list of attempts. An attempt holds state, a globally reserved rebuild revision,
-assignment and verified run/result/publication evidence.
-
-Target compatibility compares family, distribution, suite, architecture and format, plus
-native platform or OpenWrt target. The row ID identifies the row within its repository;
-the coordinate comparison establishes compatibility across repositories. The runner is a
-placement selector, not proof of ABI or SDK compatibility.
-
-Graph selection proceeds in this order:
-
-1. Invert dependency declarations into a dependent adjacency map.
-2. Traverse from the requested root through affected dependents.
-3. Visit their prerequisites in dependency-first order, validating cycles, namespaces and
-   missing or ambiguous target matches.
-4. For each affected repository/target, select prerequisite execution IDs. Unaffected
-   prerequisites must already have matching selected work; core-ci does not build upward
-   automatically just to fill a missing prerequisite.
-5. Derive the execution identity from immutable source, target and prerequisite identities.
-   Reuse an existing identical selection instead of creating duplicate work.
-6. Reserve revisions for new attempts. Supersede only older waiting automatic selections;
-   preserve their records. Assigned work and explicit older requests remain intact.
-7. Commit the change only if the graph generation is still the generation that was read.
-
-```mermaid
-sequenceDiagram
-    participant GH as GitHub tag event
-    participant C as Controller
-    participant R as Source reader
-    participant G as Graph
-    participant DB as MariaDB
-    GH->>C: Signed version-tag notification
-    C->>C: Validate signature, repository and tag shape
-    C-->>GH: 202 accepted
-    C->>R: Resolve exact root and highest dependent selections
-    R-->>C: Pinned commits and definitions
-    C->>G: Traverse dependents and required prerequisites
-    G->>G: Validate graph and compatible target relationships
-    G-->>C: Immutable nodes, relationships and revision reservations
-    C->>DB: Conditional graph-generation transaction
-    DB-->>C: Committed or rejected/uncertain
-    C->>G: Advance committed eligible nodes
-    Note over C,DB: No new ready queue is persisted
-```
-
-### Why the diamond waits
-
-Suppose `core` is used by both `app` and `side`, and `join` needs both branches. For one
-compatible target, a changed `core` creates corresponding affected selections. `app` and
-`side` each wait for the selected `core` publication. `join` waits for the selected `app`
-**and** selected `side` publications. Publishing `app` while `side` is still building or failed
-does not satisfy the second edge. Another target can advance independently.
-
-```mermaid
-flowchart LR
-    R[core selected execution] --> A[app selected execution]
-    R --> B[side selected execution]
-    A --> J[join selected execution]
-    B --> J
-```
-
-```mermaid
-sequenceDiagram
-    participant C as Controller graph
-    participant A as App execution
-    participant B as Side execution
-    participant J as Join execution
-    A-->>C: Verified publication for selected target
-    C->>J: Evaluate all prerequisite edges
-    Note over C,J: Side still building or failed, so join stays waiting
-    B-->>C: Verified publication for the same selected target
-    C->>J: Evaluate all prerequisite edges again
-    Note over C,J: Every selected prerequisite is now published
-    C->>J: Commit build assignment, then dispatch
-```
-
-The messages above represent verified graph transitions, not success strings sent by source
-hooks. If side fails, only an explicit retry and its verified publication can satisfy that
-selected edge. A successful build without publication cannot release join.
-
-Implementation: [Graph.cpp](../../src/Graph.cpp), [Definition::coordinates](../../src/Definition.cpp).
-
-## 6. Eligibility and the five states
-
-| State | Meaning | How it advances |
-| --- | --- | --- |
-| `waiting` | Selected but not assigned to GitHub | All prerequisites are verified published and payload is supported |
-| `building` | Build authorized; may be running, uncertain or complete awaiting publication | Verified build evidence is recorded, then the feed writer becomes available |
-| `publishing` | Publication authorized; outcome may still be uncertain | Verified feed receipt and bytes, or definitive proof of a pre-push failure |
-| `published` | The package repository update and receipt are verified | Satisfies the corresponding prerequisite edge |
-| `failed` | A definite failure with a recorded reason | Explicit retry creates another attempt/rebuild revision |
-
-There is deliberately no separate persisted ready or built state. A completed build remains
-`building` with a build result until it can obtain publication authority. Blockers and UI
-activity text are derived from the graph and evidence.
-
-An oversized dispatch remains visible with a derived blocker. Its assignment and full escaped
-REST input payload are bounded before a transition commits; publication includes `build_result`.
-It does not consume a writer slot or stop unrelated nodes advancing. Assignments are limited
-to 60,000 bytes and full serialized dispatch inputs to 65,535 bytes.
-
-The graph admits up to eight publication assignments per feed repository ID and branch.
-Uncertain assignments retain their slots and cannot satisfy dependents, while independent work
-may proceed within capacity. GitHub serializes only the actual feed-mutating publication job
-and status writer in one shared concurrency group. Artifact validation and public HTTPS
-confirmation run outside that group. The normal checked Git update remains required.
-
-## 7. Dispatching a build and recording evidence
-
-The controller reserves an assignment in MariaDB **before** making the REST dispatch. The
-assignment contains source/definition/target identities, exact prerequisite receipts, tooling
-pins, a safe artifact name, revision and derived readable label. Its canonical SHA-256 remains
-part of the contract even though the GitHub run title is readable.
-
-```mermaid
-sequenceDiagram
-    participant C as Controller
-    participant DB as MariaDB
-    participant S as Source workflow
-    participant W as Trusted reusable worker
-    participant P as Prerequisite feed
-    C->>DB: Commit waiting to building with immutable assignment
-    DB-->>C: Commit success
-    C->>S: REST workflow_dispatch on approved workflow ref
-    S->>W: Call reusable workflow at pinned tooling commit
-    W->>W: Resolve and record image or SDK environment
-    W->>P: Fetch exact assigned prerequisite packages and exports
-    W->>W: Check out selected source SHA and run source hook
-    W->>W: Independently validate outputs and produce manifest
-    W-->>S: Upload assigned environment and package artifacts
-    S-->>C: Signed run/job notification
-    C->>S: Read assigned attempt-one run, workflow blob, job and artifacts
-    C->>DB: Record verified build result
-```
-
-Workflow checkout and source checkout are different identities. The thin workflow dispatches
-from its approved ref; the worker explicitly checks out the assignment's source commit.
-Roots resolve the latest official SDK for their configured series; dependents reuse the exact
-compatible SDK of their prerequisites. Retries reuse recorded environment evidence rather
-than resolving a different image/SDK under the same selected inputs.
-
-A successful completed build with a complete artifact listing that proves its required package
-artifact missing/expired becomes `failed`. Denied, incomplete or inaccessible evidence stays
-uncertain. Missing environment evidence after a possible build prevents retry from silently
-choosing a different environment.
-
-## 8. Publication is a separate trust boundary
-
-An Actions artifact is only an intermediate result. Publication means packages and signed
-indexes are available at the configured HTTPS feed. The publisher's unprivileged validator
-checks the assigned run/job/artifact and package metadata. Its privileged job has the signing
-and feed-write secrets; it does not execute source hooks, installers or artifact scripts.
-
-```mermaid
-sequenceDiagram
-    participant C as Controller
-    participant DB as MariaDB
-    participant V as Unprivileged validator
-    participant P as Trusted publication job
-    participant F as Feed Git repository
-    participant Q as Secret-free confirmation job
-    participant H as Public HTTPS host
-    C->>DB: Commit building to publishing
-    C->>V: Dispatch approved publication workflow
-    V->>V: Verify assigned artifact and actual package metadata
-    V-->>P: Validated bounded artifact
-    P->>F: Read current feed revision
-    P->>P: Add packages, generate indexes, sign and locally verify
-    P->>P: Check receipt, render status, verify staged bytes and commit
-    P->>P: Mint feed-only token in push step
-    P->>F: Normal checked push
-    P-->>Q: Mandatory receipt SHA-256 and local commit SHA
-    Q->>H: Confirm exact expected receipt bytes
-    Q-->>C: GitHub-authenticated run completion notification
-    C->>F: Verify recorded feed revision and receipt provenance
-    C->>H: Verify receipt and package/export identities
-    C->>DB: Commit published
-    C->>C: Advance eligible dependents and next feed publication
-```
-
-Preparation performs deterministic fallible work before the push step. A verified skipped
-push step is definite pre-push evidence. Failure after that step starts remains uncertain,
-even if token minting or another local operation failed before the actual push. A missing
-receipt, empty job list or failed job alone does not prove that no feed mutation happened.
-
-Signed package hashes can differ from unsigned build hashes. Receipts preserve both the
-build provenance and final published identities. An identical publication replay verifies
-retained bytes and avoids unnecessary signing/commits. Different bytes under an already
-published package identity are rejected.
-
-Implementation: [publish.py](../../deployment/worker/core_ci/publish.py),
-[validate.py](../../deployment/worker/core_ci/validate.py), [FeedProof.cpp](../../src/FeedProof.cpp).
-
-## 9. Notifications, reruns and recovery
-
-Every public notification is authenticated against the raw request body. Repository and
-installation identity are checked. A report is matched to assigned work; an arbitrary success
-string or unrelated run ID cannot publish a node. The controller reads immutable attempt-one
-endpoints. A GitHub UI rerun cannot replace that evidence, and worker processes executing
-attempt two or later refuse before mutable environment/build/publication work.
-
-Acknowledgement is separate from processing success. Accepted notifications return promptly;
-`GitHub webhook completed` log entries contain the eventual processing status/result. There
-is no durable notification inbox. The accepted crash window is between acknowledgement and
-persisting a new selection; explicit tag request/rescan or GitHub redelivery closes it.
-
-```mermaid
-sequenceDiagram
-    participant Jobs as GitHub jobs
-    participant C as Controller
-    participant DB as MariaDB
-    Jobs->>C: Signed assigned-work notification
-    C-->>Jobs: 202 accepted
-    C->>Jobs: Inspect assigned immutable evidence
-    C->>DB: Commit verified transition
-    Note over C: Controller restarts
-    C->>DB: Restore graph, attempts and assignments
-    DB-->>C: Persisted state and pinned run identities
-    C->>Jobs: Inspect already assigned work
-    Jobs-->>C: Current attempt-one evidence or unavailable result
-    C->>C: Preserve uncertainty and retain the assignment
-```
-
-If the database commit outcome is uncertain, further mutations are blocked until restart and
-restoration establish durable state. A definite conditional rollback caused by an advanced
-generation can be revalidated once against the current graph; that narrow case is not an
-uncertain-mutation retry policy. Graph and SQL generation/state guards remain authoritative.
-
-## 10. Persistence, names and observability
-
-`repositories`, `definitions` and `namespace_claims` retain enrollment/configuration references.
-`executions` and `prerequisites` retain immutable graph selections and edges. `attempts` retain
-revisions, assignments, states, run identities, results, receipts and failures. `graph_revision`
-contains the conditional generation and next rebuild revision allocator.
-
-Readable labels are derived execution metadata, not an independently editable naming authority.
-The desktop UI shows work in a compact table, with repository editing in a separate tab.
-Stage, source version and target coordinates are explicit; full identities are expandable.
-The local `/api/events` SSE route uses SNode.C `sendHeader()`/`sendFragment()` response
-streaming, following MQTTSuite's receiver/disconnect pattern. A connection receives current
-graph and repository views. The existing graph store notifies the stream after write completion;
-only successful transactions advance graph state. Uncertain failures expose the mutation guard
-without inventing a transition. Each connection sends a `:keep-alive` SSE comment every
-30 seconds through SNode.C's interval timer. The disconnect callback cancels that timer and
-releases the response. Comments cause no browser data event, graph mutation or GitHub work.
-
-Browser `EventSource` reconnects automatically and receives a fresh current view; no event log,
-replay queue or GitHub polling is added. Search, selection and unsaved
-repository drafts survive incoming events and stream reconnection. A changed remote definition
-is announced without replacing the draft or its original conditional-write revision. `Live`
-means the stream is connected, not that every execution or external service is healthy.
-"Inspect assigned GitHub work" remains an explicit action and is independent of SSE delivery.
-Execution details show the first controller verification time as **Publication verified**,
-formatted in the browser's local timezone. The `publication_verified_utc` field belongs to the
-controller and is stored in the existing receipt only when the verified publication transition
-is recorded. It is an observation time, not the feed commit time or build completion time.
-Duplicate reports and restarts preserve it. The host's UTC system clock supplies the value;
-existing receipts without that fact stay unrecorded rather than being backfilled.
-
-Compiler versions, test counts, optional coverage and a report link come from `receipt.summary`
-and are labelled **Hook-reported build summary**. The source hook reports them; verification
-of publication does not independently attest that its tests ran. These optional facts appear
-after publication evidence is recorded and do not affect eligibility, signatures or retry.
-Missing facts show **Not recorded**. The browser uses text nodes for reported content and
-opens HTTPS report links separately with `noopener noreferrer`. Existing graph/SSE delivery
-carries this information without another API, state, database column or GitHub request.
-
-The feed's status pages combine retained publication receipts with an explicitly public
-projection of the existing graph. `GET /public/status` supplies accepted selected versions
-in existing SemVer order, work states, prerequisites, blockers and recorded verification times.
-It excludes execution assignments and deployment credentials. The public TLS listener still
-has no administration routes. The projection is derived data, never another graph authority.
-
-A successful commit dispatches the trusted status workflow with a generation number. After
-acquiring the shared feed lock, GitHub fetches current facts and renders the deployment-owned
-Jinja templates. Publication uses the same renderer and retains the latest public projection.
-The template owns Available: select the highest selected source version, find its publication
-for the target, otherwise show `—`. Older publications remain available to custom history views.
-No controller or worker adapter computes a competing Available field.
-
-```mermaid
-sequenceDiagram
-    participant DB as MariaDB
-    participant Controller as core-ci
-    participant GitHub
-    participant Jinja
-    participant Feed
-    DB-->>Controller: Successful graph commit
-    Controller->>GitHub: Dispatch status workflow with generation
-    GitHub->>GitHub: Acquire shared feed write lock
-    GitHub->>Controller: GET public status over HTTPS
-    Controller-->>GitHub: Current whitelisted graph facts
-    GitHub->>Jinja: Facts, retained receipts, trusted presentation
-    Jinja-->>GitHub: Status pages and JSON
-    GitHub->>Feed: Checked status-only update
-```
-
-A delayed notification fetches current facts rather than carrying an old snapshot. The
-writer rejects older/conflicting generations and normal Git conflicts. It never signs packages
-or retries an uncertain mutation. Startup or explicit reconciliation can request a fresh status
-render. Public pages have workflow/hosting latency; the local management UI uses live SSE.
-Unknown historical timestamps and unverified job links remain absent. Publication timestamps
-are first controller verification observations, not an invented exact push time.
-
-The controller remains deliberately small: no distribution/runner catalogue, registry/SDK
-client, application thread pool, persistent ready queue or generic workflow engine. The HTTP
-client's current reuse model is unchanged; changing that ownership boundary is separate work.
-
-## 11. HTTP interfaces and their callers
-
-The browser uses the local administration REST API. The controller uses GitHub's REST API
-through SNode.C's asynchronous HTTPS client. GitHub calls the separate public webhook route.
-There is no shell `gh` process in a controller event handler; deployment commands using `gh`
-are operator tooling, not the controller's HTTP transport.
-
-| Interface | Purpose and main input |
+| Current facts | Next eligible action |
 | --- | --- |
-| `GET /public/status` | Read-only public graph facts for the configured trusted status workflow |
-| `GET /api/repositories` | Enrollments and committed editing definitions |
-| `POST /api/repositories/refresh` | Read/enroll a committed definition using `repository` and `branch` |
-| `POST /api/repositories/save` | Validate/commit `definition` with repository, branch and expected `revision`/`blob_sha` |
-| `POST /api/repositories/workflow` | Preview by repository; conditional write adds `write`, expected `head` and `blob_sha` |
-| `GET /api/graph` | Derived execution/state/blocker/identity view, including the immutable `target_row` |
-| `GET /api/events` | Local SSE stream with current graph/repository views and automatic reconnect baseline |
-| `POST /api/work/request` | Select `repository` and exact `tag`, or empty tag for highest SemVer |
-| `POST /api/work/retry` | Explicit retry by `execution` after definite failure |
-| `POST /api/work/reconcile` | Inspect assigned GitHub work and advance verified state |
-| `GET /api/status` | Actual asynchronous database availability query |
-| `POST /github/webhook` on TLS listener | Raw-body authenticated GitHub events |
+| Waiting; every exact prerequisite verified published | Reserve build assignment |
+| Successful verified build result; valid payload | Reserve publication assignment |
+| Verified committed receipt and public bytes | Mark published; traverse dependents |
+| Definite build failure or trusted skipped publication push | Mark failed; offer explicit retry |
+| Missing/inaccessible evidence or possible mutation | Preserve assignment and uncertainty |
 
-Configuration-writing requests are JSON operations without Origin/Host restrictions. The public listener does not
-expose these administration routes. The trusted workflow does not call a homemade success
-callback: GitHub's authenticated run/job events notify core-ci, which fetches assigned evidence
-itself before trusting results.
+`graph::advance` examines all eligible executions in rebuild-revision order. It claims every
+ready build or publisher without a controller job quota. Independent targets continue while
+another target waits or is uncertain. A diamond join waits for all of its selected edges;
+the controller contains no project-specific knowledge of core, app, side or join.
 
-For example, a local exact-version request is:
+Assignments include source, target, exact prerequisite receipts, deployment pins, execution,
+attempt and rebuild revision. They have a canonical digest. Oversized build or publication
+inputs remain blocked with a visible reason and do not prevent other assignments.
 
-```sh
-curl -H 'Content-Type: application/json' \
-  --data '{"repository":"VOC-Experiments/demo-join","tag":"v2.1.3"}' \
-  http://127.0.0.1:8080/api/work/request
+```mermaid
+sequenceDiagram
+    participant Event as Notification or operator
+    participant Pipeline
+    participant Store as GraphStore / Database FIFO
+    participant GitHub
+    Event->>Pipeline: Accepted immutable facts
+    Pipeline->>Store: Enqueue graph transformation
+    Store->>Store: Derive against current applied graph
+    Store->>Store: Traverse eligible executions
+    Store->>Store: Persist assignments atomically
+    Store-->>Pipeline: Apply acknowledged state; continue
+    par Independent assignment A
+        Pipeline->>GitHub: Dispatch A
+    and Independent assignment B
+        Pipeline->>GitHub: Dispatch B
+    end
+    Store-->>Event: SSE graph projection
 ```
 
-This is an action, not a read-only probe. Do not blindly repeat it after losing the response.
-Inspect the graph first. An HTTP success for webhook acceptance does not mean that this
-selection/dispatch/publication sequence has already completed.
+Workflow approval resolves the exact dispatch commit and approved regular-file blob. The
+preflight proof can be reused when the actual run uses that commit. If the branch advances,
+the actual run commit needs fresh proof. A dispatch response's run ID does not supply the
+actor/workflow proof. Dispatch authority is always committed before the HTTP mutation. A
+lost response never authorizes another dispatch of the same assignment.
+
+GitHub queues the assigned workflows according to its available runners. Publishers validate
+artifacts independently, then the feed-mutating jobs share the feed's exclusive concurrency
+group. Signing, reading the current feed head, index updates and checked push belong inside
+that boundary. Public HTTPS confirmation can run outside it without signing secrets.
+
+## Evidence and completion
+
+The webhook listener verifies the raw-body HMAC, event shape, installation and granted
+repository. It acknowledges valid notifications promptly with HTTP 202. Processing then
+checks assignment, attempt one, run/job identity, controller actor and approved workflow.
+A source hook cannot assert these facts as trusted GitHub execution evidence.
+
+Run and job conclusions remain separate. A job-first report obtains missing run proof;
+a bound run's ordinary progress needs no evidence REST read. Run-first, job-first, delayed
+and duplicate facts enter the same application path as REST reconciliation. Facts merge
+monotonically; terminal outcomes do not regress. Unchanged notifications produce no durable
+change, no evidence lookup and no derivative status dispatch.
+
+Successful build completion requires both successful attempt-one run and job evidence.
+One coalesced artifact-list request then verifies the assigned artifact's name, run, digest,
+size, expiry and bounded result set, together with the trusted job/time binding. Missing or
+expired required artifacts fail explicitly. Overlapping reports do not multiply that lookup.
+The callback consults the current graph and attempt before accepting the result.
+
+Publication completion waits for terminal workflow and publisher-job evidence, including
+the separate confirmation job's effect on the workflow conclusion. A trusted skipped push
+or privileged job establishes failure before mutation and needs no feed search. An
+unevaluated publisher name is accepted only for the exact skipped-job case, never as proof
+of a successful writer. Other possible-push outcomes remain uncertain until independent
+publication proof succeeds.
+
+`FeedProof` verifies the configured feed repository, the commit containing the exact receipt,
+its regular Git blob bytes and the public HTTPS receipt bytes. The receipt must match the
+assigned execution, source, attempt, feed, publication run, assignment digest and accepted
+build result. Pinned worker tooling validates package bytes and signatures. Only then
+is the edge satisfied. The controller records its own verification UTC; it does not invent
+a package's earlier publication timestamp or process package contents locally.
+
+## Persistence and recovery
+
+The fresh schema stores one graph document in the single `graph_state` row. The document
+contains enrollment, immutable selections, prerequisite IDs and every retained attempt.
+`GraphStore` is the only applied in-memory authority. A write is derived when it reaches the
+front of the existing Database FIFO, against all earlier acknowledged changes. It performs
+one conditional autocommitted UPDATE using the current generation.
+
+After acknowledgement, state application and generation advancement precede the next write.
+That change's execution continuation runs before derivative public-status work. No SQL
+transaction stays open across HTTP. Preparation errors and definite SQL rejection do not
+apply the proposed state. A lost write acknowledgement latches mutation uncertainty and
+prevents later producers from guessing whether the mutation landed. Explicit restart restores
+the durable document; it does not replay the uncertain mutation.
+
+This design copies and rewrites retained graph history per change. Small local fixtures do
+not establish its cost for a large accumulated history. Capacity and history-scaling acceptance
+remain unmeasured. The schema is fresh: there is no importer or migration from another schema.
+An existing feed also requires an operator-reviewed rebuild-revision seed above retained
+versions before a fresh graph can safely publish into that namespace.
+
+Restoration keeps assigned work and exact identities. Explicit reconciliation reads the
+assigned attempt-one run/jobs and applies their facts through the same validation path.
+An unknown dispatch can search for exactly one matching controller-actor run; ambiguous or
+inaccessible evidence preserves the assignment. UI reruns cannot replace attempt-one evidence
+or authorize a rerun worker to mutate the feed.
+
+The accepted crash boundary remains: a tag notification acknowledged before its selection
+was persisted requires explicit request/rescan or redelivery. There is no durable webhook inbox.
+
+## UI, SSE and public status
+
+`GET /api/graph` returns the graph projection, current attempt, blockers, evidence, timing and
+verified links without private assignments. `GET /api/events` sends the initial graph and
+repository list, then graph changes and enrollment updates. The view is built for connected
+SSE receivers; the existing heartbeat keeps idle streams alive. The reused browser assets
+render these facts without becoming an execution authority.
+
+Public status uses a restricted projection from the same graph. Publicly meaningful evidence
+changes, including within-state progress, request a trusted status workflow. Private approval
+and dispatch bookkeeping alone does not. Overlapping generations coalesce while approval or
+dispatch is in flight; the captured minimum generation is dispatched and newer work follows.
+An uncertain dispatch is not blindly replayed. Each real refresh still costs approval and
+HTTP work, runner setup and GitHub Pages propagation. Its live cost is not zero or established
+by the controller's local response time.
+
+Templates and package processing remain in trusted pinned worker tooling. They receive
+structured projects, target executions, publication receipts, prerequisites and public facts;
+owner-defined presentation does not authorize execution. Controller persistence, SSE,
+worker refresh, feed commit and Pages visibility are distinct observable milestones.

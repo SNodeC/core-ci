@@ -96,9 +96,18 @@ def exercise(args, root):
             elif suffix in ("/git/tags/" + "a" * 40, "/git/tags/" + "b" * 40):
                 first = suffix.endswith("a" * 40)
                 self.send_json(200, {"sha": ("a" if first else "b") * 40, "object": {"type": "tag" if first else "commit", "sha": ("b" if first else "c") * 40}})
+            elif suffix.startswith("/commits/") and suffix[9:] in ("c" * 40, "d" * 40, "e" * 40):
+                commit = suffix[9:]
+                self.send_json(200, {"sha": commit, "commit": {"tree": {"sha": hashlib.sha1(("root-" + commit).encode()).hexdigest()}}})
             elif suffix.startswith("/git/commits/") and suffix[13:] in ("c" * 40, "d" * 40, "e" * 40):
                 commit = suffix[13:]
                 self.send_json(200, {"sha": commit, "tree": {"sha": hashlib.sha1(("root-" + commit).encode()).hexdigest()}})
+            elif suffix.startswith("/git/trees/") and suffix.endswith("?recursive=1"):
+                identity = suffix[11:].split("?")[0]
+                directory = roots[identity]
+                entries = [{"path": "ci", "type": "tree", "mode": "040000", "sha": directory},
+                           {"path": "ci/packages.json", "type": "blob", "mode": "120000" if args.case == "symlink" else "100644", "sha": directories[directory]}]
+                self.send_json(200, {"truncated": False, "tree": entries})
             elif suffix.startswith("/git/trees/") and suffix[11:] in roots:
                 sha = suffix[11:]
                 self.send_json(200, {"sha": sha, "truncated": False, "tree": [{"path": "ci", "type": "tree", "mode": "040000", "sha": roots[sha]}]})
@@ -108,7 +117,7 @@ def exercise(args, root):
             elif suffix.startswith("/git/blobs/") and suffix[11:] in blobs:
                 sha = suffix[11:]
                 content = blobs[sha] + (b"modified" if args.case == "modified-blob" else b"")
-                self.send_json(200, {"sha": sha, "encoding": "base64", "content": base64.b64encode(content).decode()})
+                self.send_json(200, {"sha": sha, "encoding": "base64", "size": len(content), "content": base64.b64encode(content).decode()})
             else:
                 errors.append("unexpected source request " + suffix)
                 self.send_json(404, {})

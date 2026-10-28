@@ -53,6 +53,7 @@ def exercise(args, directory):
     tls_key.chmod(0o600)
     errors = []
     seen = []
+    token_grants = []
     active = 0
     peak = 0
     lock = threading.Lock()
@@ -91,6 +92,7 @@ def exercise(args, directory):
                     run(["openssl", "dgst", "-sha256", "-verify", str(public), "-signature", str(sig)], (header + "." + payload).encode())
                     body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     assert body["repository_ids"] == [99]
+                    token_grants.append(body["permissions"])
                     assert body["permissions"] in ({"contents": "read"}, {"actions": "read"}) if args.case == "token-reuse" else body["permissions"] == {"contents": "read"}
                     if args.case == "token-rejected":
                         self.send_json(403, {"message": "fixture rejected token"})
@@ -113,7 +115,8 @@ def exercise(args, directory):
             expected_path = "/repos/" + selected + ("/probe/" + str(probe) if probe is not None else "")
             if self.path != expected_path or self.headers.get("Authorization") != "Bearer unit-test-only-token":
                 errors.append("unexpected repository request")
-            if args.case == "token-reuse" and seen.count("repository") == 2:
+            if args.case == "token-reuse" and seen.count("repository") == 1:
+                # The initial identical reads share one GET; expire its token before either callback runs.
                 time.sleep(2.1)
             if args.case == "shutdown":
                 shutdown_started.set()
@@ -196,8 +199,9 @@ def exercise(args, directory):
             assert (peak == 1 if args.case == "parallel-single" else 2 <= peak <= 8), peak
             print("Synthetic concurrent HTTP peak:", peak)
         elif args.case == "token-reuse":
-            assert seen.count("token") == 3 and seen.count("repository") == 4, seen
-            assert seen[:3] == ["token", "repository", "repository"], "cold concurrent reads minted twice"
+            assert seen.count("token") == 3 and seen.count("repository") == 3, seen
+            assert seen[:2] == ["token", "repository"], "cold identical reads did not share their GET"
+            assert token_grants.count({"contents": "read"}) == 2 and token_grants.count({"actions": "read"}) == 1, token_grants
         else:
             assert seen == ["token", "repository"], "request was dropped or replayed"
         if args.case == "multi-address":

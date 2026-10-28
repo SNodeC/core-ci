@@ -63,7 +63,7 @@ int main(int argc, char* argv[]) {
             }
         };
         if (disabled) {
-            disabled->request("api.github.com", 443, "GET", "/probe", {}, "", [&](const coreci::HttpResult& result) {
+            disabled->request("GET", "/probe", {}, "", [&](const coreci::HttpResult& result) {
                 completed({result.status, nullptr, result.error, result.submitted});
             });
         } else if (std::getenv("CORE_CI_TEST_PUBLIC_READ") != nullptr) {

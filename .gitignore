@@ -1,6 +1,7 @@
 /build/
 /checkouts/
 /.local-credentials/
+/secrets/
 /.qtcreator/
 /local/
 *.swp
