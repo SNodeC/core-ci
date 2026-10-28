@@ -1,7 +1,7 @@
 "use strict";
 const element = (id) => document.getElementById(id);
 let repositories = [], graph = {executions: [], mutations_allowed: false};
-let selected = null, executionId = null, workflowPreview = null, events = null, dirty = false, busy = false, targetIndex = null;
+let selected = null, executionIds = new Set(), workflowPreview = null, events = null, dirty = false, busy = false, targetIndex = null;
 
 function node(tag, text = "", className = "") {
     const result = document.createElement(tag);
@@ -73,7 +73,7 @@ function tab(name) {
     }
 }
 function showExecution(id) {
-    executionId = id;
+    executionIds.add(id);
     element("search").value = "";
     element("state-filter").value = "all";
     tab("work");
@@ -208,7 +208,7 @@ function renderExecution(execution, panel, open) {
 }
 function renderWork() {
     const query = element("search").value.toLowerCase(), filter = element("state-filter").value;
-    const technicalOpen = document.querySelector(".execution-details details")?.open || false;
+    const technicalOpen = new Set([...document.querySelectorAll(".execution-details details[open]")].map((detail) => detail.closest("td").id));
     const order = {publishing: 0, building: 1, waiting: 2, failed: 3, published: 3};
     const visible = graph.executions.filter((row) => {
         const target = row.target_row;
@@ -216,19 +216,19 @@ function renderWork() {
         return matches && [row.repository, row.tag, target.distribution, target.suite, target.arch, target.build.format]
             .join(" ").toLowerCase().includes(query);
     }).sort((a, b) => (a.superseded_by ? 5 : order[a.state]) - (b.superseded_by ? 5 : order[b.state]) || b.revision - a.revision);
-    if (!visible.some((row) => row.id === executionId)) {
-        executionId = null;
-    }
+    executionIds = new Set([...executionIds].filter((id) => graph.executions.some((row) => row.id === id)));
     element("graph").replaceChildren();
     for (const execution of visible) {
         const target = execution.target_row, row = node("tr", "", "execution-row"), repository = node("th"), distribution = node("td");
         repository.scope = "row";
-        row.setAttribute("aria-selected", String(execution.id === executionId));
-        const toggle = button(execution.id === executionId ? "▾" : "▸", () => {
-            executionId = executionId === execution.id ? null : execution.id;
+        row.setAttribute("aria-selected", String(executionIds.has(execution.id)));
+        const toggle = button(executionIds.has(execution.id) ? "▾" : "▸", () => {
+            if (!executionIds.delete(execution.id)) {
+                executionIds.add(execution.id);
+            }
             renderWork();
         }, "row-select chevron");
-        toggle.setAttribute("aria-expanded", String(execution.id === executionId));
+        toggle.setAttribute("aria-expanded", String(executionIds.has(execution.id)));
         toggle.setAttribute("aria-label", "Build details for " + execution.label);
         toggle.setAttribute("aria-controls", "execution-" + execution.id);
         const control = node("td");
@@ -257,11 +257,11 @@ function renderWork() {
         verified.append(timestamp(execution.receipt?.publication_verified_utc, verificationPending));
         row.append(verified);
         element("graph").append(row);
-        if (execution.id === executionId) {
+        if (executionIds.has(execution.id)) {
             const details = node("tr"), panel = node("td", "", "execution-details");
             panel.colSpan = 7;
             panel.id = "execution-" + execution.id;
-            renderExecution(execution, panel, technicalOpen);
+            renderExecution(execution, panel, technicalOpen.has(panel.id));
             details.append(panel);
             element("graph").append(details);
         }

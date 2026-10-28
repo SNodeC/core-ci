@@ -17,12 +17,12 @@
 <label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
 <option value="failed">Failed</option><option value="published">Published</option></select></label></div>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Package executions; scroll horizontally for all timing columns">
-<table class="work-table"><colgroup><col class="work-toggle"><col><col class="work-target"><col class="work-state">
+<table class="work-table"><colgroup><col class="work-toggle"><col class="work-package"><col class="work-target"><col class="work-state">
 <col class="work-job"><col class="work-job"><col class="work-verified"></colgroup><thead><tr>
 <th scope="col" aria-label="Build details"></th><th scope="col">Package</th><th scope="col">Target</th><th scope="col">State</th>
 <th scope="col" class="work-job"><strong>Build</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
 <th scope="col" class="work-job"><strong>Publisher job</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
-<th scope="col" class="work-verified">Publication verified</th></tr></thead><tbody id="graph"></tbody></table></div>
+<th scope="col" class="work-verified"><strong>Publication verified</strong></th></tr></thead><tbody id="graph"></tbody></table></div>
 <p id="visible-count"></p>
 </section>
 <section id="repositories-panel" aria-labelledby="repositories-heading" hidden>
