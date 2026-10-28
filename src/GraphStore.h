@@ -20,11 +20,9 @@ namespace coreci {
         }
         Json view() const;
         Json publicView() const;
-        std::function<void(bool, bool)> onChanged;
+        std::function<void(bool)> onChanged;
 
     private:
-        Json view(const Json& state) const;
-        Json publicView(const Json& state) const;
         Database& database;
         Json state = graph::empty();
     };

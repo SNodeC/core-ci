@@ -442,7 +442,6 @@ function connect() {
             dependencyChoices();
         }
     });
-    events.addEventListener("unavailable", (event) => { feedback(JSON.parse(event.data), true); });
     events.onerror = () => {
         element("connection").textContent = events.readyState === EventSource.CLOSED ? "Disconnected" : "Reconnecting…";
         element("reconnect").hidden = false;
@@ -517,7 +516,7 @@ element("import").addEventListener("click", () => operation(async () => {
             element("definition-controls").disabled = true;
             dirty = true;
             element("definition-details").open = true;
-            element("revision").textContent = "Read GitHub revision: " + error.result.github_revision +
+            element("revision").textContent = "Read GitHub definition blob: " + error.result.blob_sha +
                 " · use Start new definition to replace the unsupported document";
         }
         throw error;
@@ -541,7 +540,7 @@ element("request-build").addEventListener("click", () => operation(async () => {
 }));
 element("workflow-preview").addEventListener("click", () => operation(async () => {
     workflowPreview = await api("/api/repositories/workflow", {repository: element("repository").value});
-    element("workflow-current").value = workflowPreview.current;
+    element("workflow-current").value = workflowPreview.content;
     element("workflow-proposed").value = workflowPreview.proposed;
     feedback("Workflow preview at " + workflowPreview.head + " · proposed blob " + workflowPreview.proposed_blob_sha);
 }));

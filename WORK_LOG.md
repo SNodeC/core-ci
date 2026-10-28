@@ -3349,3 +3349,43 @@ competing override. Icon hover uses ordinary button affordance. CSS+1/-1/net0; C
 Final Release build, changed-line<=160 and diff check pass. No new behavior mechanism.
 Keep this cosmetic source delta separate from Claude's dd09c70 architecture checkpoint;
 controller/worker/application logic is unchanged. Continue existing UI cpmd authorization.
+
+## 2026-10-28 — Validated Claude review corrections
+
+Canonical checkout /home/voc/projects/snodec/core-ci, owned rewrite/slim-graph-controller,
+HEAD e78923e; starting origin/main a11d98b has the same tree. No open PRs.
+Validated each review finding against current source and discussed concrete counterexamples
+with actual read-only Claude CLI. Agreement, prompt and final review are recorded in
+docs/reports/claude-review-corrections-e78923e.md and
+docs/proposals/review-corrections-agreed-prompt.md.
+Implemented F1/F3/F4/S1/S2/S4: enrollment guards tolerate independent progress while
+preserving namespace and same-row races; post-PUT import uses exact SHA; real UI fields;
+public-facts status comparison in one consumer, latest capture after approval, uncertainty
+gate and no replay; synchronous list and existing bool in-flight responsibility.
+Claude withdrew unsafe preflight-SHA recovery filtering, receipt dry-run deletion and
+repeated-startup claim. State-only refresh remains withdrawn; within-state progress retained.
+F2 over-100 recovery remains unimplemented pending the owner's separate bounded-pagination
+choice and growth approval. No new retirement/retry/DB recovery policy or persisted field.
+C++ 3576 ->3572, runtime source/UI net -5; eight CMake test registrations separately counted.
+Twenty affected checks passed (12 existing, eight new); Release build, canonical format-check,
+JS syntax, AST and diff checks passed. Actual app.js synthetic jsdom probe passed, not browser.
+Initial fixture-byte/reimport/immutable-URL assumptions and seeded generation were corrected;
+a rejected JSON iterator conversion was reverted after the existing boundary test caught it.
+/tmp disk-full startup failures were rerun after cleaning only stopped task-owned synthetic
+datadirs, preserving logs/traces. All final regressions passed. Synthetic comparable workflow
+HTTP counts: baseline818/178statusPOSTs ->660/124; event-order dependent, no live speedup claim.
+Unchanged eight-report burst retains zero outgoing requests.
+Claude's final source review found no remaining production defect within implemented scope;
+its failed-approval coverage gap is now covered. Negative timing assertions are bounded.
+Nothing committed/pushed/merged/deployed, no live CI mutation or acceptance run. Existing
+three other dirty docs remained byte-identical; WORK_LOG appended only; private dirs untouched.
+
+
+## 2026-10-28 — Review correction promotion authorized
+
+Owner requested cpmd: commit, push, merge and deployment of the reviewed correction set.
+The separate F2 pagination question remains unanswered and outside this promotion.
+Verified final production diff matches the tested identity; all20affected checks and
+formatting passed. Only task source/tests, review records and task log hunks are staged.
+Deployment will use the existing private runtime and unchanged service/listener settings,
+with durable graph backup/restoration and asset checks. No fresh build/tag is requested.

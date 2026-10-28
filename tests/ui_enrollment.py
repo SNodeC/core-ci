@@ -150,6 +150,9 @@ def serve(directory):
                     self.reply(502, {"github_committed": False, "error": "Repair payload verified; no write performed"})
                 else:
                     self.save_join(value, definition)
+            elif self.path == "/api/repositories/workflow":
+                self.reply(200, {"repository": value["repository"], "head": "e" * 40, "blob_sha": "f" * 40,
+                                 "proposed_blob_sha": "d" * 40, "proposed": "approved fixture workflow", "content": "committed fixture workflow"})
             elif self.path == "/api/work/retire":
                 with condition:
                     row = next(item for item in executions if item["id"] == "assigned")
@@ -159,8 +162,8 @@ def serve(directory):
                 (directory / "retirement.json").write_text(json.dumps(value))
                 self.reply(200, {"execution": "assigned"})
             elif self.path == "/api/repositories/refresh":
-                self.reply(422, {"github_committed": False, "content": "{invalid fixture JSON", "blob_sha": "f" * 40,
-                                 "github_revision": "e" * 40, "error": "Unsupported committed fixture definition"})
+                self.reply(422, {"content": "{invalid fixture JSON", "blob_sha": "f" * 40,
+                                 "error": "Unsupported committed fixture definition"})
             else:
                 self.reply(409, {"github_committed": False, "error": "Fixture accepts definition saves only"})
 

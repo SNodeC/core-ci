@@ -1,5 +1,7 @@
 #include "Enrollment.h"
 
+#include <regex>
+
 namespace coreci {
     Enrollment::Enrollment(GitHub& github, GraphStore& store, SourceReader& sources, const PipelineConfig& config)
         : github(github)
@@ -7,18 +9,19 @@ namespace coreci {
         , sources(sources)
         , config(config) {
     }
-    void Enrollment::list(const Callback& callback) const {
+    Json Enrollment::list() const {
         auto rows = Json::array();
         for (const auto& [name, row] : store.graph().at("repositories").items()) {
             rows.push_back(row);
         }
-        callback({200, {{"repositories", rows}}});
+        return {{"repositories", rows}};
     }
-    void Enrollment::persist(const Json& row, std::uint64_t generation, const Callback& callback) {
+    void Enrollment::persist(const Json& row, const Json& expected, const Callback& callback) {
         store.change(
-            [row, generation](Json& state) {
-                require(state.at("generation") == generation, "graph changed while editing enrollment");
+            [row, expected](Json& state) {
                 const auto name = row.at("name").get<std::string>();
+                require(state.at("repositories").value(name, Json::object()) == expected,
+                        "repository enrollment changed during GitHub read");
                 const bool fresh = !state.at("repositories").contains(name);
                 require(fresh || state.at("repositories").at(name).at("id") == row.at("id"), "enrolled repository ID changed");
                 state["repositories"][name] = row;
@@ -36,21 +39,21 @@ namespace coreci {
                 callback({result.error.empty() ? 200 : (result.uncertain || result.code) ? 503 : 409, body});
             });
     }
-    void Enrollment::refresh(const Json& input, const Callback& callback) {
+    void Enrollment::refresh(const Json& input, const Callback& callback, const std::string& commit, const Json& expected) {
         const auto repository = input.at("repository").get<std::string>();
         const auto branch = input.at("branch").get<std::string>();
-        const auto generation = store.graph().at("generation").get<std::uint64_t>();
+        const auto name = repository.substr(repository.find('/') + 1);
+        const auto previous = expected.is_null() ? store.graph().at("repositories").value(name, Json::object()) : expected;
         require(!branch.empty(), "repository branch is required");
         github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, [=, this](const GitHubResult& metadata) {
             if (metadata.status != 200 || !metadata.error.empty() ||
                 metadata.body.value("id", std::uint64_t{0}) != github.repositoryId(repository)) {
                 callback({503, {{"error", "enrolled repository evidence is unavailable"}}});
             } else {
-                sources.definition(repository, branch, [=, this](const SourceResult& result) {
+                sources.definition(repository, commit.empty() ? branch : commit, [=, this](const SourceResult& result) {
                     if (!result.error.empty()) {
                         callback({result.status, {{"error", result.error}, {"content", result.content}, {"blob_sha", result.blobSha}}});
                     } else {
-                        const auto name = repository.substr(repository.find('/') + 1);
                         persist({{"id", metadata.body.at("id")},
                                  {"repository", repository},
                                  {"name", name},
@@ -58,7 +61,7 @@ namespace coreci {
                                  {"revision", result.source.at("commit")},
                                  {"blob_sha", result.blobSha},
                                  {"definition", result.source.at("definition")}},
-                                generation,
+                                previous,
                                 callback);
                     }
                 });
@@ -70,14 +73,15 @@ namespace coreci {
         const auto branch = input.at("branch").get<std::string>();
         const auto name = repository.substr(repository.find('/') + 1);
         const auto content = input.at("definition").dump(2) + "\n";
-        const auto generation = store.graph().at("generation");
-        auto proposed = store.graph().at("repositories");
+        const auto repositories = store.graph().at("repositories");
+        const auto since = store.graph().at("next_revision");
+        auto proposed = repositories;
         const auto enrolled = proposed.value(name, Json::object());
         proposed[name] = {{"repository", repository}, {"definition", SourceReader::parseDefinition(content)}};
         graph::validateSources(proposed, store.graph().at("executions"));
         sources.file(repository, branch, "ci/packages.json", [=, this](const SourceResult& current) {
-            if (store.graph().at("generation") != generation || (!current.error.empty() && current.status != 404) ||
-                enrolled.value("revision", "") != input.value("revision", "") ||
+            if (store.graph().at("repositories") != repositories || store.graph().at("next_revision") != since ||
+                (!current.error.empty() && current.status != 404) || enrolled.value("revision", "") != input.value("revision", "") ||
                 current.blobSha != input.value("blob_sha", enrolled.value("blob_sha", ""))) {
                 callback({409, {{"error", "committed definition changed; read it before saving"}, {"github_committed", false}}});
             } else {
@@ -92,11 +96,23 @@ namespace coreci {
                                {{"contents", "write"}},
                                [=, this](const GitHubResult& result) {
                                    if ((result.status == 200 || result.status == 201) && result.error.empty()) {
-                                       refresh(input, [callback](const EnrollmentResult& enrolled) {
-                                           auto body = enrolled.body;
-                                           body["github_committed"] = true;
-                                           callback({enrolled.status, body});
-                                       });
+                                       const auto commit = result.body.is_object() ? result.body.value("commit", Json()) : Json();
+                                       const auto sha = commit.is_object() ? commit.value("sha", Json()) : Json();
+                                       if (sha.is_string() && std::regex_match(sha.get<std::string>(), std::regex("^[a-f0-9]{40}$"))) {
+                                           refresh(
+                                               input,
+                                               [callback](const EnrollmentResult& imported) {
+                                                   auto body = imported.body;
+                                                   body["github_committed"] = true;
+                                                   callback({imported.status, body});
+                                               },
+                                               sha,
+                                               enrolled);
+                                       } else {
+                                           callback({503,
+                                                     {{"error", "definition committed without a commit identity; import again"},
+                                                      {"github_committed", true}}});
+                                       }
                                    } else {
                                        callback({503,
                                                  {{"error", result.error.empty() ? "GitHub definition commit failed" : result.error},

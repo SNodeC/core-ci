@@ -156,9 +156,9 @@ int main(int argc, char* argv[]) {
         });
     database = std::make_unique<coreci::Database>(*client);
     graph = std::make_unique<coreci::GraphStore>(*database);
-    graph->onChanged = [&](bool committed, bool) {
+    graph->onChanged = [&](bool repositories) {
         ++notifications;
-        passed = passed && committed && callbacks == notifications;
+        passed = passed && !repositories && callbacks == notifications && graph->graph().at("generation") == notifications;
     };
     client->connect();
     const auto status = core::SNodeC::start();
