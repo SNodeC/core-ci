@@ -1,0 +1,180 @@
+name: core-ci trusted publication
+run-name: Publish ${{ fromJSON(inputs.assignment).label }}
+on:
+  workflow_dispatch:
+    inputs:
+      execution:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: string
+      assignment_sha256:
+        required: true
+        type: string
+      assignment:
+        required: true
+        type: string
+      build_result:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+env:
+  CORE_CI_TOOLING_SHA: "@TOOLING_SHA@"
+  CONTROLLER_APP_BOT_ID: ${{ vars.CONTROLLER_APP_BOT_ID }}
+  FEED_REPOSITORY: ${{ vars.FEED_REPOSITORY }}
+  FEED_REPOSITORY_ID: ${{ vars.FEED_REPOSITORY_ID }}
+  FEED_BRANCH: ${{ vars.FEED_BRANCH }}
+  FEED_BASE_URL: ${{ vars.FEED_BASE_URL }}
+  PACKAGES_GPG_FINGERPRINT: ${{ vars.PACKAGES_GPG_FINGERPRINT }}
+  OPENWRT_DOWNLOAD_BASE_URL: ${{ vars.OPENWRT_DOWNLOAD_BASE_URL || 'https://downloads.openwrt.org' }}
+  EXECUTION: ${{ inputs.execution }}
+  ATTEMPT: ${{ inputs.attempt }}
+  ASSIGNMENT: ${{ inputs.assignment }}
+  ASSIGNMENT_SHA256: ${{ inputs.assignment_sha256 }}
+  BUILD_RESULT: ${{ inputs.build_result }}
+jobs:
+  validate:
+    name: Validate the assigned build artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      artifact-id: ${{ steps.validated.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CORE_CI_TOOLING_SHA }}
+          path: tooling
+          persist-credentials: false
+      - name: Install standard package metadata tools
+        run: sudo apt-get update && sudo apt-get install -y rpm zstd build-essential
+      - name: Validate provenance, archive and actual package metadata
+        env:
+          SOURCE_ARTIFACT_TOKEN: ${{ secrets.PACKAGES_OBSERVER_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir "$RUNNER_TEMP/validated"
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/assignment.json"
+          printf '%s' "$BUILD_RESULT" > "$RUNNER_TEMP/build-result.json"
+          python3 tooling/core_ci/validate.py \
+            --assignment "$RUNNER_TEMP/assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --build-result "$RUNNER_TEMP/build-result.json" \
+            --output "$RUNNER_TEMP/validated/packages"
+      - name: Retain verified official SDK archive
+        if: fromJSON(inputs.assignment).target.family == 'openwrt'
+        run: cp "$RUNNER_TEMP/validation-sdk/sdk.archive" "$RUNNER_TEMP/validated/sdk.archive"
+      - id: validated
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ fromJSON(inputs.assignment).artifact_name }}-validated
+          path: ${{ runner.temp }}/validated/
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 7
+  publish:
+    name: Publish ${{ fromJSON(inputs.assignment).label }}
+    needs: validate
+    concurrency:
+      group: core-ci-feed-${{ vars.FEED_REPOSITORY }}-${{ vars.FEED_BRANCH }}
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      receipt-sha256: ${{ steps.prepared.outputs.receipt-sha256 }}
+      feed-revision: ${{ steps.prepared.outputs.feed-revision }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: package-publication
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CORE_CI_TOOLING_SHA }}
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ vars.FEED_REPOSITORY }}
+          ref: ${{ vars.FEED_BRANCH }}
+          path: feed
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
+          path: ${{ runner.temp }}/validated
+          merge-multiple: true
+      - name: Install standard signing and repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm gnupg apt-utils createrepo-c zstd build-essential python3-venv
+          python3 -m venv "$RUNNER_TEMP/core-ci-status-python"
+          "$RUNNER_TEMP/core-ci-status-python/bin/pip" install -r tooling/status-templates/requirements.txt
+      - name: Prepare signed feed update
+        id: prepared
+        env:
+          CORE_CI_RENDER_PYTHON: ${{ runner.temp }}/core-ci-status-python/bin/python
+          GITHUB_TOKEN: ${{ github.token }}
+          APT_SIGNING_KEY: >-
+            ${{ (fromJSON(inputs.assignment).target.build.format == 'deb' || fromJSON(inputs.assignment).target.build.format == 'rpm')
+            && secrets.APT_SIGNING_KEY || '' }}
+          OPENWRT_USIGN_KEY: ${{ fromJSON(inputs.assignment).target.build.format == 'ipk' && secrets.OPENWRT_USIGN_KEY || '' }}
+          OPENWRT_APK_KEY: ${{ fromJSON(inputs.assignment).target.build.format == 'apk' && secrets.OPENWRT_APK_KEY || '' }}
+          PACKAGES_GPG_PASSPHRASE: >-
+            ${{ (fromJSON(inputs.assignment).target.build.format == 'deb' || fromJSON(inputs.assignment).target.build.format == 'rpm')
+            && secrets.PACKAGES_GPG_PASSPHRASE || '' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/assignment.json"
+          printf '%s' "$BUILD_RESULT" > "$RUNNER_TEMP/build-result.json"
+          python3 tooling/core_ci/publish.py --phase prepare \
+            --assignment "$RUNNER_TEMP/assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --build-result "$RUNNER_TEMP/build-result.json" \
+            --artifacts "$RUNNER_TEMP/validated/packages" \
+            --sdk-archive "$RUNNER_TEMP/validated/sdk.archive" \
+            --feed "$GITHUB_WORKSPACE/feed"
+      - name: Publish checked feed update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PACKAGES_APP_PRIVATE_KEY: ${{ secrets.PACKAGES_APP_PRIVATE_KEY }}
+          FEED_WRITER_APP_ID: ${{ vars.FEED_WRITER_APP_ID }}
+          FEED_WRITER_INSTALLATION_ID: ${{ vars.FEED_WRITER_INSTALLATION_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 tooling/core_ci/publish.py --phase push \
+            --assignment "$RUNNER_TEMP/assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --build-result "$RUNNER_TEMP/build-result.json" \
+            --artifacts "$RUNNER_TEMP/validated/packages" \
+            --feed "$GITHUB_WORKSPACE/feed"
+  confirm:
+    name: Confirm public receipt
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CORE_CI_TOOLING_SHA }}
+          path: tooling
+          persist-credentials: false
+      - name: Verify the exact prepared receipt over HTTPS
+        env:
+          RECEIPT_SHA256: ${{ needs.publish.outputs.receipt-sha256 }}
+          FEED_REVISION: ${{ needs.publish.outputs.feed-revision }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/assignment.json"
+          python3 tooling/core_ci/publish.py --phase confirm \
+            --assignment "$RUNNER_TEMP/assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" \
+            --receipt-sha256 "$RECEIPT_SHA256" \
+            --feed-revision "$FEED_REVISION"

@@ -68,7 +68,12 @@ namespace coreci {
         for (const auto& [id, node] : state.at("executions").items()) {
             const auto& attempt = node.at("attempts").back();
             const auto& source = node.at("source");
-            Json row = attempt;
+            auto row = Json::object();
+            for (const auto& [key, value] : attempt.items()) {
+                if (key != "assignment" && key != "build_result" && key != "preflight" && key != "dispatch") {
+                    row[key] = value;
+                }
+            }
             row["id"] = id;
             row["attempt"] = attempt.at("id");
             row["target"] = node.at("target_row").at("id");
@@ -98,9 +103,6 @@ namespace coreci {
                 if (stage == "building" && !attempt.at("build_result").is_null()) {
                     row["activity"] = "build complete; waiting for publication";
                 }
-            }
-            for (const auto* key : {"assignment", "build_result", "preflight", "dispatch"}) {
-                row.erase(key);
             }
             executions.push_back(std::move(row));
         }

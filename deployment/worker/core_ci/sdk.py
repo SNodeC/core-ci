@@ -3,44 +3,57 @@
 import os
 from pathlib import Path
 import resource
+import shutil
 import subprocess
 import tarfile
 
 from contract import file_hash, output, require, run
 
 
-def prepare(target, environment, destination):
+def prepare(target, environment, destination, archive=None):
     from environment import sdk
 
+    print("SDK metadata start", flush=True)
     expected = sdk(target, environment["release"])
     require(
         all(environment[key] == value for key, value in expected.items()),
         "SDK identity differs from official release metadata",
     )
+    print("SDK metadata verified", flush=True)
     destination = Path(destination)
     require(not destination.exists(), "SDK destination must be new")
     destination.mkdir()
+    supplied = Path(archive) if archive is not None else None
     archive = destination / "sdk.archive"
-    subprocess.run(
-        [
-            "curl",
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--max-filesize",
-            str(1024**3),
-            "--output",
-            str(archive),
-            expected["sdk"]["url"],
-        ],
-        check=True,
-        timeout=600,
-    )
+    if supplied is not None:
+        require(
+            supplied.is_file() and not supplied.is_symlink() and supplied.stat().st_size <= 1024**3,
+            "supplied SDK requires a regular file within 1 GiB",
+        )
+        shutil.copyfile(supplied, archive)
+    else:
+        subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--max-filesize",
+                str(1024**3),
+                "--output",
+                str(archive),
+                expected["sdk"]["url"],
+            ],
+            check=True,
+            timeout=600,
+        )
     require(
         archive.stat().st_size <= 1024**3 and file_hash(archive) == expected["sdk"]["sha256"], "SDK checksum mismatch"
     )
+    print("SDK archive verified", flush=True)
     extracted = destination / "extracted"
     extract(archive, extracted, expected["sdk"]["url"].endswith(".zst"))
+    print("SDK extraction completed", flush=True)
     roots = list(extracted.iterdir())
     require(len(roots) == 1 and roots[0].is_dir() and not roots[0].is_symlink(), "SDK archive requires one directory")
     root = roots[0]

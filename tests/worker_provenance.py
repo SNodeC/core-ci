@@ -113,9 +113,10 @@ def main():
     try:
         github.api = api
         github.download_artifact = download
-        observed = github.artifact(selected, build_result, "synthetic-scoped-reader", directory / "valid")
+        (directory / "validated").mkdir()
+        observed = github.artifact(selected, build_result, "synthetic-scoped-reader", directory / "validated/packages")
         assert observed["id"] == 102 and observed["started_at"] == "2026-10-26T10:00:00Z"
-        assert (directory / "valid/manifest.json").read_text() == "{}" and len(downloads) == 1
+        assert (directory / "validated/packages/manifest.json").read_text() == "{}" and len(downloads) == 1
         # Human labels do not replace immutable assignment/run/artifact verification.
         readable = copy.deepcopy(selected)
         readable["label"] = "Example/source v1.2.3 | debian trixie | arm64 | deb | r1"
@@ -503,6 +504,21 @@ def main():
     publication_workflow = (repository / "deployment/worker/.github/workflows/core-ci-publish.yml").read_text()
     status_workflow = (repository / "deployment/worker/.github/workflows/core-ci-status.yml").read_text()
     assert "queue: max" in publication_workflow and "queue: max" in status_workflow
+    bundle_template = repository / "deployment/source/core-ci-publish-bundle.yml.in"
+    bundle = bundle_template.read_text()
+    assert bundle.count("@TOOLING_SHA@") == 1 and "queue: max" in bundle
+    assert "group: core-ci-feed-${{ vars.FEED_REPOSITORY }}-${{ vars.FEED_BRANCH }}" in bundle
+    assert bundle.index('mkdir "$RUNNER_TEMP/validated"') < bundle.index("python3 tooling/core_ci/validate.py")
+    assert "if: fromJSON(inputs.assignment).target.family == 'openwrt'" in bundle
+    assert 'run: cp "$RUNNER_TEMP/validation-sdk/sdk.archive" "$RUNNER_TEMP/validated/sdk.archive"' in bundle
+    assert "path: ${{ runner.temp }}/validated/\n          compression-level: 0" in bundle
+    assert "retention-days: 7" in bundle and bundle.count('--artifacts "$RUNNER_TEMP/validated/packages"') == 2
+    rendered = directory / "publication.yml"
+    rendered_info = contract.output([sys.executable, str(repository / "deployment/render-source-workflow.py"), "--worker", "Owner/worker",
+         "--tooling-sha", "a" * 40, "--template", str(bundle_template), "--output", str(rendered)])
+    assert "@TOOLING_SHA@" not in rendered.read_text() and 'CORE_CI_TOOLING_SHA: "' + "a" * 40 + '"' in rendered.read_text()
+    encoded = rendered.read_bytes()
+    assert rendered_info.split()[-1] == hashlib.sha1(b"blob " + str(len(encoded)).encode() + b"\0" + encoded).hexdigest()
     assert "APT_SIGNING_KEY" not in status_workflow and "OPENWRT_USIGN_KEY" not in status_workflow
 
     # The publisher invokes the same renderer with a clean environment.
@@ -642,6 +658,39 @@ def main():
             except ValueError:
                 rejected = True
             assert rejected and not any(call.called for call in (load, identity, token, push))
+    # Only OpenWrt prepare requires an SDK handoff, before identity requests and signing files.
+    for package_format in ("ipk", "apk"):
+        openwrt = copy.deepcopy(prepared)
+        openwrt["target"]["build"]["format"] = package_format
+        with patch.object(sys, "argv", argv), patch.dict(os.environ, {
+            "EXECUTION": prepared["execution"], "ATTEMPT": prepared["attempt"]
+        }), patch.object(publish, "assignment", return_value=openwrt), patch.object(publish, "trusted_deployment"), patch.object(
+            publish, "run_identity", side_effect=AssertionError("missing SDK reached identity/network")
+        ) as identity, patch.object(publish.tempfile, "TemporaryDirectory") as secrets:
+            rejected = False
+            try:
+                publish.main()
+            except ValueError as failure:
+                rejected = str(failure) == "OpenWrt prepare requires --sdk-archive"
+            assert rejected and not identity.called and not secrets.called
+        import sign_openwrt
+        supplied = directory / "validated/sdk.archive"
+        with patch.object(sys, "argv", argv + ["--sdk-archive", str(supplied)]), patch.dict(os.environ, {
+            "EXECUTION": prepared["execution"], "ATTEMPT": prepared["attempt"], "RUNNER_TEMP": str(directory),
+            "OPENWRT_USIGN_KEY": "synthetic", "OPENWRT_APK_KEY": "synthetic"
+        }), patch.object(publish, "assignment", return_value=openwrt), patch.object(publish, "trusted_deployment"), patch.object(
+            publish, "run_identity", return_value={}
+        ), patch.object(publish, "read_json", return_value={}), patch.object(
+            sign_openwrt, "update", return_value=empty_receipt
+        ) as signing, patch.object(publish, "retained_receipt", return_value=empty_receipt), patch.object(
+            publish, "render", side_effect=ValueError("stop before commit")
+        ):
+            try:
+                publish.main()
+            except ValueError as failure:
+                assert str(failure) == "stop before commit"
+            assert signing.call_count == 1 and signing.call_args.args[-1] == str(supplied)
+    argv += ["--sdk-archive", str(directory / "not-an-sdk")]  # Native prepare must ignore this path.
     # Public outputs bind the already prepared bytes and local commit, before any push.
     receipt_file = writer / publish.receipt_path(prepared)
     receipt_file.parent.mkdir(parents=True)

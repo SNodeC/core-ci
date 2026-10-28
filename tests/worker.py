@@ -140,7 +140,9 @@ def main():
                 "branch": "main",
                 "base_url": "https://example.invalid/packages/",
             }
-            root = directory / package_format
+            bundle = directory / package_format
+            bundle.mkdir()
+            root = bundle / "packages"
             root.mkdir()
             target = directory / (package_format + ".json")
             contract.write_json(target, request["target"])
@@ -204,7 +206,9 @@ def main():
                 lambda: contract.verify_manifest(request, root, {"run": {"id": 99}, "artifacts": [{"job_id": 44}]}),
                 "job timing from another execution accepted",
             )
+            (bundle / "sdk.archive").write_bytes(b"sibling is not package authority")
             contract.write_json(root / "manifest.json", manifest)
+            assert contract.verify_manifest(request, root) == manifest
             changed = copy.deepcopy(manifest)
             changed["environment"]["image"] = "another:image"
             contract.write_json(root / "manifest.json", changed)

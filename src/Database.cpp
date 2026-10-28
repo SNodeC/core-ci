@@ -8,11 +8,13 @@
 namespace coreci {
     std::string Database::text(const std::string& value) {
         std::string result = "CONVERT(X'";
+        result.reserve(result.size() + 2 * value.size() + 16);
         for (const unsigned char byte : value) {
             result += "0123456789abcdef"[byte >> 4];
             result += "0123456789abcdef"[byte & 15];
         }
-        return result + "' USING utf8mb4)";
+        result += "' USING utf8mb4)";
+        return result;
     }
 
     void Database::enqueue(const std::function<void()>& operation) {

@@ -20,13 +20,13 @@ from sign_native import (
 )
 
 
-def update(selected, build_result, publication_run, artifacts, feed, private_key, public_key, temporary_root):
+def update(selected, build_result, publication_run, artifacts, feed, private_key, public_key, temporary_root, sdk_archive):
     feed = Path(feed).resolve()
     receipt = retained_receipt(selected, build_result, publication_run, feed)
     if receipt is None:
         # The source artifact supplies no executable or key authority. Re-read official metadata and verify the SDK again.
         environment = read_json(Path(artifacts) / "manifest.json")["environment"]
-        sdk, staging = prepare(selected["target"], environment, Path(temporary_root) / "sdk")
+        sdk, staging = prepare(selected["target"], environment, Path(temporary_root) / "sdk", sdk_archive)
         manifest = verify_manifest(selected, artifacts, build_result)
         target = selected["target"]
         package_format = target["build"]["format"]
