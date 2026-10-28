@@ -3218,3 +3218,17 @@ restart, live tag or VOC-Experiments workflow activation is part of this stage.
   acceptance and concrete pre-activation content conflicts remain live-stage concerns.
 - This review record changes documentation only. No deployment, new builds, historical
   cleanup, feed/key/config changes or uncertainty recovery was performed.
+
+## Stable work-table columns during live state updates — 2026-10-28
+
+Owner additionally observed that changing state labels resize the State column and move
+timing columns. Replace the local timing-cell width tweak and obsolete state min-width
+with one table column policy: fixed layout, explicit State/Target/timestamp/verification
+columns, remaining width for Repository, and equal widths for all four job timestamps.
+Existing colgroup semantics, centered headings/date/time, two-line timestamps, full state
+text and horizontal scrolling remain. Minimum width keeps dates/headings readable on narrow
+containers; expanded details retain their existing container-relative layout. No truncation
+or new JavaScript/state/rendering mechanism. C++0, tests0; combined UI HTML/CSS net0lines.
+Owner authorized commit, push, merge and deployment. Release core-ci build, format-check,
+column-group/width assertions and git diff --check pass. Browser unavailable; rendered layout
+remains unverified. Restart will preserve durable assignments; no workflow or pipeline change.
