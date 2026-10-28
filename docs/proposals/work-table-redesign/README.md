@@ -72,6 +72,11 @@ Rows normally contain two lines, approximately 60–64px high. Long real content
 height rather than being hidden. Hover/focus and the expanded row use a subtle background.
 The page uses a compact heading and summary, not oversized cards or large counters.
 
+Any number of executions can be expanded simultaneously. Closing one affects only that
+execution; dependency navigation adds its target to the open rows. Live updates retain open
+rows and each visible technical disclosure independently. Filtering temporarily hides rows
+without clearing their expansion choices. All three timing headings share colour, size and weight.
+
 ## One stage, one column
 
 The table has seven physical columns:
@@ -79,12 +84,12 @@ The table has seven physical columns:
 | Column | Width policy | Contents |
 | --- | --- | --- |
 | Disclosure | 32px | Keyboard-operable details button and expanded state |
-| Package | Remaining width, at least 264px at minimum table width | Name, full tag, owner and rebuild revision |
+| Package | 208px | Name, full tag, owner and rebuild revision |
 | Target | 156px | Distribution/series and architecture/format |
-| State | 190px | Overall state plus exact known activity |
+| State | 128px | Overall state plus exact known activity |
 | Build | 184px | Identical Started/Finished pair |
 | Publisher job | 184px | Identical Started/Finished pair |
-| Publication verified | 142px | Verified timestamp, Pending or Not recorded |
+| Publication verified | 156px | Verified timestamp, Pending or Not recorded |
 
 Each job column has one inner grid shared by its header labels and timestamp pair:
 two 72px tracks, an 8px inner gap and 16px padding at each outside edge. This gives an
@@ -94,10 +99,10 @@ Build and Publisher job names are centered over their respective pairs.
 There are no spanning job columns and no `col span` width rules. Each stage is one native
 column, with its pair laid out inside the cell. Thus the browser cannot independently assign
 a different width to Publisher's Started and Finished. At 1280px and 1440px the same stage
-geometry is used. Spare width goes to Package. The content area stops growing at a sensible
-desktop width rather than stretching small timestamps across a large screen.
+geometry is used. Package and State do not absorb spare space. The table stays compact
+instead of stretching its columns across a large screen.
 
-Minimum table width is 1152px. Smaller windows retain legible text and horizontal scrolling;
+Table width is 1048px (1050px including its wrapper borders). Smaller windows retain legible text and horizontal scrolling;
 controls can wrap. All information remains accessible. The disclosure/identity area must not
 be pinned so widely that it consumes most of a narrow viewport. No alternate card UI or
 second rendering authority is proposed.
@@ -123,11 +128,11 @@ second rendering authority is proposed.
 | Retry with a new rebuild revision | Expanded actions, under existing eligibility rules |
 | Retirement and explicit uncertainty acknowledgement | Expanded actions, under existing eligibility rules; retry remains separate |
 | All source/configuration/assignment/evidence JSON | Existing technical disclosure, unchanged information |
-| Search, All/Active and failed/Failed/Published filters | Compact toolbar; retain matching and selection behavior |
+| Search, All/Active and failed/Failed/Published filters | Compact toolbar; retain matching and independent expansion |
 | Work counts, visible/total execution count | Compact summary and toolbar/footer |
 | Inspect assigned GitHub work | Existing secondary action, without changing reconciliation |
 | Connection state, reconnect, Work/Repositories navigation | Retained application shell; preview is explicitly disconnected |
-| SSE updates, selected execution, technical disclosure state | Existing data flow and event handling |
+| SSE updates, open executions, technical disclosure state | Existing data flow and event handling |
 | Busy/disabled controls and mutation uncertainty | Existing action behavior |
 
 The preview simplifies some facts into labelled fixture examples. It is not a substitute for

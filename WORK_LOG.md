@@ -3296,3 +3296,28 @@ checks pass. These HTTP/source checks are not browser rendering/interaction cove
 Evidence: /tmp/codex/build/core-ci/work-table-redesign/fixture-proof.json. Browser access
 still reports no enabled apps/browsers; requested enablement while continuing independent
 work. Authorized deployment will be reported with visual verification explicitly pending.
+
+## Independent execution expansion and compact columns — 2026-10-28
+
+Owner requires arbitrary simultaneous open builds and explicitly authorizes cpmd after the
+fix. Invariant: each execution owns its disclosure independently; opening, closing, SSE
+refresh or prerequisite navigation must not close unrelated executions. Replace the single
+executionId with one Set of expanded IDs, prune only IDs absent from the authoritative
+graph, and snapshot each visible open technical disclosure by its panel ID before redraw.
+No second authority, persistence, network mechanism or backend change. Filtering retains
+row expansion choices. Technical disclosure state is retained for visible rows across SSE;
+closing/hiding a row does not create a new persistent technical-state cache.
+Owner additionally requests narrower Package/State and equal heading typography. Package
+208px, State128px, table1048px with1050px wrapper; no unused width assigned to Package.
+Publication verified uses the same strong element/shared text colour/12px/700 rule as Build
+and Publisher job; its156px column accommodates that face. All timestamps/target info kept.
+Production UI+19/-19/net0, tests0 repository lines; C++/SQL/API/workflow changes0.
+Focused actual-app synthetic DOM probe (jsdom installed only under permitted temporary
+checks) reproduces old exclusive expansion failure, then passes24 simultaneous disclosures,
+independent close, per-row technical state across standard graph events, additive dependency
+navigation, filter round-trip, pruning removed IDs, header styles and column widths, with0
+fetch requests. It is DOM/logic coverage, not browser geometry. Probe/logs under
+/tmp/codex/build/core-ci/multi-expansion/. node --check and final Release build pass;
+changed production lines<=160 and git diff --check pass. Existing C++ unchanged, earlier
+format-check remains applicable. No live graph mutation/new build/tag/retry. Browser visual
+verification remains unavailable; cpmd stages will verify exact served assets and durable state.
