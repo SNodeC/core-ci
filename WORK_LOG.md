@@ -3232,3 +3232,14 @@ or new JavaScript/state/rendering mechanism. C++0, tests0; combined UI HTML/CSS 
 Owner authorized commit, push, merge and deployment. Release core-ci build, format-check,
 column-group/width assertions and git diff --check pass. Browser unavailable; rendered layout
 remains unverified. Restart will preserve durable assignments; no workflow or pipeline change.
+
+## Restore compact timing pairs — 2026-10-28
+
+Owner rejected the fixed percentage table layout. Governing presentation invariant: State
+width stays independent of its current label; timing pairs stay compact, with more whitespace
+between Build and Publisher job than between Started and Finished. Restore automatic table
+layout and original colgroups, fix only State to260px, and apply symmetric20px outer/6px
+inner timing-cell padding to both headers and body. Centered local two-line timestamps and
+group headings remain. No JS/C++ or controller behavior change. UI+6/-6/net0; tests0.
+Static checks and git diff --check pass, changed lines <=160. Browser reports no available
+apps/browsers, so no rendered visual claim. Continue the previously authorized commit/push/merge/deployment stages for this correction.
