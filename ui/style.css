@@ -58,7 +58,7 @@ dialog { width: min(760px,95vw); max-height: 90vh; overflow: auto; border: 1px s
     border-radius: 8px; padding: 20px; color: var(--text); background: var(--panel); }
 dialog::backdrop { background: #0006; }
 
-#work-panel > .table-wrap { container-type: inline-size; } #graph > tr > td:nth-child(4) { width: 260px; min-width: 260px; max-width: 260px; }
+#work-panel > .table-wrap { container-type: inline-size; } .work-table { table-layout: fixed; min-width: 1224px; }
 .work-table > tbody > tr > td { vertical-align: top; } .work-table > thead th { padding-block: 3px; }
 .work-table > thead > tr:last-child > :nth-child(odd), #graph > tr > td:is(:nth-child(5),:nth-child(7)) { padding-inline: 20px 6px; }
 .work-table > thead > tr:last-child > :nth-child(even), #graph > tr > td:is(:nth-child(6),:nth-child(8)) { padding-inline: 6px 20px; }
