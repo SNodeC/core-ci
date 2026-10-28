@@ -2773,3 +2773,121 @@ The original database, old tags, keys, private directories and unrelated edits r
 preserved. No production SNodeC integration changed. No main merge or speedup claim.
 Final controller size is3,510 lines. This handover adds documentation only; no further
 build or repeat tests were needed after the already tested/deployed source.
+
+
+### Compact work UI proposal — 2026-10-28
+
+Design-only checkpoint on rewrite/slim-graph-controller at7c5e68d. Read current UI,
+CMake embedding and existing UI fixture; preserved existing unrelated edits. Owner asked
+to discuss all layout/timestamp findings with Claude before implementation. Claude's
+read-only review and follow-up agreed the proposal in docs/proposals/compact-work-ui.md:
+merge repo/tag/rebuild and target/arch/format; grouped build/publisher start+finish,
+separate verification time; intentional date/time lines; scoped nonwrapping labels and
+compact details timing table. Explicit format remains because OpenWrt has IPK and APK.
+Full timestamp zones remain accessible; narrow-panel sizing needs actual browser proof.
+
+Review corrected provisional width claims and the fact that superseded waiting rows
+remain in history. Existing missing-time semantics stay unchanged; no new controller
+state, network request, workflow or recovery behavior. UI source/tests/deployment unchanged.
+No tests or live performance claims for this design-only checkpoint. Proposed UI net
++40–60 production lines, fixture +30–50, C++0; needs explicit growth approval before
+implementation. Documentation only; no commit/push/restart. Review files are retained in
+/tmp/codex/build/core-ci/ui-compact-proposal/. Stuck publication investigation remains deferred.
+
+
+### Compact work UI implementation — 2026-10-28
+
+Owner approved +40–60 UI production / +30–50 fixture lines and zero C++ growth.
+Implemented on rewrite/slim-graph-controller from7c5e68d without a branch change.
+Invariant: present existing graph identities and evidence compactly, preserving one
+state authority, exact timestamps, missing-evidence semantics and existing actions.
+Merged repository/tag/rebuild and distribution/series/architecture/format. Grouped
+Build and Publisher job start/finish columns; kept verification separate. Details use
+a timing table and scoped nonwrapping labels. No controller/network/workflow changes.
+Owner requested the grouped-header gap removed: reduced header padding to3px.
+Owner then explicitly requested all timezone labels removed: local browser date/time
+is used in the overview, details and full accessible descriptions/tooltips. Machine
+ISO datetime values remain exact. No zone note, selector, timer or additional API.
+
+Final task delta: UI85 added /28 removed = net+57; fixture29 added /1 removed = net+28;
+C++0, controller remains3,510 lines. Fixture growth is below the estimated range.
+No source moved out of src. Proposal and this append are documentation, not controller
+budget. Existing unrelated README/deployment/WORK_LOG hunks remain untouched.
+
+Focused final verification passes:
+- node --check ui/app.js; python3 -m py_compile tests/ui_enrollment.py.
+- Existing tests/ui_enrollment.py HTTP/SSE fixture with the new /test/layout cases.
+- Installed Chrome via temporary CDP scripts check.py/check-us.py/interaction.py:
+  UK/US locales,1440/1280/1152/720/390CSSpx; grouped headers, timestamp lines,
+  no label wraps, no narrow-panel overflow after scrolling, IPK/APK, safe long
+  compiler text, filtering, failed-only retry, busy controls and SSE open-state retention.
+  No extra API/mutation requests. Initial narrow US-time overflow was fixed before
+  final checks.1152/720 widths approximate zoom layout space; actual browser zoom
+  controls were not exercised. This is local synthetic proof, not live acceptance.
+- cmake --build build/codex/slim-controller --target core-ci format-check -j2.
+  Reconfigured embedded assets and built final source. Formatting target covers its
+  committed C++/CMake baseline; JS syntax/browser checks are separate. git diff --check.
+
+Build identity: HEAD7c5e68dfd9230696968ad8905da2e7b3f0c8870c plus UI/fixture diff
+SHA256 bfb6f728bc246026185afa2c2e88cab9204662b8eea2333e4f163c5368b56d1c.
+Evidence/screenshots retained under /tmp/codex/build/core-ci/ui-compact/; no new
+repository browser framework. No full backend suite, commit, push, installation,
+restart, live retry or GitHub mutation. Stuck-publication investigation remains deferred.
+
+
+### Compact UI deployed on core.vchrist.at — 2026-10-28
+
+Owner explicitly authorized deployment and restart. Deployed the tested local UI build
+from HEAD7c5e68d plus UI/fixture diff SHA256
+bfb6f728bc246026185afa2c2e88cab9204662b8eea2333e4f163c5368b56d1c.
+Binary SHA256 bb1d52035163124d7959a6e739e55a4e64e762166f1804bb581471b30529700f.
+The runtime manifest records both base commit and dirty diff; no commit was invented.
+Verified transfer checksum, backed up prior binary/manifest under
+/var/backups/core-ci/ui-compact-20261028T102725Z, atomically replaced the binary and
+restarted the existing service. Release: /srv/core-ci/releases/ui-compact-bfb6f728/.
+No configuration, credentials, libraries, listener settings, database or GitHub changes.
+
+Service active, PID222024, NRestarts0. Served HTML, JS and CSS match the tested files
+byte-for-byte. Complete graph before/after restart is identical: generation2100,
+40 executions. The earlier uncertain r169 assignment remains unchanged, not replayed.
+Public TLS status and SSE bootstrap both report generation2100/40 executions.
+Journal has no Pipeline failure in the inspected interval; framework TLS/socket
+shutdown warnings were observed after successful HTTP checks, not investigated here.
+
+Deployment snapshots/checks remain in /tmp/codex/build/core-ci/ui-compact/.
+No further package build, commit, push or merge. Local task changes remain uncommitted;
+unrelated working-tree edits/private directories preserved. Stuck-publication
+investigation remains outside this UI deployment.
+
+
+### Centered local 24-hour timestamps — 2026-10-28
+
+Owner requested centered two-line timestamps and 24-hour display, citing Austria.
+Centered the date/time spans and selected Intl hourCycle h23 for visible/local full
+timestamp descriptions. Local timezone conversion is unchanged; no timezone labels.
+No net production/test growth; UI remains net+57, fixture net+28, C++0.
+Node syntax and Austrian-time diagnostic pass (midnight00:05:06, afternoon14:05:06).
+Chrome checks all5 widths in US locale: two centered lines, HH:mm:ss without AM/PM,
+no narrow-panel overflow. core-ci and format-check build pass; diff check passes.
+
+Continued the authorized UI deployment: binary SHA256
+eb33eb941c8fbd107883eff0d2efb8f555c46b37de21069125b50d395e0358bf;
+HEAD7c5e68d plus UI/fixture diff SHA256
+2b7f33dcd043538dcd7612f4fea724084a5898beba278897fe5307571b458504.
+Backup /var/backups/core-ci/ui-centered-20261028T103104Z; release
+/srv/core-ci/releases/ui-compact-2b7f33dc/. Service active PID222160, NRestarts0.
+Live assets match source; entire graph unchanged at generation2100. No retry or
+GitHub/configuration/database changes; task remains uncommitted. Evidence stays
+under /tmp/codex/build/core-ci/ui-compact/.
+
+
+### Centered timing group headings — 2026-10-28
+
+Owner requested the Build and Publisher job headings centered above their Started/
+Finished columns, and explicitly authorized commit and deployment. Added one scoped
+CSS rule for colgroup headers. Chrome measured both text centers within0.008px of
+the midpoint of their two-column group. This changes no timestamp/state behavior.
+Build core-ci and format-check pass; git diff --check passes. Total UI delta is
+86 added /28 removed = net+58; fixture29/1 = net+28; C++0. All UI work stays inside
+the approved bounds. Commit includes task UI, fixture, proposal and task WORK_LOG
+entries only; unrelated hunks remain unstaged. Deployment/restart verification follows.

@@ -56,7 +56,7 @@ def serve(directory):
                             self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
-            elif self.path == "/test/metadata":
+            elif self.path in ("/test/metadata", "/test/layout"):
                 with condition:
                     sample = {"id": "recorded", "label": "Recorded build", "repository": "Owner/core", "tag": "v1.0.0",
                               "target_row": base["matrix"][0], "revision": 2, "state": "published", "activity": "published",
@@ -67,6 +67,34 @@ def serve(directory):
                                   "tests": {"passed": 3, "failed": 0, "skipped": 1, "coverage_percent": 0,
                                             "report_url": "https://reports.example.test/results"}}}}
                     executions[:] = [sample, {**sample, "id": "historical", "label": "Older build", "revision": 1, "receipt": {}}]
+                    if self.path == "/test/layout":
+                        sample.update(
+                            build_job={"status": "completed", "started_at": "2026-10-25T00:58:00Z",
+                                       "completed_at": "2026-10-25T00:59:00Z"},
+                            publication_job={"status": "completed", "started_at": "2026-10-25T01:02:00Z",
+                                             "completed_at": "2026-10-25T01:03:00Z"},
+                            build_run={"html_url": "https://github.com/Owner/core/actions/runs/1"},
+                            publication_run={"html_url": "https://github.com/Owner/core/actions/runs/2"})
+                        sample["receipt"]["publication_verified_utc"] = "2026-10-25T01:04:00Z"
+                        layout = [copy.deepcopy(sample)]
+                        for index, package_format in enumerate(("ipk", "apk"), 3):
+                            target = copy.deepcopy(base["matrix"][0])
+                            target.update(distribution="openwrt", suite="25.12", arch="x86_64")
+                            target["build"]["format"] = package_format
+                            layout.append({**copy.deepcopy(sample), "id": package_format,
+                                           "target_row": target, "revision": index})
+                        layout.append({**copy.deepcopy(sample), "id": "partial", "revision": 5,
+                                       "state": "publishing", "activity": "publishing: running",
+                                       "receipt": None, "publication_job": {
+                                           "status": "in_progress", "started_at": "2026-10-25T01:02:00Z"}})
+                        layout.append({**copy.deepcopy(sample), "id": "failed", "revision": 6,
+                                       "state": "failed", "activity": "failed", "publication_job": {},
+                                       "publication_run": None, "receipt": None})
+                        layout.append({**copy.deepcopy(sample), "id": "assigned", "revision": 7,
+                                       "repository": "Owner/long-project-name-for-layout-inspection",
+                                       "state": "publishing", "activity": "publishing: assigned; awaiting GitHub status",
+                                       "publication_job": {}, "publication_run": None, "receipt": None})
+                        executions[:] = layout
                     generation += 1
                     condition.notify_all()
                 self.reply(200, {"synthetic_metadata": generation})
