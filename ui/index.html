@@ -16,13 +16,13 @@
 <div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
 <label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
 <option value="failed">Failed</option><option value="published">Published</option></select></label></div>
-<div class="table-wrap"><table class="work-table"><colgroup><col style="width:36px"><col><col style="width:156px"><col style="width:260px"></colgroup>
-<colgroup><col span="2" style="width:96px"></colgroup><colgroup><col span="2" style="width:96px"></colgroup><colgroup><col style="width:148px"></colgroup>
-<thead><tr><th rowspan="2" scope="col" aria-label="Build details"></th><th rowspan="2" scope="col">Repository</th>
-<th rowspan="2" scope="col">Target</th><th rowspan="2" scope="col">State</th><th colspan="2" scope="colgroup">Build</th>
-<th colspan="2" scope="colgroup">Publisher job</th><th rowspan="2" scope="col">Publication verified</th></tr>
-<tr><th scope="col">Started</th><th scope="col">Finished</th><th scope="col">Started</th><th scope="col">Finished</th></tr>
-</thead><tbody id="graph"></tbody></table></div>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Package executions; scroll horizontally for all timing columns">
+<table class="work-table"><colgroup><col class="work-toggle"><col><col class="work-target"><col class="work-state">
+<col class="work-job"><col class="work-job"><col class="work-verified"></colgroup><thead><tr>
+<th scope="col" aria-label="Build details"></th><th scope="col">Package</th><th scope="col">Target</th><th scope="col">State</th>
+<th scope="col" class="work-job"><strong>Build</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
+<th scope="col" class="work-job"><strong>Publisher job</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
+<th scope="col" class="work-verified">Publication verified</th></tr></thead><tbody id="graph"></tbody></table></div>
 <p id="visible-count"></p>
 </section>
 <section id="repositories-panel" aria-labelledby="repositories-heading" hidden>

@@ -58,14 +58,34 @@ dialog { width: min(760px,95vw); max-height: 90vh; overflow: auto; border: 1px s
     border-radius: 8px; padding: 20px; color: var(--text); background: var(--panel); }
 dialog::backdrop { background: #0006; }
 
-#work-panel > .table-wrap { container-type: inline-size; } .work-table { table-layout: fixed; min-width: 1224px; }
-.work-table > tbody > tr > td { vertical-align: top; } .work-table > thead th { padding-block: 3px; }
-.work-table > thead > tr:last-child > :nth-child(odd), #graph > tr > td:is(:nth-child(5),:nth-child(7)) { padding-inline: 20px 6px; }
-.work-table > thead > tr:last-child > :nth-child(even), #graph > tr > td:is(:nth-child(6),:nth-child(8)) { padding-inline: 6px 20px; }
-.work-time, .timestamp { font-size: 12px; font-variant-numeric: tabular-nums; } .timestamp > span { display: block; white-space: nowrap; text-align: center; }
+#work-heading { font-size: 22px; letter-spacing: -.4px; }
+#work-panel { max-width: 1320px; margin-inline: auto; } #work-panel > .table-wrap { container-type: inline-size; }
+.work-table { table-layout: fixed; min-width: 1152px; }
+col.work-toggle { width: 32px; } col.work-target { width: 156px; } col.work-state { width: 190px; }
+col.work-job { width: 184px; } col.work-verified { width: 142px; }
+.work-table > thead th { height: 60px; padding: 8px 12px; font-size: 12px; }
+.work-table > tbody > .execution-row > :is(th,td) { padding: 10px 12px; border-top: 1px solid var(--line); height: 64px; }
+.work-table > tbody > .execution-row > th { background: transparent; color: var(--text); font-size: 13px; font-weight: 400; }
+.work-table > tbody > .execution-row > th { white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.execution-row:hover { background: var(--soft); } .work-table > tbody > .execution-row > td:first-child { padding-inline: 6px; }
+.package-identity { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; } .package-identity strong { font-size: 14px; }
+.package-version { border-radius: 4px; padding: 1px 6px; background: var(--soft); color: var(--sub); font-size: 11px; font-weight: 600; }
+.execution-row .secondary { margin-top: 4px; } .execution-row strong { font-weight: 650; }
+.execution-state { display: inline-block; } .activity { font-size: 11px; }
+.execution-state .state { display: inline-block; padding: 2px 7px; border-radius: 4px; background: var(--soft); font-weight: 650; text-transform: capitalize; }
+.execution-state .state.published { background: light-dark(#e8f5ee,#193c30); }
+.execution-state .state.waiting { background: light-dark(#fff3dc,#3e321c); }
+.execution-state .state.failed { background: light-dark(#fcebea,#47282d); }
+.work-table > thead th.work-job, .work-table > tbody > .execution-row > td.work-job { padding-inline: 16px; text-align: center; }
+.job-pair { display: grid; grid-template-columns: 72px 72px; gap: 8px; justify-content: center; align-items: center; }
+.work-job > strong { display: block; margin-bottom: 7px; } thead .job-pair { font-size: 10px; font-weight: 400; }
+.timestamp { display: block; font-variant-numeric: tabular-nums; } .timestamp > span { display: block; white-space: nowrap; text-align: center; }
+.timestamp > span:first-child { font-size: 11px; color: var(--sub); } .timestamp > span:last-child { font-size: 13px; font-weight: 650; }
+.job-pair > .secondary, .work-verified > .secondary { font-size: 11px; }
+.work-verified { text-align: center; } .work-table > thead th.work-verified { font-size: 11px; }
 .execution-content { position: sticky; left: 0; width: 100%; max-width: 100cqi; padding: 16px; }
 .execution-details dl { grid-template-columns: max-content minmax(0,1fr); } .execution-details dt, .timings th { white-space: nowrap; }
-.work-table > thead th:not([rowspan]), .work-table > thead th:last-child, .work-time, .timings td, .timings th:not(:first-child) { text-align: center; }
+.timings td, .timings th:not(:first-child) { text-align: center; }
 .timings { width: auto; } .timings th, .timings td { padding: 5px 6px; vertical-align: top; }
 @container (max-width:760px) { .detail-grid { grid-template-columns: minmax(0,1fr); }
     .execution-content { padding: 12px; }

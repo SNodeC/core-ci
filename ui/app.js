@@ -16,8 +16,11 @@ function button(text, action, className = "") {
     return result;
 }
 function state(execution) {
-    const result = node("span", execution.superseded_by ? "superseded" :
-        ["building", "publishing"].includes(execution.state) ? execution.activity : execution.state, "state " + execution.state);
+    const result = node("span", "", "execution-state");
+    result.append(node("span", execution.superseded_by ? "superseded" : execution.state, "state " + execution.state));
+    if (!execution.superseded_by && execution.activity && execution.activity !== execution.state) {
+        result.append(node("span", execution.activity.replace(execution.state + ": ", "").replaceAll("_", " "), "secondary activity"));
+    }
     return result;
 }
 function feedback(value, failed = false) {
@@ -218,7 +221,8 @@ function renderWork() {
     }
     element("graph").replaceChildren();
     for (const execution of visible) {
-        const target = execution.target_row, row = node("tr"), repository = node("td"), distribution = node("td");
+        const target = execution.target_row, row = node("tr", "", "execution-row"), repository = node("th"), distribution = node("td");
+        repository.scope = "row";
         row.setAttribute("aria-selected", String(execution.id === executionId));
         const toggle = button(execution.id === executionId ? "▾" : "▸", () => {
             executionId = executionId === execution.id ? null : execution.id;
@@ -229,24 +233,33 @@ function renderWork() {
         toggle.setAttribute("aria-controls", "execution-" + execution.id);
         const control = node("td");
         control.append(toggle);
-        repository.append(node("span", execution.repository), node("span", execution.tag + " · r" + execution.revision, "secondary revision"));
-        distribution.append(node("span", target.distribution + " " + target.suite),
+        const [owner, name] = execution.repository.split("/"), identity = node("span", "", "package-identity");
+        identity.append(Object.assign(node("strong", name), {title: execution.repository}), node("span", execution.tag, "package-version"));
+        repository.append(identity, node("span", owner + " · r" + execution.revision, "secondary revision"));
+        distribution.append(node("strong", target.distribution + " " + target.suite),
             node("span", target.arch + " · " + target.build.format, "secondary"));
         const status = node("td");
         status.append(state(execution));
         row.append(control, repository, distribution, status);
         const [buildPending, publicationPending, verificationPending] = executionPending(execution);
-        for (const [value, waiting] of [[execution.build_job?.started_at, buildPending], [execution.build_job?.completed_at, buildPending],
-            [execution.publication_job?.started_at, publicationPending], [execution.publication_job?.completed_at, publicationPending],
-            [execution.receipt?.publication_verified_utc, verificationPending]]) {
-            const cell = node("td", "", "work-time");
-            cell.append(timestamp(value, waiting));
+        for (const [phase, job, waiting] of [["Build", execution.build_job, buildPending],
+            ["Publisher job", execution.publication_job, publicationPending]]) {
+            const cell = node("td", "", "work-job"), pair = node("span", "", "job-pair");
+            for (const [label, value] of [["started", job?.started_at], ["finished", job?.completed_at]]) {
+                const stamp = timestamp(value, waiting);
+                stamp.setAttribute("aria-label", phase + " " + label + ": " + (stamp.getAttribute("aria-label") || stamp.textContent));
+                pair.append(stamp);
+            }
+            cell.append(pair);
             row.append(cell);
         }
+        const verified = node("td", "", "work-verified");
+        verified.append(timestamp(execution.receipt?.publication_verified_utc, verificationPending));
+        row.append(verified);
         element("graph").append(row);
         if (execution.id === executionId) {
             const details = node("tr"), panel = node("td", "", "execution-details");
-            panel.colSpan = 9;
+            panel.colSpan = 7;
             panel.id = "execution-" + execution.id;
             renderExecution(execution, panel, technicalOpen);
             details.append(panel);
