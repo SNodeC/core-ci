@@ -2748,3 +2748,28 @@ APK client40666809235 also passed. Remaining target/client results stay unclaime
 Public UI assets match source byte-for-byte; invalid HMAC is rejected; live SSE is captured.
 Loopback endpoint medians under load: graph19.664ms, database health1.748ms, public status
 18.078ms. These are endpoint timings, not dispatch latency or a speedup claim.
+
+
+### Slim controller final sandbox verification — 2026-10-28
+
+Deployed eab0b087135e8275752e48ba2fd8772c55e82e92 to core.vchrist.at under the
+owner's commit/push/deployment/test authorization. Binary SHA-256:
+ee4cfa91431876f967a3fb423df884b2e104e340af9d3784cfbba779bdc60f51.
+Service PID221515 is active with NRestarts0. The approved payload change resumed the
+same waiting Fedora join revision202; it did not retry successful executions.
+
+All20 fresh revisions185–204 are now verified published. All5 join client workflows
+passed:40666026402,40666021823,40668066980,40667246183,40666809235.
+Controller/public/Pages reached generation2100; public and Pages JSON are identical.
+HTTPS bytes for20 receipts,4 project pages and controller JSON match committed blobs.
+Feed comparison found no removed files and no changes to535 retained package,
+receipt/export/key blobs. Existing-path changes are affected indexes/status only.
+No new403 or Pipeline error was observed after the payload deployment.
+
+Full run links and limits are in docs/proposals/slim-controller-sandbox-acceptance.md.
+This includes the intervening approved restart, the earlier uncertain APK assignment
+(not replayed), superseded waiting history and unresolved installed-framework N2.
+The original database, old tags, keys, private directories and unrelated edits remain
+preserved. No production SNodeC integration changed. No main merge or speedup claim.
+Final controller size is3,510 lines. This handover adds documentation only; no further
+build or repeat tests were needed after the already tested/deployed source.
