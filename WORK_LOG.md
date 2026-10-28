@@ -3196,3 +3196,25 @@ restart, live tag or VOC-Experiments workflow activation is part of this stage.
   live activation, report concrete occupied-directory signing/index conflicts without
   modifying historical files. Real client installation and Packages-link HTTP checks are
   live acceptance work, not established by these local checks.
+
+
+## Canonical publication correction — deep review and merge preparation
+
+- Owner authorized commit, push and merge, and required a deep Claude review. Source
+  correction committed/pushed as `3683f840d92856361ee04177f69b52bad2287ff3` on
+  `rewrite/slim-graph-controller`; PR https://github.com/SNodeC/core-ci/pull/3.
+- Claude reviewed the exact source in session `44ba3c49-8184-4b83-9689-fea34f4c5f12`: no
+  concrete source defects or merge blockers; agreed paths, receipts/replay/signatures and
+  SDK archive reuse remain intact. Full read-only review/request retained in
+  `/tmp/codex/build/core-ci/publication-layout-review/committed-review.{md,json}`.
+- Independently resolved the branch-escaping note: public GitHub HEAD returned HTTP200 for
+  both `/tree/rewrite%2Fslim-graph-controller` and `/tree/rewrite/slim-graph-controller`.
+  Confirmed canonical layout/client documentation is in the source commit; unrelated dirty
+  documentation hunks remain excluded. Missing receipt identity is outside the current
+  contract, not a renderer fallback requirement. No production/test correction was needed.
+- Existing focused tests validate the exact committed production/test bytes. GitHub reports
+  no configured PR checks and a clean merge. No full suite was run. Local synthetic
+  OpenWrt proof is not live SDK/signature/client proof; second-architecture/native client
+  acceptance and concrete pre-activation content conflicts remain live-stage concerns.
+- This review record changes documentation only. No deployment, new builds, historical
+  cleanup, feed/key/config changes or uncertainty recovery was performed.
