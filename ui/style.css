@@ -60,11 +60,12 @@ dialog::backdrop { background: #0006; }
 
 #work-panel > .table-wrap { container-type: inline-size; }
 .work-table > tbody > tr > td { vertical-align: top; } .work-table > thead th { padding-block: 3px; }
-.work-table > thead th[scope="colgroup"] { text-align: center; }
+.work-table > thead th:not([rowspan]), .work-table > thead th:last-child { text-align: center; }
 .work-table > tbody > tr > td:nth-child(4) { min-width: 18ch; overflow-wrap: normal; }
 .work-time, .timestamp { font-size: 12px; font-variant-numeric: tabular-nums; } .timestamp > span { display: block; white-space: nowrap; text-align: center; }
 .execution-content { position: sticky; left: 0; width: 100%; max-width: 100cqi; padding: 16px; }
 .execution-details dl { grid-template-columns: max-content minmax(0,1fr); } .execution-details dt, .timings th { white-space: nowrap; }
+.work-time, .timings td, .timings th:not(:first-child) { text-align: center; }
 .timings { width: auto; } .timings th, .timings td { padding: 5px 6px; vertical-align: top; }
 @container (max-width:760px) { .detail-grid { grid-template-columns: minmax(0,1fr); }
     .execution-content { padding: 12px; }

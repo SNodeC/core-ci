@@ -2891,3 +2891,14 @@ Build core-ci and format-check pass; git diff --check passes. Total UI delta is
 86 added /28 removed = net+58; fixture29/1 = net+28; C++0. All UI work stays inside
 the approved bounds. Commit includes task UI, fixture, proposal and task WORK_LOG
 entries only; unrelated hunks remain unstaged. Deployment/restart verification follows.
+
+
+### Align timing headers and values to their columns — 2026-10-28
+
+Owner pointed out timestamp values still did not align with Started/Finished headings.
+Centered timing leaf headers, verified heading, Pending values and detail timing values
+as well as the group titles. Chrome measured every synthetic timestamp/placeholder
+text center against its column heading: maximum delta0.008px. Both group titles remain
+centered over two columns. core-ci/format-check build and diff checks pass. UI is now
+net+59 relative to7c5e68d; tests net+28; C++0. No behavior/data change. The preceding
+group-heading binary was transferred but not activated; deploy this complete correction.
