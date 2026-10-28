@@ -306,6 +306,7 @@ if(BUILD_TESTING)
         preflight-publish-known
         preflight-live
         queued-job
+        large-indexes
     )
         add_test(
             NAME pipeline-${case}

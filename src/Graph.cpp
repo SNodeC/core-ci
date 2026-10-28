@@ -64,7 +64,9 @@ namespace coreci {
                 } else {
                     for (const auto& id : node.at("prerequisites")) {
                         const auto& other = state.at("executions").at(id.get<std::string>()).at("attempts").back();
-                        dependencies.push_back({{"execution", id}, {"attempt", other.at("id")}, {"receipt", other.at("receipt")}});
+                        auto receipt = other.at("receipt");
+                        receipt.erase("indexes");
+                        dependencies.push_back({{"execution", id}, {"attempt", other.at("id")}, {"receipt", receipt}});
                     }
                 }
                 const auto& source = node.at("source");

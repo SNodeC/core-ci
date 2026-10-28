@@ -2697,3 +2697,54 @@ Live evidence, scripts, manifests and request/progress snapshots remain under
 /tmp/codex/build/core-ci/slim-deployment/. N2 is still an unresolved installed-framework
 reconnection defect; no framework code changed. Live signed publication, fresh-chain
 completion and client acceptance remain unclaimed until actually observed.
+
+
+### Approved compact prerequisite payload and live continuation — 2026-10-28
+
+The live fresh v2.1.5 chain reached18 published targets while Fedora join was visibly blocked
+by its input bound. Real diagnostic using the authoritative Graph.cpp assignment/inputs on a
+read-only sandbox state measured assignment82,701B / inputs87,705B. Prerequisite RPM index
+listings alone accounted for65,382B. This is a transport-bound defect, not a dependency-delay
+inference. The existing65,535B dispatch bound and60,000B worker assignment bound stay.
+
+Owner explicitly approved the bounded payload fix before implementation. Take a value copy
+of each first-attempt prerequisite receipt and omit only indexes. Full stored and signed
+receipts, exact package/export hashes, environment/SDK compatibility, identities and all
+verification stay unchanged. Existing assignments and retries keep original bytes. Hooks'
+receipt copies now omit indexes; docs/extensions/README.md states that contract. No worker
+production change, callback protocol, persistence state or workflow update was introduced.
+Two C++ lines bring the controller to exactly3,510. The same real Fedora data now measures
+assignment17,286B / inputs19,164B. Baseline/after diagnostics remain in input-metrics*.jsonl
+under /tmp/codex/build/core-ci/slim-deployment; the live database was not edited by the probe.
+
+Claude traced all worker consumers and source hooks, agreed the design and reviewed the
+implementation in detail. It found no concrete defects; claude-payload-review.md and
+claude-payload-confirm.md record its source/consumer analysis and limitations. This is local
+review, not live acceptance. The reviewer noted possible retained RPM repodata accumulation;
+that is a separate unverified worker-side hypothesis, not changed in this correction.
+
+Seven focused checks pass against the final production source: graph-state-boundaries,
+pipeline-chain, pipeline-recovery, pipeline-large-indexes, worker-package-boundaries,
+worker-environment-boundaries and worker-provenance-boundaries. The graph test proves
+large-index joins fit; exact consumed identities and full stored receipts remain; assignments
+are not replayed/recomputed; retries reuse their original dependencies. The new full20-node
+MariaDB/syntheticGitHub case retains100 index entries in each stored RPM receipt while
+omitting them from dispatched prerequisites. Worker projection proof accounts for the
+correctly changed assignment digest and preserves every other publication-receipt field.
+
+The first test run had test-only indentation and expected-digest errors. Fixed those tests;
+the four affected failures pass on rerun. Graph/environment/provenance already passed against
+the identical production source and are not repeated solely for a consolidated log. All
+relevant checks ran independently. Logs: payload-tests.log and payload-tests-final.log.
+Build, canonical formatting and git diff --check pass. Controller delta +3/-1 = net+2;
+CMake registration +1; tests +60/-1 = net+59; extension documentation +3.
+
+The corrected timestamp deployment ae2f3ac is running, binary SHA-256
+93c825981c4c5378ed15f8138388735c3e76de830956e0a83ebd894ef530599c.
+The fresh chain was triggered only by demo-core v2.1.5 at378ff698bf66dc1b4d1b46c1b72dc12704fe3cf1,
+at09:19:29Z. No manual advancement/retry was used for its18 successful publications.
+Native join client acceptance passed on amd64 (40666026402) and arm64 (40666021823);
+APK client40666809235 also passed. Remaining target/client results stay unclaimed.
+Public UI assets match source byte-for-byte; invalid HMAC is rejected; live SSE is captured.
+Loopback endpoint medians under load: graph19.664ms, database health1.748ms, public status
+18.078ms. These are endpoint timings, not dispatch latency or a speedup claim.

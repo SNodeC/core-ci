@@ -260,6 +260,53 @@ int main(int argc, char* argv[]) {
         check(graph::advance(state).empty(), "completed graph dispatched replacement work");
         check(graph::select(state, "core", selected, false, state.at("next_revision").get<std::uint64_t>()).empty(),
               "unchanged selection created work");
+        auto indexHeavy = state;
+        auto indexes = Json::array();
+        for (unsigned int index = 0; index < 100; ++index) {
+            indexes.push_back(
+                {{"path", "rpm/fedora/43/x86_64/repodata/" + std::string(120, 'a') + std::to_string(index) + "-primary.xml.gz"},
+                 {"sha256", std::string(64, 'b')},
+                 {"size_bytes", 1024}});
+        }
+        for (auto& node : indexHeavy.at("executions")) {
+            node.at("attempts").back().at("receipt")["indexes"] = indexes;
+        }
+        const auto retained = indexHeavy.at("executions");
+        auto nextJoin = selected;
+        nextJoin["join"]["tag"] = "v2.1.4";
+        nextJoin["join"]["commit"] = std::string(40, '9');
+        graph::select(indexHeavy, "join", nextJoin, false, indexHeavy.at("next_revision"));
+        const auto joins = graph::advance(indexHeavy);
+        check(joins.size() == 5, "unused repository metadata blocked ready joins");
+        for (const auto& work : joins) {
+            const auto& node = indexHeavy.at("executions").at(work.at("execution").get<std::string>());
+            const auto& assigned = node.at("attempts").back().at("assignment");
+            const auto payload = graph::inputs(node, false);
+            check(assigned.dump().size() < 60000 && payload.dump().size() <= 65535 &&
+                      payload.at("assignment_sha256") == coreci::digest(assigned),
+                  "compact dispatch lost its bound or digest");
+            for (const auto& dependency : assigned.at("dependencies")) {
+                const auto& original = retained.at(dependency.at("execution").get<std::string>()).at("attempts").back();
+                auto consumed = original.at("receipt");
+                consumed.erase("indexes");
+                check(dependency.at("receipt") == consumed && dependency.at("attempt") == original.at("id"),
+                      "compact prerequisite changed exact consumption facts");
+                check(indexHeavy.at("executions").at(dependency.at("execution").get<std::string>()).at("attempts").back().at("receipt") ==
+                          original.at("receipt"),
+                      "assignment projection mutated the retained receipt");
+            }
+        }
+        check(graph::advance(indexHeavy).empty(), "compact join assignment was dispatched twice");
+        auto& assignedJoin = indexHeavy.at("executions").at(joins.front().at("execution").get<std::string>());
+        assignedJoin.at("attempts").back().at("assignment")["dependencies"][0]["receipt"]["indexes"] = Json::array({indexes.front()});
+        const auto committedAssignment = assignedJoin.at("attempts").back().at("assignment");
+        check(graph::advance(indexHeavy).empty() && assignedJoin.at("attempts").back().at("assignment") == committedAssignment,
+              "existing full assignment was rewritten");
+        graph::failed(assignedJoin, assignedJoin.at("attempts").back().at("id"), "definite test failure");
+        graph::retry(indexHeavy, assignedJoin.at("id"));
+        check(graph::advance(indexHeavy).size() == 1 &&
+                  assignedJoin.at("attempts").back().at("assignment").at("dependencies") == committedAssignment.at("dependencies"),
+              "retry changed its original prerequisite inputs");
         const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::cout << "Synthetic in-memory twenty-target graph: " << elapsed << " ms (no HTTP or database time)\n";
 

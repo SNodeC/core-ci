@@ -684,6 +684,9 @@ def exercise(arguments):
                                    "assignment_sha256": work["inputs"]["assignment_sha256"], "source_commit": selected["source"]["commit"],
                                    "run": identity, "build_result": json.loads(work["inputs"]["build_result"]), "feed": selected["source"]["deployment"]["feed"],
                                    "packages": [{"name": selected["source"]["package"], "sha256": "a" * 64}], "environment": {"fixture": "synthetic"}}
+                        if arguments.case == "large-indexes" and selected["target"]["build"]["format"] == "rpm":
+                            receipt["indexes"] = [{"path": "rpm/repodata/" + "a" * 140 + str(i) + ".xml.gz", "sha256": "b" * 64, "size_bytes": 1024}
+                                                  for i in range(100)]
                         path = "receipts/" + selected["execution"] + "/" + str(selected["revision"]) + ".json"
                         public_files[path] = canonical(receipt).encode()
                         receipt_bytes = public_files[path]
@@ -706,6 +709,10 @@ def exercise(arguments):
                     wait(lambda: sum(row["state"] == "published" for row in api("/api/graph")[1]["executions"]) == len(completed), "publication proof was not accepted")
                 expected_dispatches = 42 if arguments.case in ("skip", "skip-job") else 41 if arguments.case in ("missing", "expired") else 40
                 expected_artifacts = 21 if arguments.case in ("skip", "skip-job", "missing", "expired") else 20
+                if arguments.case == "large-indexes":
+                    assert all("indexes" not in dependency["receipt"] for work in dispatches for dependency in work["selected"]["dependencies"])
+                    assert all(len(row["receipt"]["indexes"]) == 100 for row in api("/api/graph")[1]["executions"]
+                               if row["target_row"]["build"]["format"] == "rpm")
                 assert len(dispatches) == expected_dispatches and len(completed) == 20
                 assert sum("/artifacts?" in item[2] for item in trace) == expected_artifacts, "artifact reads multiplied"
                 graph = api("/api/graph")[1]
@@ -747,5 +754,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True)
     parser.add_argument("--directory", required=True)
-    parser.add_argument("--case", choices=("chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job"), default="chain")
+    parser.add_argument("--case", choices=("chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
     exercise(parser.parse_args())
