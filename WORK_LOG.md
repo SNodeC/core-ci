@@ -3340,3 +3340,12 @@ viewport movement remains unverified because browser access is unavailable. Prob
 /tmp/codex/build/core-ci/prerequisite-navigation/{probe.cjs,before.log,after.log}.
 Node syntax, changed-line<=160 and diff checks pass. Continuing owner cpmd authorization
 for these Work-UI fixes; preserve unrelated working-tree documentation and deployment state.
+
+## Chevron hover styling — 2026-10-28
+
+Owner requests no underline on disclosure triangles. Narrow the existing text-link hover
+selector with :not(.chevron), preserving prerequisite-name underlines without adding a
+competing override. Icon hover uses ordinary button affordance. CSS+1/-1/net0; C++/JS/tests0.
+Final Release build, changed-line<=160 and diff check pass. No new behavior mechanism.
+Keep this cosmetic source delta separate from Claude's dd09c70 architecture checkpoint;
+controller/worker/application logic is unchanged. Continue existing UI cpmd authorization.
