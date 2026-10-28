@@ -1,21 +1,15 @@
-#ifndef CORE_CI_VERSION_H
-#define CORE_CI_VERSION_H
+#pragma once
 
-#include <array>
 #include <string>
 #include <vector>
 
 namespace coreci {
-
-    struct Version {
+    class Version {
+    public:
         explicit Version(const std::string& tag);
         int compare(const Version& other) const;
 
-        std::string tag;
-        std::array<std::string, 3> release;
-        std::vector<std::string> prerelease;
+    private:
+        std::vector<std::string> parts;
     };
-
 } // namespace coreci
-
-#endif

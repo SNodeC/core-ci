@@ -1,5 +1,5 @@
-#include "Definition.h"
-
+#include "Graph.h"
+#include "SourceReader.h"
 #include "Version.h"
 
 #include <fstream>
@@ -26,6 +26,16 @@ namespace {
         check(rejected, "invalid public input was accepted");
     }
 
+    nlohmann::json parse(const nlohmann::json& document) {
+        return coreci::SourceReader::parseDefinition(document.dump());
+    }
+    void validate(const std::map<std::string, nlohmann::json>& definitions) {
+        auto sources = nlohmann::json::object();
+        for (const auto& [name, document] : definitions) {
+            sources[name] = {{"repository", "Owner/" + name}, {"definition", document}};
+        }
+        coreci::graph::validateSources(sources);
+    }
     nlohmann::json definition(const std::string& package, const std::vector<std::string>& dependencies) {
         return {{"schema", 1},
                 {"title", package},
@@ -47,16 +57,16 @@ int main(int argc, char* argv[]) {
     int status = 0;
     try {
         check(argc == 2, "sandbox definitions directory required");
-        std::map<std::string, coreci::Definition> sandbox;
+        std::map<std::string, nlohmann::json> sandbox;
         for (const auto* name : {"demo-core", "demo-app", "demo-side", "demo-join"}) {
             std::ifstream input(std::string(argv[1]) + "/" + name + ".json");
             nlohmann::json document;
             input >> document;
-            auto parsed = coreci::Definition::parse(document);
-            check(parsed.json == document && document["matrix"].size() == 5, "sandbox targets changed");
+            auto parsed = parse(document);
+            check(parsed == document && document["matrix"].size() == 5, "sandbox targets changed");
             sandbox.emplace(name, std::move(parsed));
         }
-        coreci::Definition::validateGraph(sandbox);
+        validate(sandbox);
 
         const std::vector<std::string> ordered{"1.0.0-alpha",
                                                "1.0.0-alpha.1",
@@ -85,47 +95,44 @@ int main(int argc, char* argv[]) {
         auto core = definition("demo-core", {});
         auto app = definition("demo-app", {"demo-core"});
         app["matrix"][0]["id"] = "different-repository-local-label";
-        coreci::Definition::validateGraph({{"demo-core", coreci::Definition::parse(core)}, {"demo-app", coreci::Definition::parse(app)}});
-        check(coreci::Definition::parse(app).json == app, "worker data was rewritten");
+        validate({{"demo-core", parse(core)}, {"demo-app", parse(app)}});
+        check(parse(app) == app, "worker data was rewritten");
         auto named = app;
         named["depends_on"] = {"Mixed_Name"};
-        coreci::Definition::validateGraph({{"Mixed_Name", coreci::Definition::parse(core)}, {"app", coreci::Definition::parse(named)}});
+        validate({{"Mixed_Name", parse(core)}, {"app", parse(named)}});
 
         auto overlap = app;
         overlap["package"] = "demo-core-extra";
         rejects([&]() {
-            coreci::Definition::validateGraph(
-                {{"demo-core", coreci::Definition::parse(core)}, {"demo-app", coreci::Definition::parse(overlap)}});
+            validate({{"demo-core", parse(core)}, {"demo-app", parse(overlap)}});
         });
 
         auto wrong = app;
         wrong["matrix"].push_back(wrong["matrix"][0]);
         rejects([&]() {
-            coreci::Definition::parse(wrong);
+            parse(wrong);
         });
         wrong = app;
         wrong["build"]["native"] = "ci/../../escape";
         rejects([&]() {
-            coreci::Definition::parse(wrong);
+            parse(wrong);
         });
         wrong = app;
         wrong["matrix"][0]["build"]["arch"] = "duplicated";
         rejects([&]() {
-            coreci::Definition::parse(wrong);
+            parse(wrong);
         });
         wrong = app;
         wrong["matrix"][0]["arch"] = "other-arch";
         rejects([&]() {
-            coreci::Definition::validateGraph(
-                {{"demo-core", coreci::Definition::parse(core)}, {"demo-app", coreci::Definition::parse(wrong)}});
+            validate({{"demo-core", parse(core)}, {"demo-app", parse(wrong)}});
         });
         rejects([&]() {
-            coreci::Definition::validateGraph({{"demo-app", coreci::Definition::parse(app)}});
+            validate({{"demo-app", parse(app)}});
         });
         core["depends_on"] = {"demo-app"};
         rejects([&]() {
-            coreci::Definition::validateGraph(
-                {{"demo-core", coreci::Definition::parse(core)}, {"demo-app", coreci::Definition::parse(app)}});
+            validate({{"demo-core", parse(core)}, {"demo-app", parse(app)}});
         });
 
         auto sdk = definition("demo-sdk", {});
@@ -134,10 +141,10 @@ int main(int argc, char* argv[]) {
         row["family"] = "openwrt";
         row["distribution"] = "openwrt";
         row["build"] = {{"target", "custom/target"}, {"format", "apk"}};
-        coreci::Definition::parse(sdk);
+        parse(sdk);
         row["build"]["sdk"]["sha256"] = "not source-owned";
         rejects([&]() {
-            coreci::Definition::parse(sdk);
+            parse(sdk);
         });
         std::cout << "PASS authoritative definitions, target graph validation and numeric SemVer\n";
     } catch (const std::exception& error) {

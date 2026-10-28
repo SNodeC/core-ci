@@ -92,7 +92,7 @@ installed Unix-socket authentication plugin:
 ```sql
 CREATE DATABASE core_ci CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER 'core_ci'@'localhost' IDENTIFIED VIA unix_socket;
-GRANT SELECT, INSERT, UPDATE, DELETE ON core_ci.* TO 'core_ci'@'localhost';
+GRANT SELECT, UPDATE ON core_ci.* TO 'core_ci'@'localhost';
 ```
 
 Apply the schema as an administrative account:
@@ -567,47 +567,39 @@ have changed the feed. Inspect the assigned run/receipt/feed revision, preserve 
 and reconcile it. Never delete state or dispatch a replacement merely because a result is
 inaccessible or an HTTP response was lost.
 
-### Upgrade trusted tooling coherently
+### Activate the controller with a fresh graph
 
-Keep two reviewed generations, O (previous) and N (new), through separate deployment-owned
-workflow paths. This preserves immutable historical assignments without adding a controller
-compatibility mechanism. Paths below are examples; the controller configuration owns them.
+The controller restores one `graph_state` row from the schema above. This source has no
+schema migration or importer. Do not point it at an existing deployment's database or apply
+its schema over that deployment. Keep the existing database and its backup intact. A fresh
+schema does not adopt in-flight assignments; finish or explicitly resolve those assignments
+before routing notifications to another controller. Do not trigger replacements for unknown
+outcomes.
 
-1. Review code and focused checks. Record active assignments and back up MariaDB before restart.
-2. Retain O's deployed source, publisher and status workflow bytes and repository variable
-   `CORE_CI_TOOLING_SHA=O`. Keep its tooling commit accessible. Do not overwrite old paths.
-3. Commit reviewed new worker tooling first, obtaining N, while leaving O’s deployed publisher
-   and status workflow paths byte-identical. Exclude their replacement templates from this tooling
-   commit. Then render the new publisher and status
-   templates with N into new paths, such as `core-ci-publish-parallel.yml` and
-   `core-ci-status-parallel.yml`. Commit those wrappers separately: a commit cannot embed its
-   own SHA. Both generations must use the same actual feed concurrency group and trusted keys.
-4. Render the thin source template with N into a new path in each enrolled repository, such
-   as `core-ci-build-parallel.yml`. Preserve its previous workflow path on the dispatch branch.
-   Calculate the approved Git blob identities from the actual committed wrapper bytes.
-5. Configure future selections with N and the new source/publication/status paths and blobs.
-   Do not rewrite old selections, attempts or their deployment JSON. The main-only publication
-   environment remains in place; path retention does not require additional secrets.
-6. Build/restart the reviewed controller first with `pipeline.publication-limit=1` if old
-   tooling is still active, then enable the approved capacity after mixed-generation checks.
-   Restore old assignments without replacement dispatches; explicitly retry a historical
-   failure and make a new selection to verify both generations against their own exact pins.
-7. Verify actual publication and public HTTPS confirmation. The new `confirm` job receives only
-   the prepared receipt SHA-256 and feed commit SHA, has no publication environment or secrets,
-   and runs outside the feed lock. Controller receipt/Git/HTTPS proof still decides publication.
+Before using an existing feed with a fresh graph, inventory its retained rebuild revisions.
+Provision `next_revision` above that maximum while the new controller is stopped. The default
+value of 1 is appropriate only for a feed without previously used rebuild revisions. Preserve
+all retained package bytes, signing keys and tags. This requires an operator-reviewed feed
+inventory; the controller does not discover it automatically.
 
-The defaults are eight HTTPS operations per named client (`github-http --max-in-flight 8`,
-`feed-http --max-in-flight 8`, permitted range 1–16), and eight publication assignments per feed
-(`pipeline --publication-limit 8`, range 1–32). HTTP overlap stays within the current origin;
-a pending origin change waits for in-flight transports to drain. The shared client remains.
-Publication capacity includes uncertain assignments. Independent nodes may proceed within
-capacity; an uncertain node retains its assignment and cannot satisfy its dependents.
-The actual feed-mutating jobs and status writer still share one GitHub concurrency group.
+Review and pin the worker tooling SHA and the exact source, publication and status workflow
+blobs. Install the matching thin source workflows in the explicitly authorized repositories.
+Retain every workflow/tooling identity still needed by a selected execution or explicit retry;
+a branch edit cannot silently update its immutable deployment inputs. The publication and
+status feed-mutating jobs must use the same actual GitHub concurrency group. Validate that
+exclusion in the sandbox before live publication.
 
-Do not remove O merely to make room for N: retiring an approved historical generation requires
-an owner decision about its future explicit retries. Rollback to an older controller is unsafe
-while multiple publications for one feed remain assigned, because its restore validation may
-reject that graph. Drain/reconcile valid assignments first; never delete them to force rollback.
+There is no controller publication-admission limit. All eligible assignments are committed
+and dispatched, while dependencies wait for verified published prerequisites. GitHub owns
+runner capacity and the workflow's feed-write exclusion. HTTPS operations remain bounded per
+named client (`github-http --max-in-flight 8` and `feed-http --max-in-flight 8`, range 1–16).
+This transport limit is not a limit on assigned or running GitHub jobs.
+
+Record assignments and database identity before starting or stopping a deployment. Verify
+restoration, standard webhook delivery, local graph/SSE progress, signed publication and
+public HTTPS bytes separately. A passing synthetic pipeline is not this live acceptance.
+The fresh controller is not yet deployed; listener addresses, ports and TLS settings have
+not been changed by its implementation.
 
 Each workflow dispatch is independent, but a later job is not free to adopt arbitrary current
 CI files. Its assignment pins still govern which bytes may execute. A workflow/blob mismatch

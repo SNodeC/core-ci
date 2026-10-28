@@ -2222,3 +2222,842 @@ proposed. Commit/push/merge remain separate authorization stages.
   for these documentation-only additions. Merge authority does not activate deployment.
 - Installation, live restart, sandbox alias rollout and mixed-generation lock proof remain
   separate. No production SNodeC workflow, credential, key, tag, feed or deployed state changes.
+
+## Slim controller fresh implementation — source foundation
+
+Owner instructions: start a fresh controller on a new branch, with at most
+2,000 production lines including bootstrap; preserve the publication pipeline's
+functionality, reuse `main.cpp` unchanged, and reuse the web UI unchanged.
+The controller remains an externally driven, persisted dependency graph: apply
+events, traverse eligible nodes, commit assignments, then dispatch GitHub work.
+GitHub owns runner capacity and serial feed mutations. No separate scheduler.
+
+Branch: `rewrite/slim-graph-controller`, based on `7a38f93293666176c3387b8ff119b5c2c0ab6b94`,
+which matched remote `main` when checked. Existing unrelated documentation edits
+were carried intact. The initial attempt to branch from the stale local `main`
+was refused by Git; no files were overwritten.
+
+Removed the previous controller implementation under `src/`, retaining
+`src/main.cpp` byte-for-byte and its UI asset-generation template. The existing
+UI, GitHub worker tooling/workflows, tests and build/format infrastructure remain
+as inputs and behavioral contracts for reconstruction. Private directories and
+keys were not opened, listed, removed or changed. No deployed controller or
+database was touched. The removed implementation remains in the base commit.
+
+This is a source foundation, not a functioning replacement. Bootstrap dependency
+implementations and their build/test wiring still require reconstruction; the
+checkout is intentionally not buildable at this point. No build, functional
+verification, commit, push or deployment is claimed. The 2,000-line ceiling is
+for the complete replacement controller, not a claim about this incomplete tree.
+
+Owner performance boundary: the complete four-project sandbox matrix must incur
+at most one second of controller-added delay, not one second per node or event.
+Millisecond local reaction is the target. Measure local graph derivation, durable
+assignment, ready-work dispatch and controller scheduling gaps; distinguish these
+from externally awaited GitHub evidence/API responses, runner queues, execution,
+feed writes and Pages propagation. External waits must not serialize independent
+ready work. No minute-scale controller delay is acceptable. This is an acceptance
+requirement, not a measured result or an end-to-end GitHub duration guarantee.
+
+
+## Fresh controller implementation checkpoint
+
+The owner approved raising the complete controller C++ source/header ceiling from
+2,000 to 2,600 lines, including the reused bootstrap, after the remaining GitHub,
+recovery and UI contracts were estimated. This authorizes the revised bound; it
+does not authorize deployment or dropping publication functionality. Main, UI,
+worker workflows/tooling and private files remain unchanged.
+
+New code uses the installed SNode.C asynchronous MariaDB API and its existing
+one-event-loop lifecycle. Graph changes derive at the front of the database FIFO,
+write one conditional autocommitted graph-document update, apply only after
+acknowledgement, then deliver the execution continuation before derivative UI
+notification. The fresh schema is in sql/graph.sql; it is not a migration and has
+not been applied to an existing or live database. The existing schema and all live
+data remain untouched. New storage requires explicit deployment/data planning
+before any future activation.
+
+Focused local checks under /tmp/codex/build/core-ci/slim-controller/ passed:
+- DatabaseBoundary.cpp: twelve queued writes plus a callback-enqueued thirteenth
+  derive against the already-applied state; definite SQL, conditional and
+  preparation failures leave later writes usable; no-op handling; teardown from
+  the final read callback. Two independent isolated real-MariaDB fixtures.
+- SlimGraphTest.cpp: four synthetic projects/five targets, root -> app/side -> join
+  publication dependencies, every eligible publication admitted, no replay of
+  assigned work, delayed/duplicate and attempt-two rejection, explicit missing
+  prerequisite/cycle errors, oversized assignment blocker, SemVer cases. The
+  generated assignment passed the unchanged Python worker contract.
+- GraphPersistenceBoundary.cpp: real MariaDB stores the twenty-node graph, applies
+  twelve overlapping progress changes without lost updates, suppresses unchanged
+  advancement, rejects a failed derivation without partial storage, restores in a
+  fresh process without replacement assignments, and exposes UI/public projections.
+  Missing-schema startup failure/teardown checked independently.
+
+These are isolated local checks, not complete controller, HTTP/SSE or GitHub
+acceptance. The in-memory traversal measured 40.6841 ms in the Debug diagnostic;
+this excludes MariaDB and HTTP and is not a full-controller latency claim.
+The repository application build remains incomplete while adapters/bootstrap
+dependencies are reconstructed. No commit, push, restart or activation performed.
+
+
+## Slim controller: verification and line-budget checkpoint
+
+Checkout /home/voc/projects/snodec/core-ci, branch rewrite/slim-graph-controller,
+HEAD 7a38f93293666176c3387b8ff119b5c2c0ab6b94 plus the uncommitted rewrite.
+The owner-approved maximum remains 2,600 physical C++ source/header lines,
+including bootstrap. Current src/*.cpp and src/*.h total: 2,349. This is an
+incomplete application; the remaining 251 lines cannot be reported as sufficient
+for the missing publication pipeline. The earlier estimate was too low.
+
+The invariant remains one durable graph: derive each mutation against the latest
+applied state, commit dispatch assignments before HTTP, overlap independent ready
+work, and satisfy dependency edges only from verified publication. No application
+scheduler, persisted ready queue, replacement dispatch or admission reservation is
+being added.
+
+Fresh checks after the Crypto extraction and five-target fixture update:
+- The slim-graph-test diagnostic passed: synthetic in-memory twenty-target traversal
+  36.3675 ms, excluding all MariaDB and HTTP time.
+- tests/database_boundary.py --case graph passed against graph-persistence-boundary
+  in a new isolated real-MariaDB fixture at
+  /tmp/codex/build/core-ci/slim-controller/graph-final. This includes restoration
+  in a fresh process without replacement assignments.
+- Fourteen independently executed tests/github_transport.py cases passed against
+  slim-github-test: parallel, parallel-single, wrong-hostname, wrong-ca,
+  token-rejected, token-lost-response, expired-token, mutation-lost-response,
+  lost-response, disabled, capacity-zero, capacity-seventeen, shutdown, token-reuse.
+  Synthetic concurrent request peaks were 7 with capacity 8 and 1 with capacity 1;
+  neither is a live throughput result. Reports are under the permitted temporary
+  slim-controller directory, including transport-results.json.
+- SourceReader.cpp compiled with -Wall -Wextra -Wpedantic through the temporary
+  slim-source-check object target. This is compilation only, not source-selection
+  or definition-validation acceptance.
+- The preceding local TLS success check passed after correcting request teardown
+  correlation. SNode.C clears the request socket context before its HTTP disconnect
+  hook; correlation now uses the existing weak request identity. The earlier local
+  diagnostic crash did not involve a deployed controller.
+- Managed MariaDB startup, initial database failure, and owned-child startup failure
+  had separate passing isolated checks. They are not complete application startup
+  acceptance.
+
+Current source still lacks complete configuration, enrollment/editor integration,
+workflow dispatch/binding, webhook/reconciliation application, artifact completion,
+public-status dispatch and independent receipt/HTTPS publication proof. Definition
+validation and graph/UI contracts also need completion. The root application is
+not buildable, and the original pipeline tests do not validate this replacement.
+The unchanged bootstrap still contains the obsolete publication-limit constructor
+argument; it must be removed as wiring, rather than retained as a dummy setting.
+No such bootstrap change has been made.
+
+Re-estimate for the current approach, before any further production additions:
+configuration 120-160 lines; enrollment/editor integration 180-250; independent
+publication proof 100-150; dispatch/webhook/reconciliation/artifact/status orchestration
+650-850; remaining interface declarations 70-100. These are unimplemented estimates,
+not measured code. Consolidation may remove approximately 100-200 existing lines;
+it does not account for the missing 1,120-1,510 lines. A realistic revised upper
+bound for this approach is 3,800 total lines. It is NOT approved. Do not exceed
+2,600, drop functionality, compress formatting, or move controller logic elsewhere
+to conceal the count. A larger bound or a substantially different reviewed design
+is required before this approach can be completed.
+
+Whole-document persistence currently copies and rewrites the retained graph on a
+change. The small synthetic fixture does not establish its scaling with accumulated
+history. No complete-controller latency, SSE, Pages, GitHub execution or publication
+acceptance is claimed. The new schema has only been provisioned in isolated fixtures.
+
+Relative to HEAD, including explicit new task files: C++ production +1,192/-4,589,
+net -3,397; tests +710/-4, net +706. sql/graph.sql is separate fresh-schema work.
+These reductions include missing implementation and are NOT a completed simplification
+claim. Preexisting documentation changes remain separate. Main, UI assets and the
+original GraphFixtures.h remain byte-identical to HEAD. git diff --check passed.
+Private directories were not opened, listed or changed. No commit, push, merge,
+installation, restart, live database change or GitHub mutation was performed.
+
+## Fresh controller: approved 3,500-line implementation checkpoint
+
+Owner approval: “OK 3500 lines are approved.” The implementation remains on
+`rewrite/slim-graph-controller` in `/home/voc/projects/snodec/core-ci`, based on
+`7a38f93293666176c3387b8ff119b5c2c0ab6b94`. No branch switch, additional checkout,
+commit, push, merge, installation, restart or GitHub mutation was performed here.
+Preexisting README, deployment and work-log hunks were preserved. The new architecture
+and deployment edits describe this source; existing live deployment evidence does not
+validate it.
+
+Measured controller size: **3,498 physical src/*.cpp and src/*.h lines**, including
+main.cpp and blank lines. The unchanged 11-line UiAssets.h.in embedding template is
+separate, as are reused HTML/CSS/JavaScript and unchanged worker tooling. No controller
+logic was moved into those exclusions. main.cpp retains bootstrap/routes/lifetime,
+with constructor wiring, direct GraphStore restoration, the existing database-authority
+POST boundary and the derivative public-change callback adjusted for this implementation.
+Graph restoration no longer forwards through Enrollment. AGENTS.md records the new bound.
+
+Invariant: one durable graph authority; derive against acknowledged state at the front
+of the Database FIFO; commit dispatch authority before its HTTP mutation. Every eligible
+build/publication is admitted in rebuild-revision order without a publication quota or
+reserved runners. Exact published prerequisites alone release edges. GitHub controls runner
+capacity and exclusive feed-mutating jobs. No controller scheduler, polling timer, package
+processing or uncertain mutation replay was added. The reused SSE heartbeat remains.
+
+The fresh MariaDB schema uses one conditional autocommitted graph-document UPDATE. Lost
+acknowledgement stops further producers until explicit restoration; failed derivation and
+definite SQL rejection do not apply state. This deliberately has no migration/importer.
+Whole-document copying/rewriting cost with large retained history is not measured. Do not
+claim arbitrary history scaling or a live latency target from small local fixtures.
+
+Source definitions are read at selected immutable revisions, including newly introduced
+prerequisites absent from enrollment snapshots. An unreadable unknown repository blocks
+and is reported. Selection/deployment/generation guards, namespace ownership including
+selected history, SemVer, explicit older requests, exact retry inputs, oversized payload
+blockers, immutable run binding and uncertainty remain exercised at public boundaries.
+A recursive regular-file Git-tree lookup replaces repeated path walks. Its explicit bounds
+are 20,000 entries and the HTTP client's 2 MB response bound; truncated/oversized repositories
+are rejected. Large-tree compatibility remains an acceptance limit, not a proven property.
+
+Webhook and attempt-one reconciliation facts share application/validation. Bound unchanged
+progress does no HTTP work. Build completion coalesces its artifact-list read through durable
+acceptance. Publication waits for terminal workflow and publisher evidence; skipped push/job
+fails without feed reads, while possible push needs committed receipt and HTTPS proof.
+The exact unevaluated publisher label is accepted only for a verified skipped job. Successful
+or running jobs with that unevaluated label cannot authorize a writer.
+
+Verification used GCC 16.2 Debug, installed public SNode.C targets and OpenSSL 3.6.5:
+
+- `cmake -S . -B build/codex/slim-controller -DBUILD_TESTING=ON -DCORE_CI_TEST_DIRECTORY=/tmp/codex/build/core-ci/slim-controller/final-tests`
+- `cmake --build build/codex/slim-controller -j4`: passed. The final fixture-header consolidation
+  also rebuilt successfully (final-build-4.log). Compiler temporary/build artifacts stayed in
+  the permitted build directories. Root application and registered test targets build.
+- `ctest --test-dir build/codex/slim-controller --output-on-failure -j4 -R '^(lifecycle-|enrollment-boundaries$|database-|persistence-|graph-state-boundaries$|definitions-and-versions$|github-transport-|source-selection-|pipeline-)'`:
+  51/51 passed in 96.73 s, including the idle SSE heartbeat. No worker/package/full suite ran.
+- Following the skipped-job correction and direct restoration wiring, the affected eight
+  startup cases, enrollment and eleven pipeline cases passed: 20/20 in 40.43 s.
+- Fixture reuse/consolidation then passed database, persistence, graph and all eleven pipeline
+  cases: 17/17 in 34.59 s. These use a distinct disposable fixture directory per invocation;
+  rerunning CTest no longer fails because a previous fixture directory exists.
+- `cmake --build build/codex/slim-controller --target format-check`: passed. Canonical formatting
+  files match ~/.codex/formatting byte-for-byte; changed production lines are <=160 characters.
+  `git diff --check` passed. Logs are in `/tmp/codex/build/core-ci/slim-controller/`.
+
+Tests were ported to the fresh Json graph and SQL boundary rather than retaining production
+compatibility shims. The canonical GraphFixtures/GraphTest/GraphStoreTest and pipeline.py
+cover the current APIs. New DatabaseBoundary plus database_boundary.py covers callback ordering,
+no-op/rejected derivation drain, definite failures, lost successful UPDATE acknowledgement and
+server-side no-replay verification. Redundant early lifecycle diagnostic sources were moved to
+the permitted temporary diagnostics directory; registered main lifecycle tests cover those
+boundaries. Obsolete schema-specific START/ROLLBACK and normalized-table assertions do not
+apply to the single-statement schema; they are not claimed as coverage. A database-locked
+competing-bind race, delayed status-approval stress and sanitizer shutdown checks have not been
+reproduced for this rewrite; ordinary concurrent facts, artifact overlap, transport shutdown,
+restart and restoration checks do not stand in for those specific diagnostics.
+
+Synthetic whole-chain evidence: all 20 nodes, 40 build/publication dispatches, all five target
+families, both run/job orders, exact inputs, commit-before-dispatch, independent publishers,
+one artifact lookup per successful build, source-read failures, explicit retry after missing/
+expired artifacts or skipped push, inaccessible/tampered receipt uncertainty, recovery,
+workflow preview/install/CAS, changed run-commit proof, and restart without replacement.
+The eight unchanged notification burst produced **zero outgoing requests**, including tokens
+and derivative status work, in every pipeline case.
+
+The latest normal chain recorded **599 total outgoing requests**, including **16 token
+requests, 20 artifact reads and 117 status dispatches**. Request-path counters include status
+approval reads, execution dispatches, feed Git proof and public HTTPS. Totals vary with
+asynchronous coalescing. Derivative status work is still substantial: this is not a claim
+that request cost is minimal or that the 10–20x expected speedup is achieved. Synthetic runs
+complete in approximately 10–13 s with a local mock, not real GitHub runner/Pages latency.
+No live throughput, exact eligibility-to-commit latency, signing or client acceptance is
+claimed. The former 1,914-connection partial session is not an equivalent benchmark.
+
+Official API references used to settle the current evidence/dispatch contracts:
+
+- https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+- https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt
+- https://docs.github.com/en/rest/actions/artifacts?apiVersion=2026-03-10
+- https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app
+- https://docs.github.com/en/webhooks/webhook-events-and-payloads
+- https://docs.github.com/en/rest/git/trees#get-a-tree
+- https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
+
+The dispatch-input limit is 65,535 characters; this controller conservatively bounds the
+serialized inputs object in bytes and the assignment separately. The ref wrapper is not
+included in that official input limit. Artifact identity still uses the independent agreed
+REST listing, not a custom callback. Installed SNode.C HTTP request/FlowController/SocketContext
+and MariaDB command lifecycle interfaces, src/apps HTTP/database examples and MQTTSuite
+ownership examples were inspected. They required no framework change.
+
+Remaining activation gates: review the fresh schema and retained-feed rebuild seed; preserve
+and resolve existing live assignments without replacement; validate real GitHub feed-lock
+exclusion, signed integrated publication, client installation, UI/SSE and status/Pages timing;
+measure controller-local latency and status-request cost separately. The source has not been
+activated on core.vchrist.at. Its database, ports, TLS, webhooks, tags, keys and feed bytes
+were untouched. UI assets are byte-identical. Private directories were neither read nor
+listed, and remain preserved; /secrets/ was added to .gitignore.
+
+Build identity and exact source/test accounting are recorded in
+`/tmp/codex/build/core-ci/slim-controller/accounting.json` (HEAD plus dirty production diff
+SHA-256, including explicit new source files). Temporary logs/fixtures remain there for review;
+remove them after acceptance when no process uses them. Documentation accounting includes
+preexisting unrelated dirty hunks and must not be treated as solely this task's additions.
+
+Final implementation accounting relative to HEAD (including explicit new files): controller
+C++ +2133/-4381, net -2248; CMake/schema +77/-111,
+net -34; tests +1380/-1843, net -463.
+The production diff SHA-256 is `4343de7845e9728d2b111379b6cf96d924cc18b136d0a8c644ecb6a4a2df34c3`.
+
+### Publish the fresh controller review branch
+
+Owner explicitly authorized committing on the current branch, pushing it and notifying
+Claude. Stage only the fresh-controller implementation, its current architecture/schema
+and test changes, and the fresh-controller work-log entries. Preserve unrelated monitoring,
+deployment and review hunks unstaged. Request a read-only detailed review of the exact
+pushed commit. This stage does not merge or activate the rewrite.
+
+
+### Fresh-controller review corrections — 2026-10-28
+
+Workspace: `/home/voc/projects/snodec/core-ci`, `rewrite/slim-graph-controller`,
+HEAD `e34748a0cda0dc07cdf674974cedba440ca65a16`. The prior review checkpoint is
+committed and pushed; these corrections are uncommitted. Preserve the unrelated dirty
+operational/deployment hunks and existing review records. No additional checkout exists.
+Owner explicitly approved a maximum of **3,510 physical controller C++ lines** after the
+fully formatted agreed correction measured that size. AGENTS.md records that bound.
+
+Claude and Codex agreed the source-level correction prompt after checking counterexamples,
+framework ownership and local probes. Read-only dialogue, final agreement and implementing
+prompt are retained under `/tmp/codex/build/core-ci/slim-controller/claude-*`; the correction
+diff, final review, commands and results are under `/tmp/codex/build/core-ci/slim-corrections/`.
+Those task directories are temporary evidence, removable after review/acceptance when unused.
+No discarded implementation was recovered.
+
+Invariant: derive selections against current graph authority, preserve newer/incomparable
+immutable source inputs, and distinguish provably unsubmitted work from uncertain dispatch.
+No controller runner reservation, publication admission cap, state, timer or queue was added.
+
+- D1: selection captures existing `next_revision`, checks current enrollment/branch equality,
+  and rejects newer/incomparable sources created during its reads. Job evidence and explicit
+  retries do not invalidate those reads. Explicit older root versions remain supported;
+  conflicting equal-version identities remain rejected. Current namespace validation and
+  exact prerequisite lookup remain authoritative. Real competing source selections report
+  409, without automatic retry/reselection; lossless competing-tag delivery is not claimed.
+- Supersession: compare all shared transitive source inputs, not only the node's own tag or
+  direct prerequisites. An explicit older chain and later automatic dependent cannot discard
+  waiting work with newer inputs. Dependency removal remains supported. Lookup still chooses
+  the newest-revision matching prerequisite; this correction does not introduce a new policy.
+- N1: automatic root notifications supply a pushed-tag floor while still reading tags. Two
+  pushes sharing a stale listing cannot silently lose the newer pushed tag. Explicit exact
+  tags, backport/highest-version selection, expected tag-object checks and non-SemVer rejection
+  retain their contracts.
+- D3: startup reconciliation alone fails an assigned stage with no committed preflight,
+  raw dispatch identity or bound run. Committed preflight remains uncertain. Ordinary operator
+  reconciliation cannot cancel live preflight. Preflight commit checks both attempt and stage
+  before dispatch. No mutation is replayed. Reconciliation uses the existing lazy change and
+  removes its trailing no-op write.
+- H1: coverage only. Null queued timestamp followed by stable running/completed timestamps
+  succeeds; conflicting nonnull timestamps still reject. Real GitHub changing this timestamp
+  remains unproven; no production relaxation was introduced.
+- D2 retains block-and-report for unreadable/missing source definitions. H2 retains uncertainty
+  for empty job/step evidence. H3's dispatch concern and H5's ownership concern were withdrawn
+  after source/API checks. H4 retains definite zero-row CAS rejection; H6 retains the completion
+  exception uncertainty latch. One-page cold run search, schema and status-refresh policy stay.
+
+Reductions replace repeated bootstrap teardown, enrollment completion and failed-transition
+closures; the unused Enrollment::persist argument is removed. Main's completion factory has
+main lifetime, rather than capturing a local startup callback object.
+
+Focused verification (local synthetic GitHub, real isolated MariaDB; no live acceptance):
+
+```
+cmake -S . -B build/codex/slim-controller -DCORE_CI_TEST_DIRECTORY=/tmp/codex/build/core-ci/slim-corrections/tests
+cmake --build build/codex/slim-controller -j4
+cmake --build build/codex/slim-controller --target format-check
+ctest --test-dir build/codex/slim-controller --output-on-failure -j4 -R '^(lifecycle-|enrollment-|database-|persistence-|graph-state-|source-selection-|pipeline-)'
+git diff --check
+```
+
+Build, formatting and whitespace checks pass. All **48 selected checks pass** (91.09 s),
+including all 24 independent pipeline cases; 13 pipeline cases are new. Graph boundary tests
+retain existing assertions and add stale-source, transitive-input and timestamp coverage.
+The first restart-fixture run exposed graceful shutdown resolving blocked callbacks; the
+crash tests now kill only their disposable controller at the held boundary, then restart
+from its real durable database. All four corrected build/publication crash cases pass.
+No test was weakened to accept controller behavior.
+
+The final local normal twenty-node chain records **569 outgoing requests**, 16 token mints,
+20 artifact reads and 106 status dispatches. Eight unchanged notifications cause **zero**
+outgoing requests, including status/token work. The prior 599-request normal-chain result
+is a baseline, not an equivalent live benchmark; asynchronous coalescing changes totals and
+this difference is not a claimed speedup. In-memory graph traversal measured 41.1854 ms,
+excluding HTTP/database/runner/Pages latency. Status cost and retained-history scaling remain
+acceptance items. No 10–20x speedup or subsecond end-to-end acceptance is asserted.
+
+N2 is a separately **confirmed installed-dependency recovery defect**, not corrected here.
+A local probe with the exact e34748a binary stopped its isolated external MariaDB: status
+answered in 0.0035 s beforehand, timed out at 2 s during absence and still timed out after
+SQL was independently ready again. In-memory graph reads remained available. Installed
+SNode.C's MariaDBConnection immediate reconnect failure leaves `connected=false`; destruction
+then deletes queued commands without command-error callbacks. The controller FIFO cannot
+complete its head. A process restart is required. Probe source/result:
+`/tmp/codex/build/core-ci/slim-controller/corrections/database-disappearance.py` and
+`corrections/n2/results.json`. Framework correction or an application workaround needs
+separate scope; no framework edit, hidden recovery mechanism or automatic replay was made.
+
+Accounting against e34748a: controller C++ +167/-155, **net +12**, total **3,510**;
+CMake test registration +13/-0; tests +514/-218, **net +296**. Reused UI embedding remains
+11 separate unchanged lines. Against the fresh rewrite base 7a38f93: C++ +2209/-4445,
+net -2236; build/schema +90/-111, net -21; tests +1669/-1836, net -167.
+Documentation accounting is separate; unrelated 682 work-log lines are not these corrections.
+Build identity is HEAD plus dirty production diff SHA-256
+`b6ade475e46b60a1f3b8d079de318314c03e49d2b521a7571a0b4bb273d72e2d`;
+`slim-corrections/accounting.json` records the classification and counts.
+
+No correction commit, push, merge, deployment, live restart or GitHub trigger occurred.
+Production SNodeC resources, live database, ports/TLS/listeners, tags, trusted keys, feeds and
+previously published bytes were untouched. Private directories remain uninspected/preserved.
+Live pipeline/signing/client/UI/status acceptance and the N2 recovery gate remain outstanding.
+
+Final read-only Claude review confirms plan adherence and reports no concrete code defects;
+see `slim-corrections/claude-final.md`. It independently read the final diff, affected source,
+tests and 48/48 result. Observable error-path difference: reconcile does not inspect when
+its initial graph change fails; that definite error is reported. The latched-mutation route
+remains rejected by existing middleware. Reviewer agreement is not live acceptance.
+
+### Fresh-controller sandbox deployment authorization — 2026-10-28
+
+Owner explicitly authorized committing, pushing and deploying the corrected rewrite on
+core.vchrist.at, followed by real VOC-Experiments sandbox testing. This does not merge main
+or authorize production SNodeC resource changes. Preserve the existing database/history,
+keys, package bytes and listener settings. Current service has no assigned build/publication:
+its public graph reports 127 published, 17 failed and 16 waiting executions. Capture that
+checkpoint before cutover. The fresh schema uses a separate database, not a schema overwrite.
+
+
+### Slim sandbox activation and live timestamp correction — 2026-10-28
+
+Owner authorized commit, push, deployment on core.vchrist.at and concrete VOC-Experiments
+acceptance. Committed/pushed 4cbd5bff0f923d60a3cb5c47a114df36e916a87b on
+rewrite/slim-graph-controller. No main merge. Unrelated local hunks remain unstaged.
+
+Installed the tested binary (SHA-256 adbcb9f2b015d8b29c68e1ef1736b93725bc9f618e618b8208867f182a34a161).
+All 20 server SNode.C runtime libraries match the local tested build; ldd -r and help pass.
+Backed up the previous executable, manifest, service and database under
+/var/backups/core-ci/slim-4cbd5bf-20261028T090218Z. Kept the original core_ci database intact
+with all 160 executions/history (127 published, 17 failed, 16 waiting; no active assignments).
+Provisioned separate core_ci_slim with current GitHub enrollment definitions, generation1686
+and next_revision165, above retained receipt/attempt revisions. No history importer or state
+conversion. Service core-ci runs as core_ci, with existing keys and systemd TLS credentials;
+8080 wildcard UI, TLS8443 and ports80/443 are unchanged. Fresh settings contain identifiers
+and existing file paths only; private files/configuration contents were not inspected.
+
+Sandbox worker tooling e7b1423cc9537070f84aea7bf7893fb590f75301 and wrappers
+721537bc7d0478b564eb397c3c87069778ac8cfe deploy the reviewed publisher job lock and
+secret-free confirmation. Sources pin this tooling. Source wrapper blob
+30c4d3074c5031f4b904f70b106eeabd655f52dd; publisher c2b5e78b721d2e649490baa390e3ea5e7f8cdf9b;
+status54220e81eda55958e2d862c7f8815156acec2b32. Existing trusted keys, tags and package bytes
+were not replaced. The user CLI token lacks workflow scope, so Git SSH pushed wrapper commits
+using a temporary Git index in the canonical repository, without another checkout/worktree.
+Only VOC-Experiments resources changed. Public workflow variables/secrets were not changed.
+
+Tag demo-core v2.1.4 triggered 20 nodes and five root builds. Live evidence then proved H1:
+GitHub queued job started_at09:03:18 differs from actual start09:03:21/completion09:03:51.
+The controller rejected later facts and displayed queued after GitHub completion. This is a
+controller merge defect, not GitHub delivery delay. Earlier null-queued synthetic coverage
+was insufficient. No real publication success is claimed for that initial test.
+
+Owner explicitly requested the fix, redeployment and a fresh chain, plus Claude's detailed
+review of all GitHub REST and inbound webhook paths. Correct invariant: queued placeholders
+are not actual start evidence; actual running/completed start replaces only pre-running
+facts; later queued facts cannot regress progress. Identity/provenance checks remain exact.
+Graph::observe is the single merge authority. Its null suppression replaces duplicate
+filtering in Pipeline::facts. A first-patch null lookup error was caught locally and corrected
+with contains(), before deployment. Graph tests cover fresh stages, restored queued evidence,
+completed-only recovery, late queued delivery and conflicts after actual start. Existing
+checks are retained. The first test attempt also exhausted /tmp; removed only stopped,
+disposable task database directories, keeping logs/source/JSON evidence, then reran tests.
+
+Claude's read-only comprehensive review and final confirmation are in
+/tmp/codex/build/core-ci/slim-deployment/claude-api-review.md and claude-api-confirm.md.
+Final review confirms the correction and reports no remaining concrete REST/webhook defect.
+Owner accepted the token recommendation: cache reuse stops300s before expiry, preserving
+scopes, cold coalescing and mutation non-replay. This mitigates near-expiry queue risk, not
+arbitrary queue delay. A new public transport test uses a still-valid120s token to verify
+refresh before actual expiry; existing expired-token and reuse checks remain.
+
+Final timestamp checks: 25/25 graph/pipeline checks passed; after token change, all24 pipeline
+checks passed again, plus seven graph/token/parallel/mutation non-replay checks. Formatting
+and build pass. Additional near-expiry/reuse results are recorded in token-near-expiry.log.
+Source is3,508 C++ lines within the approved3,510; no new state, queue, timer or replay was added.
+Official references checked: GitHub REST workflow-jobs (attempt-specific jobs), workflow-runs
+(attempt-one run), workflows (dispatch), artifacts (complete listing), and installation-token
+generation (one-hour expiry and scoped grants):
+https://docs.github.com/en/rest/actions/workflow-jobs
+https://docs.github.com/en/rest/actions/workflow-runs
+https://docs.github.com/en/rest/actions/workflows
+https://docs.github.com/en/rest/actions/artifacts
+https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
+
+Live evidence, scripts, manifests and request/progress snapshots remain under
+/tmp/codex/build/core-ci/slim-deployment/. N2 is still an unresolved installed-framework
+reconnection defect; no framework code changed. Live signed publication, fresh-chain
+completion and client acceptance remain unclaimed until actually observed.
+
+
+### Approved compact prerequisite payload and live continuation — 2026-10-28
+
+The live fresh v2.1.5 chain reached18 published targets while Fedora join was visibly blocked
+by its input bound. Real diagnostic using the authoritative Graph.cpp assignment/inputs on a
+read-only sandbox state measured assignment82,701B / inputs87,705B. Prerequisite RPM index
+listings alone accounted for65,382B. This is a transport-bound defect, not a dependency-delay
+inference. The existing65,535B dispatch bound and60,000B worker assignment bound stay.
+
+Owner explicitly approved the bounded payload fix before implementation. Take a value copy
+of each first-attempt prerequisite receipt and omit only indexes. Full stored and signed
+receipts, exact package/export hashes, environment/SDK compatibility, identities and all
+verification stay unchanged. Existing assignments and retries keep original bytes. Hooks'
+receipt copies now omit indexes; docs/extensions/README.md states that contract. No worker
+production change, callback protocol, persistence state or workflow update was introduced.
+Two C++ lines bring the controller to exactly3,510. The same real Fedora data now measures
+assignment17,286B / inputs19,164B. Baseline/after diagnostics remain in input-metrics*.jsonl
+under /tmp/codex/build/core-ci/slim-deployment; the live database was not edited by the probe.
+
+Claude traced all worker consumers and source hooks, agreed the design and reviewed the
+implementation in detail. It found no concrete defects; claude-payload-review.md and
+claude-payload-confirm.md record its source/consumer analysis and limitations. This is local
+review, not live acceptance. The reviewer noted possible retained RPM repodata accumulation;
+that is a separate unverified worker-side hypothesis, not changed in this correction.
+
+Seven focused checks pass against the final production source: graph-state-boundaries,
+pipeline-chain, pipeline-recovery, pipeline-large-indexes, worker-package-boundaries,
+worker-environment-boundaries and worker-provenance-boundaries. The graph test proves
+large-index joins fit; exact consumed identities and full stored receipts remain; assignments
+are not replayed/recomputed; retries reuse their original dependencies. The new full20-node
+MariaDB/syntheticGitHub case retains100 index entries in each stored RPM receipt while
+omitting them from dispatched prerequisites. Worker projection proof accounts for the
+correctly changed assignment digest and preserves every other publication-receipt field.
+
+The first test run had test-only indentation and expected-digest errors. Fixed those tests;
+the four affected failures pass on rerun. Graph/environment/provenance already passed against
+the identical production source and are not repeated solely for a consolidated log. All
+relevant checks ran independently. Logs: payload-tests.log and payload-tests-final.log.
+Build, canonical formatting and git diff --check pass. Controller delta +3/-1 = net+2;
+CMake registration +1; tests +60/-1 = net+59; extension documentation +3.
+
+The corrected timestamp deployment ae2f3ac is running, binary SHA-256
+93c825981c4c5378ed15f8138388735c3e76de830956e0a83ebd894ef530599c.
+The fresh chain was triggered only by demo-core v2.1.5 at378ff698bf66dc1b4d1b46c1b72dc12704fe3cf1,
+at09:19:29Z. No manual advancement/retry was used for its18 successful publications.
+Native join client acceptance passed on amd64 (40666026402) and arm64 (40666021823);
+APK client40666809235 also passed. Remaining target/client results stay unclaimed.
+Public UI assets match source byte-for-byte; invalid HMAC is rejected; live SSE is captured.
+Loopback endpoint medians under load: graph19.664ms, database health1.748ms, public status
+18.078ms. These are endpoint timings, not dispatch latency or a speedup claim.
+
+
+### Slim controller final sandbox verification — 2026-10-28
+
+Deployed eab0b087135e8275752e48ba2fd8772c55e82e92 to core.vchrist.at under the
+owner's commit/push/deployment/test authorization. Binary SHA-256:
+ee4cfa91431876f967a3fb423df884b2e104e340af9d3784cfbba779bdc60f51.
+Service PID221515 is active with NRestarts0. The approved payload change resumed the
+same waiting Fedora join revision202; it did not retry successful executions.
+
+All20 fresh revisions185–204 are now verified published. All5 join client workflows
+passed:40666026402,40666021823,40668066980,40667246183,40666809235.
+Controller/public/Pages reached generation2100; public and Pages JSON are identical.
+HTTPS bytes for20 receipts,4 project pages and controller JSON match committed blobs.
+Feed comparison found no removed files and no changes to535 retained package,
+receipt/export/key blobs. Existing-path changes are affected indexes/status only.
+No new403 or Pipeline error was observed after the payload deployment.
+
+Full run links and limits are in docs/proposals/slim-controller-sandbox-acceptance.md.
+This includes the intervening approved restart, the earlier uncertain APK assignment
+(not replayed), superseded waiting history and unresolved installed-framework N2.
+The original database, old tags, keys, private directories and unrelated edits remain
+preserved. No production SNodeC integration changed. No main merge or speedup claim.
+Final controller size is3,510 lines. This handover adds documentation only; no further
+build or repeat tests were needed after the already tested/deployed source.
+
+
+### Compact work UI proposal — 2026-10-28
+
+Design-only checkpoint on rewrite/slim-graph-controller at7c5e68d. Read current UI,
+CMake embedding and existing UI fixture; preserved existing unrelated edits. Owner asked
+to discuss all layout/timestamp findings with Claude before implementation. Claude's
+read-only review and follow-up agreed the proposal in docs/proposals/compact-work-ui.md:
+merge repo/tag/rebuild and target/arch/format; grouped build/publisher start+finish,
+separate verification time; intentional date/time lines; scoped nonwrapping labels and
+compact details timing table. Explicit format remains because OpenWrt has IPK and APK.
+Full timestamp zones remain accessible; narrow-panel sizing needs actual browser proof.
+
+Review corrected provisional width claims and the fact that superseded waiting rows
+remain in history. Existing missing-time semantics stay unchanged; no new controller
+state, network request, workflow or recovery behavior. UI source/tests/deployment unchanged.
+No tests or live performance claims for this design-only checkpoint. Proposed UI net
++40–60 production lines, fixture +30–50, C++0; needs explicit growth approval before
+implementation. Documentation only; no commit/push/restart. Review files are retained in
+/tmp/codex/build/core-ci/ui-compact-proposal/. Stuck publication investigation remains deferred.
+
+
+### Compact work UI implementation — 2026-10-28
+
+Owner approved +40–60 UI production / +30–50 fixture lines and zero C++ growth.
+Implemented on rewrite/slim-graph-controller from7c5e68d without a branch change.
+Invariant: present existing graph identities and evidence compactly, preserving one
+state authority, exact timestamps, missing-evidence semantics and existing actions.
+Merged repository/tag/rebuild and distribution/series/architecture/format. Grouped
+Build and Publisher job start/finish columns; kept verification separate. Details use
+a timing table and scoped nonwrapping labels. No controller/network/workflow changes.
+Owner requested the grouped-header gap removed: reduced header padding to3px.
+Owner then explicitly requested all timezone labels removed: local browser date/time
+is used in the overview, details and full accessible descriptions/tooltips. Machine
+ISO datetime values remain exact. No zone note, selector, timer or additional API.
+
+Final task delta: UI85 added /28 removed = net+57; fixture29 added /1 removed = net+28;
+C++0, controller remains3,510 lines. Fixture growth is below the estimated range.
+No source moved out of src. Proposal and this append are documentation, not controller
+budget. Existing unrelated README/deployment/WORK_LOG hunks remain untouched.
+
+Focused final verification passes:
+- node --check ui/app.js; python3 -m py_compile tests/ui_enrollment.py.
+- Existing tests/ui_enrollment.py HTTP/SSE fixture with the new /test/layout cases.
+- Installed Chrome via temporary CDP scripts check.py/check-us.py/interaction.py:
+  UK/US locales,1440/1280/1152/720/390CSSpx; grouped headers, timestamp lines,
+  no label wraps, no narrow-panel overflow after scrolling, IPK/APK, safe long
+  compiler text, filtering, failed-only retry, busy controls and SSE open-state retention.
+  No extra API/mutation requests. Initial narrow US-time overflow was fixed before
+  final checks.1152/720 widths approximate zoom layout space; actual browser zoom
+  controls were not exercised. This is local synthetic proof, not live acceptance.
+- cmake --build build/codex/slim-controller --target core-ci format-check -j2.
+  Reconfigured embedded assets and built final source. Formatting target covers its
+  committed C++/CMake baseline; JS syntax/browser checks are separate. git diff --check.
+
+Build identity: HEAD7c5e68dfd9230696968ad8905da2e7b3f0c8870c plus UI/fixture diff
+SHA256 bfb6f728bc246026185afa2c2e88cab9204662b8eea2333e4f163c5368b56d1c.
+Evidence/screenshots retained under /tmp/codex/build/core-ci/ui-compact/; no new
+repository browser framework. No full backend suite, commit, push, installation,
+restart, live retry or GitHub mutation. Stuck-publication investigation remains deferred.
+
+
+### Compact UI deployed on core.vchrist.at — 2026-10-28
+
+Owner explicitly authorized deployment and restart. Deployed the tested local UI build
+from HEAD7c5e68d plus UI/fixture diff SHA256
+bfb6f728bc246026185afa2c2e88cab9204662b8eea2333e4f163c5368b56d1c.
+Binary SHA256 bb1d52035163124d7959a6e739e55a4e64e762166f1804bb581471b30529700f.
+The runtime manifest records both base commit and dirty diff; no commit was invented.
+Verified transfer checksum, backed up prior binary/manifest under
+/var/backups/core-ci/ui-compact-20261028T102725Z, atomically replaced the binary and
+restarted the existing service. Release: /srv/core-ci/releases/ui-compact-bfb6f728/.
+No configuration, credentials, libraries, listener settings, database or GitHub changes.
+
+Service active, PID222024, NRestarts0. Served HTML, JS and CSS match the tested files
+byte-for-byte. Complete graph before/after restart is identical: generation2100,
+40 executions. The earlier uncertain r169 assignment remains unchanged, not replayed.
+Public TLS status and SSE bootstrap both report generation2100/40 executions.
+Journal has no Pipeline failure in the inspected interval; framework TLS/socket
+shutdown warnings were observed after successful HTTP checks, not investigated here.
+
+Deployment snapshots/checks remain in /tmp/codex/build/core-ci/ui-compact/.
+No further package build, commit, push or merge. Local task changes remain uncommitted;
+unrelated working-tree edits/private directories preserved. Stuck-publication
+investigation remains outside this UI deployment.
+
+
+### Centered local 24-hour timestamps — 2026-10-28
+
+Owner requested centered two-line timestamps and 24-hour display, citing Austria.
+Centered the date/time spans and selected Intl hourCycle h23 for visible/local full
+timestamp descriptions. Local timezone conversion is unchanged; no timezone labels.
+No net production/test growth; UI remains net+57, fixture net+28, C++0.
+Node syntax and Austrian-time diagnostic pass (midnight00:05:06, afternoon14:05:06).
+Chrome checks all5 widths in US locale: two centered lines, HH:mm:ss without AM/PM,
+no narrow-panel overflow. core-ci and format-check build pass; diff check passes.
+
+Continued the authorized UI deployment: binary SHA256
+eb33eb941c8fbd107883eff0d2efb8f555c46b37de21069125b50d395e0358bf;
+HEAD7c5e68d plus UI/fixture diff SHA256
+2b7f33dcd043538dcd7612f4fea724084a5898beba278897fe5307571b458504.
+Backup /var/backups/core-ci/ui-centered-20261028T103104Z; release
+/srv/core-ci/releases/ui-compact-2b7f33dc/. Service active PID222160, NRestarts0.
+Live assets match source; entire graph unchanged at generation2100. No retry or
+GitHub/configuration/database changes; task remains uncommitted. Evidence stays
+under /tmp/codex/build/core-ci/ui-compact/.
+
+
+### Centered timing group headings — 2026-10-28
+
+Owner requested the Build and Publisher job headings centered above their Started/
+Finished columns, and explicitly authorized commit and deployment. Added one scoped
+CSS rule for colgroup headers. Chrome measured both text centers within0.008px of
+the midpoint of their two-column group. This changes no timestamp/state behavior.
+Build core-ci and format-check pass; git diff --check passes. Total UI delta is
+86 added /28 removed = net+58; fixture29/1 = net+28; C++0. All UI work stays inside
+the approved bounds. Commit includes task UI, fixture, proposal and task WORK_LOG
+entries only; unrelated hunks remain unstaged. Deployment/restart verification follows.
+
+
+### Align timing headers and values to their columns — 2026-10-28
+
+Owner pointed out timestamp values still did not align with Started/Finished headings.
+Centered timing leaf headers, verified heading, Pending values and detail timing values
+as well as the group titles. Chrome measured every synthetic timestamp/placeholder
+text center against its column heading: maximum delta0.008px. Both group titles remain
+centered over two columns. core-ci/format-check build and diff checks pass. UI is now
+net+59 relative to7c5e68d; tests net+28; C++0. No behavior/data change. The preceding
+group-heading binary was transferred but not activated; deploy this complete correction.
+
+
+### Timing-column alignment live verification — 2026-10-28
+
+Deployed committed ef19a129cae76523ad8514f226b5569148d1c3c1, binary SHA256
+3b9ac12ad5fd0e2063af1b7f14732442ae089c5527b3584c1f1455db3989652a.
+Backup /var/backups/core-ci/ui-columns-20261028T103621Z; release
+/srv/core-ci/releases/ef19a12/. Service active PID222354, NRestarts0.
+Served UI assets match source; graph is byte-equivalent as JSON before/after,
+generation2100. Read-only Chrome verification on the live8080 UI measured all5
+column headings and all timestamp/Pending text centers: at most0.008px difference.
+Both Build/Publisher job titles remain centered over their two columns. Live checks
+and screenshot are retained under /tmp/codex/build/core-ci/ui-compact/live-*.
+No GitHub mutations, retries, config/database changes, push or merge. Unrelated
+hunks remain preserved; this append records deployment under existing commit authority.
+
+### Unconfirmed r169 publication investigation — 2026-10-28
+
+Owner requested investigation/proposal only and discussion with Claude until agreement.
+Canonical checkout remains rewrite/slim-graph-controller at032cb34; preserved the four
+unrelated dirty files and private directories. No production/test edits, GitHub mutations,
+retry, deployment, restart, commit or push. Proposed correction and separate policy choice
+are in docs/proposals/unconfirmed-publication-recovery.md.
+
+Live graph plus read-only live MariaDB query confirm r169 publishing, build40661265395
+successful09:04:49UTC, committed publication preflight, no publication dispatch ID/run.
+Journal09:19:51.070UTC records uncertain dispatch, .069 unconfirmed status dispatch.
+Nearby broken-pipe/read-descriptor logs cannot be correlated to requests; HTTPstatus,
+submitted and error were discarded. Exact HTTPcause,403 and token-expiry claims unproven.
+Complete date-filtered publisher listing24/24 has no r169; unfiltered159total/100page
+includes all24today. No receipt-path commit history. No currently discoverable publisher
+run; absence is not proof never accepted. Late/deleted evidence remains a policy risk.
+Newer coreAPK r189 publication40663767448 is successful; fresh20chain already complete.
+
+Claude and this agent exchanged source/evidence reviews and corrections to agreement.
+Withdrawn: proven transport loss/nojobevercreated, uniqueness from one match on an
+incomplete page, preflightprovesPOSTsubmission, unnecessary worker-atomicity changes,
+and claims proposedtests were written. False-send submission flag is defensive and
+unreproduced, not the demonstratedcause; defer it and unrelated status-zero wording.
+Core proposal: preserve safe dispatch diagnostics, distinguish search/jobs read outcomes,
+return inspected/unresolved details, truthful derived activity. No new authority, state,
+queue, timer, cache or replay. Estimate+8–12C++/+60–100tests/UI0, needs approval beyond
+current3510bound (proposedupper3522). No invented offsetting reductions.
+Separate retirement policy: exact latest unbound publishing attempt, atomic guards,
+explicit operator acknowledgement, existingfailedstate with honest unknown-outcome reason,
+retained assignment/history, no automaticretry, no SQLediting. Late facts retained without
+automatic completion of retirednode. Estimate+15–25C++/+8–15UI/+40–60tests; combinedC++
+upper3547 if both approved. Retirement/futureexplicitretry needs explicit owner policy
+approval; reviewers cannot relax no-replacement-of-unknown-work rule. Recommend r169
+retirement without retry because newer chain already published; currentpolicy alternative
+is retainassignment and await genuineevidence. No recovery action was taken.
+
+Existing focused local checks (syntheticGitHub, isolated realMariaDB) bothpass:
+python3 tests/pipeline.py --executable "$PWD/build/codex/slim-controller/core-ci"
+ --directory /tmp/codex/build/core-ci/stuck-publication/tests/preflight-known
+ --case preflight-publish-known
+and same command --directory /tmp/codex/build/core-ci/stuck-publication/tests/cold
+ --case cold. They prove current preservation/nonreplay and evidence-based recovery,
+not a proposedfix. Coldfixture reports611HTTP/16token/0unchanged-burstrequests, not live
+performance acceptance. No newtests, fullsuite or fixvalidation claimed. Stopped task
+datadirs removed; logs/JSON/reviews retained under /tmp/codex/build/core-ci/stuck-publication/.
+Production/test line delta0; documentation-only proposal/log. git diff --check passes.
+
+Official GitHub API references checked:
+https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
+https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt
+https://docs.github.com/en/rest/actions/workflow-runs#delete-a-workflow-run
+API2026-03-10 dispatch200includesrunID/URLs; documented listing/pagination/deletion is
+not an exactly-once recovery guarantee. Current framework Request.cpp false-send/source
+trace is separate from installed-binary runtime proof. No framework change proposed.
+
+
+### Unconfirmed-dispatch correction and explicit retirement — 2026-10-28
+
+Owner instructed obtaining Claude's implementation prompt and applying it. Saved prompt
+and status in docs/proposals/unconfirmed-publication-implementation.md. Draft formatting
+exceeded the initial estimate; consolidated repeated inspection response builders and
+counter/result handling, measured the full correction, then requested revised bounds.
+Owner explicitly approved3572C++/15UI/3test-registration/180testlines. AGENTS.md records
+the current bound and acknowledged-retirement policy. No implicit authority from reviewers.
+
+Implemented current proposal on rewrite/slim-graph-controller, base032cb34:
+- Safe status/submitted/transport diagnostics for uncertain execution/statusPOSTs,
+  with execution/stage or generation. No bodies/headers/tokens logged; no replay.
+- Complete-list/shape/uniqueness validation before unbound-run recovery; incomplete
+  pages never bind even one candidate. Known-ID/webhook validation unchanged.
+- Shared local inspect outcome callback replaces duplicated response constructors.
+  TransientJSON{inspected,unresolved} replaces pendingcounter, not a secondqueue.
+  Read completion explicitly does not claim asynchronous graph commitment.
+- Graph-derived run-unconfirmed activity and one graph::retirable predicate shared
+  by mutationguard and view capability. No new persistedstate/flag/schema.
+- Explicitretire action checks exactlatestattempt, publishing, no publicationrun,
+  dispatchID or evidence; acknowledged via typedboolean at the HTTPboundary. Uses
+  existingfailedstate with honest unknown-outcome reason; keeps assignment/history.
+  Two HTTProute registrations share identicalparse/responsepolicy, separate domain
+  actions. No automaticretry/cancellation; latefacts retained without completion.
+- UI action uses backendcapability, mutationauthority/busychecks and explicitconfirm
+  explaining unknownoutcome, nocancellation, operatorchoice and laternewrevisionretry.
+Deferred false-send/status-zero and optionaldefinite4xxdiagnostics; no framework/workerchanges.
+
+Line accounting versus032cb34, including current working tree:
+C++96added/34removed/net+62 =3572physicalsrc cpp/h lines.
+UI12/0/net+12; CMake3/0/net+3. Totalproduction111/34/net+77.
+Tests139added/8removed/net+131. Documentation trackedseparately; unrelatedhunks preserved.
+Source identity HEAD032cb34 plus SHA256(src/UI/tests/CMake diff)
+3059f7c530f61a9c9c7d154723e70fc18fabcf556cee45f5ac14495bc298e2ca.
+Persistent buildbuild/codex/slim-controller; newtest/evidence root
+/tmp/codex/build/core-ci/unconfirmed-dispatch-fix/. No othercheckout/worktree.
+
+Verification:
+cmake --build build/codex/slim-controller --target core-ci graph-test format-check -j2
+and graph-store-test build pass. format applied to task C++/CMake/test sources.
+node --check ui/app.js and python3 -m py_compile tests/pipeline.py tests/ui_enrollment.py
+pass; git diff --check passes, changedproductionlines<=160, singlefinalreturns/braces.
+Final command (9/9pass,12.51s):
+ctest --test-dir build/codex/slim-controller --output-on-failure -j3
+ -R '^(pipeline-(unconfirmed-dispatch|unconfirmed-run|retirement|preflight-publish-known|preflight-publish-absent|cold|recovery)|graph-state-boundaries|persistence-graph)$'
+CMake testroot now /tmp/codex/build/core-ci/unconfirmed-dispatch-fix/t to keep Unix
+socket names bounded. Initial preflight-absent failure was testMariaDB108charpath>107,
+not a controllerfailure; shorterpathrerun and finalregisteredtestpass. Initial GraphTest
+buildfailed from duplicate testvariable ready; renamed it and graphbuild/testpass.
+No failing check suppressed another; no unrelated fullsuite. Logs preserve failures.
+
+Newpipelinecases cover lostPOSTresponse without/withcreatedrun, per-execution/status
+logfields, incomplete0/1/malformed/ambiguous/unreadablesearch, jobsreaderror, no retry
+or replacement afterrestart, explicitretirement ack/stale/history/latefacts/noFeedProof,
+then newrevisionretry only when explicitlyrequested. Domainchecks reject recorded
+run/dispatch/evidence and buildingstate. Existingcold/recovery and graph/store tests kept.
+All are local syntheticGitHub plus real isolatedMariaDB, not liveacceptance.
+
+Browserdriver ui-check.py and ui-results.json under the evidence root pass installedChrome
+publicHTTP/SSE fixture: absentpartial/failed, shownretirable, cancelkeepspublishing,
+unknown/no-remote-cancel/operator-decision/newrevisionconfirm, held-request busycontrols
+acrossSSE, exactretirementPOSTchecked outside serverthread, and failed-rowretryvisibility.
+The driver is temporary evidence; only the extendedexistingfixture is repositorycode.
+Claude found no productionbug; tightened a test selecting the exactexecutionlog rather
+than acceptingstatuslogfields. Finalreview reports no concrete defect/disagreement.
+
+No commit/push/deploy/restart/live retirement/retry. Read-only livegraph stillcontains
+r169 at publishing; no production SNodeC resources, keys, tags, credentials, feedbytes or
+private directories touched. Existing unrelatedREADME/deployment/WORK_LOG changes remain.
+
+### Receiver iteration simplification and authorized integration — 2026-10-28
+
+Owner authorized the receiver fix, commit, push and merge of the completed work.
+Traced sendFragment through SocketWriter and descriptor teardown: outgoing bytes are
+queued; even synchronous ENOBUFS schedules disable cleanup, with disconnect notification
+later in releaseDisabledEvents. Enrollment::list invokes its callback synchronously.
+Both SSE receiver loops therefore use eventReceivers directly; no list snapshot/copy
+is needed. No framework change, asynchronous capture or new lifecycle mechanism.
+C++ total is now 3571 physical lines (net+61 versus032cb34), UI net+12, CMake net+3;
+combined production net+76, tests net+131. The earlier3572 measurement predates this
+one-line reduction. Build core-ci and format-check pass after this final change.
+Commit includes only task source/tests/AGENTS/proposal records and task WORK_LOG entries;
+unrelated existing documentation hunks remain unstaged. No deployment or live retirement.
+
+Final receiver-change verification: all nine selected graph/store/pipeline checks pass
+(12.81s), including cold/recovery, unchanged-burst coverage and retirement cases.

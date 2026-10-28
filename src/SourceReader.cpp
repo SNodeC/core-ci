@@ -1,360 +1,282 @@
 #include "SourceReader.h"
 
-#include "Definition.h"
+#include "Graph.h"
 
-#include <algorithm>
-#include <cctype>
-#include <openssl/evp.h>
 #include <regex>
-#include <stdexcept>
+#include <set>
+#include <sstream>
+#include <utility>
 #include <web/http/http_utils.h>
 
 namespace coreci {
-    namespace {
-        void require(bool condition, const std::string& message) {
-            if (!condition) {
-                throw std::invalid_argument(message);
-            }
-        }
-
-        bool validSha(const std::string& value) {
-            static const std::regex syntax(R"(^[a-f0-9]{40}$)");
-            return std::regex_match(value, syntax);
-        }
-    } // namespace
-
-    SourceReader::SourceReader(GitHub& github)
-        : github(github) {
+    std::string SourceReader::blobSha(const std::string& content) {
+        return hash("blob " + std::to_string(content.size()) + '\0' + content, EVP_sha1());
     }
-
-    void SourceReader::select(const std::string& repository, const std::string& tag, const Callback& callback) {
-        try {
-            if (!tag.empty()) {
-                const Version selected(tag);
-            }
-            const auto reading = std::make_shared<Reading>();
-            reading->repository = repository;
-            reading->tag = tag;
-            reading->callback = callback;
-            github.request(repository, "GET", "", nullptr, {{"contents", "read"}}, [this, reading](const GitHubResult& metadata) {
-                if (metadata.status != 200 || !metadata.error.empty()) {
-                    reading->callback({metadata.status == 404 ? 404 : 502, nullptr, "", "", "could not read authorized source repository"});
-                } else {
-                    try {
-                        require(metadata.body.at("full_name") == reading->repository, "source repository name changed");
-                        const auto separator = reading->repository.find('/');
-                        reading->source = {{"repository", reading->repository},
-                                           {"name", reading->repository.substr(separator + 1)},
-                                           {"repository_id", metadata.body.at("id")}};
-                        if (reading->tag.empty()) {
-                            tags(reading);
-                        } else {
-                            reference(reading);
-                        }
-                    } catch (const std::exception& error) {
-                        reading->callback({422, nullptr, "", "", error.what()});
+    void SourceReader::finish(const std::shared_ptr<Reading>& reading, const SourceResult& result) {
+        if (const auto callback = std::exchange(reading->callback, nullptr)) {
+            callback(result);
+        }
+    }
+    void SourceReader::read(const std::shared_ptr<Reading>& reading, const std::string& suffix, const GitHub::Callback& callback) {
+        github.request(
+            reading->repository,
+            "GET",
+            suffix,
+            nullptr,
+            {{"contents", "read"}},
+            [reading, callback](const GitHubResult& response) {
+                try {
+                    if (response.status == 200 && response.error.empty()) {
+                        callback(response);
+                    } else {
+                        reading->result.status = response.error.empty() && response.status ? response.status : 503;
+                        reading->result.error = response.error.empty() ? "GitHub source evidence is unavailable" : response.error;
+                        finish(reading, reading->result);
                     }
+                } catch (const std::exception& error) {
+                    reading->result.status = 422;
+                    reading->result.error = error.what();
+                    finish(reading, reading->result);
+                }
+            },
+            reading->publicRepository);
+    }
+    void SourceReader::select(const std::string& repository, const std::string& tag, const Callback& callback, const std::string& floor) {
+        try {
+            const Version version(tag.empty() ? "0.0.0" : tag);
+            auto reading = std::make_shared<Reading>();
+            reading->repository = repository;
+            reading->tag = tag.empty() ? floor : tag;
+            reading->callback = callback;
+            read(reading, "", [this, reading, tag](const GitHubResult& result) {
+                require(result.body.at("id") == github.repositoryId(reading->repository), "repository ID differs from enrollment/grant");
+                reading->result.source = {{"repository", reading->repository},
+                                          {"repository_id", result.body.at("id")},
+                                          {"name", reading->repository.substr(reading->repository.find('/') + 1)}};
+                if (tag.empty()) {
+                    tags(reading);
+                } else {
+                    reference(reading);
                 }
             });
         } catch (const std::exception& error) {
             callback({422, nullptr, "", "", error.what()});
         }
     }
-
     void SourceReader::tags(const std::shared_ptr<Reading>& reading) {
-        github.request(
-            reading->repository,
-            "GET",
-            "/tags?per_page=100&page=" + std::to_string(reading->page),
-            nullptr,
-            {{"contents", "read"}},
-            [this, reading](const GitHubResult& result) {
-                if (result.status != 200 || !result.error.empty() || !result.body.is_array() || result.body.size() > 100) {
-                    reading->callback({502, nullptr, "", "", "could not enumerate source version tags"});
-                } else {
-                    try {
-                        for (const auto& item : result.body) {
-                            const auto name = item.at("name").get<std::string>();
-                            std::optional<Version> version;
-                            try {
-                                version.emplace(name);
-                            } catch (const std::invalid_argument&) {
-                                // Repositories may also contain tags that are not semantic versions.
-                            }
-                            if (version) {
-                                const int comparison = reading->highest ? version->compare(*reading->highest) : 1;
-                                if (comparison > 0) {
-                                    reading->highest = version;
-                                    reading->ambiguous = false;
-                                } else if (comparison == 0 && version->tag != reading->highest->tag) {
-                                    reading->ambiguous = true;
-                                }
-                            }
-                        }
-                        if (result.body.size() == 100 && reading->page < 128) {
-                            ++reading->page;
-                            tags(reading);
-                        } else if (result.body.size() == 100) {
-                            reading->callback({422, nullptr, "", "", "tag enumeration exceeds the 128-page bound; request an exact tag"});
-                        } else if (!reading->highest) {
-                            reading->callback({404, reading->source, "", "", "repository has no numeric semantic-version tag"});
-                        } else if (reading->ambiguous) {
-                            reading->callback({409, nullptr, "", "", "highest SemVer precedence is ambiguous; request an exact tag"});
-                        } else {
-                            reading->tag = reading->highest->tag;
-                            reference(reading);
-                        }
-                    } catch (const std::exception& error) {
-                        reading->callback({422, nullptr, "", "", error.what()});
+        read(reading, "/tags?per_page=100&page=" + std::to_string(reading->page), [this, reading](const GitHubResult& result) {
+            require(result.body.is_array() && result.body.size() <= 100, "invalid GitHub tag listing");
+            for (const auto& row : result.body) {
+                const auto name = row.at("name").get<std::string>();
+                try {
+                    const Version version(name);
+                    const auto order = reading->tag.empty() ? 1 : version.compare(Version(reading->tag));
+                    if (order > 0) {
+                        reading->tag = name;
+                        reading->ambiguous = false;
+                    } else if (order == 0 && reading->tag != name) {
+                        reading->ambiguous = true;
                     }
+                } catch (const std::invalid_argument&) {
                 }
-            });
+            }
+            if (result.body.size() == 100) {
+                require(++reading->page <= 32, "tag listing exceeds supported bound");
+                tags(reading);
+            } else if (reading->tag.empty()) {
+                reading->result.status = 404;
+                reading->result.error = "repository has no semantic-version tag";
+                finish(reading, reading->result);
+            } else if (reading->ambiguous) {
+                reading->result.status = 409;
+                reading->result.error = "highest semantic-version tag is ambiguous";
+                finish(reading, reading->result);
+            } else {
+                reference(reading);
+            }
+        });
     }
-
     void SourceReader::reference(const std::shared_ptr<Reading>& reading) {
-        github.request(
-            reading->repository,
-            "GET",
-            "/git/ref/tags/" + httputils::url_encode(reading->tag),
-            nullptr,
-            {{"contents", "read"}},
-            [this, reading](const GitHubResult& result) {
-                if (result.status != 200 || !result.error.empty()) {
-                    reading->callback({result.status == 404 ? 404 : 502, nullptr, "", "", "selected version tag is unavailable"});
-                } else {
-                    try {
-                        require(result.body.at("ref") == "refs/tags/" + reading->tag, "GitHub returned another source reference");
-                        const auto sha = result.body.at("object").at("sha").get<std::string>();
-                        reading->source["tag"] = reading->tag;
-                        reading->source["tag_object_sha"] = sha;
-                        peel(reading, result.body.at("object").at("type").get<std::string>(), sha, 0);
-                    } catch (const std::exception& error) {
-                        reading->callback({422, nullptr, "", "", error.what()});
-                    }
-                }
-            });
+        read(reading, "/git/ref/tags/" + httputils::url_encode(reading->tag), [this, reading](const GitHubResult& result) {
+            reading->result.source["tag"] = reading->tag;
+            reading->result.source["tag_object_sha"] = result.body.at("object").at("sha");
+            peel(reading, result.body.at("object"), 0);
+        });
     }
-
-    void SourceReader::peel(const std::shared_ptr<Reading>& reading, const std::string& type, const std::string& sha, unsigned int depth) {
-        if (!validSha(sha)) {
-            reading->callback({422, nullptr, "", "", "tag object has an invalid immutable identity"});
-        } else if (type == "commit") {
-            definition(reading->repository, sha, [reading, sha](const SourceResult& result) {
-                if (result.status != 200) {
-                    reading->callback(result);
-                } else {
-                    try {
-                        auto selected = reading->source;
-                        selected["commit"] = sha;
-                        selected["definition_revision"] = sha;
-                        selected["definition_blob_sha"] = result.blobSha;
-                        selected["definition"] = Definition::parse(nlohmann::json::parse(result.content)).json;
-                        reading->callback({200, selected, result.content, result.blobSha, ""});
-                    } catch (const std::exception& error) {
-                        reading->callback({422, nullptr, "", result.blobSha, error.what()});
-                    }
-                }
+    void SourceReader::peel(const std::shared_ptr<Reading>& reading, const Json& object, unsigned int depth) {
+        static const std::regex sha("^[a-f0-9]{40}$");
+        const auto id = object.at("sha").get<std::string>();
+        require(depth < 16 && std::regex_match(id, sha), "invalid or excessive tag indirection");
+        if (object.at("type") == "tag") {
+            read(reading, "/git/tags/" + id, [this, reading, depth](const GitHubResult& result) {
+                peel(reading, result.body.at("object"), depth + 1);
             });
-        } else if (type == "tag" && depth < 16) {
-            github.request(reading->repository,
-                           "GET",
-                           "/git/tags/" + sha,
-                           nullptr,
-                           {{"contents", "read"}},
-                           [this, reading, sha, depth](const GitHubResult& result) {
-                               if (result.status != 200 || !result.error.empty()) {
-                                   reading->callback({502, nullptr, "", "", "could not peel selected annotated tag"});
-                               } else {
-                                   try {
-                                       require(result.body.at("sha") == sha, "annotated tag identity differs from request");
-                                       peel(reading,
-                                            result.body.at("object").at("type").get<std::string>(),
-                                            result.body.at("object").at("sha").get<std::string>(),
-                                            depth + 1);
-                                   } catch (const std::exception& error) {
-                                       reading->callback({422, nullptr, "", "", error.what()});
-                                   }
-                               }
-                           });
         } else {
-            reading->callback({422, nullptr, "", "", "tag must resolve to a commit within the 16-object bound"});
+            require(object.at("type") == "commit", "selected tag does not resolve to a commit");
+            definition(reading->repository, id, [reading](const SourceResult& result) {
+                auto selected = result;
+                selected.source.update(reading->result.source);
+                finish(reading, selected);
+            });
         }
     }
-
-    void SourceReader::definition(const std::string& repository, const std::string& commit, const Callback& callback) {
-        file(repository, commit, "ci/packages.json", callback);
+    void SourceReader::definition(const std::string& repository, const std::string& ref, const Callback& callback) {
+        file(repository, ref, "ci/packages.json", [callback](const SourceResult& file) {
+            auto result = file;
+            if (result.error.empty()) {
+                try {
+                    result.source["definition"] = parseDefinition(result.content);
+                    result.source["definition_blob_sha"] = result.blobSha;
+                    result.source["definition_revision"] = result.source.at("commit");
+                } catch (const std::exception& error) {
+                    result.status = 422;
+                    result.error = error.what();
+                }
+            }
+            callback(result);
+        });
     }
-
     void SourceReader::file(const std::string& repository,
-                            const std::string& commit,
+                            const std::string& ref,
                             const std::string& path,
                             const Callback& callback,
                             bool publicRepository,
-                            const std::string& rootTree,
+                            const std::string& root,
                             bool contents) {
-        try {
-            static const std::regex pathSyntax(R"(^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$)");
-            if (!validSha(commit) || path.size() > 512 || !std::regex_match(path, pathSyntax)) {
-                callback({422, nullptr, "", "", "file requires an exact commit and a bounded repository-relative path"});
-            } else {
-                const auto reading = std::make_shared<Reading>();
-                reading->repository = repository;
-                reading->publicRepository = publicRepository;
-                reading->contents = contents;
-                reading->source = {{"commit", commit}};
-                reading->callback = callback;
-                std::size_t offset = 0;
-                while (offset < path.size()) {
-                    const auto end = path.find('/', offset);
-                    reading->path.push_back(path.substr(offset, end == std::string::npos ? end : end - offset));
-                    offset = end == std::string::npos ? path.size() : end + 1;
-                }
-                const bool safe =
-                    reading->path.size() <= 32 && std::all_of(reading->path.begin(), reading->path.end(), [](const auto& part) {
-                        return part != "." && part != "..";
-                    });
-                if (!safe) {
-                    throw std::invalid_argument("selected file must remain inside its checkout");
-                }
-                if (!rootTree.empty()) {
-                    tree(reading, rootTree, 0);
-                } else {
-                    request(reading, "/git/commits/" + commit, [this, reading, commit](const GitHubResult& result) {
-                        if (result.status != 200 || !result.error.empty()) {
-                            reading->callback(
-                                {result.status == 404 ? 404 : 502, nullptr, "", "", "selected definition commit is unavailable"});
-                        } else {
-                            try {
-                                require(result.body.at("sha") == commit, "definition commit differs from selected source");
-                                tree(reading, result.body.at("tree").at("sha").get<std::string>(), 0);
-                            } catch (const std::exception& error) {
-                                reading->callback({422, nullptr, "", "", error.what()});
-                            }
-                        }
-                    });
+        auto reading = std::make_shared<Reading>();
+        reading->repository = repository;
+        reading->callback = callback;
+        reading->publicRepository = publicRepository;
+        reading->contents = contents;
+        reading->result.source = {{"commit", ref}};
+        reading->path = pathParts(path);
+        if (!root.empty()) {
+            tree(reading, root);
+        } else {
+            read(reading, "/commits/" + httputils::url_encode(ref), [this, reading, ref](const GitHubResult& result) {
+                static const std::regex sha("^[a-f0-9]{40}$");
+                require(std::regex_match(result.body.at("sha").get<std::string>(), sha) &&
+                            (!std::regex_match(ref, sha) || result.body.at("sha") == ref),
+                        "Git commit identity differs from lookup");
+                reading->result.source["commit"] = result.body.at("sha");
+                tree(reading, result.body.at("commit").at("tree").at("sha"));
+            });
+        }
+    }
+    void SourceReader::tree(const std::shared_ptr<Reading>& reading, const std::string& sha) {
+        read(reading, "/git/trees/" + sha + "?recursive=1", [this, reading](const GitHubResult& result) {
+            require(!result.body.value("truncated", true) && result.body.at("tree").is_array() && result.body.at("tree").size() <= 20000,
+                    "incomplete or excessive Git tree");
+            const auto& entries = result.body.at("tree");
+            auto found = entries.end();
+            std::string path;
+            bool present = true;
+            for (std::size_t position = 0; present && position < reading->path.size(); ++position) {
+                path += (path.empty() ? "" : "/") + reading->path.at(position);
+                found = std::find_if(entries.begin(), entries.end(), [&](const Json& entry) {
+                    return entry.at("path") == path;
+                });
+                present = found != entries.end();
+                if (present && position + 1 < reading->path.size()) {
+                    require(found->at("type") == "tree" && found->at("mode") == "040000", "Git path contains a link/submodule");
                 }
             }
-        } catch (const std::exception& error) {
-            callback({422, nullptr, "", "", error.what()});
-        }
-    }
-
-    void SourceReader::request(const std::shared_ptr<Reading>& reading, const std::string& suffix, const GitHub::Callback& callback) {
-        github.request(reading->repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback, reading->publicRepository);
-    }
-
-    void SourceReader::tree(const std::shared_ptr<Reading>& reading, const std::string& sha, unsigned int position) {
-        if (!validSha(sha)) {
-            reading->callback({422, nullptr, "", "", "definition tree has an invalid immutable identity"});
-        } else {
-            request(reading, "/git/trees/" + sha, [this, reading, sha, position](const GitHubResult& result) {
-                if (result.status != 200 || !result.error.empty()) {
-                    reading->callback({502, nullptr, "", "", "could not read selected definition tree"});
+            if (!present) {
+                reading->result.status = 404;
+                reading->result.error = "Git file is absent";
+                finish(reading, reading->result);
+            } else {
+                require(found->at("type") == "blob" && (found->at("mode") == "100644" || found->at("mode") == "100755"),
+                        "Git file is not regular");
+                reading->result.blobSha = found->at("sha");
+                require(std::regex_match(reading->result.blobSha, std::regex("^[a-f0-9]{40}$")), "invalid Git blob identity");
+                if (reading->contents) {
+                    read(reading, "/git/blobs/" + reading->result.blobSha, [reading](const GitHubResult& blob) {
+                        require(blob.body.at("encoding") == "base64" && blob.body.at("size").get<std::size_t>() <= 2 * 1024 * 1024,
+                                "invalid or oversized Git blob");
+                        reading->result.content = unbase64(blob.body.at("content"));
+                        require(reading->result.content.size() == blob.body.at("size") &&
+                                    blobSha(reading->result.content) == reading->result.blobSha,
+                                "Git blob bytes do not match their identity");
+                        finish(reading, reading->result);
+                    });
                 } else {
-                    try {
-                        require(result.body.at("sha") == sha && !result.body.value("truncated", true),
-                                "definition tree is truncated or has changed identity");
-                        const auto& name = reading->path.at(position);
-                        nlohmann::json selected;
-                        for (const auto& entry : result.body.at("tree")) {
-                            if (entry.at("path") == name) {
-                                require(selected.is_null(), "ambiguous definition tree entry");
-                                selected = entry;
-                            }
-                        }
-                        if (selected.is_null()) {
-                            reading->callback({404, reading->source, "", "", "selected file is absent at the exact commit"});
-                        } else if (position + 1 < reading->path.size()) {
-                            require(selected.at("type") == "tree" && selected.at("mode") == "040000",
-                                    "selected file parent must be a directory inside the checkout");
-                            tree(reading, selected.at("sha").get<std::string>(), position + 1);
-                        } else {
-                            require(selected.at("type") == "blob" && (selected.at("mode") == "100644" || selected.at("mode") == "100755"),
-                                    "selected file must be regular, not a symlink or submodule");
-                            require(validSha(selected.at("sha").get<std::string>()), "selected file has invalid blob identity");
-                            if (reading->contents) {
-                                blob(reading, selected.at("sha").get<std::string>());
-                            } else {
-                                reading->callback({200, reading->source, "", selected.at("sha").get<std::string>(), ""});
-                            }
-                        }
-                    } catch (const std::exception& error) {
-                        reading->callback({422, nullptr, "", "", error.what()});
-                    }
+                    finish(reading, reading->result);
                 }
-            });
-        }
+            }
+        });
     }
-
-    std::string SourceReader::decode(const nlohmann::json& blob, const std::string& sha) {
-        require(validSha(sha) && blob.at("sha") == sha && blob.at("encoding") == "base64",
-                "definition blob identity/encoding differs from its tree");
-        auto encoded = blob.at("content").get<std::string>();
-        encoded.erase(std::remove_if(encoded.begin(),
-                                     encoded.end(),
-                                     [](unsigned char ch) {
-                                         return std::isspace(ch);
-                                     }),
-                      encoded.end());
-        require(encoded.size() <= 1398104 && encoded.size() % 4 == 0, "definition exceeds the one-MiB bound or has invalid base64 length");
-        std::size_t padding = 0;
-        if (!encoded.empty() && encoded.back() == '=') {
-            ++padding;
+    std::vector<std::string> SourceReader::pathParts(const std::string& path) {
+        std::vector<std::string> result;
+        std::istringstream components(path);
+        std::string component;
+        require(!path.empty() && path.size() <= 512 && !path.ends_with('/') && path.find('\\') == std::string::npos &&
+                    std::none_of(path.begin(),
+                                 path.end(),
+                                 [](unsigned char c) {
+                                     return c < 32 || c == 127;
+                                 }),
+                "invalid relative Git path");
+        while (std::getline(components, component, '/')) {
+            require(!component.empty() && component != "." && component != "..", "unsafe relative Git path");
+            result.push_back(component);
         }
-        if (encoded.size() >= 2 && encoded[encoded.size() - 2] == '=') {
-            ++padding;
-        }
-        for (std::size_t index = 0; index < encoded.size(); ++index) {
-            const unsigned char ch = encoded[index];
-            require((index >= encoded.size() - padding && ch == '=') ||
-                        (index < encoded.size() - padding &&
-                         ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '+' || ch == '/')),
-                    "invalid base64 definition byte");
-        }
-        std::string content(encoded.size() / 4 * 3 + 1, '\0');
-        const int count = EVP_DecodeBlock(reinterpret_cast<unsigned char*>(content.data()),
-                                          reinterpret_cast<const unsigned char*>(encoded.data()),
-                                          static_cast<int>(encoded.size()));
-        require(count >= static_cast<int>(padding) && static_cast<std::size_t>(count) - padding <= 1024 * 1024,
-                "invalid or oversized definition encoding");
-        content.resize(static_cast<std::size_t>(count) - padding);
-        require(blobSha(content) == sha, "definition bytes do not match the selected Git blob");
-        return content;
+        require(result.size() <= 16, "excessive relative Git path");
+        return result;
     }
-
-    std::string SourceReader::blobSha(const std::string& content) {
-        std::string object = "blob " + std::to_string(content.size());
-        object.push_back('\0');
-        object += content;
-        unsigned char hash[EVP_MAX_MD_SIZE]{};
-        unsigned int size = 0;
-        require(EVP_Digest(object.data(), object.size(), hash, &size, EVP_sha1(), nullptr) == 1 && size == 20,
-                "could not verify Git blob identity");
-        constexpr char digits[] = "0123456789abcdef";
-        std::string actual;
-        for (unsigned int index = 0; index < size; ++index) {
-            actual.push_back(digits[hash[index] >> 4]);
-            actual.push_back(digits[hash[index] & 15]);
+    Json SourceReader::parseDefinition(const std::string& content) {
+        auto definition = Json::parse(content);
+        static const std::set<std::string> allowed{"schema", "title", "package", "depends_on", "build", "matrix"};
+        for (const auto& [key, value] : definition.items()) {
+            require(allowed.contains(key), "unsupported definition field: " + key);
         }
-        return actual;
-    }
-
-    void SourceReader::blob(const std::shared_ptr<Reading>& reading, const std::string& sha) {
-        if (!validSha(sha)) {
-            reading->callback({422, nullptr, "", "", "definition blob has an invalid immutable identity"});
-        } else {
-            request(reading, "/git/blobs/" + sha, [reading, sha](const GitHubResult& result) {
-                if (result.status != 200 || !result.error.empty()) {
-                    reading->callback({502, nullptr, "", sha, "could not read selected definition blob"});
-                } else {
-                    try {
-                        const auto content = decode(result.body, sha);
-                        reading->callback({200, reading->source, content, sha, ""});
-                    } catch (const std::exception& error) {
-                        reading->callback({422, reading->source, "", sha, error.what()});
-                    }
-                }
-            });
+        static const std::regex package("^[a-z0-9][a-z0-9+.-]{0,127}$");
+        require(definition.at("schema") == 1 && !definition.at("title").get<std::string>().empty() &&
+                    std::regex_match(definition.at("package").get<std::string>(), package) && definition.at("depends_on").is_array() &&
+                    definition.at("depends_on").size() <= 128 && definition.at("matrix").is_array() && !definition.at("matrix").empty() &&
+                    definition.at("matrix").size() <= 256,
+                "invalid package definition");
+        const auto fields = [](const Json& object, const std::set<std::string>& allowed) {
+            require(object.is_object(), "definition section must be an object");
+            for (const auto& [key, value] : object.items()) {
+                require(allowed.contains(key), "unsupported definition field: " + key);
+            }
+        };
+        fields(definition.at("build"), {"native", "openwrt"});
+        std::set<std::string> dependencies, ids, coordinates;
+        static const std::regex coordinate("^[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}$");
+        for (const auto& dependency : definition.at("depends_on")) {
+            const auto name = dependency.get<std::string>();
+            require(GitHub::validRepository("Owner/" + name) && dependencies.insert(name).second, "invalid or duplicate dependency");
         }
+        for (const auto& target : definition.at("matrix")) {
+            fields(target, {"id", "family", "distribution", "suite", "arch", "runner", "build"});
+            const auto family = target.at("family").get<std::string>();
+            const auto format = target.at("build").at("format").get<std::string>();
+            fields(target.at("build"),
+                   family == "native" ? std::set<std::string>{"format", "image", "platform"} : std::set<std::string>{"format", "target"});
+            for (const auto& [key, value] : target.at("build").items()) {
+                require(value.is_string() && !value.get_ref<const std::string&>().empty(), "invalid target build value");
+            }
+            require(family != "native" || target.at("build").contains("image"), "native target image is required");
+            for (const auto* key : {"id", "distribution", "suite", "arch"}) {
+                require(std::regex_match(target.at(key).get<std::string>(), coordinate), "invalid target coordinate");
+            }
+            require(ids.insert(target.at("id")).second && coordinates.insert(graph::coordinates(target).dump()).second &&
+                        ((family == "native" && (format == "deb" || format == "rpm")) ||
+                         (family == "openwrt" && (format == "ipk" || format == "apk"))),
+                    "invalid or duplicate package target");
+            pathParts(definition.at("build").at(family));
+            require(target.at("runner").is_string() || (target.at("runner").is_array() && !target.at("runner").empty()),
+                    "invalid runner selector");
+            const auto labels = target.at("runner").is_string() ? Json::array({target.at("runner")}) : target.at("runner");
+            require(labels.size() <= 32, "excessive runner selector");
+            for (const auto& label : labels) {
+                require(label.is_string() && !label.get_ref<const std::string&>().empty() &&
+                            label.get_ref<const std::string&>().size() <= 128,
+                        "invalid runner label");
+            }
+        }
+        return definition;
     }
 } // namespace coreci

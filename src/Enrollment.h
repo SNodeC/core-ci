@@ -1,65 +1,27 @@
-#ifndef CORE_CI_ENROLLMENT_H
-#define CORE_CI_ENROLLMENT_H
+#pragma once
 
-#include "Database.h"
-#include "Definition.h"
 #include "GraphStore.h"
 #include "PipelineConfig.h"
-#include "SourceReader.h"
-
-#include <functional>
-#include <map>
-#include <string>
 
 namespace coreci {
-
     struct EnrollmentResult {
         int status = 200;
-        nlohmann::json body;
+        Json body;
     };
-
     class Enrollment {
     public:
         using Callback = std::function<void(const EnrollmentResult&)>;
-        Enrollment(Database& database, GitHub& github, GraphStore& graphStore, SourceReader& sources, const PipelineConfig& deployment);
-        void restore(const Callback& callback);
-        void list(const Callback& callback);
-        void save(const nlohmann::json& request, const Callback& callback);
-        void workflow(const nlohmann::json& request, const Callback& callback);
-        void refresh(const nlohmann::json& request, const Callback& callback);
+        Enrollment(GitHub& github, GraphStore& store, SourceReader& sources, const PipelineConfig& config);
+        void list(const Callback& callback) const;
+        void refresh(const Json& input, const Callback& callback);
+        void save(const Json& input, const Callback& callback);
+        void workflow(const Json& input, const Callback& callback);
 
     private:
-        struct Save {
-            std::string repository;
-            std::string name;
-            std::string branch;
-            std::string expectedRevision;
-            std::string expectedBlob;
-            std::string blob;
-            std::string head;
-            std::uint64_t id = 0;
-            std::uint64_t generation = 0;
-            Definition definition;
-            bool importing = false;
-            Callback callback;
-        };
-
-        void readHead(const std::shared_ptr<Save>& save);
-        void readFile(const std::shared_ptr<Save>& save);
-        void checkClaims(const std::shared_ptr<Save>& save, const std::function<void()>& next);
-        void writeDefinition(const std::shared_ptr<Save>& save);
-        void commit(const std::shared_ptr<Save>& save);
-        void remember(const std::shared_ptr<Save>& save, const GitHubResult& result);
-        void finish(const std::shared_ptr<Save>& save, int status, const nlohmann::json& body);
-
-        Database& database;
+        void persist(const Json& row, std::uint64_t generation, const Callback& callback);
         GitHub& github;
-        GraphStore& graphStore;
+        GraphStore& store;
         SourceReader& sources;
-        const PipelineConfig& deployment;
-        bool saving = false;
+        const PipelineConfig& config;
     };
-
 } // namespace coreci
-
-#endif

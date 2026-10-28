@@ -1,153 +1,60 @@
 #include "PipelineConfig.h"
 
-#include "HttpsUrl.h"
-#include "SourceReader.h"
 #include "UiAssets.h"
 
 #include <regex>
-#include <stdexcept>
 
 namespace coreci {
     PipelineConfig::PipelineConfig(utils::SubCommand* parent)
-        : SubCommand(parent, this, "Package pipeline deployment") {
+        : SubCommand(parent, this, "Package pipeline") {
+        const std::pair<const char*, std::string&> options[]{{"worker-repository", workerRepository},
+                                                             {"tooling-sha", toolingSha},
+                                                             {"source-workflow", sourceWorkflow},
+                                                             {"source-workflow-blob", sourceWorkflowBlob},
+                                                             {"publication-workflow", publicationWorkflow},
+                                                             {"publication-ref", publicationRef},
+                                                             {"publication-workflow-blob", publicationWorkflowBlob},
+                                                             {"status-workflow", statusWorkflow},
+                                                             {"status-workflow-blob", statusWorkflowBlob},
+                                                             {"feed-repository", feedRepository},
+                                                             {"feed-branch", feedBranch},
+                                                             {"feed-base-url", feedBaseUrl},
+                                                             {"gpg-fingerprint", gpgFingerprint},
+                                                             {"usign-key-sha256", usignKeySha256},
+                                                             {"apk-key-sha256", apkKeySha256}};
+        for (const auto& [name, value] : options) {
+            setConfigurable(addOptionVariable(std::string("--") + name, value, name, "string", value, CLI::TypeValidator<std::string>()),
+                            true);
+        }
         setConfigurable(
-            addOptionVariable("--publication-limit", publicationLimit, "Assigned publications per feed", "uint", 8u, CLI::Range(1u, 32u)),
-            true);
-        setConfigurable(addOptionVariable("--status-workflow",
-                                          statusWorkflow,
-                                          "Optional trusted public status workflow path",
-                                          "path",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--status-workflow-blob",
-                                          statusWorkflowBlob,
-                                          "Approved public status workflow blob SHA",
-                                          "sha",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--worker-repository",
-                                          workerRepository,
-                                          "Trusted worker owner/repository",
-                                          "repository",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(
-            addOptionVariable(
-                "--tooling-sha", toolingSha, "Reviewed immutable worker tooling commit", "sha", CLI::TypeValidator<std::string>()),
-            true);
-        setConfigurable(addOptionVariable("--publication-workflow",
-                                          publicationWorkflow,
-                                          "Trusted publisher workflow path",
-                                          "path",
-                                          std::string(".github/workflows/core-ci-publish.yml"),
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--publication-ref",
-                                          publicationRef,
-                                          "Authorized publisher dispatch branch or tag",
-                                          "ref",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--publication-workflow-blob",
-                                          publicationWorkflowBlob,
-                                          "Approved publisher workflow Git blob SHA",
-                                          "sha",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--source-workflow",
-                                          sourceWorkflow,
-                                          "Approved source build workflow path",
-                                          "path",
-                                          std::string(".github/workflows/core-ci-build.yml"),
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--source-workflow-blob",
-                                          sourceWorkflowBlob,
-                                          "Approved source workflow Git blob SHA",
-                                          "sha",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--feed-repository",
-                                          feedRepository,
-                                          "Feed owner/repository (separate feed-writer access)",
-                                          "repository",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(
-            addOptionVariable(
-                "--feed-id", feedId, "Feed immutable repository ID", "uint64", std::uint64_t{0}, CLI::TypeValidator<std::uint64_t>()),
-            true);
-        setConfigurable(
-            addOptionVariable("--feed-branch", feedBranch, "Explicit feed publication branch", "branch", CLI::TypeValidator<std::string>()),
-            true);
-        setConfigurable(addOptionVariable("--feed-base-url",
-                                          feedBaseUrl,
-                                          "Actual package-compatible public HTTPS base URL",
-                                          "url",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(addOptionVariable("--gpg-fingerprint",
-                                          gpgFingerprint,
-                                          "Trusted APT/RPM OpenPGP fingerprint",
-                                          "fingerprint",
-                                          CLI::TypeValidator<std::string>()),
-                        true);
-        setConfigurable(
-            addOptionVariable(
-                "--usign-key-sha256", usignKeySha256, "Reviewed IPK public-key file SHA-256", "sha256", CLI::TypeValidator<std::string>()),
-            true);
-        setConfigurable(
-            addOptionVariable(
-                "--apk-key-sha256", apkKeySha256, "Reviewed APK public-key file SHA-256", "sha256", CLI::TypeValidator<std::string>()),
+            addOptionVariable("--feed-id", feedId, "Feed repository ID", "id", std::uint64_t{0}, CLI::TypeValidator<std::uint64_t>()),
             true);
     }
-
-    std::string PipelineConfig::sourceWorkflowContent() const {
-        std::string content = ui::sourceWorkflow;
-        for (const auto& [key, value] : std::map<std::string, std::string>{{"@WORKER@", workerRepository}, {"@TOOLING_SHA@", toolingSha}}) {
-            const auto position = content.find(key);
-            if (position == std::string::npos) {
-                throw std::invalid_argument("workflow template substitution is missing");
+    std::string PipelineConfig::sourceContent() const {
+        auto result = std::string(ui::sourceWorkflow);
+        for (const auto& [marker, value] :
+             std::map<std::string, std::string>{{"@WORKER@", workerRepository}, {"@TOOLING_SHA@", toolingSha}}) {
+            std::size_t position = 0;
+            while ((position = result.find(marker, position)) != std::string::npos) {
+                result.replace(position, marker.size(), value);
+                position += value.size();
             }
-            content.replace(position, key.size(), value);
         }
-        if (SourceReader::blobSha(content) != sourceWorkflowBlob) {
-            throw std::invalid_argument("rendered source workflow differs from the configured approved blob SHA");
-        }
-        return content;
+        return result;
     }
-
-    nlohmann::json PipelineConfig::deployment(const GitHub& github, const GitHubConfig& app, const nlohmann::json& repository) const {
-        static const std::regex sha(R"(^[a-f0-9]{40}$)");
-        static const std::regex hash(R"(^[a-f0-9]{64}$)");
-        static const std::regex fingerprint(R"(^([A-F0-9]{40}|[A-F0-9]{64})$)");
-        static const std::regex workflow(R"(^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$)");
-        if (!GitHub::validRepository(workerRepository) || !GitHub::validRepository(feedRepository) || workerRepository == feedRepository ||
-            workerRepository == repository.at("repository").get<std::string>() ||
-            feedRepository == repository.at("repository").get<std::string>() || feedId == 0 || app.botId == 0) {
-            throw std::invalid_argument(
-                "configure distinct pipeline worker/feed repositories, feed ID and github.bot-id before selecting work");
-        }
-        const auto workerId = github.repositoryId(workerRepository);
-        if (workerId == feedId || workerId == repository.at("id") || feedId == repository.at("id") ||
-            github.repositoryId(repository.at("repository").get<std::string>()) != repository.at("id")) {
-            throw std::invalid_argument("pipeline repository roles/IDs conflict with configured GitHub grants");
-        }
-        if (!std::regex_match(toolingSha, sha) || !std::regex_match(sourceWorkflowBlob, sha) ||
-            !std::regex_match(publicationWorkflowBlob, sha) || !std::regex_match(sourceWorkflow, workflow) ||
-            !std::regex_match(publicationWorkflow, workflow) || publicationRef.empty() || publicationRef.size() > 256 ||
-            feedBranch.empty() || feedBranch.size() > 256) {
-            throw std::invalid_argument("configure reviewed pipeline tooling/workflow identities and explicit publication/feed refs");
-        }
-        sourceWorkflowContent();
-        const HttpsUrl feed(feedBaseUrl);
-        if (feed.path.find('?') != std::string::npos || !std::regex_match(gpgFingerprint, fingerprint) ||
-            !std::regex_match(usignKeySha256, hash) || !std::regex_match(apkKeySha256, hash)) {
-            throw std::invalid_argument("configure the actual feed HTTPS base URL and all trusted public signing-key identities");
-        }
+    Json PipelineConfig::deployment(const GitHubConfig& app, const GitHub& github, const std::string& branch) const {
+        static const std::regex sha("^[a-f0-9]{40}$"), fingerprint("^[A-F0-9]{40}$"), sha256("^[a-f0-9]{64}$");
+        require(GitHub::validRepository(workerRepository) && GitHub::validRepository(feedRepository) && feedId && app.botId &&
+                    std::regex_match(toolingSha, sha) && std::regex_match(sourceWorkflowBlob, sha) &&
+                    std::regex_match(publicationWorkflowBlob, sha) && std::regex_match(gpgFingerprint, fingerprint) &&
+                    std::regex_match(usignKeySha256, sha256) && std::regex_match(apkKeySha256, sha256) && !branch.empty() &&
+                    !publicationRef.empty() && !feedBranch.empty() && feedBaseUrl.starts_with("https://"),
+                "configure immutable worker, workflow, feed and signing identities");
+        require(SourceReader::blobSha(sourceContent()) == sourceWorkflowBlob, "rendered source workflow differs from approval");
         return {{"controller_app_bot_id", app.botId},
-                {"worker", {{"repository", workerRepository}, {"repository_id", workerId}, {"tooling_sha", toolingSha}}},
-                {"source_workflow", {{"path", sourceWorkflow}, {"ref", repository.at("branch")}, {"blob_sha", sourceWorkflowBlob}}},
+                {"worker",
+                 {{"repository", workerRepository}, {"repository_id", github.repositoryId(workerRepository)}, {"tooling_sha", toolingSha}}},
+                {"source_workflow", {{"path", sourceWorkflow}, {"ref", branch}, {"blob_sha", sourceWorkflowBlob}}},
                 {"publication_workflow", {{"path", publicationWorkflow}, {"ref", publicationRef}, {"blob_sha", publicationWorkflowBlob}}},
                 {"feed", {{"repository", feedRepository}, {"repository_id", feedId}, {"branch", feedBranch}, {"base_url", feedBaseUrl}}},
                 {"signing", {{"gpg_fingerprint", gpgFingerprint}, {"usign_key_sha256", usignKeySha256}, {"apk_key_sha256", apkKeySha256}}}};

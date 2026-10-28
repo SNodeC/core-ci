@@ -1,18 +1,13 @@
-#ifndef CORE_CI_PIPELINE_H
-#define CORE_CI_PIPELINE_H
+#pragma once
 
 #include "Enrollment.h"
 #include "FeedProof.h"
-#include "PipelineConfig.h"
 
+#include <optional>
 #include <set>
 
 namespace coreci {
-    struct PipelineResult {
-        int status = 200;
-        nlohmann::json body;
-    };
-
+    using PipelineResult = EnrollmentResult;
     class Pipeline {
     public:
         using Callback = std::function<void(const PipelineResult&)>;
@@ -20,92 +15,44 @@ namespace coreci {
                  const GitHubConfig& app,
                  GitHub& github,
                  SourceReader& sources,
-                 Enrollment& enrollment,
                  GraphStore& store,
-                 FeedProof& feeds);
+                 FeedProof& feeds)
+            : config(config)
+            , app(app)
+            , github(github)
+            , sources(sources)
+            , store(store)
+            , feeds(feeds) {
+        }
+        void event(const std::string& type, const std::string& signature, const std::string& body, const Callback& callback);
         void request(const std::string& repository,
                      const std::string& tag,
                      bool automatic,
                      const Callback& callback,
-                     const std::string& expectedTagObject = "");
-        void event(const std::string& type, const std::string& signature, const std::string& body, const Callback& callback);
+                     const std::string& expectedTag = "");
+        void retire(const std::string& execution, const std::string& attempt, const Callback& callback);
         void retry(const std::string& execution, const Callback& callback);
-        void advance(const Callback& callback);
-        void reconcile(const Callback& callback);
+        void reconcile(bool restored, const Callback& callback);
         void refreshStatus();
-        void
-        inspect(const std::string& execution, const std::string& attempt, bool publication, std::uint64_t runId, const Callback& callback);
 
     private:
-        struct Selecting {
-            std::string repository;
-            std::string root;
-            std::string tag;
-            std::string expectedTagObject;
-            bool automatic = false;
-            std::uint64_t generation = 0;
-            std::vector<nlohmann::json> repositories;
-            std::size_t remaining = 0;
-            std::vector<SourceResult> results;
-            std::map<std::string, nlohmann::json> sources;
-            Callback callback;
-        };
-
-        void readSources(const std::shared_ptr<Selecting>& selection);
-        void commitSelection(const std::shared_ptr<Selecting>& selection);
-        void
-        read(const std::string& repository, const std::string& suffix, const nlohmann::json& permissions, const GitHub::Callback& callback);
-        void workflow(const std::string& repository, const nlohmann::json& definition, const SourceReader::Callback& callback);
-        void proof(const std::string& repository,
-                   const nlohmann::json& definition,
-                   const std::string& commit,
-                   const std::string& rootTree,
-                   const SourceReader::Callback& callback);
-        void observe(const std::string& execution,
-                     const std::string& attempt,
-                     bool publication,
-                     const nlohmann::json& run,
-                     const nlohmann::json& job,
-                     const Callback& callback,
-                     bool recovery = false);
-        void record(const std::string& execution,
-                    const std::string& attempt,
-                    bool publication,
-                    const nlohmann::json& identity,
-                    const nlohmann::json& observation,
-                    const Callback& callback,
-                    bool recovery,
-                    bool readJobs);
-        void complete(
-            const std::string& execution, const std::string& attempt, bool publication, const Callback& callback, bool readJobs = false);
-        void dispatch(const Node& node, bool publication, const Callback& callback);
-        void search(const std::string& execution,
-                    const std::string& attempt,
-                    bool publication,
-                    unsigned int page,
-                    const std::shared_ptr<std::vector<std::uint64_t>>& matches,
-                    const Callback& callback);
-        void buildArtifacts(const Node& node, const nlohmann::json& job, const Callback& callback);
-        void publicationResult(const Node& node, const nlohmann::json& evidence, const Callback& callback);
-        void change(const std::function<Node(const Graph&)>& derive,
-                    const Callback& callback,
-                    const PipelineResult& preparationFailure = {409, {}});
-        static bool matchesJob(const Attempt& attempt, bool publication, const nlohmann::json& job);
-        static std::string title(const Attempt& attempt, bool publication, bool job = false);
-
-        std::map<std::string, std::vector<GitHub::Callback>> reads;
-        std::map<std::string, SourceResult> proofs;
-        std::map<std::string, std::vector<SourceReader::Callback>> proofReads;
-        std::set<std::string> completionReads;
-        bool refreshing = false;
+        void change(const std::function<Json(Json&)>& derive, const Callback& callback);
+        void dispatch(const Json& executions);
+        void fail(const std::string& id, const std::string& attempt, const std::string& reason);
+        void accept(const std::string& repository, const Json& report, bool job, const Json& packageJob = nullptr);
+        void record(const std::string& id, const std::string& attempt, bool publication, const Json& run, const Json& facts);
+        void inspect(const std::string& id, const Callback& callback);
+        void complete(const std::string& id, bool publication);
+        static Json facts(const Json& report, bool job);
+        static void log(const PipelineResult& result);
         const PipelineConfig& config;
         const GitHubConfig& app;
         GitHub& github;
         SourceReader& sources;
-        Enrollment& enrollment;
         GraphStore& store;
         FeedProof& feeds;
+        std::set<std::string> completionReads;
+        std::optional<std::uint64_t> refreshing;
+        std::uint64_t statusSent = UINT64_MAX;
     };
 } // namespace coreci
-
-#endif

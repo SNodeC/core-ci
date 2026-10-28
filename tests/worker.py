@@ -245,6 +245,11 @@ def main():
             public_receipt = contract.publication_receipt(linked, {}, {}, manifest)
             assert public_receipt["dependencies"][0]["packages"] == receipt["packages"]
             assert "dependencies" not in public_receipt["dependencies"][0]
+            compact_linked = copy.deepcopy(linked)
+            compact_linked["dependencies"][0]["receipt"].pop("indexes")
+            assert contract.publication_receipt(compact_linked, {}, {}, manifest) == {
+                **public_receipt, "assignment_sha256": contract.digest(compact_linked)
+            }
             before = {
                 str(file.relative_to(feed)): contract.file_hash(file) for file in feed.rglob("*") if file.is_file()
             }

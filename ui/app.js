@@ -76,11 +76,27 @@ function showExecution(id) {
     tab("work");
     renderWork();
 }
+const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "short"});
+const timeFormat = new Intl.DateTimeFormat(undefined, {timeStyle: "medium", hourCycle: "h23"});
+const fullDateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "full", timeStyle: "medium", hourCycle: "h23"});
 function timestamp(value, pending = false) {
     const date = new Date(value || "");
-    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, {
-        dateStyle: "short", timeStyle: "long"
-    }).format(date) : pending ? "Pending" : "Not recorded";
+    let result = node("span", pending ? "Pending" : "Not recorded", "secondary");
+    if (Number.isFinite(date.getTime())) {
+        result = node("time", "", "timestamp");
+        result.dateTime = date.toISOString();
+        result.title = fullDateFormat.format(date);
+        result.setAttribute("aria-label", result.title);
+        result.append(node("span", dateFormat.format(date)), node("span", timeFormat.format(date)));
+    }
+    return result;
+}
+function executionPending(execution) {
+    return [
+        ["waiting", "building"].includes(execution.state) && execution.build_job?.status !== "completed",
+        !["published", "failed"].includes(execution.state) && execution.publication_job?.status !== "completed",
+        !["published", "failed"].includes(execution.state)
+    ];
 }
 function duration(job, pending = false) {
     const seconds = (Date.parse(job?.completed_at) - Date.parse(job?.started_at)) / 1000;
@@ -88,20 +104,33 @@ function duration(job, pending = false) {
         pending ? "Pending" : "Not recorded";
 }
 function renderExecution(execution, panel, open) {
-    const buildPending = ["waiting", "building"].includes(execution.state) && execution.build_job?.status !== "completed";
-    const publicationPending = !["published", "failed"].includes(execution.state) && execution.publication_job?.status !== "completed";
-    const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl");
-    for (const [label, value] of [["Activity", execution.activity], ["Selection", execution.automatic ? "Automatic" : "Explicit request"],
-        ["Build started", timestamp(execution.build_job?.started_at, buildPending)],
-        ["Build finished", timestamp(execution.build_job?.completed_at, buildPending)],
-        ["Build duration", duration(execution.build_job, buildPending)],
-        ["Publisher job started", timestamp(execution.publication_job?.started_at, publicationPending)],
-        ["Publisher job finished", timestamp(execution.publication_job?.completed_at, publicationPending)],
-        ["Publisher job duration", duration(execution.publication_job, publicationPending)],
-        ["Publication verified", timestamp(execution.receipt?.publication_verified_utc, !["published", "failed"].includes(execution.state))]]) {
+    const [buildPending, publicationPending, verificationPending] = executionPending(execution);
+    const columns = node("div", "", "detail-grid"), facts = node("div"), values = node("dl"), timings = node("table", "", "timings");
+    for (const [label, value] of [["Activity", execution.activity], ["Selection", execution.automatic ? "Automatic" : "Explicit request"]]) {
         values.append(node("dt", label), node("dd", value));
     }
-    facts.append(values,
+    const heading = timings.createTHead().insertRow();
+    for (const label of ["Job", "Started", "Finished", "Duration"]) {
+        const cell = node("th", label);
+        cell.scope = "col";
+        heading.append(cell);
+    }
+    const body = timings.createTBody(), verified = node("dl"), verifiedTime = node("dd");
+    for (const [label, job, waiting] of [["Build", execution.build_job, buildPending],
+        ["Publisher job", execution.publication_job, publicationPending]]) {
+        const row = body.insertRow(), title = node("th", label);
+        title.scope = "row";
+        row.append(title);
+        for (const value of [timestamp(job?.started_at, waiting), timestamp(job?.completed_at, waiting),
+            node("span", duration(job, waiting))]) {
+            const cell = node("td");
+            cell.append(value);
+            row.append(cell);
+        }
+    }
+    verifiedTime.append(timestamp(execution.receipt?.publication_verified_utc, verificationPending));
+    verified.append(node("dt", "Publication verified"), verifiedTime);
+    facts.append(values, timings, verified,
         node("p", execution.failure || execution.blockers.join("; ") || "No current blockers", execution.failure ? "error" : "secondary"));
     const summary = execution.receipt?.summary, tests = summary?.tests, reported = node("dl");
     const compilers = (summary?.compilers || []).map((compiler) => compiler.name + " " + compiler.version).join("; ");
@@ -149,6 +178,18 @@ function renderExecution(execution, panel, open) {
             actions.append(link);
         }
     }
+    if (execution.retirable && graph.mutations_allowed) {
+        const retire = button("Retire unconfirmed publication", () => operation(async () => {
+            if (window.confirm("GitHub's outcome is unknown: a run may still exist or have published. " +
+                "This does not cancel remote work; it records your decision, not a GitHub failure. " +
+                "Any later retry is a separate action with a new rebuild revision. Retire this attempt?")) {
+                feedback(await api("/api/work/retire", {execution: execution.id, attempt: execution.attempt,
+                    acknowledge_unknown_outcome: true}));
+            }
+        }));
+        retire.disabled = busy;
+        actions.append(retire);
+    }
     if (execution.state === "failed" && !execution.superseded_by && graph.mutations_allowed) {
         const retry = button("Retry with a new rebuild revision", () => operation(async () => {
             feedback(await api("/api/work/retry", {execution: execution.id}));
@@ -159,7 +200,8 @@ function renderExecution(execution, panel, open) {
     const technical = node("details");
     technical.open = open;
     technical.append(node("summary", "Source, configuration and execution identities"), node("pre", JSON.stringify(execution, null, 2)));
-    panel.append(columns, actions, technical);
+    const content = panel.appendChild(node("div", "", "execution-content"));
+    content.append(columns, actions, technical);
 }
 function renderWork() {
     const query = element("search").value.toLowerCase(), filter = element("state-filter").value;
@@ -187,17 +229,24 @@ function renderWork() {
         toggle.setAttribute("aria-controls", "execution-" + execution.id);
         const control = node("td");
         control.append(toggle);
-        repository.append(node("span", execution.repository), node("span", execution.tag, "secondary"));
-        distribution.append(node("span", target.distribution), node("span", target.suite, "secondary"));
+        repository.append(node("span", execution.repository), node("span", execution.tag + " · r" + execution.revision, "secondary revision"));
+        distribution.append(node("span", target.distribution + " " + target.suite),
+            node("span", target.arch + " · " + target.build.format, "secondary"));
         const status = node("td");
         status.append(state(execution));
-        row.append(control, repository, distribution, node("td", target.arch), node("td", target.build.format),
-            node("td", "r" + execution.revision, "revision"), status, node("td", timestamp(execution.build_job?.started_at,
-                ["waiting", "building"].includes(execution.state) && execution.build_job?.status !== "completed"), "build-time"));
+        row.append(control, repository, distribution, status);
+        const [buildPending, publicationPending, verificationPending] = executionPending(execution);
+        for (const [value, waiting] of [[execution.build_job?.started_at, buildPending], [execution.build_job?.completed_at, buildPending],
+            [execution.publication_job?.started_at, publicationPending], [execution.publication_job?.completed_at, publicationPending],
+            [execution.receipt?.publication_verified_utc, verificationPending]]) {
+            const cell = node("td", "", "work-time");
+            cell.append(timestamp(value, waiting));
+            row.append(cell);
+        }
         element("graph").append(row);
         if (execution.id === executionId) {
             const details = node("tr"), panel = node("td", "", "execution-details");
-            panel.colSpan = 8;
+            panel.colSpan = 9;
             panel.id = "execution-" + execution.id;
             renderExecution(execution, panel, technicalOpen);
             details.append(panel);

@@ -165,6 +165,9 @@ The shell hook receives these environment variables:
 | `PREREQUISITES_DIR` | Read-only exact packages, receipts and development exports keyed by execution |
 | `OUTPUT_DIR` | Writable declared output location |
 
+Prerequisite receipt copies omit repository `indexes`; full signed receipts remain in the feed.
+Package/export identities and SDK compatibility facts stay exact.
+
 Read the small [working reference hook](../../deployment/reference/native/ci/native.sh)
 before adapting your own. It builds a C project, runs its test and produces DEB or RPM packages
 using standard tools. It is deliberately usable without a CMake-based project.

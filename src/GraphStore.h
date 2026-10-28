@@ -1,48 +1,31 @@
-#ifndef CORE_CI_GRAPH_STORE_H
-#define CORE_CI_GRAPH_STORE_H
+#pragma once
 
 #include "Database.h"
 #include "Graph.h"
 
-#include <functional>
-
 namespace coreci {
     class GraphStore {
     public:
-        explicit GraphStore(Database& database, unsigned int publicationLimit = 8);
+        using Callback = std::function<void(const DatabaseResult&, const Json&)>;
+        explicit GraphStore(Database& database)
+            : database(database) {
+        }
         void restore(const Database::Callback& callback);
-        using Derive = std::function<GraphChange(const Graph&)>;
-        using CommitCallback = std::function<void(const DatabaseResult&, const GraphChange*)>;
-        void commit(const Derive& derive, const CommitCallback& callback);
-        void enroll(const std::string& name,
-                    const std::string& repository,
-                    const std::string& branch,
-                    const SelectedDefinition& definition,
-                    std::uint64_t expectedGeneration,
-                    const Database::Callback& callback);
-        std::uint64_t getGeneration() const;
-        const Graph& graph() const;
-        nlohmann::json view() const;
-        nlohmann::json publicView() const;
+        void change(const std::function<Json(Json&)>& apply, const Callback& callback);
+        const Json& graph() const {
+            return state;
+        }
+        bool mutationsAllowed() const {
+            return database.mutationsAllowed();
+        }
+        Json view() const;
+        Json publicView() const;
         std::function<void(bool, bool)> onChanged;
 
     private:
-        struct Restoring {
-            std::map<std::string, Node> nodes;
-            std::uint64_t generation = 0;
-            std::uint64_t nextRevision = 1;
-            Database::Callback callback;
-        };
-
-        void readNodes(const std::shared_ptr<Restoring>& restoring);
-        void readEdges(const std::shared_ptr<Restoring>& restoring);
-        void readAttempts(const std::shared_ptr<Restoring>& restoring);
-        std::string guard(std::uint64_t nextRevision, std::uint64_t expectedGeneration) const;
-
+        Json view(const Json& state) const;
+        Json publicView(const Json& state) const;
         Database& database;
-        Graph state;
-        std::uint64_t generation = 0;
+        Json state = graph::empty();
     };
 } // namespace coreci
-
-#endif

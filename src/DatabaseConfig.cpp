@@ -1,63 +1,37 @@
 #include "DatabaseConfig.h"
 
+#include "Error.h"
 #include "PrivateFile.h"
 
-#include <stdexcept>
-
 namespace coreci {
-
     DatabaseConfig::DatabaseConfig(utils::SubCommand* parent)
         : SubCommand(parent, this, "Database") {
-        required(setConfigurable(
-            addOptionVariable("--mode", mode, "Server ownership mode", "managed|unmanaged", CLI::IsMember({"managed", "unmanaged"})),
-            false));
-        setConfigurable(addOptionVariable("--host", host, "Explicit TCP hostname", "hostname", CLI::TypeValidator<std::string>()), true);
-        setConfigurable(addOptionVariable("--port", port, "TCP port", "uint16", 3306U, CLI::Range(1, 65535)), true);
-        setConfigurable(
-            addOptionVariable(
-                "--socket", socket, "Explicit UNIX socket (takes precedence over TCP)", "path", CLI::TypeValidator<std::string>()),
-            true);
-        required(setConfigurable(
-            addOptionVariable("--user", user, "Restricted application account", "string", CLI::TypeValidator<std::string>()), true));
-        required(
-            setConfigurable(addOptionVariable("--name", name, "Application schema", "string", CLI::TypeValidator<std::string>()), true));
-        required(setConfigurable(addOptionVariable("--password-file",
-                                                   passwordFile,
-                                                   "Private password file; empty file for explicit socket authentication",
-                                                   "path",
-                                                   CLI::ExistingFile),
-                                 true));
-        setConfigurable(
-            addOptionVariable("--managed-executable", managedExecutable, "Explicit private mariadbd executable", "path", CLI::ExistingFile),
-            true);
         setConfigurable(addOptionVariable(
-                            "--managed-config-file", managedConfigFile, "Separate private server configuration", "path", CLI::ExistingFile),
+                            "--mode", mode, "Server ownership", "mode", std::string("unmanaged"), CLI::IsMember({"managed", "unmanaged"})),
                         true);
-        setConfigurable(addOptionVariable(
-                            "--managed-datadir", managedDatadir, "Pre-provisioned private data directory", "path", CLI::ExistingDirectory),
-                        true);
-        setConfigurable(
-            addOptionVariable("--managed-pid-file", managedPidFile, "Private server PID file", "path", CLI::TypeValidator<std::string>()),
-            true);
+        const std::pair<const char*, std::string&> strings[]{{"host", host},
+                                                             {"socket", socket},
+                                                             {"user", user},
+                                                             {"name", name},
+                                                             {"password-file", passwordFile},
+                                                             {"managed-executable", managedExecutable},
+                                                             {"managed-config-file", managedConfigFile},
+                                                             {"managed-datadir", managedDatadir},
+                                                             {"managed-pid-file", managedPidFile}};
+        for (const auto& [option, value] : strings) {
+            setConfigurable(addOptionVariable(std::string("--") + option, value, option, "string", CLI::TypeValidator<std::string>()),
+                            true);
+        }
+        setConfigurable(addOptionVariable("--port", port, "TCP port", "port", 3306u, CLI::Range(1u, 65535u)), true);
     }
 
     database::mariadb::MariaDBConnectionDetails DatabaseConfig::connection() const {
-        if (name.empty() || user.empty()) {
-            throw std::runtime_error("configure a nonempty database name and user");
-        }
-
-        if (socket.empty() && host.empty()) {
-            throw std::runtime_error("configure an explicit database socket or host");
-        }
-
-        std::string password = readPrivateFile(passwordFile, 4096);
-        if (password.find('\0') != std::string::npos) {
-            throw std::runtime_error("database password file contains an unsupported NUL byte");
-        }
+        require(!user.empty() && !name.empty() && (!socket.empty() || !host.empty()), "configure the database user, schema and endpoint");
+        auto password = readPrivateFile(passwordFile, 4096);
+        require(password.find('\0') == std::string::npos, "database password contains a NUL byte");
         if (!password.empty() && password.back() == '\n') {
             password.pop_back();
         }
-
         return {.connectionName = "core-ci",
                 .hostname = host,
                 .username = user,
@@ -67,5 +41,4 @@ namespace coreci {
                 .socket = socket,
                 .flags = 0};
     }
-
 } // namespace coreci

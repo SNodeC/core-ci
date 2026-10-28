@@ -33,6 +33,8 @@ immutable selections, dependency relationships and execution evidence. One graph
 authority; no persisted ready queue or generic workflow engine. Commit dispatch authority
 before calling GitHub. Unknown outcomes preserve assignments and uncertainty.
 A join waits for all relevant prerequisites; verified publication alone satisfies an edge.
+An explicitly acknowledged operator retirement may mark an unbound publication failed
+while preserving its assignment/history and unknown remote outcome; it never replays work.
 Builds, signing and publication run on GitHub, with privileged publication kept separate.
 Image/SDK discovery and registry authentication also belong to GitHub worker tooling.
 The controller dispatches selected source/target/prerequisite inputs and records verified
@@ -52,10 +54,12 @@ Before net production-code growth, present the design and estimate and obtain th
 explicit approval required by the global engineering instructions. Do not claim completion
 until the real graph-driven package pipeline and required acceptance have been verified.
 
-The owner instructed implementation continuation after the refined proposal and estimate
-(7,000-10,500 production lines, 2,500-4,000 test lines). Re-estimate before exceeding a
-checkpoint upper bound or adding unagreed architecture. Runtime dependency declarations
-remain source-owned compatible ranges; build artifact selection stays exact.
+The owner approved the fresh controller implementation with a maximum of 3,572 physical
+C++ source/header lines under src/, including main.cpp. Reused UI assets and GitHub worker
+tooling are separate; do not move controller logic there to evade the bound. This replaces
+the earlier implementation estimate. Re-estimate before exceeding the bound or introducing
+unagreed architecture. Runtime dependency declarations remain source-owned compatible
+ranges; build artifact selection stays exact.
 
 Canonical formatting files/modules are byte copies. The top-level build extends the
 canonical format target to tests/ and adds format-check for src/ and tests/. Source

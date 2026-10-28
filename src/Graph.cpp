@@ -6,672 +6,438 @@
 #include <ctime>
 #include <functional>
 #include <iomanip>
-#include <limits>
-#include <openssl/evp.h>
-#include <regex>
 #include <set>
 #include <sstream>
-#include <stdexcept>
+#include <vector>
 
 namespace coreci {
-
-    namespace {
-        void require(bool condition, const std::string& message) {
-            if (!condition) {
-                throw std::invalid_argument(message);
+    namespace graph {
+        namespace {
+            bool newer(const Json& a, const Json& b) {
+                const auto order = Version(a.at("tag")).compare(Version(b.at("tag")));
+                return order > 0 || (order == 0 && (a.at("tag") != b.at("tag") || a.at("tag_object_sha") != b.at("tag_object_sha") ||
+                                                    a.at("commit") != b.at("commit")));
             }
+
+            Json closure(const Json& state, const Json& node) {
+                auto result = Json::array();
+                std::set<std::string> visited;
+                std::function<void(const Json&)> visit = [&](const Json& input) {
+                    if (visited.insert(input.at("id")).second) {
+                        result.push_back(input.at("source"));
+                        for (const auto& id : input.at("prerequisites")) {
+                            visit(state.at("executions").at(id.get<std::string>()));
+                        }
+                    }
+                };
+                visit(node);
+                return result;
+            }
+
+            Json waiting(Json& state, const std::string& id) {
+                const auto revision = state.at("next_revision").get<std::uint64_t>();
+                require(revision > 0 && revision < UINT64_MAX, "rebuild revision exhausted");
+                state["next_revision"] = revision + 1;
+                return {{"id", id + ":" + std::to_string(revision)},
+                        {"revision", revision},
+                        {"state", "waiting"},
+                        {"assignment", nullptr},
+                        {"build_run", nullptr},
+                        {"build_result", nullptr},
+                        {"publication_run", nullptr},
+                        {"receipt", nullptr},
+                        {"evidence", Json::object()},
+                        {"failure", ""}};
+            }
+
+            Json& current(Json& node, const std::string& id) {
+                auto& attempt = node.at("attempts").back();
+                require(attempt.at("id") == id, "result does not belong to the current attempt");
+                return attempt;
+            }
+
+            Json assignment(const Json& state, const Json& node) {
+                const auto& attempt = node.at("attempts").back();
+                auto dependencies = Json::array();
+                if (node.at("attempts").size() > 1) {
+                    dependencies = node.at("attempts").front().at("assignment").at("dependencies");
+                } else {
+                    for (const auto& id : node.at("prerequisites")) {
+                        const auto& other = state.at("executions").at(id.get<std::string>()).at("attempts").back();
+                        auto receipt = other.at("receipt");
+                        receipt.erase("indexes");
+                        dependencies.push_back({{"execution", id}, {"attempt", other.at("id")}, {"receipt", receipt}});
+                    }
+                }
+                const auto& source = node.at("source");
+                const auto& target = node.at("target_row");
+                const auto revision = std::to_string(attempt.at("revision").get<std::uint64_t>());
+                const auto label = source.at("repository").get<std::string>() + " " + source.at("tag").get<std::string>() + " | " +
+                                   target.at("distribution").get<std::string>() + " " + target.at("suite").get<std::string>() + " | " +
+                                   target.at("arch").get<std::string>() + " | " + target.at("build").at("format").get<std::string>() +
+                                   " | r" + revision;
+                Json result{{"schema", 1},
+                            {"label", label},
+                            {"execution", node.at("id")},
+                            {"attempt", attempt.at("id")},
+                            {"revision", attempt.at("revision")},
+                            {"artifact_name", "core-ci-build-" + node.at("id").get<std::string>() + "-r" + revision},
+                            {"source", source},
+                            {"target", target},
+                            {"dependencies", dependencies}};
+                auto previous = Json::array();
+                for (const auto& earlier : node.at("attempts")) {
+                    if (earlier.at("id") != attempt.at("id") && !earlier.at("build_run").is_null()) {
+                        const auto& assigned = earlier.at("assignment");
+                        previous.push_back({{"run", earlier.at("build_run")},
+                                            {"attempt", earlier.at("id")},
+                                            {"assignment_sha256", digest(assigned)},
+                                            {"label", assigned.at("label")},
+                                            {"artifact_name", assigned.at("artifact_name").get<std::string>() + "-environment"}});
+                    }
+                }
+                if (!previous.empty()) {
+                    result["environment_from"] = previous;
+                }
+                return result;
+            }
+        } // namespace
+
+        Json empty() {
+            return {{"generation", 0}, {"next_revision", 1}, {"repositories", Json::object()}, {"executions", Json::object()}};
         }
 
-        nlohmann::json mergeEvidence(nlohmann::json previous, const nlohmann::json& incoming) {
-            require(previous.is_object() && incoming.is_object(), "execution evidence must be an object");
-            const std::map<std::string, unsigned int> progress{
-                {"requested", 0}, {"waiting", 0}, {"pending", 0}, {"queued", 0}, {"in_progress", 1}, {"completed", 2}};
-            for (const auto& [phase, facts] : incoming.items()) {
-                require((phase == "build" || phase == "publication") && facts.is_object(), "unknown execution evidence phase");
-                auto& known = previous[phase];
-                for (const auto& [key, value] : facts.items()) {
-                    if (!value.is_null()) {
-                        if (key == "status" || key == "job_status") {
-                            const auto rank = progress.at(value.get<std::string>());
-                            if (!known.contains(key) || rank >= progress.at(known.at(key).get<std::string>())) {
-                                known[key] = value;
-                            }
-                        } else {
-                            require(!known.contains(key) || known.at(key) == value, "conflicting execution evidence: " + key);
-                            known[key] = value;
+        Json coordinates(const Json& target) {
+            Json result;
+            for (const auto* key : {"family", "distribution", "suite", "arch"}) {
+                result[key] = target.at(key);
+            }
+            result["format"] = target.at("build").at("format");
+            const auto* platform = target.at("family") == "native" ? "platform" : "target";
+            result[platform] = target.at("build").at(platform);
+            return result;
+        }
+
+        std::vector<std::string> validateSources(const Json& sources, const Json& executions) {
+            std::map<std::pair<std::string, std::string>, std::string> namespaces;
+            const auto reserve = [&](const std::string& repository, const std::string& package, const Json& target) {
+                auto coordinate = coordinates(target);
+                for (const auto* key : {"family", "platform", "target"}) {
+                    coordinate.erase(key);
+                }
+                const auto space = std::make_pair(coordinate.dump(), package);
+                for (const auto& [previous, owner] : namespaces) {
+                    require(owner == repository || previous.first != space.first ||
+                                (previous.second != package && !previous.second.starts_with(package + "-") &&
+                                 !package.starts_with(previous.second + "-")),
+                            "package namespace overlaps: " + repository);
+                }
+                namespaces[space] = repository;
+            };
+            std::map<std::string, int> colors;
+            std::vector<std::string> order;
+            std::function<void(const std::string&)> visit = [&](const std::string& name) {
+                require(sources.contains(name), "required prerequisite source missing: " + name);
+                require(colors[name] != 1, "dependency cycle at " + name);
+                if (colors[name] == 0) {
+                    colors[name] = 1;
+                    const auto& source = sources.at(name);
+                    for (const auto& dependency : source.at("definition").at("depends_on")) {
+                        visit(dependency.get<std::string>());
+                        for (const auto& target : source.at("definition").at("matrix")) {
+                            const auto& candidates = sources.at(dependency.get<std::string>()).at("definition").at("matrix");
+                            require(std::any_of(candidates.begin(),
+                                                candidates.end(),
+                                                [&](const Json& other) {
+                                                    return coordinates(other) == coordinates(target);
+                                                }),
+                                    "required prerequisite target missing: " + dependency.get<std::string>());
                         }
+                    }
+                    for (const auto& target : source.at("definition").at("matrix")) {
+                        reserve(source.at("repository"), source.at("definition").at("package"), target);
+                    }
+                    colors[name] = 2;
+                    order.push_back(name);
+                }
+            };
+            for (const auto& [name, source] : sources.items()) {
+                visit(name);
+            }
+            for (const auto& [id, node] : executions.items()) {
+                reserve(node.at("source").at("repository"), node.at("source").at("package"), node.at("target_row"));
+            }
+            return order;
+        }
+
+        Json select(Json& state, const std::string& root, const Json& sources, bool explicitRequest, std::uint64_t since) {
+            require(sources.contains(root), "requested repository has no selected source");
+            for (const auto& execution : state.at("executions")) {
+                const auto& source = execution.at("source");
+                const auto name = source.at("name").get<std::string>();
+                if (execution.at("attempts").front().at("revision") >= since && sources.contains(name)) {
+                    require(
+                        !newer(source, sources.at(name)) ||
+                            (explicitRequest && name == root && Version(source.at("tag")).compare(Version(sources.at(name).at("tag"))) > 0),
+                        "newer source selection committed during source selection: " + name);
+                }
+            }
+            const auto order = validateSources(sources, state.at("executions"));
+            std::set<std::string> affected{root};
+            for (const auto& name : order) {
+                for (const auto& dependency : sources.at(name).at("definition").at("depends_on")) {
+                    if (affected.contains(dependency.get<std::string>())) {
+                        affected.insert(name);
                     }
                 }
             }
-            return previous;
-        }
-
-        nlohmann::json identity(const Node& node) {
-            return {{"source", node.source},
-                    {"target", node.target},
-                    {"prerequisites", node.prerequisites},
-                    {"reactivated", node.cause.value("reactivated", std::string{})}};
-        }
-
-        Attempt waiting(const std::string& id, std::uint64_t revision) {
-            require(revision > 0 && revision < std::numeric_limits<std::uint64_t>::max(), "package rebuild revision is exhausted");
-            Attempt result;
-            result.id = id + ":" + std::to_string(revision);
-            result.revision = revision;
-            return result;
-        }
-
-        bool sameSource(const nlohmann::json& left, const nlohmann::json& right) {
-            bool same = true;
-            for (const auto* key : {"repository_id", "repository", "tag", "commit", "definition_revision"}) {
-                same = same && left.at(key) == right.at(key);
-            }
-            return same;
-        }
-
-        void validateSource(const std::string& name, const nlohmann::json& source) {
-            static const std::regex sha(R"(^[a-f0-9]{40}$)");
-            require(source.at("name") == name && source.at("repository_id").get<std::uint64_t>() != 0,
-                    "invalid selected repository identity");
-            require(std::regex_match(source.at("commit").get<std::string>(), sha) &&
-                        std::regex_match(source.at("definition_revision").get<std::string>(), sha) &&
-                        std::regex_match(source.at("definition_blob_sha").get<std::string>(), sha),
-                    "source must select immutable commits");
-            const Version version(source.at("tag").get<std::string>());
-            Definition::parse(source.at("definition"));
-            require(source.at("deployment").is_object() && !source.at("deployment").empty(),
-                    "trusted deployment must be pinned at selection");
-        }
-
-        nlohmann::json executionSource(const nlohmann::json& source) {
-            auto result = source;
-            const auto& definition = source.at("definition");
-            for (const auto* key : {"title", "package", "depends_on", "build"}) {
-                result[key] = definition.at(key);
-            }
-            result.erase("definition");
-            return result;
-        }
-
-        void validateExecutionSource(const Node& node) {
-            auto selected = node.source;
-            selected["definition"] = {{"schema", 1},
-                                      {"title", selected.at("title")},
-                                      {"package", selected.at("package")},
-                                      {"depends_on", selected.at("depends_on")},
-                                      {"build", selected.at("build")},
-                                      {"matrix", {node.target}}};
-            validateSource(selected.at("name").get<std::string>(), selected);
-        }
-
-        Attempt& current(Node& node, const std::string& attemptId) {
-            require(!node.attempts.empty() && node.attempts.back().id == attemptId, "report does not belong to the active attempt");
-            return node.attempts.back();
-        }
-    } // namespace
-
-    Graph::Graph(unsigned int publicationLimit)
-        : publicationLimit(publicationLimit) {
-    }
-
-    std::string Graph::publicationFeed(const Node& node) {
-        const auto& feed = node.source.at("deployment").at("feed");
-        const nlohmann::json identity{feed.at("repository_id"), feed.at("branch")};
-        return identity.dump();
-    }
-
-    void Graph::verifyDefinition(const Node& node, const nlohmann::json& document, const std::string& blobSha) {
-        const auto definition = Definition::parse(document);
-        require(node.source.at("definition_blob_sha") == blobSha, "selected definition blob differs from its persisted reference");
-        for (const auto* key : {"title", "package", "depends_on", "build"}) {
-            require(node.source.at(key) == definition.json.at(key), "execution inputs differ from the authoritative committed definition");
-        }
-        require(std::count(definition.json.at("matrix").begin(), definition.json.at("matrix").end(), node.target) == 1,
-                "selected target differs from its committed definition");
-    }
-
-    std::string Graph::digest(const nlohmann::json& value) {
-        const auto bytes = value.dump();
-        unsigned char hash[EVP_MAX_MD_SIZE]{};
-        unsigned int length = 0;
-        require(EVP_Digest(bytes.data(), bytes.size(), hash, &length, EVP_sha256(), nullptr) == 1 && length == 32,
-                "could not hash selection");
-        constexpr char digits[] = "0123456789abcdef";
-        std::string result;
-        for (unsigned int index = 0; index < length; ++index) {
-            result.push_back(digits[hash[index] >> 4]);
-            result.push_back(digits[hash[index] & 15]);
-        }
-        return result;
-    }
-
-    const std::map<std::string, Node>& Graph::nodes() const {
-        return records;
-    }
-
-    std::uint64_t Graph::nextRebuildRevision() const {
-        return nextRevision;
-    }
-
-    const Node& Graph::node(const std::string& id) const {
-        return records.at(id);
-    }
-
-    void Graph::restore(const std::vector<Node>& nodes, std::uint64_t next) {
-        std::map<std::string, Node> restored;
-        std::set<std::uint64_t> revisions;
-        for (const auto& node : nodes) {
-            require(!node.id.empty() && !node.attempts.empty() && restored.emplace(node.id, node).second,
-                    "duplicate or empty persisted execution");
-            validateExecutionSource(node);
-            require(node.id == digest(identity(node)), "persisted execution selection identity changed");
-            std::uint64_t previous = 0;
-            for (const auto& attempt : node.attempts) {
-                require(attempt.revision > previous && attempt.revision < next && revisions.insert(attempt.revision).second &&
-                            attempt.id == node.id + ":" + std::to_string(attempt.revision),
-                        "invalid persisted attempt/rebuild revision");
-                previous = attempt.revision;
-                require(attempt.state == "waiting" || attempt.state == "building" || attempt.state == "publishing" ||
-                            attempt.state == "published" || attempt.state == "failed",
-                        "unknown persisted attempt state");
-                require(attempt.state == "waiting" || !attempt.assignment.is_null(), "assigned attempt lost its immutable inputs");
-                require(mergeEvidence(nlohmann::json::object(), attempt.evidence) == attempt.evidence,
-                        "invalid persisted execution evidence");
-                require(attempt.state != "published" || (!attempt.receipt.is_null() && !attempt.publicationRun.is_null()),
-                        "published attempt lost its receipt");
-            }
-        }
-        std::map<std::string, unsigned int> color;
-        std::function<void(const std::string&)> visit = [&](const std::string& id) {
-            require(color[id] != 1, "persisted execution dependency cycle");
-            if (color[id] == 0) {
-                color[id] = 1;
-                for (const auto& prerequisite : restored.at(id).prerequisites) {
-                    require(restored.contains(prerequisite), "persisted prerequisite execution is missing");
-                    visit(prerequisite);
-                }
-                color[id] = 2;
-            }
-        };
-        for (const auto& [id, node] : restored) {
-            visit(id);
-            require(node.supersededBy.empty() || restored.contains(node.supersededBy), "superseding execution is missing");
-        }
-        require(next > 0, "invalid next rebuild revision");
-        records = std::move(restored);
-        nextRevision = next;
-    }
-
-    std::vector<std::string> Graph::blockers(const std::string& id) const {
-        const auto& selected = records.at(id);
-        std::vector<std::string> reasons;
-        if (!selected.supersededBy.empty()) {
-            reasons.push_back("superseded by " + selected.supersededBy);
-        }
-        const bool publication = selected.attempts.back().state == "building" && !selected.attempts.back().buildResult.is_null();
-        if (publication) {
-            const auto reason = publicationBlocker(id);
-            if (!reason.empty()) {
-                reasons.push_back(reason);
-            }
-        } else if (selected.attempts.back().state != "waiting") {
-            reasons.push_back("attempt is " + selected.attempts.back().state);
-        }
-        for (const auto& prerequisite : selected.prerequisites) {
-            const auto& other = records.at(prerequisite);
-            if (other.attempts.back().state != "published") {
-                reasons.push_back(other.source.at("name").get<std::string>() + "/" + other.target.at("id").get<std::string>() + " is " +
-                                  other.attempts.back().state);
-            }
-        }
-        if (reasons.empty() && !publication) {
-            const auto reason = dispatchBlocker(selected, selected.attempts.back().state == "building");
-            if (!reason.empty()) {
-                reasons.push_back(reason);
-            }
-        }
-        return reasons;
-    }
-
-    SourceTraversal Graph::traverseSources(const std::string& root, const std::map<std::string, nlohmann::json>& sources) {
-        require(sources.contains(root), "requested repository has no pinned semantic-version source");
-        SourceTraversal result;
-        std::map<std::string, std::vector<std::string>> dependents;
-        for (const auto& [name, source] : sources) {
-            for (const auto& dependency : source.at("definition").at("depends_on")) {
-                dependents[dependency.get<std::string>()].push_back(name);
-            }
-        }
-        result.affected.insert(root);
-        std::vector<std::string> traversal{root};
-        for (std::size_t index = 0; index < traversal.size(); ++index) {
-            for (const auto& dependent : dependents[traversal[index]]) {
-                if (result.affected.insert(dependent).second) {
-                    traversal.push_back(dependent);
-                }
-            }
-        }
-        std::set<std::string> visited;
-        std::map<std::string, Definition> definitions;
-        std::function<void(const std::string&)> visit = [&](const std::string& name) {
-            require(sources.contains(name), "required prerequisite has no selected version tag: " + name);
-            if (visited.insert(name).second) {
-                definitions.emplace(name, Definition::parse(sources.at(name).at("definition")));
-                for (const auto& dependency : sources.at(name).at("definition").at("depends_on")) {
-                    visit(dependency.get<std::string>());
-                }
-                result.order.push_back(name);
-            }
-        };
-        for (const auto& name : traversal) {
-            visit(name);
-        }
-        Definition::validateGraph(definitions);
-        return result;
-    }
-
-    GraphChange Graph::select(const std::string& root, const std::map<std::string, nlohmann::json>& sources, bool explicitRequest) const {
-        const auto traversal = traverseSources(root, sources);
-        const auto& affected = traversal.affected;
-        for (const auto& name : traversal.order) {
-            validateSource(name, sources.at(name));
-        }
-
-        GraphChange change;
-        change.nextRevision = nextRevision;
-        std::map<std::string, Node> selected;
-        const nlohmann::json cause{{"repository", sources.at(root).at("repository")},
-                                   {"tag", sources.at(root).at("tag")},
-                                   {"commit", sources.at(root).at("commit")},
-                                   {"explicit", explicitRequest}};
-        bool acceptedRoot = false;
-        for (const auto& name : traversal.order) {
-            if (affected.contains(name) && (name == root || acceptedRoot)) {
-                const auto& source = sources.at(name);
-                for (const auto& row : source.at("definition").at("matrix")) {
-                    Node next;
-                    next.source = executionSource(source);
-                    next.target = row;
-                    next.cause = cause;
-                    next.automatic = name != root || !explicitRequest;
-                    for (const auto& dependency : source.at("definition").at("depends_on")) {
-                        const auto dependencyName = dependency.get<std::string>();
-                        const auto coordinate = Definition::coordinates(row);
-                        const Node* prerequisite = nullptr;
-                        if (affected.contains(dependencyName)) {
-                            const auto found = selected.find(dependencyName + ":" + coordinate.dump());
-                            require(found != selected.end(), "affected prerequisite target is missing");
-                            prerequisite = &found->second;
-                        } else {
-                            for (const auto& [id, candidate] : records) {
-                                if (candidate.supersededBy.empty() && candidate.source.at("name") == dependencyName &&
-                                    sameSource(candidate.source, sources.at(dependencyName)) &&
-                                    Definition::coordinates(candidate.target) == coordinate &&
-                                    (prerequisite == nullptr ||
-                                     candidate.attempts.front().revision > prerequisite->attempts.front().revision)) {
-                                    prerequisite = &candidate;
+            auto selected = Json::object();
+            auto created = Json::array();
+            bool acceptedRoot = false;
+            for (const auto& name : order) {
+                if (affected.contains(name) && (name == root || acceptedRoot)) {
+                    auto source = sources.at(name);
+                    const auto definition = source.at("definition");
+                    source.erase("definition");
+                    for (const auto* key : {"title", "package", "depends_on", "build"}) {
+                        source[key] = definition.at(key);
+                    }
+                    for (const auto& target : definition.at("matrix")) {
+                        const auto coordinate = coordinates(target).dump();
+                        auto prerequisites = Json::array();
+                        for (const auto& dependency : definition.at("depends_on")) {
+                            const auto other = dependency.get<std::string>();
+                            std::string prerequisite;
+                            if (affected.contains(other)) {
+                                prerequisite = selected.at(other + ":" + coordinate).get<std::string>();
+                            } else {
+                                std::uint64_t newest = 0;
+                                for (const auto& [id, candidate] : state.at("executions").items()) {
+                                    const auto& original = candidate.at("source");
+                                    if (original.at("name") == other && original.at("commit") == sources.at(other).at("commit") &&
+                                        original.at("tag") == sources.at(other).at("tag") &&
+                                        original.at("definition_blob_sha") == sources.at(other).at("definition_blob_sha") &&
+                                        original.at("deployment") == sources.at(other).at("deployment") &&
+                                        coordinates(candidate.at("target_row")) == coordinates(target) &&
+                                        candidate.at("superseded_by") == "" &&
+                                        candidate.at("attempts").back().at("revision").get<std::uint64_t>() > newest) {
+                                        prerequisite = id;
+                                        newest = candidate.at("attempts").back().at("revision").get<std::uint64_t>();
+                                    }
                                 }
                             }
-                            require(prerequisite != nullptr,
-                                    "missing selected prerequisite work for " + dependencyName + "; request it explicitly first");
+                            require(!prerequisite.empty(), "required prerequisite execution missing: " + other);
+                            prerequisites.push_back(prerequisite);
                         }
-                        next.prerequisites.push_back(prerequisite->id);
-                    }
-                    next.id = digest(identity(next));
-                    if (name == root && explicitRequest && records.contains(next.id) && !records.at(next.id).supersededBy.empty()) {
-                        next.cause["reactivated"] = next.id;
-                        next.id = digest(identity(next));
-                    }
-                    if (records.contains(next.id)) {
-                        next = records.at(next.id);
-                        if (name == root && explicitRequest && next.automatic && next.attempts.back().state == "waiting" &&
-                            next.supersededBy.empty()) {
-                            next.automatic = false;
-                            change.nodes.push_back(next);
+                        Json identity{{"source", source}, {"target", target}, {"prerequisites", prerequisites}};
+                        auto id = digest(identity);
+                        if (explicitRequest && name == root && state.at("executions").contains(id) &&
+                            state.at("executions").at(id).at("superseded_by") != "") {
+                            identity["reactivated"] = state.at("next_revision");
+                            id = digest(identity);
                         }
-                    } else {
-                        acceptedRoot = acceptedRoot || name == root;
-                        next.attempts.push_back(waiting(next.id, change.nextRevision));
-                        ++change.nextRevision;
-                        change.nodes.push_back(next);
-                        const auto definition = std::find_if(change.definitions.begin(), change.definitions.end(), [&](const auto& known) {
-                            return known.repositoryId == source.at("repository_id").get<std::uint64_t>() &&
-                                   known.revision == source.at("definition_revision").get<std::string>();
-                        });
-                        if (definition == change.definitions.end()) {
-                            change.definitions.push_back({source.at("repository_id").get<std::uint64_t>(),
-                                                          source.at("definition_revision").get<std::string>(),
-                                                          source.at("definition_blob_sha").get<std::string>(),
-                                                          source.at("definition")});
+                        if (!state.at("executions").contains(id)) {
+                            Json node{{"id", id},
+                                      {"source", source},
+                                      {"target_row", target},
+                                      {"prerequisites", prerequisites},
+                                      {"automatic", name != root || !explicitRequest},
+                                      {"superseded_by", ""},
+                                      {"attempts", {waiting(state, id)}}};
+                            const auto inputs = closure(state, node);
+                            for (auto& [previousId, previous] : state.at("executions").items()) {
+                                if (previous.at("automatic") && previous.at("superseded_by") == "" &&
+                                    previous.at("attempts").back().at("state") == "waiting" &&
+                                    previous.at("source").at("repository_id") == source.at("repository_id") &&
+                                    coordinates(previous.at("target_row")) == coordinates(target)) {
+                                    bool older = true;
+                                    for (const auto& prior : closure(state, previous)) {
+                                        for (const auto& next : inputs) {
+                                            older = older && (prior.at("name") != next.at("name") || !newer(prior, next));
+                                        }
+                                    }
+                                    if (older) {
+                                        previous["superseded_by"] = id;
+                                    }
+                                }
+                            }
+                            acceptedRoot = acceptedRoot || name == root;
+                            state["executions"][id] = node;
+                            created.push_back(id);
+                        } else if (explicitRequest && name == root &&
+                                   state.at("executions").at(id).at("attempts").back().at("state") == "waiting" &&
+                                   state.at("executions").at(id).at("superseded_by") == "") {
+                            state["executions"][id]["automatic"] = false;
                         }
+                        selected[name + ":" + coordinate] = id;
                     }
-                    selected.emplace(name + ":" + Definition::coordinates(row).dump(), next);
                 }
             }
+            return created;
         }
-        // Only newly accepted selections supersede older waiting automatic work.
-        const auto created = change.nodes;
-        for (const auto& replacement : created) {
-            for (const auto& [id, existing] : records) {
-                if (!records.contains(replacement.id) && existing.automatic && existing.supersededBy.empty() &&
-                    existing.attempts.back().state == "waiting" && existing.source.at("name") == replacement.source.at("name") &&
-                    Definition::coordinates(existing.target) == Definition::coordinates(replacement.target)) {
-                    auto superseded = existing;
-                    superseded.supersededBy = replacement.id;
-                    change.nodes.push_back(std::move(superseded));
+
+        Json blockers(const Json& state, const Json& node) {
+            auto result = Json::array();
+            if (node.at("superseded_by") != "") {
+                result.push_back("superseded by " + node.at("superseded_by").get<std::string>());
+            }
+            for (const auto& id : node.at("prerequisites")) {
+                if (!state.at("executions").contains(id.get<std::string>()) ||
+                    state.at("executions").at(id.get<std::string>()).at("attempts").back().at("state") != "published") {
+                    result.push_back("waiting for published prerequisite " + id.get<std::string>());
                 }
             }
-        }
-        return change;
-    }
-
-    GraphChange Graph::retry(const std::string& id) const {
-        auto selected = records.at(id);
-        require(selected.attempts.back().state == "failed" && selected.supersededBy.empty(),
-                "only definitively failed work can be retried");
-        selected.attempts.push_back(waiting(id, nextRevision));
-        return {{selected}, nextRevision + 1, {}};
-    }
-
-    std::string Graph::label(const Node& selected) {
-        return selected.source.at("repository").get<std::string>() + " " + selected.source.at("tag").get<std::string>() + " | " +
-               selected.target.at("distribution").get<std::string>() + " " + selected.target.at("suite").get<std::string>() + " | " +
-               selected.target.at("arch").get<std::string>() + " | " + selected.target.at("build").at("format").get<std::string>() +
-               " | r" + std::to_string(selected.attempts.back().revision);
-    }
-
-    nlohmann::json Graph::buildAssignment(const Node& selected) const {
-        const auto& attempt = selected.attempts.back();
-        const auto& id = selected.id;
-        nlohmann::json dependencies = nlohmann::json::array();
-        if (selected.attempts.size() > 1) {
-            dependencies = selected.attempts.front().assignment.at("dependencies");
-        } else {
-            for (const auto& prerequisite : selected.prerequisites) {
-                const auto& other = records.at(prerequisite);
-                dependencies.push_back(
-                    {{"execution", other.id}, {"attempt", other.attempts.back().id}, {"receipt", other.attempts.back().receipt}});
+            const auto& attempt = node.at("attempts").back();
+            const bool publish = attempt.at("state") == "building" && !attempt.at("build_result").is_null();
+            if (result.empty() && (attempt.at("state") == "waiting" || publish)) {
+                auto candidate = node;
+                if (!publish) {
+                    candidate["attempts"].back()["assignment"] = assignment(state, node);
+                }
+                const auto payload = inputs(candidate, publish);
+                if (payload.at("assignment").get_ref<const std::string&>().size() > 60000 || payload.dump().size() > 65535) {
+                    result.push_back("GitHub dispatch payload exceeds supported input bounds");
+                }
             }
+            return result;
         }
-        nlohmann::json result = {{"schema", 1},
-                                 {"label", label(selected)},
-                                 {"execution", id},
-                                 {"attempt", attempt.id},
-                                 {"revision", attempt.revision},
-                                 {"artifact_name", "core-ci-build-" + id + "-r" + std::to_string(attempt.revision)},
-                                 {"source", selected.source},
-                                 {"target", selected.target},
-                                 {"dependencies", dependencies}};
-        nlohmann::json previous = nlohmann::json::array();
-        for (const auto& earlier : selected.attempts) {
-            if (earlier.id != attempt.id && !earlier.buildRun.is_null()) {
-                previous.push_back({{"run", earlier.buildRun},
-                                    {"attempt", earlier.id},
-                                    {"assignment_sha256", digest(earlier.assignment)},
-                                    {"label", earlier.assignment.value("label", std::string{})},
-                                    {"artifact_name", earlier.assignment.at("artifact_name").get<std::string>() + "-environment"}});
+
+        Json inputs(const Json& node, bool publication) {
+            const auto& attempt = node.at("attempts").back();
+            const auto& assigned = attempt.at("assignment");
+            Json result{{"execution", node.at("id")},
+                        {"attempt", attempt.at("id")},
+                        {"assignment_sha256", digest(assigned)},
+                        {"assignment", assigned.dump()}};
+            if (publication) {
+                result["build_result"] = attempt.at("build_result").dump();
             }
+            return result;
         }
-        if (!previous.empty()) {
-            result["environment_from"] = previous;
-        }
-        return result;
-    }
 
-    nlohmann::json Graph::dispatchInputs(const Node& selected, bool publication) const {
-        const auto& attempt = selected.attempts.back();
-        const auto assignment = attempt.assignment.is_null() ? buildAssignment(selected) : attempt.assignment;
-        nlohmann::json result{{"execution", selected.id},
-                              {"attempt", attempt.id},
-                              {"assignment_sha256", digest(assignment)},
-                              {"assignment", assignment.dump()}};
-        if (publication) {
-            result["build_result"] = attempt.buildResult.dump();
-        }
-        return result;
-    }
-
-    std::string Graph::dispatchBlocker(const Node& selected, bool publication) const {
-        const auto inputs = dispatchInputs(selected, publication);
-        std::string reason;
-        if (inputs.at("assignment").get_ref<const std::string&>().size() > 60000 || inputs.dump().size() > 65535) {
-            reason = "GitHub dispatch payload exceeds supported input bounds";
-        }
-        return reason;
-    }
-
-    Node Graph::beginBuild(const std::string& id) const {
-        require(blockers(id).empty(), "execution is not eligible");
-        auto selected = records.at(id);
-        selected.attempts.back().assignment = buildAssignment(selected);
-        selected.attempts.back().state = "building";
-        return selected;
-    }
-
-    Node Graph::bindRun(const std::string& id,
-                        const std::string& attemptId,
-                        bool publication,
-                        const nlohmann::json& run,
-                        const nlohmann::json& observation) const {
-        auto selected = records.at(id);
-        require(run.at("id").get<std::uint64_t>() != 0 && run.at("run_attempt").get<std::uint64_t>() == 1 &&
-                    run.at("repository_id").get<std::uint64_t>() != 0 && run.contains("workflow_blob_sha") && run.contains("actor_id"),
-                "incomplete GitHub run identity");
-        auto found = std::find_if(selected.attempts.begin(), selected.attempts.end(), [&](const auto& attempt) {
-            return attempt.id == attemptId;
-        });
-        require(found != selected.attempts.end() && !found->assignment.is_null(), "run report does not match assigned work");
-        const auto& deployment = selected.source.at("deployment");
-        const auto expectedRepository = publication ? deployment.at("worker").at("repository_id") : selected.source.at("repository_id");
-        const auto expectedWorkflow = deployment.at(publication ? "publication_workflow" : "source_workflow").at("blob_sha");
-        require(run.at("repository_id") == expectedRepository && run.at("workflow_blob_sha") == expectedWorkflow &&
-                    run.at("actor_id") == deployment.at("controller_app_bot_id"),
-                "GitHub run repository/workflow/actor differs from assignment");
-        auto& assigned = publication ? found->publicationRun : found->buildRun;
-        require(assigned.is_null() || assigned == run, "conflicting GitHub run identity");
-        assigned = run;
-        if (!observation.empty()) {
-            require(observation.at("run_id") == assigned.at("id"), "execution evidence belongs to another run");
-            found->evidence = mergeEvidence(found->evidence, {{publication ? "publication" : "build", observation}});
-        }
-        return selected;
-    }
-
-    Node Graph::built(const std::string& id, const std::string& attemptId, const nlohmann::json& result) const {
-        auto selected = records.at(id);
-        auto& attempt = current(selected, attemptId);
-        require(attempt.state == "building" && !attempt.buildRun.is_null(), "build result does not match an assigned building attempt");
-        require(result.at("run") == attempt.buildRun && result.at("assignment_sha256") == digest(attempt.assignment) &&
-                    result.at("artifacts").is_array() && !result.at("artifacts").empty(),
-                "verified build artifact identity does not match assignment");
-        require(attempt.buildResult.is_null() || attempt.buildResult == result, "conflicting build result");
-        attempt.buildResult = result;
-        return selected;
-    }
-
-    std::string Graph::publicationBlocker(const std::string& id, std::size_t reserved) const {
-        const auto& selected = records.at(id);
-        const auto& attempt = selected.attempts.back();
-        std::string reason;
-        if (attempt.state != "building" || attempt.buildResult.is_null()) {
-            reason = "publication requires a verified assigned build";
-        } else {
-            reason = dispatchBlocker(selected, true);
-            const auto feed = publicationFeed(selected);
-            const auto assigned = std::count_if(records.begin(), records.end(), [&](const auto& entry) {
-                return entry.second.attempts.back().state == "publishing" && publicationFeed(entry.second) == feed;
+        Json advance(Json& state) {
+            std::vector<std::string> order;
+            for (const auto& [id, node] : state.at("executions").items()) {
+                order.push_back(id);
+            }
+            std::sort(order.begin(), order.end(), [&](const auto& left, const auto& right) {
+                return state.at("executions").at(left).at("attempts").back().at("revision") <
+                       state.at("executions").at(right).at("attempts").back().at("revision");
             });
-            if (reason.empty() && assigned + reserved >= publicationLimit) {
-                reason = "feed publication capacity is assigned; unresolved assignments retain their slots";
-            }
-        }
-        return reason;
-    }
-
-    bool Graph::publicationReady(const std::string& id) const {
-        return publicationBlocker(id).empty();
-    }
-
-    Node Graph::beginPublication(const std::string& id, std::size_t reserved) const {
-        auto selected = records.at(id);
-        auto& attempt = selected.attempts.back();
-        require(publicationBlocker(id, reserved).empty(), "publication is blocked by assigned capacity or invalid build inputs");
-        attempt.state = "publishing";
-        return selected;
-    }
-
-    Node Graph::published(const std::string& id, const std::string& attemptId, const nlohmann::json& receipt) const {
-        auto selected = records.at(id);
-        auto& attempt = current(selected, attemptId);
-        require((attempt.state == "publishing" || attempt.state == "published") && !attempt.publicationRun.is_null(),
-                "publication does not match assigned work");
-        require(receipt.at("execution") == id && receipt.at("attempt") == attemptId &&
-                    receipt.at("assignment_sha256") == digest(attempt.assignment) && receipt.at("run") == attempt.publicationRun &&
-                    receipt.at("source_commit") == selected.source.at("commit") && receipt.at("feed_revision").is_string() &&
-                    receipt.at("environment").is_object() && !receipt.at("environment").empty() && receipt.at("packages").is_array() &&
-                    !receipt.at("packages").empty(),
-                "publication receipt identities differ from assignment");
-        // Verification time belongs to the controller; the feed cannot supply or refresh it.
-        auto verified = receipt;
-        verified.erase("publication_verified_utc");
-        auto previous = attempt.receipt;
-        if (!previous.is_null()) {
-            previous.erase("publication_verified_utc");
-        }
-        require(previous.is_null() || previous == verified, "conflicting publication receipt");
-        if (attempt.receipt.is_null()) {
-            const auto now = std::time(nullptr);
-            const auto* utc = std::gmtime(&now);
-            require(utc != nullptr, "publication verification clock is unavailable");
-            std::ostringstream timestamp;
-            timestamp << std::put_time(utc, "%Y-%m-%dT%H:%M:%SZ");
-            verified["publication_verified_utc"] = timestamp.str();
-            attempt.receipt = verified;
-        }
-        attempt.state = "published";
-        return selected;
-    }
-
-    Node Graph::failed(const std::string& id,
-                       const std::string& attemptId,
-                       const std::string& reason,
-                       const nlohmann::json& buildRun,
-                       const nlohmann::json& observation) const {
-        auto selected = buildRun.is_null() ? records.at(id) : bindRun(id, attemptId, false, buildRun, observation);
-        auto& attempt = current(selected, attemptId);
-        require((attempt.state == "building" || attempt.state == "publishing" || attempt.state == "failed") && !reason.empty(),
-                "failure must belong to assigned work");
-        require((attempt.state != "building" || !attempt.buildRun.is_null()) &&
-                    (attempt.state != "publishing" || !attempt.publicationRun.is_null()),
-                "unknown execution outcome is not proof of failure");
-        require(attempt.failure.empty() || attempt.failure == reason, "conflicting failure result");
-        attempt.failure = reason;
-        attempt.state = "failed";
-        return selected;
-    }
-
-    Node Graph::rejectedDispatch(const std::string& id,
-                                 const std::string& attemptId,
-                                 bool publication,
-                                 int status,
-                                 bool submitted,
-                                 const std::string& reason) const {
-        auto selected = records.at(id);
-        auto& attempt = current(selected, attemptId);
-        require(attempt.state == (publication ? "publishing" : "building") && !attempt.assignment.is_null() &&
-                    (publication ? attempt.publicationRun : attempt.buildRun).is_null(),
-                "dispatch failure does not match assigned work");
-        require(!reason.empty() && (!submitted || (status >= 400 && status < 500 && status != 408)),
-                "uncertain dispatch outcome is not proof of failure");
-        attempt.state = "failed";
-        attempt.failure = reason;
-        return selected;
-    }
-
-    void Graph::validate(const GraphChange& change) const {
-        require(change.nextRevision >= nextRevision, "graph revision allocator regressed");
-        std::map<std::string, const Node*> changed;
-        std::set<std::uint64_t> allocated;
-        std::map<std::string, std::size_t> publicationFeeds;
-        for (const auto& node : change.nodes) {
-            require(changed.emplace(node.id, &node).second && !node.attempts.empty(), "duplicate/empty execution mutation");
-            require(node.id == digest(identity(node)), "execution selection identity changed");
-            const auto previous = records.find(node.id);
-            if (previous != records.end()) {
-                const auto& old = previous->second;
-                require(
-                    old.source == node.source && old.target == node.target && old.cause == node.cause &&
-                        old.prerequisites == node.prerequisites &&
-                        (old.automatic == node.automatic || (old.automatic && !node.automatic && old.attempts.back().state == "waiting")),
-                    "execution selection inputs changed");
-                require(old.supersededBy.empty() || old.supersededBy == node.supersededBy, "superseded history was rewritten");
-                require(node.attempts.size() >= old.attempts.size() && node.attempts.size() <= old.attempts.size() + 1,
-                        "attempt history was removed/duplicated");
-                if (node.attempts.size() > old.attempts.size()) {
-                    require(old.attempts.back().state == "failed" && node.supersededBy.empty(), "retry requires definitive failed work");
-                }
-                if (old.supersededBy != node.supersededBy) {
-                    require(old.automatic && old.attempts.back().state == "waiting", "assigned/explicit work was superseded");
-                }
-                for (std::size_t index = 0; index < old.attempts.size(); ++index) {
-                    const auto& before = old.attempts[index];
-                    const auto& after = node.attempts[index];
-                    require(mergeEvidence(before.evidence, after.evidence) == after.evidence,
-                            "execution evidence regressed or disappeared");
-                    require(before.id == after.id && before.revision == after.revision, "attempt identity changed");
-                    require(before.assignment.is_null() || before.assignment == after.assignment, "assigned inputs changed");
-                    require(before.buildRun.is_null() || before.buildRun == after.buildRun, "assigned build run changed");
-                    require(before.publicationRun.is_null() || before.publicationRun == after.publicationRun,
-                            "assigned publication run changed");
-                    require(before.buildResult.is_null() || before.buildResult == after.buildResult, "accepted build result changed");
-                    require(before.receipt.is_null() || before.receipt == after.receipt, "published receipt changed");
-                    if (before.state == "building" && after.state == "publishing") {
-                        require(publicationBlocker(node.id, publicationFeeds[publicationFeed(node)]++).empty(),
-                                "publication conflicts with assigned work for the same feed");
+            auto dispatches = Json::array();
+            for (const auto& id : order) {
+                auto& node = state.at("executions").at(id);
+                auto& attempt = node.at("attempts").back();
+                const bool build = attempt.at("state") == "waiting";
+                const bool publish = attempt.at("state") == "building" && !attempt.at("build_result").is_null();
+                if ((build || publish) && blockers(state, node).empty()) {
+                    auto candidate = node;
+                    auto& next = candidate.at("attempts").back();
+                    if (build) {
+                        next["assignment"] = assignment(state, node);
                     }
-                    bool allowed = before.state == after.state;
-                    if (index + 1 == old.attempts.size()) {
-                        allowed = allowed || (before.state == "waiting" && after.state == "building") ||
-                                  (before.state == "building" && (after.state == "publishing" || after.state == "failed")) ||
-                                  (before.state == "publishing" && (after.state == "published" || after.state == "failed"));
-                    }
-                    require(allowed, "attempt state regressed or skipped a required transition");
+                    next["state"] = publish ? "publishing" : "building";
+                    dispatches.push_back({{"execution", id}, {"attempt", next.at("id")}, {"publication", publish}});
+                    node = std::move(candidate);
                 }
-            } else {
-                validateExecutionSource(node);
-                require(node.attempts.size() == 1 && node.supersededBy.empty(), "new execution has unexpected history");
-                const auto definition = std::find_if(change.definitions.begin(), change.definitions.end(), [&](const auto& selected) {
-                    return selected.repositoryId == node.source.at("repository_id").get<std::uint64_t>() &&
-                           selected.revision == node.source.at("definition_revision").get<std::string>();
-                });
-                require(definition != change.definitions.end(), "new execution lost its committed definition reference");
-                verifyDefinition(node, definition->document, definition->blobSha);
             }
-            const std::size_t oldCount = previous == records.end() ? 0 : previous->second.attempts.size();
-            for (std::size_t index = oldCount; index < node.attempts.size(); ++index) {
-                const auto& attempt = node.attempts[index];
-                require(attempt.state == "waiting" && attempt.assignment.is_null() && attempt.revision >= nextRevision &&
-                            attempt.revision < change.nextRevision && allocated.insert(attempt.revision).second &&
-                            attempt.id == node.id + ":" + std::to_string(attempt.revision),
-                        "new attempt/rebuild revision is invalid");
-            }
+            return dispatches;
         }
-        require(allocated.size() == change.nextRevision - nextRevision, "reserved rebuild revisions do not match new attempts");
-        for (const auto& [id, node] : changed) {
-            for (const auto& prerequisite : node->prerequisites) {
-                require(changed.contains(prerequisite) || records.contains(prerequisite), "execution prerequisite is missing");
-            }
-            require(node->supersededBy.empty() || changed.contains(node->supersededBy) || records.contains(node->supersededBy),
-                    "superseding execution is missing");
-        }
-    }
 
-    void Graph::apply(const GraphChange& change) {
-        validate(change);
-        for (const auto& node : change.nodes) {
-            records.insert_or_assign(node.id, node);
+        bool retirable(const Json& node) {
+            const auto& attempt = node.at("attempts").back();
+            return attempt.at("state") == "publishing" && attempt.at("publication_run").is_null() &&
+                   attempt.value("dispatch", Json::object()).value("publication", Json()).is_null() &&
+                   attempt.at("evidence").value("publication", Json::object()).empty();
         }
-        nextRevision = change.nextRevision;
-    }
+        void retire(Json& state, const std::string& id, const std::string& attemptId) {
+            auto& node = state.at("executions").at(id);
+            require(node.at("attempts").back().at("id") == attemptId && retirable(node), "publication cannot be retired");
+            failed(node, attemptId, "operator abandoned unconfirmed dispatch; remote outcome unknown");
+        }
 
+        void retry(Json& state, const std::string& id) {
+            auto& node = state.at("executions").at(id);
+            require(node.at("attempts").back().at("state") == "failed" && node.at("superseded_by") == "", "execution cannot be retried");
+            node["attempts"].push_back(waiting(state, id));
+        }
+
+        void observe(Json& node, const std::string& attemptId, bool publication, const Json& run, const Json& facts) {
+            auto& attempts = node.at("attempts");
+            const auto found = std::find_if(attempts.begin(), attempts.end(), [&](const auto& attempt) {
+                return attempt.at("id") == attemptId;
+            });
+            require(found != attempts.end(), "report does not belong to an assigned attempt");
+            auto& attempt = *found;
+            auto& known = attempt.at(publication ? "publication_run" : "build_run");
+            require(!attempt.at("assignment").is_null() && run.at("run_attempt") == 1, "report does not match assigned attempt one");
+            require(known.is_null() || known == run, "conflicting assigned run");
+            known = run;
+            auto& evidence = attempt["evidence"][publication ? "publication" : "build"];
+            const std::map<std::string, int> rank{
+                {"requested", 0}, {"waiting", 0}, {"pending", 0}, {"queued", 0}, {"in_progress", 1}, {"completed", 2}};
+            const auto previousPhase = evidence.contains("job_status") ? rank.at(evidence.at("job_status").get<std::string>()) : 0;
+            for (const auto& [key, value] : facts.items()) {
+                if (!value.is_null()) {
+                    if (key == "status" || key == "job_status") {
+                        if (!evidence.contains(key) || rank.at(value.get<std::string>()) >= rank.at(evidence.at(key).get<std::string>())) {
+                            evidence[key] = value;
+                        }
+                    } else if (key != "started_at" || rank.at(facts.value("job_status", "queued")) > 0) {
+                        require(!evidence.contains(key) || evidence.at(key) == value || (key == "started_at" && previousPhase == 0),
+                                "conflicting run/job evidence: " + key);
+                        evidence[key] = value;
+                    }
+                }
+            }
+        }
+
+        void built(Json& node, const std::string& attemptId, const Json& result) {
+            auto& attempt = current(node, attemptId);
+            require(attempt.at("state") == "building" && !attempt.at("build_run").is_null() && result.at("artifacts").is_array() &&
+                        !result.at("artifacts").empty() && result.at("run") == attempt.at("build_run") &&
+                        result.at("assignment_sha256") == digest(attempt.at("assignment")),
+                    "build result differs from assignment");
+            require(attempt.at("build_result").is_null() || attempt.at("build_result") == result, "conflicting build artifact result");
+            attempt["build_result"] = result;
+        }
+
+        void published(Json& node, const std::string& attemptId, const Json& receipt) {
+            auto& attempt = current(node, attemptId);
+            require((attempt.at("state") == "publishing" || attempt.at("state") == "published") &&
+                        receipt.at("execution") == node.at("id") && receipt.at("attempt") == attemptId &&
+                        receipt.at("assignment_sha256") == digest(attempt.at("assignment")) && !attempt.at("publication_run").is_null() &&
+                        receipt.at("run") == attempt.at("publication_run") &&
+                        receipt.at("source_commit") == node.at("source").at("commit") &&
+                        receipt.at("feed") == node.at("source").at("deployment").at("feed") && receipt.at("packages").is_array() &&
+                        !receipt.at("packages").empty() && receipt.at("environment").is_object() && !receipt.at("environment").empty() &&
+                        receipt.at("feed_revision").is_string(),
+                    "receipt differs from assignment");
+            auto verified = receipt;
+            verified.erase("publication_verified_utc");
+            auto previous = attempt.at("receipt");
+            if (previous.is_object()) {
+                previous.erase("publication_verified_utc");
+            }
+            require(previous.is_null() || previous == verified, "conflicting publication receipt");
+            if (attempt.at("state") != "published") {
+                const auto now = std::time(nullptr);
+                std::ostringstream utc;
+                const auto* time = std::gmtime(&now);
+                require(time != nullptr, "UTC clock unavailable");
+                utc << std::put_time(time, "%Y-%m-%dT%H:%M:%SZ");
+                verified["publication_verified_utc"] = utc.str();
+                attempt["receipt"] = verified;
+                attempt["state"] = "published";
+            }
+        }
+
+        void failed(Json& node, const std::string& attemptId, const std::string& reason) {
+            auto& attempt = current(node, attemptId);
+            require(!reason.empty() && (attempt.at("state") == "building" || attempt.at("state") == "publishing"),
+                    "failure is not for assigned work");
+            attempt["failure"] = reason;
+            attempt["state"] = "failed";
+        }
+    } // namespace graph
 } // namespace coreci
