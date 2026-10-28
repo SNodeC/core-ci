@@ -39,7 +39,9 @@ def main():
         shutil.copyfile(Path(args.keys) / "apt.asc", public / "apt.asc")
         if target["format"] == "deb":
             assert target["distribution"] == "debian", "this acceptance fixture uses Debian"
-            feed = base + "/apt/" + target["distribution"] + "/" + target["suite"]
+            assert package["path"] == (target["distribution"] + "/pool/" + target["suite"] + "/"
+                                       + package["name"] + "_" + package["version"] + "_" + package["arch"] + ".deb")
+            feed = base + "/" + target["distribution"]
             for name, key in (("bad", "/usr/share/keyrings/debian-archive-keyring.gpg"), ("good", "/proof/apt.asc")):
                 (public / (name + ".list")).write_text(
                     "deb [signed-by=" + key + "] " + feed + " " + target["suite"] + " main\n"
@@ -54,7 +56,9 @@ def main():
             )
         else:
             assert target["distribution"] == "fedora", "this acceptance fixture uses Fedora"
-            folder = Path(package["path"]).parent
+            folder = Path(target["distribution"]) / target["suite"] / target["arch"]
+            assert package["path"] == str(folder / "Packages" / (package["name"] + "-" + package["version"]
+                                                               + "." + package["arch"] + ".rpm"))
             assert not folder.is_absolute() and ".." not in folder.parts
             for name, key in (("bad", "/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-43-primary"), ("good", "/proof/apt.asc")):
                 directory = public / name

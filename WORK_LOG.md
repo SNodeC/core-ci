@@ -3151,3 +3151,48 @@ against the validated Release binary. Both are unchanged. Reused the passing foc
 without repeating them. Stage only this correction's source, tests, template, report, AGENTS
 cap and appended task log; unrelated documentation/log hunks remain local. No deployment,
 restart, live tag or VOC-Experiments workflow activation is part of this stage.
+
+
+## Canonical new-publication paths and browsing links — 2026-10-28
+
+- Owner authorized implementation using Claude's agreed prompt, preserving the merged
+  package-production speedup. Source: canonical checkout, `rewrite/slim-graph-controller`,
+  HEAD `877946851aadd05667f6515ae8bb1c6c2493c205`; remote main verified as
+  `5758671349e8898bd1ba4a11dbd8b0228daeb805` with no open PR. Existing dirty documentation
+  remains preserved; no checkout/branch switch, commit, push or deployment was performed.
+- Invariant: new package writes, native/OpenWrt indexes, client repository roots and
+  Packages browsing links agree on distribution-owned paths. Native pools/indexes use
+  `DISTRIBUTION/pool/SUITE`, `DISTRIBUTION/dists/SUITE`, and
+  `DISTRIBUTION/SUITE/ARCH/{Packages,repodata}`; OpenWrt uses `openwrt/SUITE/ARCH`.
+- Package filenames follow DEB/IPK underscore and RPM/APK hyphen conventions without
+  changing package version metadata. Markdown browsing uses relative repository paths;
+  HTML browsing uses escaped GitHub tree URLs. Direct download URLs remain unchanged.
+- SDK archive handoff and official metadata/checksum verification remain intact. The
+  SDK preparation module, publisher entry point, bundle workflow, workflow renderer and
+  all C++ sources are unchanged from HEAD. The synthetic OpenWrt fixture asserts supplied
+  archive forwarding and separate receipt SDK identities sharing the canonical directory.
+- No history migration, deletion, inventory, compatibility adapter, key change, database
+  reset, feed replacement or build.json addition. Existing receipt/export/signing and
+  replay checks remain authoritative. Live activation and client installation are not run.
+- Validation source identity: HEAD above plus SHA256 of the task production/test diff
+  `851ed92568a676df8d5194f3fbb90062240f08dbedaa59a5c383d651461e3925`.
+  CMake configured `/tmp/codex/build/core-ci/canonical-paths/build` with fixture directory
+  `/tmp/codex/build/core-ci/canonical-paths/fixtures`; TMPDIR stayed under this task root.
+- Focused commands: `ctest --test-dir /tmp/codex/build/core-ci/canonical-paths/build
+  --output-on-failure -j3 -R '^(worker-package-boundaries|openwrt-archive-boundaries|worker-provenance-boundaries)$'`;
+  only failed checks were rerun after correcting new fixture assumptions about RPM metadata
+  compression and README selection/log identity. Final results: native package boundary
+  PASS (2.08 s), OpenWrt boundary PASS (0.97 s), provenance boundary PASS (2.05 s).
+  Existing speedup assertions in these checks were preserved and executed. OpenWrt signing
+  tools are synthetic; these results are not real SDK/signature/client or live acceptance.
+- `cmake --build /tmp/codex/build/core-ci/canonical-paths/build --target format-check`
+  passed. Python AST parsing, changed production line length <=160, and `git diff --check`
+  passed. No unrelated/full suite or live actions were performed.
+- Task accounting: production (worker Python/Jinja) +18/-18/net 0; tests +126/-3/net +123;
+  deployment documentation +9/-9/net 0, plus this appended work-log entry. No C++ growth.
+  Temporary fixtures/build evidence remain under the task root for review and may be
+  removed after handover; no extra source checkout was created.
+- Remaining stages: commit/push/merge and tooling rollout are not performed. Before any
+  live activation, report concrete occupied-directory signing/index conflicts without
+  modifying historical files. Real client installation and Packages-link HTTP checks are
+  live acceptance work, not established by these local checks.

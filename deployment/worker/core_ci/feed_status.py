@@ -52,6 +52,7 @@ def render(feed, templates=None):
             )
         repository = build.split("/actions/runs/")[0].removeprefix("https://github.com/")
         base = receipt["feed"]["base_url"].rstrip("/") + "/"
+        feed_tree_url = "https://github.com/" + quote(receipt["feed"]["repository"]) + "/tree/" + quote(receipt["feed"]["branch"], safe="") + "/"
         address = urlsplit(base)
         require(
             address.scheme == "https"
@@ -94,6 +95,8 @@ def render(feed, templates=None):
                     "source_commit": receipt["source_commit"],
                     "sha256": package["sha256"],
                     "package_url": base + quote(package["path"]),
+                    "package_directory": quote(package["path"].rpartition("/")[0]) + "/",
+                    "feed_tree_url": feed_tree_url,
                     "receipt_url": base + quote(path.relative_to(feed).as_posix()),
                     "build_url": build,
                     "publication_url": publication,

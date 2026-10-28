@@ -144,6 +144,7 @@ def main():
         assert target["format"] in ("ipk", "apk") and len(receipt["packages"]) == 1
         package = receipt["packages"][0]
         folder = str(Path(package["path"]).parent)
+        assert folder == "openwrt/" + target["suite"] + "/" + target["arch"]
         assert not Path(folder).is_absolute() and ".." not in Path(folder).parts
         feed = base + "/" + folder
         release = target["release"]

@@ -38,14 +38,7 @@ def update(selected, build_result, publication_run, artifacts, feed, private_key
         )
         require(Path(private_key).stat().st_mode & 0o077 == 0, "private key requires owner-only permissions")
         receipt = publication_receipt(selected, build_result, publication_run, manifest)
-        folder = (
-            feed
-            / "openwrt"
-            / feed_component(target["suite"])
-            / feed_component(target["arch"])
-            / package_format
-            / environment["sdk"]["sha256"]
-        )
+        folder = feed / "openwrt" / feed_component(target["suite"]) / feed_component(target["arch"])
         folder.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="verification-", dir=temporary_root) as temporary:
             scratch = Path(temporary)
@@ -82,7 +75,10 @@ def update(selected, build_result, publication_run, artifacts, feed, private_key
                     "APK key must use EC P-256",
                 )
             for package in manifest["packages"]:
-                filename = package["name"] + "-" + package["version"] + "." + package_format
+                filename = (
+                    f"{package['name']}_{package['version']}_{package['arch']}.ipk" if package_format == "ipk"
+                    else f"{package['name']}-{package['version']}.apk"
+                )
                 destination = folder / filename
                 add_new(Path(artifacts) / package["file"], destination)
                 if package_format == "apk":

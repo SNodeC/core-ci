@@ -344,10 +344,10 @@ The deterministic layout is:
 keys/apt.asc
 keys/opkg.pub
 keys/core-ci-apk.pem
-apt/DISTRIBUTION/SUITE/pool/NAMESPACE/...
-apt/DISTRIBUTION/SUITE/dists/SUITE/main/binary-ARCH/...
-rpm/DISTRIBUTION/SUITE/ARCH/...
-openwrt/SUITE/ARCH/FORMAT/SDK_IDENTITY/...
+DISTRIBUTION/pool/SUITE/...
+DISTRIBUTION/dists/SUITE/main/binary-ARCH/...
+DISTRIBUTION/SUITE/ARCH/Packages/... (metadata: repodata/)
+openwrt/SUITE/ARCH/...
 exports/EXECUTION/REVISION/development.tar.gz
 receipts/EXECUTION/REVISION.json
 status.json
@@ -527,7 +527,7 @@ under `/etc/apk/keys` and use the matching OpenWrt client/toolchain.
 An APT source for the current layout is:
 
 ```text
-deb [signed-by=/usr/share/keyrings/core-ci.asc] https://YOUR_FEED/apt/DISTRIBUTION/SUITE SUITE main
+deb [signed-by=/usr/share/keyrings/core-ci.asc] https://YOUR_FEED/DISTRIBUTION SUITE main
 ```
 
 An RPM repository entry uses the corresponding target path:
@@ -535,16 +535,16 @@ An RPM repository entry uses the corresponding target path:
 ```ini
 [core-ci]
 name=core-ci packages
-baseurl=https://YOUR_FEED/rpm/DISTRIBUTION/SUITE/ARCH/
+baseurl=https://YOUR_FEED/DISTRIBUTION/SUITE/ARCH/
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=https://YOUR_FEED/keys/apt.asc
 ```
 
-OpenWrt feed URLs include format and SDK identity from the receipt. Do not invent a shorter
-path that drops SDK compatibility. Use the current receipt's actual feed root/path and the
-matching package-client version. The live acceptance scripts in [tests/live](../../tests/live)
+OpenWrt feed URLs use `openwrt/SUITE/ARCH/`. Exact SDK compatibility remains recorded in the
+assignment and receipt, independently of the directory layout. Use the receipt's feed root/path
+and the matching package-client version. The live acceptance scripts in [tests/live](../../tests/live)
 show actual refresh/install/runtime and wrong-key checks for all supported client families.
 
 Test both the intended key and rejection with an unrelated key. Modified-index/package

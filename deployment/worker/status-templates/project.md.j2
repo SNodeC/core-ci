@@ -35,7 +35,7 @@
 {% else %}—{% endif %}</td><td>
 {% set log = active.build_job_url if active else (available.build_job.html_url if available and available.build_job else none) %}
 {% if log %}<a href="{{ log }}">Build log</a> · {% endif %}
-{% if available %}<a href="{{ available.package_url.rsplit('/', 1)[0] }}/">Packages</a>{% else %}—{% endif %}
+{% if available %}<a href="{{ (available.feed_tree_url if html else root ~ '../') ~ available.package_directory }}">Packages</a>{% else %}—{% endif %}
 </td></tr>
 {% if available and available.summary %}<tr><td colspan="5"><details><summary>Hook-reported build summary</summary>
 {% for compiler in available.summary.get('compilers', []) %}{{ compiler.name }} {{ compiler.version }}; {% endfor %}

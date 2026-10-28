@@ -2,6 +2,7 @@
 
 import argparse
 import copy
+import gzip
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from xml.etree import ElementTree
 
 
 def rejected(operation, message):
@@ -241,6 +243,30 @@ def main():
             receipt = sign_native.update(
                 request, build_result, publication_run, root, feed, private, passphrase, public, directory
             )
+            package = receipt["packages"][0]
+            target = request["target"]
+            if package_format == "deb":
+                folder = target["distribution"] + "/pool/" + target["suite"]
+                filename = package["name"] + "_" + package["version"] + "_" + package["arch"] + ".deb"
+                index = target["distribution"] + "/dists/" + target["suite"] + "/"
+                assert {item["path"] for item in receipt["indexes"]} == {
+                    index + path for path in ("Release", "Release.gpg", "InRelease",
+                                             "main/binary-amd64/Packages", "main/binary-amd64/Packages.gz")}
+                assert "Filename: " + folder.removeprefix(target["distribution"] + "/") + "/" + filename in (
+                    feed / index / "main/binary-amd64/Packages").read_text()
+            else:
+                repository_root = target["distribution"] + "/" + target["suite"] + "/" + target["arch"]
+                folder = repository_root + "/Packages"
+                filename = package["name"] + "-" + package["version"] + "." + package["arch"] + ".rpm"
+                indexes = {item["path"] for item in receipt["indexes"]}
+                assert repository_root + "/repodata/repomd.xml.asc" in indexes
+                repomd = ElementTree.parse(feed / repository_root / "repodata/repomd.xml")
+                primary = feed / repository_root / repomd.find("{*}data[@type='primary']/{*}location").attrib["href"]
+                xml = gzip.decompress(primary.read_bytes()) if primary.suffix == ".gz" else subprocess.check_output(
+                    ["zstd", "-dc", str(primary)])
+                locations = ElementTree.fromstring(xml).findall(".//{*}location")
+                assert [location.attrib["href"] for location in locations] == ["Packages/" + filename]
+            assert package["path"] == folder + "/" + filename
             assert receipt["summary"] == manifest["summary"] and receipt["source"]["tag"] == request["source"]["tag"]
             linked = {
                 **request,

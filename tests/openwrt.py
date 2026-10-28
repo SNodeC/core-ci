@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deployment/worker/
 import contract
 import sdk
 import environment
+import sign_openwrt
 from sign_native import publish_key
 
 
@@ -105,12 +106,93 @@ def preparation(root):
         os.umask(mask)
 
 
+def publication_paths(root):
+    # Synthetic SDK tools prove layout, indexing and replay; they do not prove package signatures.
+    fixture = root / "publisher-sdk"
+    (fixture / "staging_dir/host/bin").mkdir(parents=True)
+    (fixture / "scripts").mkdir()
+    usign = fixture / "staging_dir/host/bin/usign"
+    usign.write_text("#!/usr/bin/env python3\nimport pathlib,sys\na=sys.argv[1:]\n"
+                     "if '-F' in a: print('synthetic-key')\n"
+                     "elif '-S' in a: pathlib.Path(a[a.index('-x')+1]).write_bytes(b'synthetic-signature')\n"
+                     "elif '-V' in a: assert pathlib.Path(a[a.index('-x')+1]).read_bytes()==b'synthetic-signature'\n")
+    usign.chmod(0o755)
+    indexer = fixture / "scripts/ipkg-make-index.sh"
+    indexer.write_text('test "$1" = . || exit 1\nfor file in *.ipk; do printf "Filename: %s\\n" "$file"; done\n')
+    apk = root / "synthetic-apk"
+    apk.write_text("#!/usr/bin/env python3\nimport pathlib,sys\na=sys.argv[1:]\n"
+                   "if 'adbsign' in a:\n p=pathlib.Path(a[-1]); p.write_bytes(p.read_bytes()+b'synthetic-signature')\n"
+                   "elif 'mkndx' in a:\n p=pathlib.Path(a[a.index('--output')+1]); "
+                   "p.write_text('\\n'.join(a[a.index('--output')+2:]))\n"
+                   "elif 'verify' in a: assert pathlib.Path(a[-1]).stat().st_size > 0\n")
+    apk.chmod(0o755)
+    private = root / "publisher-private.pem"
+    public = root / "publisher-public.pem"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
+                    "-out", str(private)], check=True, stderr=subprocess.PIPE)
+    private.chmod(0o600)
+    subprocess.run(["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)],
+                   check=True, stderr=subprocess.PIPE)
+    feed = root / "publication-feed"
+    feed.mkdir()
+    archive = root / "supplied-sdk.archive"
+    archive.write_bytes(b"synthetic SDK archive handoff")
+    for package_format, suite in (("ipk", "24.10"), ("apk", "25.12")):
+        recorded = []
+        for revision in (1, 2):
+            artifacts = root / (package_format + "-artifacts-" + str(revision))
+            artifacts.mkdir()
+            (artifacts / "package").write_bytes(b"synthetic unsigned package")
+            environment = {"release": suite + ".1", "sdk": {"sha256": str(revision) * 64}, "toolchain": {}}
+            manifest = {"environment": environment, "development_export": None,
+                        "packages": [{"file": "package", "name": "example", "version": "1.0-r" + str(revision),
+                                      "arch": "x86_64", "sha256": contract.file_hash(artifacts / "package")}]}
+            contract.write_json(artifacts / "manifest.json", manifest)
+            selected = {"execution": ("a" if package_format == "ipk" else "b") * 64,
+                        "attempt": "synthetic:" + str(revision), "revision": revision, "dependencies": [],
+                        "source": {"commit": "c" * 40, "tag": "v1.0.0", "deployment": {
+                            "signing": {"usign_key_sha256": contract.file_hash(public),
+                                        "apk_key_sha256": contract.file_hash(public)},
+                            "feed": {"repository": "Example/feed", "branch": "main", "base_url": "https://feed.example"}}},
+                        "target": {"family": "openwrt", "distribution": "openwrt", "suite": suite, "arch": "x86_64",
+                                   "build": {"format": package_format, "target": "x86/64"}}}
+            temporary = root / (package_format + "-temporary-" + str(revision))
+            temporary.mkdir()
+            with patch.object(sign_openwrt, "prepare", return_value=(fixture, fixture)) as prepared, patch.object(
+                sign_openwrt, "verify_manifest", return_value=manifest
+            ), patch.dict(os.environ, {"CORE_CI_APK": str(apk)}):
+                receipt = sign_openwrt.update(selected, {}, {}, artifacts, feed, private, public, temporary, archive)
+                prepared.assert_called_once_with(selected["target"], environment, temporary / "sdk", archive)
+                folder = "openwrt/" + suite + "/x86_64/"
+                filename = "example_1.0-r" + str(revision) + "_x86_64.ipk" if package_format == "ipk" else (
+                    "example-1.0-r" + str(revision) + ".apk")
+                assert receipt["packages"][0]["path"] == folder + filename
+                assert (feed / folder / filename).is_file()
+                indexes = ("Packages", "Packages.gz", "Packages.sig") if package_format == "ipk" else ("packages.adb",)
+                assert {item["path"] for item in receipt["indexes"]} == {folder + name for name in indexes}
+                if package_format == "ipk":
+                    text = (feed / folder / "Packages").read_text()
+                    assert all("Filename: example_1.0-r" + str(value) + "_x86_64.ipk" in text
+                               for value in range(1, revision + 1))
+                else:
+                    assert all(str(feed / folder / ("example-1.0-r" + str(value) + ".apk")) in (
+                        feed / folder / "packages.adb").read_text() for value in range(1, revision + 1))
+                before = {path: contract.file_hash(path) for path in feed.rglob("*") if path.is_file()}
+                assert sign_openwrt.update(selected, {}, {}, artifacts, feed, private, public, temporary, archive) == receipt
+                assert prepared.call_count == 1, "replay repeated SDK preparation"
+                assert before == {path: contract.file_hash(path) for path in feed.rglob("*") if path.is_file()}
+                recorded.append(receipt)
+        assert recorded[0]["compatibility"]["sdk_sha256"] != recorded[1]["compatibility"]["sdk_sha256"]
+        assert Path(recorded[0]["packages"][0]["path"]).parent == Path(recorded[1]["packages"][0]["path"]).parent
+
+
 def main():
     directory = Path(sys.argv[1])
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=directory) as temporary:
         root = Path(temporary)
         preparation(root)
+        publication_paths(root)
         # A new SDK feed key must not replace the existing APK feed's trust file.
         feed = root / "feed"
         (feed / "keys").mkdir(parents=True)
