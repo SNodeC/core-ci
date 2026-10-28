@@ -3243,3 +3243,17 @@ inner timing-cell padding to both headers and body. Centered local two-line time
 group headings remain. No JS/C++ or controller behavior change. UI+6/-6/net0; tests0.
 Static checks and git diff --check pass, changed lines <=160. Browser reports no available
 apps/browsers, so no rendered visual claim. Continue the previously authorized commit/push/merge/deployment stages for this correction.
+
+## Explicit compact timing-column layout — 2026-10-28
+
+Owner accepted one explicit layout: equal compact Started/Finished pairs, a larger gap
+between Build and Publisher job, centered headings/timestamps, stable State, remaining
+space for Repository. Replace automatic sizing with fixed pixel colgroups: disclosure36,
+Target156, State260, four timing columns96each, verification148; Repository alone expands.
+Minimum table width1224 preserves240px for Repository and horizontal scrolling on smaller
+screens. Existing symmetric outer20/inner6px padding gives82px timestamp-center spacing
+inside both pairs and110px between pairs, with group headings over the pair midpoint.
+Source assertions cover1224/1400/1712px layouts, colgroup semantics4/2/2/1 and unchanged
+JS/C++ consumers. These are source/calculated checks, not browser-rendered proof. Browser
+reports no enabled apps/browsers. UI+4/-4/net0; tests0; changed lines<=160 and diff check pass.
+Continue existing owner authorization for commit/push/merge/deployment of this UI fix.
