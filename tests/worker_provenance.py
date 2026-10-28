@@ -198,7 +198,7 @@ def main():
         "schema": 1,
         "source_commit": "c" * 40,
         "source": {"tag": "v1.0.0"}, "revision": 1,
-        "feed": {"base_url": "https://packages.example.test/"},
+        "feed": {"base_url": "https://packages.example.test/", "repository": "Example/feed", "branch": "topic/with#hash"},
         "compatibility": {"distribution": "configured", "suite": "series", "arch": "arch", "format": "deb"},
         "build_result": {"run": {"html_url": "https://github.com/Example/source/actions/runs/100"}},
         "run": {"html_url": "https://github.com/Example/worker/actions/runs/200"},
@@ -237,6 +237,10 @@ def main():
     assert data[0]["dependencies"] is None and data[1]["dependencies"] == receipt["dependencies"]
     project_page = (feed / "status/source.md").read_text()
     assert "Hook-reported" in project_page and "compiler &lt;reported&gt;" in project_page
+    assert 'href="../pool/">Packages</a>' in project_page
+    assert 'href="https://github.com/Example/feed/tree/topic%2Fwith%23hash/pool/">Packages</a>' in (
+        feed / "status/source.html").read_text()
+    assert data[0]["package_url"] == "https://packages.example.test/pool/project.deb"
     assert "Published (UTC)" in project_page and "Available" in project_page
     assert "coverage 0%" in project_page and 'href="https://reports.example.test/results"' in project_page
 
@@ -280,12 +284,18 @@ def main():
     assert rejected and (feed / "index.html").read_text() == page
     receipt["packages"][0]["path"] = "pool/project.deb"
     receipt["build_result"]["run"]["html_url"] = "https://github.com/Example/README/actions/runs/100"
+    receipt["build_job"] = {**observed, "html_url": observed["html_url"].replace("Example/source", "Example/README")}
     contract.write_json(receipt_path, receipt)
+    contract.write_json(feed / "status/controller.json", {**projection, "projects": [*projection["projects"],
+                        {"repository": "Example/README", "versions": ["v2.0.0"]}]})
     feed_status.render(feed)
     assert "Example/README" in (feed / "status/README.md").read_text()
     assert "Example/source" in (feed / "status/README.md").read_text()
     assert "Example/README" in (feed / "status/README/README.md").read_text()
     assert "Example/source" not in (feed / "status/README/README.md").read_text()
+    assert 'href="../../pool/">Packages</a>' in (feed / "status/README/README.md").read_text()
+    assert 'href="https://github.com/Example/feed/tree/topic%2Fwith%23hash/pool/">Packages</a>' in (
+        feed / "status/README/README.html").read_text()
     # Deployment templates get public parameters and structured coordinates, not job credentials.
     from jinja2 import UndefinedError
 

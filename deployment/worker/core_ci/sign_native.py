@@ -185,7 +185,6 @@ def update(
         distribution = feed_component(target["distribution"])
         suite = feed_component(target["suite"])
         arch = feed_component(target["arch"])
-        namespace = selected["source"]["package"]
         expected = selected["source"]["deployment"]["signing"]["gpg_fingerprint"]
         receipt = publication_receipt(selected, build_result, publication_run, manifest)
         with signing_key(private_key, passphrase, public_key, expected, temporary_root) as (key_home, gpg, keyring):
@@ -194,13 +193,15 @@ def update(
             if package_format == "rpm":
                 run(["rpmkeys", "--dbpath", str(rpmdb), "--import", str(public_key)], stderr=subprocess.PIPE)
             for package in manifest["packages"]:
-                extension = "." + package_format
-                filename = package["name"] + "_" + package["version"] + "_" + package["arch"] + extension
+                filename = (
+                    f"{package['name']}_{package['version']}_{package['arch']}.deb" if package_format == "deb"
+                    else f"{package['name']}-{package['version']}.{package['arch']}.rpm"
+                )
                 relative_path(filename)
                 folder = (
-                    "apt/" + distribution + "/" + suite + "/pool/" + namespace
+                    distribution + "/pool/" + suite
                     if package_format == "deb"
-                    else "rpm/" + distribution + "/" + suite + "/" + arch
+                    else distribution + "/" + suite + "/" + arch + "/Packages"
                 )
                 file = feed / folder / filename
                 add_new(Path(artifacts) / package["file"], file)
@@ -249,7 +250,7 @@ def update(
 
 
 def apt_indexes(feed, distribution, suite, arch, gpg, keyring):
-    root = feed / "apt" / distribution / suite
+    root = feed / distribution
     relative = Path("dists") / suite
     binary = root / relative / "main" / ("binary-" + arch)
     binary.mkdir(parents=True, exist_ok=True)
@@ -257,7 +258,7 @@ def apt_indexes(feed, distribution, suite, arch, gpg, keyring):
     # apt-ftparchive reads actual retained control records; restrict the affected architecture.
     with packages.open("wb") as outgoing:
         subprocess.run(
-            ["apt-ftparchive", "--arch", arch, "packages", "pool"],
+            ["apt-ftparchive", "--arch", arch, "packages", "pool/" + suite],
             cwd=root,
             check=True,
             stdout=outgoing,
@@ -304,7 +305,7 @@ def apt_indexes(feed, distribution, suite, arch, gpg, keyring):
 
 
 def rpm_indexes(feed, distribution, suite, arch, gpg, keyring):
-    root = feed / "rpm" / distribution / suite / arch
+    root = feed / distribution / suite / arch
     run(["createrepo_c", "--update", str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     repomd = root / "repodata/repomd.xml"
     signature = sign_file(gpg, keyring, repomd)
