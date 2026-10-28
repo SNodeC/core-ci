@@ -546,10 +546,14 @@ def exercise(arguments):
             assert api("/api/graph")[1]["generation"] == generation, "invalid execution evidence changed the graph"
 
             if arguments.case == "queued-job":
-                assert report(first, job=True, status="queued", wrong={"started_at": None})[0] == 202
+                assert report(first, job=True, status="queued", wrong={"started_at": "2026-10-27T09:59:58Z"})[0] == 202
                 wait(lambda: next(row for row in api("/api/graph")[1]["executions"] if row["id"] == first["selected"]["execution"])["build_job"].get("job_status") == "queued", "queued job report did not apply")
                 assert report(first, job=True, status="in_progress")[0] == 202
                 wait(lambda: next(row for row in api("/api/graph")[1]["executions"] if row["id"] == first["selected"]["execution"])["build_job"].get("job_status") == "in_progress", "running job report did not apply")
+                stable = api("/api/graph")[1]
+                assert report(first, job=True, status="queued", wrong={"started_at": "2026-10-27T09:59:58Z"})[0] == 202
+                time.sleep(0.1)
+                assert api("/api/graph")[1] == stable, "delayed queued placeholder changed running facts"
                 assert report(first, job=True)[0] == 202
                 wait(lambda: next(row for row in api("/api/graph")[1]["executions"] if row["id"] == first["selected"]["execution"])["build_job"].get("job_status") == "completed", "completed job report did not apply")
             if arguments.case == "selection-progress":

@@ -219,6 +219,7 @@ if(BUILD_TESTING)
         token-rejected
         token-lost-response
         token-reuse
+        token-near-expiry
         parallel
         parallel-single
         shutdown

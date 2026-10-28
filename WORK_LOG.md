@@ -2627,3 +2627,73 @@ or authorize production SNodeC resource changes. Preserve the existing database/
 keys, package bytes and listener settings. Current service has no assigned build/publication:
 its public graph reports 127 published, 17 failed and 16 waiting executions. Capture that
 checkpoint before cutover. The fresh schema uses a separate database, not a schema overwrite.
+
+
+### Slim sandbox activation and live timestamp correction — 2026-10-28
+
+Owner authorized commit, push, deployment on core.vchrist.at and concrete VOC-Experiments
+acceptance. Committed/pushed 4cbd5bff0f923d60a3cb5c47a114df36e916a87b on
+rewrite/slim-graph-controller. No main merge. Unrelated local hunks remain unstaged.
+
+Installed the tested binary (SHA-256 adbcb9f2b015d8b29c68e1ef1736b93725bc9f618e618b8208867f182a34a161).
+All 20 server SNode.C runtime libraries match the local tested build; ldd -r and help pass.
+Backed up the previous executable, manifest, service and database under
+/var/backups/core-ci/slim-4cbd5bf-20261028T090218Z. Kept the original core_ci database intact
+with all 160 executions/history (127 published, 17 failed, 16 waiting; no active assignments).
+Provisioned separate core_ci_slim with current GitHub enrollment definitions, generation1686
+and next_revision165, above retained receipt/attempt revisions. No history importer or state
+conversion. Service core-ci runs as core_ci, with existing keys and systemd TLS credentials;
+8080 wildcard UI, TLS8443 and ports80/443 are unchanged. Fresh settings contain identifiers
+and existing file paths only; private files/configuration contents were not inspected.
+
+Sandbox worker tooling e7b1423cc9537070f84aea7bf7893fb590f75301 and wrappers
+721537bc7d0478b564eb397c3c87069778ac8cfe deploy the reviewed publisher job lock and
+secret-free confirmation. Sources pin this tooling. Source wrapper blob
+30c4d3074c5031f4b904f70b106eeabd655f52dd; publisher c2b5e78b721d2e649490baa390e3ea5e7f8cdf9b;
+status54220e81eda55958e2d862c7f8815156acec2b32. Existing trusted keys, tags and package bytes
+were not replaced. The user CLI token lacks workflow scope, so Git SSH pushed wrapper commits
+using a temporary Git index in the canonical repository, without another checkout/worktree.
+Only VOC-Experiments resources changed. Public workflow variables/secrets were not changed.
+
+Tag demo-core v2.1.4 triggered 20 nodes and five root builds. Live evidence then proved H1:
+GitHub queued job started_at09:03:18 differs from actual start09:03:21/completion09:03:51.
+The controller rejected later facts and displayed queued after GitHub completion. This is a
+controller merge defect, not GitHub delivery delay. Earlier null-queued synthetic coverage
+was insufficient. No real publication success is claimed for that initial test.
+
+Owner explicitly requested the fix, redeployment and a fresh chain, plus Claude's detailed
+review of all GitHub REST and inbound webhook paths. Correct invariant: queued placeholders
+are not actual start evidence; actual running/completed start replaces only pre-running
+facts; later queued facts cannot regress progress. Identity/provenance checks remain exact.
+Graph::observe is the single merge authority. Its null suppression replaces duplicate
+filtering in Pipeline::facts. A first-patch null lookup error was caught locally and corrected
+with contains(), before deployment. Graph tests cover fresh stages, restored queued evidence,
+completed-only recovery, late queued delivery and conflicts after actual start. Existing
+checks are retained. The first test attempt also exhausted /tmp; removed only stopped,
+disposable task database directories, keeping logs/source/JSON evidence, then reran tests.
+
+Claude's read-only comprehensive review and final confirmation are in
+/tmp/codex/build/core-ci/slim-deployment/claude-api-review.md and claude-api-confirm.md.
+Final review confirms the correction and reports no remaining concrete REST/webhook defect.
+Owner accepted the token recommendation: cache reuse stops300s before expiry, preserving
+scopes, cold coalescing and mutation non-replay. This mitigates near-expiry queue risk, not
+arbitrary queue delay. A new public transport test uses a still-valid120s token to verify
+refresh before actual expiry; existing expired-token and reuse checks remain.
+
+Final timestamp checks: 25/25 graph/pipeline checks passed; after token change, all24 pipeline
+checks passed again, plus seven graph/token/parallel/mutation non-replay checks. Formatting
+and build pass. Additional near-expiry/reuse results are recorded in token-near-expiry.log.
+Source is3,508 C++ lines within the approved3,510; no new state, queue, timer or replay was added.
+Official references checked: GitHub REST workflow-jobs (attempt-specific jobs), workflow-runs
+(attempt-one run), workflows (dispatch), artifacts (complete listing), and installation-token
+generation (one-hour expiry and scoped grants):
+https://docs.github.com/en/rest/actions/workflow-jobs
+https://docs.github.com/en/rest/actions/workflow-runs
+https://docs.github.com/en/rest/actions/workflows
+https://docs.github.com/en/rest/actions/artifacts
+https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
+
+Live evidence, scripts, manifests and request/progress snapshots remain under
+/tmp/codex/build/core-ci/slim-deployment/. N2 is still an unresolved installed-framework
+reconnection defect; no framework code changed. Live signed publication, fresh-chain
+completion and client acceptance remain unclaimed until actually observed.

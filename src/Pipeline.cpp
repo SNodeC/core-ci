@@ -167,15 +167,11 @@ namespace coreci {
         const auto conclusion = report.value("conclusion", Json());
         require(report.at("status") != "completed" || (conclusion.is_string() && !conclusion.get_ref<const std::string&>().empty()),
                 "completed report has no conclusion");
-        if (!conclusion.is_null()) {
-            result[job ? "job_conclusion" : "conclusion"] = conclusion;
-        }
+        result[job ? "job_conclusion" : "conclusion"] = conclusion;
         if (job) {
             result["job_id"] = report.at("id");
             for (const auto* key : {"started_at", "completed_at", "html_url"}) {
-                if (report.contains(key) && !report.at(key).is_null()) {
-                    result[key] = report.at(key);
-                }
+                result[key] = report.value(key, Json());
             }
             for (const auto& step : report.value("steps", Json::array())) {
                 if (step.at("name") == "Publish checked feed update" && !step.value("conclusion", Json()).is_null()) {

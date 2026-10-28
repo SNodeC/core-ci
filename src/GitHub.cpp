@@ -133,7 +133,7 @@ namespace coreci {
     void GitHub::authorize(const Json& grant, const Callback& callback) {
         const auto scope = grant.dump();
         auto& token = tokens[scope];
-        if (token.expires > std::time(nullptr)) {
+        if (token.expires > std::time(nullptr) + 300) {
             callback(token.result);
         } else {
             const auto authorization = token.waiting.empty() ? jwt() : std::string{};

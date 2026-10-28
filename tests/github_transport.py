@@ -33,6 +33,7 @@ def exercise(args, directory):
             "core-ci-multi.test", 443, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, socket.AI_CANONNAME)))
         assert len(addresses) == 2, addresses
         bind_address = addresses[1]
+    reuse = args.case in ("token-reuse", "token-near-expiry")
     public_mode = False
     parallel = args.case in ("parallel", "parallel-single", "shutdown")
     shutdown_started = threading.Event()
@@ -93,15 +94,15 @@ def exercise(args, directory):
                     body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     assert body["repository_ids"] == [99]
                     token_grants.append(body["permissions"])
-                    assert body["permissions"] in ({"contents": "read"}, {"actions": "read"}) if args.case == "token-reuse" else body["permissions"] == {"contents": "read"}
+                    assert body["permissions"] in ({"contents": "read"}, {"actions": "read"}) if reuse else body["permissions"] == {"contents": "read"}
                     if args.case == "token-rejected":
                         self.send_json(403, {"message": "fixture rejected token"})
                     elif args.case == "token-lost-response":
                         self.close_connection = True
                     else:
                         expiry = "2000-01-01T00:00:00Z" if args.case == "expired-token" else "2099-01-01T00:00:00Z"
-                        if args.case == "token-reuse" and seen.count("token") == 1:
-                            expiry = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        if reuse and seen.count("token") == 1:
+                            expiry = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=120 if args.case == "token-near-expiry" else 2)).strftime("%Y-%m-%dT%H:%M:%SZ")
                         self.send_json(201, {"token": "unit-test-only-token", "expires_at": expiry})
             except Exception as error:
                 errors.append(type(error).__name__)
@@ -142,7 +143,7 @@ def exercise(args, directory):
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    expected = "200" if args.case in ("success", "token-reuse", "parallel", "parallel-single", "multi-address") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
+    expected = "200" if args.case in ("success", "token-reuse", "token-near-expiry", "parallel", "parallel-single", "multi-address") else "403" if args.case == "token-rejected" else "502" if args.case == "expired-token" else "0"
     command = [args.executable, "--config-file", str(config), "--log-file", str(root / "framework.log"), "github", "--app-id", "42", "--installation-id", "7", "--private-key-file", str(app_key), "--allowed-owner", "Owner", "--repository", "Owner/example=99", "github-http", "remote", "--host", "127.0.0.1", "--port", str(server.server_port)]
     if args.case == "multi-address":
         command[command.index("--host") + 1] = "core-ci-multi.test"
@@ -165,9 +166,9 @@ def exercise(args, directory):
         environment["CORE_CI_TEST_SHUTDOWN"] = "1"
     if parallel:
         environment["CORE_CI_TEST_PARALLEL"] = "1"
-    if args.case == "token-reuse":
+    if reuse:
         environment["CORE_CI_TEST_REUSE"] = "1"
-    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse", "parallel", "parallel-single", "multi-address") else "0"
+    environment["CORE_CI_TEST_EXPECTED_SUBMISSION"] = "1" if args.case in ("success", "lost-response", "mutation-lost-response", "token-reuse", "token-near-expiry", "parallel", "parallel-single", "multi-address") else "0"
     try:
         if args.case == "shutdown":
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
@@ -198,7 +199,7 @@ def exercise(args, directory):
             assert seen.count("token") == 1 and seen.count("repository") == 12, seen
             assert (peak == 1 if args.case == "parallel-single" else 2 <= peak <= 8), peak
             print("Synthetic concurrent HTTP peak:", peak)
-        elif args.case == "token-reuse":
+        elif reuse:
             assert seen.count("token") == 3 and seen.count("repository") == 3, seen
             assert seen[:2] == ["token", "repository"], "cold identical reads did not share their GET"
             assert token_grants.count({"contents": "read"}) == 2 and token_grants.count({"actions": "read"}) == 1, token_grants

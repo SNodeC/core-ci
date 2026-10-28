@@ -155,12 +155,42 @@ namespace {
         const auto assigned = graph::advance(evidence);
         auto& node = evidence.at("executions").at(assigned.front().at("execution").get<std::string>());
         const auto began = evidence.at("next_revision").get<std::uint64_t>();
-        graph::observe(node, node.at("attempts").back().at("id"), false, run(99), {{"started_at", "2026-10-27T10:00:00Z"}});
+        graph::observe(
+            node, node.at("attempts").back().at("id"), false, run(99), {{"job_status", "queued"}, {"started_at", "2026-10-27T09:59:58Z"}});
+        auto& jobEvidence = node.at("attempts").back().at("evidence").at("build");
+        check(!jobEvidence.contains("started_at"), "queued placeholder was recorded as actual job start");
+        jobEvidence["started_at"] = "2026-10-27T09:59:58Z";
+        graph::observe(node,
+                       node.at("attempts").back().at("id"),
+                       false,
+                       run(99),
+                       {{"job_status", "in_progress"}, {"started_at", "2026-10-27T10:00:00Z"}});
+        check(jobEvidence.at("started_at") == "2026-10-27T10:00:00Z", "restored queued placeholder prevented actual job start");
         rejects(
             [&] {
-                graph::observe(node, node.at("attempts").back().at("id"), false, run(99), {{"started_at", "2026-10-27T10:01:00Z"}});
+                graph::observe(node,
+                               node.at("attempts").back().at("id"),
+                               false,
+                               run(99),
+                               {{"job_status", "in_progress"}, {"started_at", "2026-10-27T10:01:00Z"}});
             },
             "conflicting immutable job timestamp was silently replaced");
+        auto restored = node;
+        restored.at("attempts").back()["evidence"]["build"] = {{"job_status", "queued"}, {"started_at", "2026-10-27T09:59:58Z"}};
+        graph::observe(restored,
+                       restored.at("attempts").back().at("id"),
+                       false,
+                       run(99),
+                       {{"job_status", "completed"}, {"started_at", "2026-10-27T10:00:00Z"}});
+        check(restored.at("attempts").back().at("evidence").at("build").at("started_at") == "2026-10-27T10:00:00Z",
+              "completed-only report did not recover restored queued evidence");
+        const auto completedOnly = restored;
+        graph::observe(restored,
+                       restored.at("attempts").back().at("id"),
+                       false,
+                       run(99),
+                       {{"job_status", "queued"}, {"started_at", "2026-10-27T09:59:58Z"}});
+        check(restored == completedOnly, "delayed queued timestamp regressed completed evidence");
         graph::failed(node, node.at("attempts").back().at("id"), "verified test failure");
         graph::retry(evidence, node.at("id"));
         check(graph::select(evidence, "core", original, false, began).empty(), "evidence or retry invalidated source selection");

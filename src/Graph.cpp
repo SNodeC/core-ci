@@ -362,14 +362,16 @@ namespace coreci {
             auto& evidence = attempt["evidence"][publication ? "publication" : "build"];
             const std::map<std::string, int> rank{
                 {"requested", 0}, {"waiting", 0}, {"pending", 0}, {"queued", 0}, {"in_progress", 1}, {"completed", 2}};
+            const auto previousPhase = evidence.contains("job_status") ? rank.at(evidence.at("job_status").get<std::string>()) : 0;
             for (const auto& [key, value] : facts.items()) {
                 if (!value.is_null()) {
                     if (key == "status" || key == "job_status") {
                         if (!evidence.contains(key) || rank.at(value.get<std::string>()) >= rank.at(evidence.at(key).get<std::string>())) {
                             evidence[key] = value;
                         }
-                    } else {
-                        require(!evidence.contains(key) || evidence.at(key) == value, "conflicting run/job evidence: " + key);
+                    } else if (key != "started_at" || rank.at(facts.value("job_status", "queued")) > 0) {
+                        require(!evidence.contains(key) || evidence.at(key) == value || (key == "started_at" && previousPhase == 0),
+                                "conflicting run/job evidence: " + key);
                         evidence[key] = value;
                     }
                 }
