@@ -30,6 +30,7 @@ namespace coreci {
                      bool automatic,
                      const Callback& callback,
                      const std::string& expectedTag = "");
+        void retire(const std::string& execution, const std::string& attempt, const Callback& callback);
         void retry(const std::string& execution, const Callback& callback);
         void reconcile(bool restored, const Callback& callback);
         void refreshStatus();

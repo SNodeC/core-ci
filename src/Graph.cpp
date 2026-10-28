@@ -344,6 +344,18 @@ namespace coreci {
             return dispatches;
         }
 
+        bool retirable(const Json& node) {
+            const auto& attempt = node.at("attempts").back();
+            return attempt.at("state") == "publishing" && attempt.at("publication_run").is_null() &&
+                   attempt.value("dispatch", Json::object()).value("publication", Json()).is_null() &&
+                   attempt.at("evidence").value("publication", Json::object()).empty();
+        }
+        void retire(Json& state, const std::string& id, const std::string& attemptId) {
+            auto& node = state.at("executions").at(id);
+            require(node.at("attempts").back().at("id") == attemptId && retirable(node), "publication cannot be retired");
+            failed(node, attemptId, "operator abandoned unconfirmed dispatch; remote outcome unknown");
+        }
+
         void retry(Json& state, const std::string& id) {
             auto& node = state.at("executions").at(id);
             require(node.at("attempts").back().at("state") == "failed" && node.at("superseded_by") == "", "execution cannot be retried");

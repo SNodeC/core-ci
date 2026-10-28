@@ -81,6 +81,14 @@ namespace coreci {
                 name == root && automatic ? tag : "");
         }
     }
+    void Pipeline::retire(const std::string& execution, const std::string& attempt, const Callback& callback) {
+        change(
+            [=](Json& state) {
+                graph::retire(state, execution, attempt);
+                return Json{{"execution", execution}};
+            },
+            callback);
+    }
     void Pipeline::retry(const std::string& execution, const Callback& callback) {
         change(
             [execution](Json& state) {
@@ -150,7 +158,12 @@ namespace coreci {
                                                 fail(id, attemptId, "GitHub definitively rejected dispatch");
                                             } else {
                                                 log({503,
-                                                     {{"error", "dispatch outcome is uncertain; assignment retained"}, {"execution", id}}});
+                                                     {{"error", "dispatch outcome is uncertain; assignment retained"},
+                                                      {"execution", id},
+                                                      {"stage", publication ? "publication" : "build"},
+                                                      {"status", response.status},
+                                                      {"submitted", response.submitted},
+                                                      {"transport", response.error}}});
                                             }
                                         });
                                 }
@@ -456,6 +469,9 @@ namespace coreci {
         const auto repository = publication ? deployment.at("worker").at("repository") : node.at("source").at("repository");
         const auto known = attempt.at(publication ? "publication_run" : "build_run");
         const auto runId = known.is_null() ? attempt.value("dispatch", Json::object()).value(stage, Json()) : known.at("id");
+        const auto observed = [id, callback](const std::string& inspection, int status) {
+            callback({status, {{"execution", id}, {"assignment_preserved", true}, {"inspection", inspection}}});
+        };
         const auto read = [=, this](const Json& identity) {
             const auto prefix = "/actions/runs/" + identity.dump() + "/attempts/1";
             github.request(repository, "GET", prefix, nullptr, {{"actions", "read"}}, [=, this](const GitHubResult& response) {
@@ -467,20 +483,20 @@ namespace coreci {
                                    nullptr,
                                    {{"actions", "read"}},
                                    [=, this](const GitHubResult& jobs) {
-                                       if (jobs.status == 200 && jobs.error.empty() && jobs.body.contains("jobs") &&
-                                           jobs.body.at("jobs").is_array() && jobs.body.at("jobs").size() <= 100 &&
-                                           jobs.body.at("total_count") == jobs.body.at("jobs").size()) {
+                                       const bool readable = jobs.status == 200 && jobs.error.empty() && jobs.body.is_object() &&
+                                                             jobs.body.value("jobs", Json()).is_array() &&
+                                                             jobs.body.at("jobs").size() <= 100 &&
+                                                             jobs.body.value("total_count", Json()) == jobs.body.at("jobs").size();
+                                       if (readable) {
                                            for (const auto& job : jobs.body.at("jobs")) {
                                                accept(repository, response.body, false, job);
                                            }
                                            complete(id, publication);
                                        }
-                                       callback({202, {{"execution", id}, {"assignment_preserved", true}}});
+                                       observed(readable ? "runs read" : "jobs unreadable", readable ? 202 : 503);
                                    });
                 } else {
-                    callback(
-                        {503,
-                         {{"error", "assigned attempt-one evidence is inaccessible"}, {"execution", id}, {"assignment_preserved", true}}});
+                    observed("run unreadable", 503);
                 }
             });
         };
@@ -494,22 +510,32 @@ namespace coreci {
                            {{"actions", "read"}},
                            [=](const GitHubResult& response) {
                                auto matches = Json::array();
-                               if (response.status == 200 && response.error.empty() && response.body.is_object() &&
-                                   response.body.value("workflow_runs", Json()).is_array()) {
+                               const bool readable = response.status == 200 && response.error.empty() && response.body.is_object();
+                               bool whole = readable && response.body.value("workflow_runs", Json()).is_array() &&
+                                            response.body.value("total_count", Json()).is_number_unsigned() &&
+                                            response.body.at("workflow_runs").size() <= 100 &&
+                                            response.body.at("total_count") == response.body.at("workflow_runs").size();
+                               if (whole) {
                                    for (const auto& run : response.body.at("workflow_runs")) {
-                                       if (run.is_object() && run.value("actor", Json()).is_object() &&
-                                           run.at("actor").value("id", Json()) == deployment.at("controller_app_bot_id") &&
-                                           run.value("display_title", Json()) ==
-                                               std::string(publication ? "Publish " : "Build ") +
-                                                   attempt.at("assignment").at("label").get<std::string>()) {
+                                       whole = whole && run.is_object() && run.value("actor", Json()).is_object() &&
+                                               run.at("actor").value("id", Json()).is_number_unsigned() &&
+                                               run.value("id", Json()).is_number_unsigned() &&
+                                               run.value("display_title", Json()).is_string();
+                                       if (whole && run.at("actor").at("id") == deployment.at("controller_app_bot_id") &&
+                                           run.at("display_title") == std::string(publication ? "Publish " : "Build ") +
+                                                                          attempt.at("assignment").at("label").get<std::string>()) {
                                            matches.push_back(run);
                                        }
                                    }
                                }
-                               if (matches.size() == 1 && matches.at(0).value("id", Json()).is_number_unsigned()) {
+                               if (whole && matches.size() == 1) {
                                    read(matches.at(0).at("id"));
                                } else {
-                                   callback({202, {{"execution", id}, {"assignment_preserved", true}}});
+                                   observed(!readable         ? "unreadable"
+                                            : !whole          ? "incomplete"
+                                            : matches.empty() ? "no matching run"
+                                                              : "ambiguous",
+                                            readable ? 202 : 503);
                                }
                            });
         } else {
@@ -537,15 +563,20 @@ namespace coreci {
                 return ids;
             },
             [this, callback](const PipelineResult& result) {
-                const auto pending = std::make_shared<std::size_t>(result.body.size());
+                const auto inspected = std::make_shared<Json>(Json{{"inspected", 0}, {"unresolved", Json::array()}});
                 if (result.status != 200 || result.body.empty()) {
-                    callback(result.status == 200 ? PipelineResult{200, {{"reconciled", 0}}} : result);
+                    callback(result.status == 200 ? PipelineResult{200, {{"inspected", 0}, {"unresolved", Json::array()}}} : result);
                 } else {
                     for (const auto& id : result.body) {
-                        inspect(id, [pending, callback, count = result.body.size()](const PipelineResult& observed) {
+                        inspect(id, [inspected, callback, count = result.body.size()](const PipelineResult& observed) {
                             log(observed);
-                            if (--*pending == 0) {
-                                callback({200, {{"reconciled", count}}});
+                            if (observed.body.at("inspection") != "runs read") {
+                                inspected->at("unresolved").push_back(observed.body);
+                            }
+                            auto& completed = inspected->at("inspected");
+                            completed = completed.get<std::size_t>() + 1;
+                            if (completed == count) {
+                                callback({200, *inspected});
                             }
                         });
                     }
@@ -575,7 +606,12 @@ namespace coreci {
                                            statusSent = generation;
                                            refreshing.reset();
                                            if (!response.error.empty() || (response.status != 200 && response.status != 204)) {
-                                               log({503, {{"error", "public status dispatch is unconfirmed; not replayed"}}});
+                                               log({503,
+                                                    {{"error", "public status dispatch is unconfirmed; not replayed"},
+                                                     {"generation", generation},
+                                                     {"status", response.status},
+                                                     {"submitted", response.submitted},
+                                                     {"transport", response.error}}});
                                            }
                                            if (store.graph().at("generation") != generation) {
                                                refreshStatus();

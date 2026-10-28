@@ -476,6 +476,39 @@ int main(int argc, char* argv[]) {
         check(graph::advance(publicationBound).size() == 1 && largeAttempt.at("state") == "building" &&
                   !graph::blockers(publicationBound, large).empty(),
               "oversized publication prevented another publisher or acquired authority");
+        auto retiring = graph::empty();
+        graph::select(retiring, "core", selected, false, 1);
+        const auto retiringReady = graph::advance(retiring);
+        const auto retiringId = retiringReady.at(0).at("execution").get<std::string>();
+        auto& retiringNode = retiring.at("executions").at(retiringId);
+        check(!graph::retirable(retiringNode), "building execution offered retirement");
+        rejects(
+            [&] {
+                graph::retire(retiring, retiringId, retiringNode.at("attempts").back().at("id"));
+            },
+            "building execution retired");
+        build(retiringNode, 800);
+        graph::advance(retiring);
+        const auto unconfirmed = retiringNode;
+        const auto attemptId = retiringNode.at("attempts").back().at("id").get<std::string>();
+        for (const auto& field : {"dispatch", "evidence", "publication_run"}) {
+            retiringNode = unconfirmed;
+            auto& attempt = retiringNode.at("attempts").back();
+            if (std::string(field) == "publication_run") {
+                attempt[field] = run(900);
+            } else {
+                attempt[field]["publication"] = std::string(field) == "dispatch" ? Json(900) : Json{{"status", "queued"}};
+            }
+            rejects(
+                [&] {
+                    graph::retire(retiring, retiringId, attemptId);
+                },
+                "retirement accepted recorded publication facts");
+            check(!graph::retirable(retiringNode), "unsafe retirement capability exposed");
+        }
+        retiringNode = unconfirmed;
+        graph::retire(retiring, retiringId, attemptId);
+        check(retiringNode.at("attempts").back().at("state") == "failed" && !graph::retirable(retiringNode), "retirement failed");
         std::cout << "PASS graph traversal and state boundaries\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';

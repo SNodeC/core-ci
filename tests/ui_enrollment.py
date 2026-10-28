@@ -92,7 +92,8 @@ def serve(directory):
                                        "publication_run": None, "receipt": None})
                         layout.append({**copy.deepcopy(sample), "id": "assigned", "revision": 7,
                                        "repository": "Owner/long-project-name-for-layout-inspection",
-                                       "state": "publishing", "activity": "publishing: assigned; awaiting GitHub status",
+                                       "state": "publishing", "activity": "publishing: publication run unconfirmed",
+                                       "attempt": "assigned:7", "retirable": True,
                                        "publication_job": {}, "publication_run": None, "receipt": None})
                         executions[:] = layout
                     generation += 1
@@ -121,6 +122,7 @@ def serve(directory):
                 self.reply(404, {})
 
         def do_POST(self):
+            nonlocal generation
             value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/api/repositories/save":
                 definition = value["definition"]
@@ -132,6 +134,14 @@ def serve(directory):
                     self.reply(502, {"github_committed": False, "error": "Repair payload verified; no write performed"})
                 else:
                     self.save_join(value, definition)
+            elif self.path == "/api/work/retire":
+                with condition:
+                    row = next(item for item in executions if item["id"] == "assigned")
+                    row.update(state="failed", retirable=False, failure="operator abandoned unconfirmed dispatch; remote outcome unknown")
+                    generation += 1
+                    condition.notify_all()
+                (directory / "retirement.json").write_text(json.dumps(value))
+                self.reply(200, {"execution": "assigned"})
             elif self.path == "/api/repositories/refresh":
                 self.reply(422, {"github_committed": False, "content": "{invalid fixture JSON", "blob_sha": "f" * 40,
                                  "github_revision": "e" * 40, "error": "Unsupported committed fixture definition"})

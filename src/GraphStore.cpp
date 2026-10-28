@@ -80,6 +80,7 @@ namespace coreci {
             }
             row["source_commit"] = source.at("commit");
             row["label"] = attempt.at("assignment").is_null() ? source.at("title") : attempt.at("assignment").at("label");
+            row["retirable"] = graph::retirable(node);
             row["blockers"] = graph::blockers(state, node);
             row["build_job"] = attempt.at("evidence").value("build", Json::object());
             row["publication_job"] = attempt.at("evidence").value("publication", Json::object());
@@ -92,7 +93,8 @@ namespace coreci {
             const auto stage = attempt.at("state").get<std::string>();
             if (stage == "building" || stage == "publishing") {
                 const auto& facts = row.at(stage == "building" ? "build_job" : "publication_job");
-                row["activity"] = stage + ": " + facts.value("status", "assigned; awaiting GitHub status");
+                row["activity"] =
+                    stage + ": " + facts.value("status", stage == "publishing" ? "publication run unconfirmed" : "build run unconfirmed");
                 if (stage == "building" && !attempt.at("build_result").is_null()) {
                     row["activity"] = "build complete; waiting for publication";
                 }

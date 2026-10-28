@@ -2917,3 +2917,147 @@ Both Build/Publisher job titles remain centered over their two columns. Live che
 and screenshot are retained under /tmp/codex/build/core-ci/ui-compact/live-*.
 No GitHub mutations, retries, config/database changes, push or merge. Unrelated
 hunks remain preserved; this append records deployment under existing commit authority.
+
+### Unconfirmed r169 publication investigation — 2026-10-28
+
+Owner requested investigation/proposal only and discussion with Claude until agreement.
+Canonical checkout remains rewrite/slim-graph-controller at032cb34; preserved the four
+unrelated dirty files and private directories. No production/test edits, GitHub mutations,
+retry, deployment, restart, commit or push. Proposed correction and separate policy choice
+are in docs/proposals/unconfirmed-publication-recovery.md.
+
+Live graph plus read-only live MariaDB query confirm r169 publishing, build40661265395
+successful09:04:49UTC, committed publication preflight, no publication dispatch ID/run.
+Journal09:19:51.070UTC records uncertain dispatch, .069 unconfirmed status dispatch.
+Nearby broken-pipe/read-descriptor logs cannot be correlated to requests; HTTPstatus,
+submitted and error were discarded. Exact HTTPcause,403 and token-expiry claims unproven.
+Complete date-filtered publisher listing24/24 has no r169; unfiltered159total/100page
+includes all24today. No receipt-path commit history. No currently discoverable publisher
+run; absence is not proof never accepted. Late/deleted evidence remains a policy risk.
+Newer coreAPK r189 publication40663767448 is successful; fresh20chain already complete.
+
+Claude and this agent exchanged source/evidence reviews and corrections to agreement.
+Withdrawn: proven transport loss/nojobevercreated, uniqueness from one match on an
+incomplete page, preflightprovesPOSTsubmission, unnecessary worker-atomicity changes,
+and claims proposedtests were written. False-send submission flag is defensive and
+unreproduced, not the demonstratedcause; defer it and unrelated status-zero wording.
+Core proposal: preserve safe dispatch diagnostics, distinguish search/jobs read outcomes,
+return inspected/unresolved details, truthful derived activity. No new authority, state,
+queue, timer, cache or replay. Estimate+8–12C++/+60–100tests/UI0, needs approval beyond
+current3510bound (proposedupper3522). No invented offsetting reductions.
+Separate retirement policy: exact latest unbound publishing attempt, atomic guards,
+explicit operator acknowledgement, existingfailedstate with honest unknown-outcome reason,
+retained assignment/history, no automaticretry, no SQLediting. Late facts retained without
+automatic completion of retirednode. Estimate+15–25C++/+8–15UI/+40–60tests; combinedC++
+upper3547 if both approved. Retirement/futureexplicitretry needs explicit owner policy
+approval; reviewers cannot relax no-replacement-of-unknown-work rule. Recommend r169
+retirement without retry because newer chain already published; currentpolicy alternative
+is retainassignment and await genuineevidence. No recovery action was taken.
+
+Existing focused local checks (syntheticGitHub, isolated realMariaDB) bothpass:
+python3 tests/pipeline.py --executable "$PWD/build/codex/slim-controller/core-ci"
+ --directory /tmp/codex/build/core-ci/stuck-publication/tests/preflight-known
+ --case preflight-publish-known
+and same command --directory /tmp/codex/build/core-ci/stuck-publication/tests/cold
+ --case cold. They prove current preservation/nonreplay and evidence-based recovery,
+not a proposedfix. Coldfixture reports611HTTP/16token/0unchanged-burstrequests, not live
+performance acceptance. No newtests, fullsuite or fixvalidation claimed. Stopped task
+datadirs removed; logs/JSON/reviews retained under /tmp/codex/build/core-ci/stuck-publication/.
+Production/test line delta0; documentation-only proposal/log. git diff --check passes.
+
+Official GitHub API references checked:
+https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
+https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt
+https://docs.github.com/en/rest/actions/workflow-runs#delete-a-workflow-run
+API2026-03-10 dispatch200includesrunID/URLs; documented listing/pagination/deletion is
+not an exactly-once recovery guarantee. Current framework Request.cpp false-send/source
+trace is separate from installed-binary runtime proof. No framework change proposed.
+
+
+### Unconfirmed-dispatch correction and explicit retirement — 2026-10-28
+
+Owner instructed obtaining Claude's implementation prompt and applying it. Saved prompt
+and status in docs/proposals/unconfirmed-publication-implementation.md. Draft formatting
+exceeded the initial estimate; consolidated repeated inspection response builders and
+counter/result handling, measured the full correction, then requested revised bounds.
+Owner explicitly approved3572C++/15UI/3test-registration/180testlines. AGENTS.md records
+the current bound and acknowledged-retirement policy. No implicit authority from reviewers.
+
+Implemented current proposal on rewrite/slim-graph-controller, base032cb34:
+- Safe status/submitted/transport diagnostics for uncertain execution/statusPOSTs,
+  with execution/stage or generation. No bodies/headers/tokens logged; no replay.
+- Complete-list/shape/uniqueness validation before unbound-run recovery; incomplete
+  pages never bind even one candidate. Known-ID/webhook validation unchanged.
+- Shared local inspect outcome callback replaces duplicated response constructors.
+  TransientJSON{inspected,unresolved} replaces pendingcounter, not a secondqueue.
+  Read completion explicitly does not claim asynchronous graph commitment.
+- Graph-derived run-unconfirmed activity and one graph::retirable predicate shared
+  by mutationguard and view capability. No new persistedstate/flag/schema.
+- Explicitretire action checks exactlatestattempt, publishing, no publicationrun,
+  dispatchID or evidence; acknowledged via typedboolean at the HTTPboundary. Uses
+  existingfailedstate with honest unknown-outcome reason; keeps assignment/history.
+  Two HTTProute registrations share identicalparse/responsepolicy, separate domain
+  actions. No automaticretry/cancellation; latefacts retained without completion.
+- UI action uses backendcapability, mutationauthority/busychecks and explicitconfirm
+  explaining unknownoutcome, nocancellation, operatorchoice and laternewrevisionretry.
+Deferred false-send/status-zero and optionaldefinite4xxdiagnostics; no framework/workerchanges.
+
+Line accounting versus032cb34, including current working tree:
+C++96added/34removed/net+62 =3572physicalsrc cpp/h lines.
+UI12/0/net+12; CMake3/0/net+3. Totalproduction111/34/net+77.
+Tests139added/8removed/net+131. Documentation trackedseparately; unrelatedhunks preserved.
+Source identity HEAD032cb34 plus SHA256(src/UI/tests/CMake diff)
+3059f7c530f61a9c9c7d154723e70fc18fabcf556cee45f5ac14495bc298e2ca.
+Persistent buildbuild/codex/slim-controller; newtest/evidence root
+/tmp/codex/build/core-ci/unconfirmed-dispatch-fix/. No othercheckout/worktree.
+
+Verification:
+cmake --build build/codex/slim-controller --target core-ci graph-test format-check -j2
+and graph-store-test build pass. format applied to task C++/CMake/test sources.
+node --check ui/app.js and python3 -m py_compile tests/pipeline.py tests/ui_enrollment.py
+pass; git diff --check passes, changedproductionlines<=160, singlefinalreturns/braces.
+Final command (9/9pass,12.51s):
+ctest --test-dir build/codex/slim-controller --output-on-failure -j3
+ -R '^(pipeline-(unconfirmed-dispatch|unconfirmed-run|retirement|preflight-publish-known|preflight-publish-absent|cold|recovery)|graph-state-boundaries|persistence-graph)$'
+CMake testroot now /tmp/codex/build/core-ci/unconfirmed-dispatch-fix/t to keep Unix
+socket names bounded. Initial preflight-absent failure was testMariaDB108charpath>107,
+not a controllerfailure; shorterpathrerun and finalregisteredtestpass. Initial GraphTest
+buildfailed from duplicate testvariable ready; renamed it and graphbuild/testpass.
+No failing check suppressed another; no unrelated fullsuite. Logs preserve failures.
+
+Newpipelinecases cover lostPOSTresponse without/withcreatedrun, per-execution/status
+logfields, incomplete0/1/malformed/ambiguous/unreadablesearch, jobsreaderror, no retry
+or replacement afterrestart, explicitretirement ack/stale/history/latefacts/noFeedProof,
+then newrevisionretry only when explicitlyrequested. Domainchecks reject recorded
+run/dispatch/evidence and buildingstate. Existingcold/recovery and graph/store tests kept.
+All are local syntheticGitHub plus real isolatedMariaDB, not liveacceptance.
+
+Browserdriver ui-check.py and ui-results.json under the evidence root pass installedChrome
+publicHTTP/SSE fixture: absentpartial/failed, shownretirable, cancelkeepspublishing,
+unknown/no-remote-cancel/operator-decision/newrevisionconfirm, held-request busycontrols
+acrossSSE, exactretirementPOSTchecked outside serverthread, and failed-rowretryvisibility.
+The driver is temporary evidence; only the extendedexistingfixture is repositorycode.
+Claude found no productionbug; tightened a test selecting the exactexecutionlog rather
+than acceptingstatuslogfields. Finalreview reports no concrete defect/disagreement.
+
+No commit/push/deploy/restart/live retirement/retry. Read-only livegraph stillcontains
+r169 at publishing; no production SNodeC resources, keys, tags, credentials, feedbytes or
+private directories touched. Existing unrelatedREADME/deployment/WORK_LOG changes remain.
+
+### Receiver iteration simplification and authorized integration — 2026-10-28
+
+Owner authorized the receiver fix, commit, push and merge of the completed work.
+Traced sendFragment through SocketWriter and descriptor teardown: outgoing bytes are
+queued; even synchronous ENOBUFS schedules disable cleanup, with disconnect notification
+later in releaseDisabledEvents. Enrollment::list invokes its callback synchronously.
+Both SSE receiver loops therefore use eventReceivers directly; no list snapshot/copy
+is needed. No framework change, asynchronous capture or new lifecycle mechanism.
+C++ total is now 3571 physical lines (net+61 versus032cb34), UI net+12, CMake net+3;
+combined production net+76, tests net+131. The earlier3572 measurement predates this
+one-line reduction. Build core-ci and format-check pass after this final change.
+Commit includes only task source/tests/AGENTS/proposal records and task WORK_LOG entries;
+unrelated existing documentation hunks remain unstaged. No deployment or live retirement.
+
+Final receiver-change verification: all nine selected graph/store/pipeline checks pass
+(12.81s), including cold/recovery, unchanged-burst coverage and retirement cases.

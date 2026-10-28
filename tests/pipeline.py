@@ -48,6 +48,8 @@ def exercise(arguments):
     blob_id = lambda value: sha(b"blob " + str(len(value)).encode() + b"\0" + value)
     trace, errors, runs, jobs, dispatches, blobs, trees, commits, public_files = [], [], {}, {}, [], {}, {}, {}, {}
     workflow_writes = []
+    inspection = {"listing": "normal", "jobs": False}
+    unconfirmed = arguments.case in ("unconfirmed-dispatch", "unconfirmed-run", "retirement")
     lock = threading.Lock()
     missing_artifacts, unreadable = set(), set()
     available, references = {}, {}
@@ -98,7 +100,7 @@ def exercise(arguments):
         dependencies = [] if name == "core" else ["core"] + (["app", "side"] if name == "join" else [])
         definition = {"schema": 1, "title": name, "package": name, "depends_on": dependencies,
                       "build": {"native": "ci/build.sh", "openwrt": "ci/openwrt.sh"},
-                      "matrix": matrices[:1] if arguments.case.startswith("preflight-") else matrices}
+                      "matrix": matrices[:1] if arguments.case.startswith("preflight-") or unconfirmed else matrices}
         content = canonical(definition).encode()
         revision = sha((name + "-source").encode())
         definitions[name] = revision
@@ -171,7 +173,10 @@ def exercise(arguments):
                         assert token_release.wait(15), "test token hold was not released"
                     self.reply(201, {"token": "synthetic-token", "expires_at": "2099-01-01T00:00:00Z"})
                 elif "core-ci-status.yml/dispatches" in self.path:
-                    self.reply(200, {"workflow_run_id": 999999})
+                    if unconfirmed:
+                        self.close_connection = True
+                    else:
+                        self.reply(200, {"workflow_run_id": 999999})
                 else:
                     selected = json.loads(body["inputs"]["assignment"])
                     identity = selected["execution"]
@@ -199,7 +204,12 @@ def exercise(arguments):
                     if stage == "publication" and holds["publication"]:
                         publication_started.set()
                         assert publication_release.wait(15), "test publication hold was not released"
-                    if arguments.case == "cold" and run_id == 1000:
+                    if unconfirmed and stage == "publication":
+                        inspection["candidate"] = dict(runs[run_id])
+                        if arguments.case != "unconfirmed-run":
+                            del runs[run_id]
+                        self.close_connection = True
+                    elif arguments.case == "cold" and run_id == 1000:
                         self.reply(204, b"", True)
                     else:
                         self.reply(200, {"workflow_run_id": run_id})
@@ -260,7 +270,15 @@ def exercise(arguments):
                         selected_runs = [run for run in runs.values() if run["repository"]["id"] == ids[repository]]
                         listing = [{**run, "run_attempt": 2} for run in selected_runs]
                         listing += [{**run, "id": run["id"] + 9000, "actor": {"id": 999}} for run in selected_runs]
-                        self.reply(200, {"total_count": len(listing), "workflow_runs": listing})
+                        mode = inspection["listing"] if repository == "worker" else "normal"
+                        if mode == "unreadable":
+                            self.reply(503, {})
+                        else:
+                            candidate = inspection.get("candidate", {})
+                            rows = [candidate] if mode == "one" else [None] if mode == "malformed" else listing
+                            if mode == "ambiguous":
+                                rows = [candidate, {**candidate, "id": candidate["id"] + 1}]
+                            self.reply(200, {"total_count": 101 if mode in ("incomplete", "one") else len(rows), "workflow_runs": rows})
                     elif "/artifacts" in suffix:
                         run_id = int(parts[6])
                         if arguments.case == "overlap" and run_id == 1000:
@@ -276,7 +294,7 @@ def exercise(arguments):
                         run_id = int(parts[6])
                         if suffix.endswith("/jobs"):
                             values = [jobs[run_id]] if run_id in jobs else []
-                            self.reply(200, {"total_count": len(values), "jobs": values})
+                            self.reply(503 if inspection["jobs"] else 200, {"total_count": len(values), "jobs": values})
                         else:
                             self.reply(200, runs[run_id])
                     else:
@@ -374,7 +392,77 @@ def exercise(arguments):
 
         application = subprocess.Popen(command, stdout=(root / "stdout.log").open("w"), stderr=subprocess.STDOUT)
         lifecycle.wait_http(port, application)
-        if arguments.case.startswith("preflight-") and arguments.case != "preflight-live":
+        if unconfirmed:
+            assert api("/api/work/request", {"repository": "Owner/core", "tag": "v1.0.0"})[0] == 200
+            wait(lambda: len(dispatches) == 1, "build did not dispatch")
+            assert report(dispatches[0])[0] == 202 and report(dispatches[0], job=True)[0] == 202
+            wait(lambda: len(dispatches) == 2, "publication did not dispatch")
+            work = dispatches[-1]
+            execution = work["selected"]["execution"]
+            row = lambda: next(x for x in api("/api/graph")[1]["executions"] if x["id"] == execution)
+            wait(lambda: "dispatch outcome is uncertain" in (root / "stdout.log").read_text(), "missing uncertainty diagnostic")
+            diagnostic = (root / "stdout.log").read_text()
+            execution_log = next(line for line in diagnostic.splitlines() if '"execution":"' + execution + '"' in line)
+            status_log = next(line for line in diagnostic.splitlines() if "public status dispatch is unconfirmed" in line)
+            assert all(value in execution_log for value in ('"stage":"publication"', '"submitted":true', '"status":0', '"transport":'))
+            assert all(value in status_log for value in ('"generation":', '"submitted":true', '"status":0', '"transport":'))
+            assert "synthetic-token" not in diagnostic
+            assert row()["activity"] == "publishing: publication run unconfirmed" and row()["publication_run"] is None
+            assert api("/api/work/retry", {"execution": execution})[0] == 409
+            if arguments.case == "unconfirmed-run":
+                inspection["jobs"] = True
+                result = api("/api/work/reconcile", {})[1]
+                assert result["inspected"] == 1 and result["unresolved"][0]["inspection"] == "jobs unreadable", result
+                wait(lambda: row()["publication_run"] is not None, "matching attempt-one run did not bind")
+                assert not row()["retirable"]
+                assert api("/api/work/retire", {"execution": execution, "attempt": row()["attempt"],
+                           "acknowledge_unknown_outcome": True})[0] == 409
+                inspection["jobs"] = False
+                assert api("/api/work/reconcile", {})[1] == {"inspected": 1, "unresolved": []}
+            else:
+                for mode, outcome in [("normal", "no matching run"), ("incomplete", "incomplete"), ("one", "incomplete"),
+                                      ("malformed", "incomplete"), ("ambiguous", "ambiguous"), ("unreadable", "unreadable")]:
+                    inspection["listing"] = mode
+                    offset = len(trace)
+                    result = api("/api/work/reconcile", {})[1]
+                    assert result["inspected"] == 1 and result["unresolved"][0]["inspection"] == outcome, result
+                    assert not any("/attempts/1" in x[2] for x in trace[offset:]), "partial or ambiguous evidence was read"
+                    assert row()["publication_run"] is None and row()["state"] == "publishing"
+                inspection["listing"] = "normal"
+            if arguments.case == "retirement":
+                request = {"execution": execution, "attempt": row()["attempt"], "acknowledge_unknown_outcome": True}
+                for acknowledgement in (None, False, "true"):
+                    invalid = {**request, "acknowledge_unknown_outcome": acknowledgement}
+                    assert api("/api/work/retire", invalid)[0] == 422
+                assert api("/api/work/retire", {k: v for k, v in request.items() if k != "acknowledge_unknown_outcome"})[0] == 422
+                assert api("/api/work/retire", {**request, "attempt": "stale"})[0] == 409
+                before = json.loads(lifecycle.query(socket, "SELECT document FROM boundary.graph_state"))["executions"][execution]
+                assert row()["retirable"]
+                offset = len(dispatches)
+                assert api("/api/work/retire", request)[0] == 200
+                retired = json.loads(lifecycle.query(socket, "SELECT document FROM boundary.graph_state"))["executions"][execution]
+                expected = json.loads(canonical(before))
+                expected["attempts"][-1].update(state="failed", failure="operator abandoned unconfirmed dispatch; remote outcome unknown")
+                assert retired == expected and not row()["retirable"] and len(dispatches) == offset
+                assert api("/api/work/retire", request)[0] == 409
+                runs[work["id"]] = inspection["candidate"]
+                feed_offset = sum("/repos/Owner/feed" in item[2] for item in trace)
+                assert report(work)[0] == 202 and report(work, job=True)[0] == 202
+                wait(lambda: row()["publication_job"].get("job_status") == "completed", "late job evidence lost")
+                assert row()["state"] == "failed" and not row()["receipt"]
+                assert sum("/repos/Owner/feed" in item[2] for item in trace) == feed_offset
+                assert api("/api/work/retry", {"execution": execution})[0] == 200
+                wait(lambda: len(dispatches) == offset + 1, "explicit new-revision retry missing")
+                assert dispatches[-1]["selected"]["revision"] > work["selected"]["revision"]
+            else:
+                posts = len(dispatches)
+                lifecycle.stop(application)
+                application = subprocess.Popen(command, stdout=(root / "restart.log").open("w"), stderr=subprocess.STDOUT)
+                lifecycle.wait_http(port, application)
+                assert api("/api/work/reconcile", {})[0] == 200 and len(dispatches) == posts
+                assert row()["state"] == "publishing", "restart replayed or failed uncertain publication"
+            finish_boundary("explicit inspection and retirement preserve unknown outcomes")
+        elif arguments.case.startswith("preflight-") and arguments.case != "preflight-live":
             publication = "publish" in arguments.case
             known = arguments.case.endswith("known")
             if publication:
@@ -754,5 +842,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True)
     parser.add_argument("--directory", required=True)
-    parser.add_argument("--case", choices=("chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
+    parser.add_argument("--case", choices=("unconfirmed-dispatch", "unconfirmed-run", "retirement", "chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
     exercise(parser.parse_args())

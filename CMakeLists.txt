@@ -307,6 +307,9 @@ if(BUILD_TESTING)
         preflight-live
         queued-job
         large-indexes
+        unconfirmed-dispatch
+        unconfirmed-run
+        retirement
     )
         add_test(
             NAME pipeline-${case}

@@ -174,16 +174,15 @@ int main(int argc, char* argv[]) {
                                 if (publicChange) {
                                     pipeline->refreshStatus();
                                 }
-                                const auto receivers = eventReceivers;
-                                if (!receivers.empty()) {
+                                if (!eventReceivers.empty()) {
                                     const auto graph = graphStore->view();
-                                    for (const auto& response : receivers) {
+                                    for (const auto& response : eventReceivers) {
                                         sendEvent(response, "graph", graph);
                                     }
                                 }
-                                if (repositoriesChanged && !receivers.empty()) {
-                                    enrollment->list([receivers, sendEvent](const coreci::EnrollmentResult& result) {
-                                        for (const auto& response : receivers) {
+                                if (repositoriesChanged && !eventReceivers.empty()) {
+                                    enrollment->list([&eventReceivers, sendEvent](const coreci::EnrollmentResult& result) {
+                                        for (const auto& response : eventReceivers) {
                                             sendEvent(response, result.status == 200 ? "repositories" : "unavailable", result.body);
                                         }
                                     });
@@ -262,16 +261,25 @@ int main(int argc, char* argv[]) {
                                     res->status(422).type("application/json").send(R"({"error":"invalid source request JSON"})");
                                 }
                             });
-                            app.post("/api/work/retry", [&] APPLICATION(req, res) {
-                                try {
-                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    pipeline->retry(body.at("execution").get<std::string>(), [res](const coreci::PipelineResult& result) {
-                                        res->status(result.status).type("application/json").send(result.body.dump());
-                                    });
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid retry JSON"})");
-                                }
-                            });
+                            for (const std::string action : {"retry", "retire"}) {
+                                app.post("/api/work/" + action, [&, action] APPLICATION(req, res) {
+                                    try {
+                                        const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
+                                        const auto done = [res](const coreci::PipelineResult& result) {
+                                            res->status(result.status).type("application/json").send(result.body.dump());
+                                        };
+                                        if (action == "retire") {
+                                            coreci::require(body.at("acknowledge_unknown_outcome") == true,
+                                                            "acknowledge the unknown outcome");
+                                            pipeline->retire(body.at("execution"), body.at("attempt"), done);
+                                        } else {
+                                            pipeline->retry(body.at("execution"), done);
+                                        }
+                                    } catch (const std::exception&) {
+                                        res->status(422).type("application/json").send("{\"error\":\"invalid " + action + " JSON\"}");
+                                    }
+                                });
+                            }
                             app.post("/api/work/reconcile", [&] APPLICATION(req, res) {
                                 pipeline->refreshStatus();
                                 pipeline->reconcile(false, [res](const coreci::PipelineResult& result) {

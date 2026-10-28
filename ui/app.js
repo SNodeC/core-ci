@@ -178,6 +178,18 @@ function renderExecution(execution, panel, open) {
             actions.append(link);
         }
     }
+    if (execution.retirable && graph.mutations_allowed) {
+        const retire = button("Retire unconfirmed publication", () => operation(async () => {
+            if (window.confirm("GitHub's outcome is unknown: a run may still exist or have published. " +
+                "This does not cancel remote work; it records your decision, not a GitHub failure. " +
+                "Any later retry is a separate action with a new rebuild revision. Retire this attempt?")) {
+                feedback(await api("/api/work/retire", {execution: execution.id, attempt: execution.attempt,
+                    acknowledge_unknown_outcome: true}));
+            }
+        }));
+        retire.disabled = busy;
+        actions.append(retire);
+    }
     if (execution.state === "failed" && !execution.superseded_by && graph.mutations_allowed) {
         const retry = button("Retry with a new rebuild revision", () => operation(async () => {
             feedback(await api("/api/work/retry", {execution: execution.id}));
