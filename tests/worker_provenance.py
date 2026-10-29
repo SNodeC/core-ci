@@ -519,10 +519,47 @@ def main():
     assert bundle.count("@TOOLING_SHA@") == 1 and "queue: max" in bundle
     assert "group: core-ci-feed-${{ vars.FEED_REPOSITORY }}-${{ vars.FEED_BRANCH }}" in bundle
     assert bundle.index('mkdir "$RUNNER_TEMP/validated"') < bundle.index("python3 tooling/core_ci/validate.py")
-    assert "if: fromJSON(inputs.assignment).target.family == 'openwrt'" in bundle
-    assert 'run: cp "$RUNNER_TEMP/validation-sdk/sdk.archive" "$RUNNER_TEMP/validated/sdk.archive"' in bundle
+    assert "sdk.archive" not in bundle and publication_workflow == bundle
+    tools_job = bundle.split("  tools:\n")[1].split("  publish:\n")[0]
+    assert "if: fromJSON(inputs.assignment).target.family == 'openwrt'" in tools_job
+    assert "secrets." not in tools_job and "environment:" not in tools_job and "concurrency:" not in tools_job
+    assert "contents: read" in tools_job and "include-hidden-files: true" in tools_job
+    assert "needs.validate.outputs.environment" in tools_job
+    assert "needs: [validate, tools]" in bundle
+    assert ("if: >-\n      !cancelled() && needs.validate.result == 'success' &&\n"
+            "      ((fromJSON(inputs.assignment).target.family == 'openwrt' && needs.tools.result == 'success') ||\n"
+            "       (fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'))") in bundle
+    assert "CORE_CI_TOOLS_SHA256: ${{ needs.tools.outputs.tools-sha256 }}" in bundle
     assert "path: ${{ runner.temp }}/validated/\n          compression-level: 0" in bundle
     assert "retention-days: 7" in bundle and bundle.count('--artifacts "$RUNNER_TEMP/validated/packages"') == 2
+    import validate
+    import sdk
+    for family, value in (("native", {}), ("openwrt", {"sdk": {"sha256": "e" * 64}}), ("openwrt", {"oversize": "x" * 16384})):
+        selected_output = copy.deepcopy(selected)
+        selected_output["target"] = {"family": family}
+        output = directory / ("selector-" + family + str(len(str(value))))
+        contract.write_json(directory / "manifest.json", {"environment": value})
+        with patch.object(sys, "argv", ["validate.py", "--assignment", "unused", "--assignment-sha256", "unused",
+                          "--build-result", "unused", "--output", str(directory)]), patch.dict(os.environ, {
+            "EXECUTION": selected["execution"], "ATTEMPT": selected["attempt"], "SOURCE_ARTIFACT_TOKEN": "synthetic",
+            "RUNNER_TEMP": str(directory), "GITHUB_OUTPUT": str(output)
+        }), patch.object(validate, "assignment", return_value=selected_output), patch.object(validate, "trusted_deployment"), patch.object(
+            validate, "artifact", return_value={}
+        ), patch.object(validate, "read_json", return_value={"environment": value}), patch.object(sdk, "prepare"), patch.object(
+            validate, "verify_manifest", return_value={"environment": value}
+        ):
+            if "oversize" in value:
+                rejected = False
+                try:
+                    validate.main()
+                except ValueError:
+                    rejected = True
+                assert rejected
+                assert not output.exists()
+            else:
+                validate.main()
+                assert (output.read_text() if output.exists() else "") == (
+                    "environment=" + contract.canonical(value) + "\n" if family == "openwrt" else "")
     rendered = directory / "publication.yml"
     rendered_info = contract.output([sys.executable, str(repository / "deployment/render-source-workflow.py"), "--worker", "Owner/worker",
          "--tooling-sha", "a" * 40, "--template", str(bundle_template), "--output", str(rendered)])
@@ -668,24 +705,24 @@ def main():
             except ValueError:
                 rejected = True
             assert rejected and not any(call.called for call in (load, identity, token, push))
-    # Only OpenWrt prepare requires an SDK handoff, before identity requests and signing files.
+    # Only OpenWrt prepare requires an tool handoff, before identity requests and signing files.
     for package_format in ("ipk", "apk"):
         openwrt = copy.deepcopy(prepared)
         openwrt["target"]["build"]["format"] = package_format
         with patch.object(sys, "argv", argv), patch.dict(os.environ, {
             "EXECUTION": prepared["execution"], "ATTEMPT": prepared["attempt"]
         }), patch.object(publish, "assignment", return_value=openwrt), patch.object(publish, "trusted_deployment"), patch.object(
-            publish, "run_identity", side_effect=AssertionError("missing SDK reached identity/network")
+            publish, "run_identity", side_effect=AssertionError("missing tools reached identity/network")
         ) as identity, patch.object(publish.tempfile, "TemporaryDirectory") as secrets:
             rejected = False
             try:
                 publish.main()
             except ValueError as failure:
-                rejected = str(failure) == "OpenWrt prepare requires --sdk-archive"
+                rejected = str(failure) == "OpenWrt prepare requires --tools"
             assert rejected and not identity.called and not secrets.called
         import sign_openwrt
-        supplied = directory / "validated/sdk.archive"
-        with patch.object(sys, "argv", argv + ["--sdk-archive", str(supplied)]), patch.dict(os.environ, {
+        supplied = directory / "verified-tools"
+        with patch.object(sys, "argv", argv + ["--tools", str(supplied)]), patch.dict(os.environ, {
             "EXECUTION": prepared["execution"], "ATTEMPT": prepared["attempt"], "RUNNER_TEMP": str(directory),
             "OPENWRT_USIGN_KEY": "synthetic", "OPENWRT_APK_KEY": "synthetic"
         }), patch.object(publish, "assignment", return_value=openwrt), patch.object(publish, "trusted_deployment"), patch.object(
@@ -700,7 +737,7 @@ def main():
             except ValueError as failure:
                 assert str(failure) == "stop before commit"
             assert signing.call_count == 1 and signing.call_args.args[-1] == str(supplied)
-    argv += ["--sdk-archive", str(directory / "not-an-sdk")]  # Native prepare must ignore this path.
+    argv += ["--tools", str(directory / "not-tools")]  # Native prepare must ignore this path.
     # Public outputs bind the already prepared bytes and local commit, before any push.
     receipt_file = writer / publish.receipt_path(prepared)
     receipt_file.parent.mkdir(parents=True)

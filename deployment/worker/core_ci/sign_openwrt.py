@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 from contract import file_hash, output, publication_receipt, read_json, require, run, verify_manifest, write_json
-from sdk import prepare
+from sdk import verified_tools
 from sign_native import (
     add_new,
     feed_component,
@@ -20,13 +20,13 @@ from sign_native import (
 )
 
 
-def update(selected, build_result, publication_run, artifacts, feed, private_key, public_key, temporary_root, sdk_archive):
+def update(selected, build_result, publication_run, artifacts, feed, private_key, public_key, temporary_root, tools):
     feed = Path(feed).resolve()
     receipt = retained_receipt(selected, build_result, publication_run, feed)
     if receipt is None:
-        # The source artifact supplies no executable or key authority. Re-read official metadata and verify the SDK again.
+        # Only the separate trusted tools job supplies executable authority.
         environment = read_json(Path(artifacts) / "manifest.json")["environment"]
-        sdk, staging = prepare(selected["target"], environment, Path(temporary_root) / "sdk", sdk_archive)
+        sdk = verified_tools(tools, os.environ["CORE_CI_TOOLS_SHA256"], selected, environment)
         manifest = verify_manifest(selected, artifacts, build_result)
         target = selected["target"]
         package_format = target["build"]["format"]

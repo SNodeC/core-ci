@@ -94,7 +94,6 @@ def build(arguments):
         # Only this copied tree enters the hook container. No .git credentials or host workspace.
         shutil.copytree(source, work / "source", ignore=shutil.ignore_patterns(".git"), symlinks=True)
         shutil.copytree(tooling / "core_ci", work / "core_ci")
-        sdk_setup = ""
         install = "RUN python3 /tool/native_container.py --install\n"
         tools = TOOLS.get(
             package_format,
@@ -102,11 +101,25 @@ def build(arguments):
             "build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync swig "
             "unzip zlib1g-dev file wget curl zstd ca-certificates",
         )
+        mounts = [
+            "--mount",
+            "type=bind,source=" + str(tooling / "core_ci") + ",target=/tool,readonly",
+            "--mount",
+            "type=bind,source=" + str(work / "assignment.json") + ",target=/assignment.json,readonly",
+            "--mount",
+            "type=bind,source=" + str(work / "target.json") + ",target=/target.json,readonly",
+            "--mount",
+            "type=bind,source=" + str(work / "environment.json") + ",target=/environment.json,readonly",
+            "--mount",
+            "type=bind,source=" + str(work / "prerequisites") + ",target=/prerequisites,readonly",
+        ]
         if family == "openwrt":
             roots = list((Path(os.environ["RUNNER_TEMP"]) / "core-ci-sdk/extracted").iterdir())
             require(len(roots) == 1, "resolved SDK workspace is unavailable")
             shutil.move(str(roots[0]), work / "sdk")
-            sdk_setup = "COPY sdk /sdk\nENV CORE_CI_APK=/sdk/staging_dir/host/bin/apk\n"
+            (work / ".dockerignore").write_text("sdk\n")
+            mounts += ["--mount", "type=bind,source=" + str(work / "sdk") + ",target=/sdk,readonly",
+                       "--env", "CORE_CI_APK=/sdk/staging_dir/host/bin/apk"]
             install = ""
         (work / "Dockerfile").write_text(
             "FROM "
@@ -115,7 +128,6 @@ def build(arguments):
             + tools
             + "\nCOPY core_ci /tool\nCOPY prerequisites /prerequisites\n"
             + "COPY assignment.json /assignment.json\n"
-            + sdk_setup
             + install
         )
         try:
@@ -144,18 +156,6 @@ def build(arguments):
                 check=True,
                 timeout=1200,
             )
-            mounts = [
-                "--mount",
-                "type=bind,source=" + str(tooling / "core_ci") + ",target=/tool,readonly",
-                "--mount",
-                "type=bind,source=" + str(work / "assignment.json") + ",target=/assignment.json,readonly",
-                "--mount",
-                "type=bind,source=" + str(work / "target.json") + ",target=/target.json,readonly",
-                "--mount",
-                "type=bind,source=" + str(work / "environment.json") + ",target=/environment.json,readonly",
-                "--mount",
-                "type=bind,source=" + str(work / "prerequisites") + ",target=/prerequisites,readonly",
-            ]
             common = [
                 "docker",
                 "run",

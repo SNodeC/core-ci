@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from contract import assignment, output, read_json, require, verify_manifest, write_json
+from contract import assignment, canonical, output, read_json, require, verify_manifest, write_json
 from github import artifact
 
 
@@ -68,6 +68,11 @@ def main():
     manifest = verify_manifest(selected, arguments.output)
     manifest["build_job"] = job
     write_json(Path(arguments.output) / "manifest.json", manifest)
+    if selected["target"]["family"] == "openwrt":
+        selector = canonical(manifest["environment"])
+        require(len(selector.encode()) <= 16384 and "\n" not in selector and "\r" not in selector, "invalid SDK environment selector")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output_file:
+            output_file.write("environment=" + selector + "\n")
 
 
 if __name__ == "__main__":
