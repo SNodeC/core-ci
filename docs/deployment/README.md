@@ -375,8 +375,12 @@ confirmation runs afterwards. Build containers mount the pristine SDK read-only;
 source hook's private SDK copy is writable.
 
 Packages, affected indexes, receipt/export and status projections are committed together.
-Normal checked updates preserve unrelated paths and retained package identities. A stale
-push is rejected rather than force-pushed or rebased over another publisher.
+Checked updates preserve unrelated paths and retained package identities. Package publication
+and retention cleanup create parentless snapshots and push with an explicit lease on the old
+checkout head, captured before creating the snapshot. A stale lease is rejected; no retry or
+rebase replaces it. Status updates remain ordinary parented commits with fast-forward pushes.
+Retention activation requires resolving historical retries pinned to the older publisher;
+see [the retention design](../proposals/publication-retention-design.md).
 
 The worker enforces a conservative 900 MiB site bound. GitHub Pages limits published sites
 to 1 GB, has a soft 100 GB/month bandwidth limit and a ten-minute deployment timeout.

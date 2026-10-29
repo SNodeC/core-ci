@@ -5,5 +5,6 @@
 <tr><td>{{ row.repository }}</td><td>{{ row.target }}</td><td>{{ row.package }}</td><td>{{ row.version }}</td><td>
 <a href="{{ row.package_url }}">Package</a> · <a href="{{ row.build_url }}">Build</a> ·
 <a href="{{ row.publication_url }}">Publication</a> · <a href="{{ row.receipt_url }}">Receipt</a>
+{% if not row.development_export_available %} · Development export unavailable{% endif %}
 </td></tr>
 {% endfor %}</tbody></table>

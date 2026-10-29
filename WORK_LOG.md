@@ -3455,3 +3455,199 @@ condition assertion was then scoped to that job; its focused provenance check pa
 Final review records: implementation/claude-review.json and implementation/claude-confirm.json.
 
 Owner subsequently authorized commit, push and merge. Deployment/activation remains separate.
+
+## 2026-10-29 — Retention design and line-estimate checkpoint
+
+Owner invoked the phase-gated task and emphasized reducing code before any additions.
+Verified canonical checkout/remote/default main and both exact heads: owned branch
+rewrite/slim-graph-controller HEAD8461764ff2131ef13e44ce187d1c84b1550f5d27, merged main
+3cc14fd9dfaba872dacb82e57d80f70c628c50fc. No open PR, no source drift; existing dirty docs
+preserved. Did not switch branches, create a checkout, inspect private directories or mutate GitHub.
+Counted src/*.cpp and src/*.h:3572 physical lines, current cap3576, headroom4.
+All five requested prior Claude evidence files are present and read. Read actual Graph,
+GraphStore, Database FIFO, Pipeline approval/dispatch/binding/completion/reconciliation,
+FeedProof, Version, worker input/signing/index/SDK/projection code, both workflow templates,
+status workflow, UI retry presentation and relevant graph/store/pipeline/worker/UI fixtures.
+
+Proposal: docs/proposals/publication-retention-design.md. One authoritative eligibility
+annotation plus explicit durable cleanup mutation evidence in the existing graph. No second
+queue/engine/timer/transport/auth callback. Reuse existing publisher in cleanup-only mode;
+verified publication or released protection triggers it, including the final target with no
+future build. Package publication and cleanup use root snapshots and captured-old-head leases;
+status stays parented. Pure next-publication cleanup is rejected as incomplete. Reuse shared
+validation, signing contexts and index functions, extracting OpenWrt index code instead of
+copying it. No FeedProof compatibility layer or new SemVer/dependency resolver proposed.
+
+Source constraints: exact frozen retry inputs, current-feed downloads, shared DEB architecture
+pool/Release, superseded waiting exclusion, protected unverified receipts, and per-object package
+versus export needs all affect expiry. New logical expiry is not proof of physical deletion.
+Normal ranking is3 versions/highest successful revision; runtime prerequisite/protected extras
+can exceed that count. Unknown POST/push remains visible and is not automatically replayed.
+No lower-version/failed candidate evicts a verified third publication. No archive/history recovery.
+
+Forecast (not a patch or granted budget): C++159added/62removed/net97, projected3669lines;
+Python206/92/net114; YAML48/8/net40; UI/templates7/3/net4; CMake4/0/net4; production424/165/net259.
+Test forecast283/13/net270. Requested ceilings equal the forecast without contingency: C++net97/total3669,
+Pythonnet114, YAMLnet40, UI/templatesnet4, CMakenet4, totalproductionnet259, testsnet270.
+The extra operation is required to finish cleanup without a subsequent publication. Reductions
+alone cannot supply eligibility withdrawal or safe remote-deletion evidence, which do not exist.
+No implementation will start under the existing four-line headroom.
+
+Local diagnostic only: empty synthetic Git repos proved root ancestry replacement, orphan alone
+retaining old files, explicit deletion removing them, stale lease rejection, status parenting,
+and unchanged receipt path history moving to a newer root. Evidence:
+/tmp/codex/build/core-ci/retention/git-snapshot-results.json. Removed only these new temporary
+Git fixtures afterwards. No production FeedProof/MariaDB retention or real GitHub test, physical
+GC assertion, build, full suite, signing test, deploy, tag or feed operation. git diff --check passes.
+Production and test edits zero; design document and this append-only work-log entry only.
+
+STOP at Phase2: owner decisions are bounded receipt/status policy (including export availability),
+shared stable/prerelease SemVer ordering, and the explicit expiry/cleanup mechanisms and line
+bounds. Per-file estimates and rollout/uncertainty/test gates are in the proposal. MariaDB audit
+purging is separate scope. No commit, push, merge, restart, activation or implementation.
+
+
+## 2026-10-29 — Retention implementation starts; revised C++ bound checkpoint
+
+Owner approved the retention design's three decisions and initial quantified bounds: net259
+production/net270tests, C++total3669 (+97), Python114/YAML40/UI4/CMake4. No commit/push/
+merge/deployment authority. Approved feature branch feat/publication-retention was created
+from current main3cc14fd9dfaba872dacb82e57d80f70c628c50fc; all four unrelated dirty documents
+retained identical SHA256 hashes across the transition. No source checkout/reset/stash/rebase.
+Current HEAD remains main's merge commit. No open PR. Canonical formatting files/modules
+match byte-for-byte. Read SNode.C HTTP client/event-loop and MQTTSuite application patterns;
+no framework API/lifecycle change is planned. No private directory contents inspected.
+
+Four affected worker baseline checks passed (1.92s). Reduced shared Git helper first:
+publish.prepare_commit now supports explicit approved deletions and a parentless snapshot;
+returns the captured old head. checked_push supports an explicit SHA lease with no retry;
+status callers keep normal parented commits/fast-forward push. The ordinary main publication
+path is not activated to orphan mode yet. Production21added/23removed/net-2 Python lines;
+new tests25added/net25. Focused worker-provenance-boundaries passed (2.43s), including real
+isolated Git root/tree/deletion/status/stale-lease checks. No C++ production edit or live change.
+
+My initial controller estimate was too low. Source-based derivation draft canonical formatting
+produced147physical lines before guards/helpers/shared GitHub binding/public views. It is a
+partial uncompiled design draft with explicit remaining cases, not tested application source
+or a claim that no shorter algorithm exists. Evidence under
+/tmp/codex/build/core-ci/retention/controller-derivation-{draft,formatted}.cpp.
+Full graph references, exact frozen attempts, active/runtime/export distinctions, bounded
+commands and duplicate/uncertain-operation ownership cannot be dropped to meet a line count.
+I stopped before applying C++ changes, as required by the approved bound.
+
+Revised per-file estimate: Graph.cpp158/16/net142; Graph.h3/0/net3;
+Pipeline.cpp75/42/net33; Pipeline.h3/1/net2; GraphStore.cpp13/3/net10.
+C++252added/62removed/net190, total3762 (+93 beyond approved3669). Other estimates unchanged:
+Python114/YAML40/UI4/CMake4, totalproductionnet352 instead of259; testsnet270 unchanged.
+No additional policy/mechanism requested. Approval needed only for revised growth; continue
+reductions first, never delete verification or move controller policy to workers to evade it.
+Design checkpoint updated with current authority and exact partial implementation status.
+Source remains canonical on the task branch, uncommitted. Unrelated docs preserved. No
+commit, push, merge, install, restart, tag, live orphan push or activation performed.
+
+### Retention revised implementation bounds approved
+
+The owner approved C++ net +190 (3,762 physical lines), total production net +352,
+and test net +270. The Python +114/YAML +40/UI +4/CMake +4 estimates remain unchanged.
+Continue on feat/publication-retention at base 3cc14fd9; no commit, push or live activation.
+
+### Retention implementation checkpoint — remaining C++ integration bound
+
+Canonical checkout /home/voc/projects/snodec/core-ci, feat/publication-retention,
+HEAD 3cc14fd9dfaba872dacb82e57d80f70c628c50fc; no commit or remote mutation.
+Source/test diff SHA256: 7bd4266fcea5647e835bd082eab45ac3b3242a4fe2a3e851e17ed379c16984de.
+
+Current implementation: shared exact-input eligibility, three-version/highest-revision
+retention derivation, package-only transitive closure, explicit bounded cleanup commands,
+per-scope outstanding-operation exclusion and atomic expiry annotations. The derivation is
+not yet connected to Pipeline changes. Existing duplicate preflight/dispatch callback handling
+and a redundant per-node copy were removed. Package preparation now creates orphan snapshots
+and passes its captured expected head to the checked push; status defaults remain parented.
+No controller expiry or cleanup is activated or deployed.
+
+Measured task source changes against HEAD: C++ 213 added/28 removed/net185,
+Python26/26/net0, YAML4/0/net4; production243/54/net189. Tests73/3/net70.
+Physical C++3,757, five below the approved3,762. No CMake/UI changes.
+The revised C++ estimate is still insufficient: shared cleanup lookup/enumeration about16,
+Pipeline dispatch/completion/reconciliation reuse20, view/projection10 and remaining guards7
+need about53 net lines beyond this source. Request total C++3,810/net238 and total production
+net400, increasing each approved ceiling by48. Other category estimates and test cap270 stay
+unchanged. No new mechanism or policy is requested. Stop before adding that integration.
+Remaining worker deletion/index reuse, cleanup workflow mode, views, persistence/protection/
+batching/restart and late FeedProof tests are incomplete; this is not acceptance.
+
+Validation at this exact source: core-ci and graph-test built, format-check passed; no changed
+production line exceeds160 characters; git diff --check passed. Commands:
+- TMPDIR=/tmp/codex/build/core-ci/retention cmake --build build/codex/slim-controller --target core-ci format-check -j2
+- TMPDIR=/tmp/codex/build/core-ci/retention cmake --build build/codex/slim-controller --target graph-test -j2
+- PYTHONDONTWRITEBYTECODE=1 ctest --test-dir build/codex/slim-controller --output-on-failure -R '^(graph-state|worker-provenance)-boundaries$':2/2 passed,2.42s.
+- PYTHONDONTWRITEBYTECODE=1 TMPDIR=/tmp/codex/build/core-ci/retention ctest --test-dir build/codex/slim-controller --output-on-failure -R '^pipeline-(chain|overlap|preflight-publish-known)$':3/3 passed,28.83s.
+The provenance fixture first failed because its prepare_commit mock did not return the new
+captured-head output; the fixture now supplies that head and checks the added public output.
+This is local/synthetic GitHub evidence with isolated real MariaDB, not live throughput.
+The existing unchanged burst assertions remain intact and passed with zero outgoing requests.
+The reused build initially retained its older fixture directory; reconfigured
+CORE_CI_TEST_DIRECTORY=/tmp/codex/build/core-ci/retention/fixtures before final checks.
+Build logs and temporary diagnostics remain under the task directory. No additional source
+checkout. Unrelated document hunks/review files and private directories remain untouched.
+Commit, push, merge, install, restart, activation and live acceptance remain unperformed.
+
+## 2026-10-29 — Retention local implementation and final approved-bound validation
+
+The owner approved the revised 3,810 physical C++ / +400 total production / +270 test bounds.
+Canonical checkout /home/voc/projects/snodec/core-ci, branch feat/publication-retention,
+HEAD/base3cc14fd9dfaba872dacb82e57d80f70c628c50fc. Remote main/HEAD still matches;8461764 is
+its merged ancestor. Source/test dirty SHA2567645ab2de7dec0c625c3567ed51e571484ac57bdebd383376abd748ecc089c63
+includes the explicit new retention.py bytes. Nothing staged, committed, pushed or deployed.
+
+Implemented atomic exact-input expiry and cleanup authority in the existing graph/Database FIFO,
+three successful SemVer roots/highest revision, active/uncertain/frozen retry protection and runtime
+package closure without permanent audit-only exports. Shared physical coordinates now match actual
+OpenWrt publication roots. Bounded per-object cleanup batches use the existing approved publication
+workflow, HMAC/run/job/attempt binding and reconciliation path. No timer, queue, controller thread,
+new endpoint or replay. Failed/uncertain cleanup keeps its scope assigned/paused. The last publication
+or consumer release triggers cleanup without a future build. Unchanged reports remain no-ops.
+Worker verifies all granted bytes before local deletion, shares native/OpenWrt signing/index paths,
+creates parentless snapshots and pushes with the exact previously captured old-head lease. Status
+commits remain parented;900MiB guard, normal package validation and FeedProof stay unchanged.
+Views show input expiry and cleanup evidence; package rows omit removed components. History stays.
+
+Measured production639added/306removed/net333; tests287/17/net270. Physical C++3,809 from3,572.
+Headroom:67 production overall, one C++ line, zero test lines. AGENTS.md records the newly approved cap.
+Per-file/category counts and documentation accounting are in docs/reports/publication-retention-local-validation.md.
+Unrelated co-owned document hunks and existing review records preserved; private directories untouched.
+
+Final build: TMPDIR=/tmp/codex/build/core-ci/retention cmake --build build/codex/slim-controller
+--target core-ci graph-test graph-store-test format-check -j2: passed. Final graph-state/worker-package/
+openwrt-archive/worker-provenance boundaries4/4passed6.79s. Isolated real-MariaDB selected cases9/9passed:
+persistence-graph, persistence-graph-missing, pipeline-chain/overlap/recovery/preflight-publish-known/
+status-delayed-approval/retention and worker-environment-boundaries. Final phase-loop edit then reran
+pipeline-chain10.74s and pipeline-retention3.50s, both passed. Full commands, identities and failure
+corrections are in the report. Node syntax/Python parsing/format/changed160-column/diff checks passed.
+No unrelated full suite. Browser inventory empty; iab unavailable, so no browser acceptance claim.
+
+Synthetic chain514requests includes17tokens/86statusPOSTs/40executionPOSTs/20artifact lists;
+retention224requests includes11tokens/32statusPOSTs/14executionPOSTs/4artifact lists. All fixture
+outgoing requests counted; GitHub worker/Git/Pages traffic does not run here. Existing unchanged burst
+and cleanup terminal duplicates produce zero outgoing requests. Status cost remains material; no new
+latch/debounce/cache hides it. Local synthetic timings are not live throughput or a before/after speedup.
+
+Activation gap: historical retries preserve O tooling/workflow pins, whose publisher makes parented
+commits. Draining assigned work alone cannot enforce orphan roots for future such retries. No pin
+rewrite, blanket old-generation expiry or compatibility mechanism implemented. Resolve that concrete
+upgrade disposition before activation, plus canonical old-path compatibility and actual feed lease
+permissions. No live feed inspection/mutation, installed-client check or GC timing proof here. Unknown
+cleanup can pause deletion indefinitely; protected extras may exceed3. Old-controller rollback cannot
+ignore expiry. Source work is not live acceptance or complete activation readiness. No stage approval
+was inferred. Task probes/logs/JSON remain under /tmp/codex/build/core-ci/retention; stopped own fixture
+DB data removed safely for tmpfs space. Persistent build remains under build/codex/slim-controller.
+
+## 2026-10-29 — Retention promotion authorized
+
+Owner requested cpmd and a fresh full build chain from core: commit, push, merge, deploy
+and launch in VOC-Experiments. This authorizes those stages for the retention change.
+Before promotion, main remains3cc14fd and the final production/test diff identity matches
+local validation. Live controller generation3458 is idle:104published/15waiting/1failed.
+No active build/publisher is running; the one failed demo-corev2.1.4 is historical.
+Historical immutable publisher pins remain an explicit activation decision, pending owner
+response; source promotion and release preparation continue independently.

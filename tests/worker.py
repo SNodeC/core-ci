@@ -292,6 +292,42 @@ def main():
             assert before == {
                 str(file.relative_to(feed)): contract.file_hash(file) for file in feed.rglob("*") if file.is_file()
             }, "identical replay changed published bytes"
+            import retention
+            pruning = directory / (package_format + "-retention")
+            shutil.copytree(feed, pruning)
+            kept = pruning / receipt["packages"][0]["path"]
+            preserved = kept.with_name("retained_" + kept.name)
+            shutil.copyfile(kept, preserved)
+            prior = contract.file_hash(preserved)
+            objects = receipt["packages"] + ([receipt["development_export"]] if receipt["development_export"] else [])
+            objects += [sign_native.file_identity(pruning, pruning / sign_native.receipt_path(request))]
+            command = {**request, "kind": "retention", "objects": objects}
+            corrupted = copy.deepcopy(command)
+            corrupted["objects"][-1]["sha256"] = "0" * 64
+            rejected(lambda: retention.update(corrupted, pruning, private, passphrase, public, directory, ""), "changed removal bytes accepted")
+            assert all((pruning / item["path"]).exists() for item in objects), "partial deletion preceded complete validation"
+            if package_format == "deb":
+                other = directory / "other-architecture"
+                (other / "DEBIAN").mkdir(parents=True)
+                (other / "DEBIAN/control").write_text("Package: unrelated\nVersion: 1\nArchitecture: arm64\nMaintainer: Test <test@example.invalid>\nDescription: fixture\n")
+                contract.run(["dpkg-deb", "--build", str(other), str(kept.parent / "unrelated_1_arm64.deb")], stdout=subprocess.DEVNULL)
+                with sign_native.signing_key(private, passphrase, public, fingerprint, directory) as (_, gpg, keyring):
+                    sign_native.apt_indexes(pruning, request["target"]["distribution"], request["target"]["suite"], "arm64", gpg, keyring)
+                other_index = pruning / request["target"]["distribution"] / "dists" / request["target"]["suite"] / "main/binary-arm64/Packages"
+                other_bytes = other_index.read_bytes()
+                wrong_arch = {**command, "target": {**command["target"], "arch": "arm64"}}
+                rejected(lambda: retention.update(wrong_arch, pruning, private, passphrase, public, directory, ""), "foreign architecture deleted")
+            linked = copy.deepcopy(command)
+            linked["objects"] = [{**objects[0], "path": "exports/" + "a" * 64 + "/1/development.tar.gz"}]
+            link = pruning / "exports" / ("a" * 64)
+            link.parent.mkdir(exist_ok=True)
+            link.symlink_to(kept.parent, target_is_directory=True)
+            rejected(lambda: retention.update(linked, pruning, private, passphrase, public, directory, ""), "linked parent accepted")
+            paths, removed = retention.update(command, pruning, private, passphrase, public, directory, "")
+            assert removed == [item["path"] for item in objects] and all(not (pruning / name).exists() for name in removed)
+            assert contract.file_hash(preserved) == prior and all((pruning / name).is_file() for name in set(paths) - set(removed))
+            if package_format == "deb":
+                assert other_index.read_bytes() == other_bytes and "arm64" in (other_index.parents[2] / "Release").read_text()
             wrong = copy.deepcopy(request)
             wrong["source"]["deployment"]["signing"]["gpg_fingerprint"] = "F" * 40
 

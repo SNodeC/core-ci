@@ -282,6 +282,7 @@ endif()
 if(BUILD_TESTING)
     foreach(
         case
+        retention
         chain
         cold
         recovery

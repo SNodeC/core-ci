@@ -71,6 +71,122 @@ namespace {
             },
             "conflicting committed receipt was accepted");
     }
+    void retentionBoundaries() {
+        auto sources = coreci::test::sources();
+        sources.erase("side");
+        sources.erase("join");
+        for (auto& source : sources) {
+            source["definition"]["matrix"] = {source.at("definition").at("matrix").front()};
+        }
+        auto state = graph::empty(), held = graph::empty();
+        const auto complete = [&](Json& state, const std::string& tag, char commit) {
+            sources["core"]["tag"] = tag;
+            sources["core"]["commit"] = std::string(40, commit);
+            const auto created = graph::select(state, "core", sources, true, state.at("next_revision"));
+            const auto id = created.front().get<std::string>();
+            graph::advance(state);
+            auto& node = state["executions"][id];
+            build(node, 100 + state.at("next_revision").get<unsigned int>());
+            graph::advance(state);
+            publish(node, 200 + state.at("next_revision").get<unsigned int>());
+            auto& receipt = node["attempts"].back()["receipt"];
+            receipt["packages"] = {{{"path", "debian/pool/trixie/core_" + node.at("attempts").back().at("revision").dump() + "_amd64.deb"},
+                                    {"size", 100},
+                                    {"sha256", std::string(64, 'a')}}};
+            receipt["development_export"] = {
+                {"path", "exports/" + id + "/1/development.tar.gz"}, {"size", 20}, {"sha256", std::string(64, 'b')}};
+            return id;
+        };
+        std::vector<std::string> ids;
+        std::string consumer;
+        unsigned int version = 0;
+        for (const auto* tag : {"v1.0.0", "v1.1.0-rc.1", "v1.1.0", "v2.0.0"}) {
+            ids.push_back(complete(state, tag, 'a' + version));
+            complete(held, tag, 'a' + version);
+            if (version++ == 0) {
+                consumer = graph::advance(held).front().at("execution");
+            }
+        }
+        const auto deployment = sources.at("core").at("deployment");
+        const auto oldest = state.at("executions").at(ids.front());
+        check(graph::retain(held, deployment).empty(), "active exact inputs were withdrawn");
+        auto retired = held;
+        build(retired["executions"][consumer], 750);
+        graph::advance(retired);
+        graph::retire(retired, consumer, retired["executions"][consumer]["attempts"].back()["id"]);
+        check(graph::retain(retired, deployment).empty(), "retired unknown publisher lost its prerequisite protection");
+        auto retryFirst = held, expiryFirst = held;
+        const auto attempt = held.at("executions").at(consumer).at("attempts").back().at("id");
+        graph::failed(retryFirst["executions"][consumer], attempt, "verified build failure");
+        graph::failed(expiryFirst["executions"][consumer], attempt, "verified build failure");
+        graph::retry(retryFirst, consumer);
+        graph::advance(retryFirst);
+        check(graph::retain(retryFirst, deployment).empty(), "retry before withdrawal lost its frozen inputs");
+        check(graph::retain(expiryFirst, deployment).size() == 1, "failed history protected inputs forever");
+        rejects(
+            [&] {
+                graph::retry(expiryFirst, consumer);
+            },
+            "expired retry was rebound or accepted");
+        const auto commands = graph::retain(state, deployment);
+        check(commands.size() == 1, "retention did not derive a single-target cleanup");
+        const auto& expired = state.at("executions").at(ids.front()).at("attempts").back();
+        check(expired.contains("expired_by") && expired.at("state") == "published" &&
+                  expired.at("receipt") == oldest.at("attempts").back().at("receipt"),
+              "retention rewrote the verified publication outcome or receipt");
+        for (std::size_t index = 1; index < ids.size(); ++index) {
+            check(!state.at("executions").at(ids[index]).at("attempts").back().contains("expired_by"), "SemVer roots were not retained");
+        }
+        const auto& request = graph::work(state, commands.front().at("execution")).at("attempts").back().at("assignment");
+        check(request.at("objects").size() == 3 && request.at("source").at("deployment") == deployment && !request.contains("dependencies"),
+              "cleanup lost its independent authority or exact removal set");
+        const auto before = state;
+        check(graph::retain(state, deployment).empty() && state == before, "unchanged retention replayed cleanup");
+        auto& dependent = held["executions"][consumer];
+        build(dependent, 800);
+        graph::advance(held);
+        publish(dependent, 900);
+        auto& receipt = dependent["attempts"].back()["receipt"];
+        receipt["packages"] = {{{"path", "debian/pool/trixie/app_1_amd64.deb"}, {"size", 100}, {"sha256", std::string(64, 'c')}}};
+        receipt["development_export"] = nullptr;
+        const auto cleanup = graph::retain(held, deployment);
+        const auto objects = graph::work(held, cleanup.front().at("execution")).at("attempts").back().at("assignment").at("objects");
+        check(objects.size() == 1 &&
+                  objects.front().at("path") == oldest.at("attempts").back().at("receipt").at("development_export").at("path"),
+              "runtime closure lost package bytes or retained audit-only exports");
+        // Highest revision wins equal SemVer precedence; a failed replacement is never a successful root.
+        auto revisions = before;
+        graph::work(revisions, commands.front().at("execution"))["attempts"].back()["state"] = "published";
+        for (const auto& work : graph::advance(revisions)) {
+            graph::failed(graph::work(revisions, work.at("execution")), work.at("attempt"), "verified build failure");
+        }
+        const auto replacement = complete(revisions, "v2.0.0+build.2", 'e');
+        check(graph::retain(revisions, deployment).size() == 1 &&
+                  revisions.at("executions").at(ids.back()).at("attempts").back().contains("expired_by"),
+              "highest successful rebuild did not replace the lower revision");
+        sources["core"]["tag"] = "v9.0.0";
+        const auto failed = graph::select(revisions, "core", sources, false, revisions.at("next_revision")).front().get<std::string>();
+        graph::advance(revisions);
+        graph::failed(revisions["executions"][failed], revisions["executions"][failed]["attempts"].back()["id"], "verified build failure");
+        graph::retain(revisions, deployment);
+        check(!revisions.at("executions").at(replacement).at("attempts").back().contains("expired_by"),
+              "failed source displaced working publication");
+        auto batch = before;
+        batch.erase("retention");
+        batch["executions"][ids.front()] = oldest;
+        auto& components = batch["executions"][ids.front()]["attempts"].back()["receipt"]["packages"];
+        auto component = components.front();
+        for (unsigned int index = 1; index < 128; ++index) {
+            component["path"] = "debian/pool/trixie/" + std::string(420, 'x') + std::to_string(index) + "_amd64.deb";
+            components.push_back(component);
+        }
+        const auto first = graph::retain(batch, deployment);
+        check(first.size() == 1 && graph::inputs(graph::work(batch, first.front().at("execution")), true).dump().size() <= 65535,
+              "cleanup batch exceeded dispatch bounds");
+        graph::work(batch, first.front().at("execution"))["attempts"].back()["state"] = "published";
+        check(graph::retain(batch, deployment).size() == 1, "completion did not derive the remaining bounded batch");
+    }
+
     void selectionBoundaries() {
         auto original = coreci::test::sources();
         for (auto& source : original) {
@@ -201,6 +317,7 @@ int main(int argc, char* argv[]) {
     int result = 0;
     try {
         selectionBoundaries();
+        retentionBoundaries();
         const auto selected = coreci::test::sources();
         auto state = graph::empty();
         const auto start = std::chrono::steady_clock::now();

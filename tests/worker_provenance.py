@@ -374,7 +374,7 @@ def main():
     import publish
     import status_update
     status_feed = directory / "status-update-feed"
-    status_feed.mkdir()
+    shutil.copytree(package.parent, status_feed / "pool")
     coordinates = receipt["compatibility"]
     work = {"id": "a" * 64, "attempt": "a" * 64 + ":3", "repository": "Example/source", "tag": "v3.0.0",
             "source_commit": "c" * 40, "definition_revision": "c" * 40,
@@ -521,14 +521,16 @@ def main():
     assert bundle.index('mkdir "$RUNNER_TEMP/validated"') < bundle.index("python3 tooling/core_ci/validate.py")
     assert "sdk.archive" not in bundle and publication_workflow == bundle
     tools_job = bundle.split("  tools:\n")[1].split("  publish:\n")[0]
-    assert "if: fromJSON(inputs.assignment).target.family == 'openwrt'" in tools_job
+    assert "fromJSON(inputs.assignment).target.family == 'openwrt'" in tools_job
+    assert "!cancelled()" in tools_job and "needs.validate.result == 'success'" in tools_job
     assert "secrets." not in tools_job and "environment:" not in tools_job and "concurrency:" not in tools_job
     assert "contents: read" in tools_job and "include-hidden-files: true" in tools_job
     assert "needs.validate.outputs.environment" in tools_job
     assert "needs: [validate, tools]" in bundle
-    assert ("if: >-\n      !cancelled() && needs.validate.result == 'success' &&\n"
-            "      ((fromJSON(inputs.assignment).target.family == 'openwrt' && needs.tools.result == 'success') ||\n"
-            "       (fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'))") in bundle
+    assert "needs.validate.result == 'success'" in bundle and "needs.validate.result == 'skipped'" in bundle
+    assert "fromJSON(inputs.assignment).target.family == 'openwrt' && needs.tools.result == 'success'" in bundle
+    assert "fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'" in bundle
+    assert "if: fromJSON(inputs.assignment).kind != 'retention'" in bundle.split("  confirm:\n")[1]
     assert "CORE_CI_TOOLS_SHA256: ${{ needs.tools.outputs.tools-sha256 }}" in bundle
     assert "path: ${{ runner.temp }}/validated/\n          compression-level: 0" in bundle
     assert "retention-days: 7" in bundle and bundle.count('--artifacts "$RUNNER_TEMP/validated/packages"') == 2
@@ -632,6 +634,28 @@ def main():
     except subprocess.CalledProcessError:
         rejected = True
     assert rejected and contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == concurrent
+    orphan_writer = directory / "orphan-writer"
+    subprocess.run(["git", "clone", "--quiet", str(remote), str(orphan_writer)], check=True)
+    (orphan_writer / "obsolete").write_text("old package fixture")
+    publish.prepare_commit(orphan_writer, ["obsolete"])
+    publish.checked_push(orphan_writer, "main", "synthetic-no-access-token")
+    (orphan_writer / "obsolete").unlink()
+    base = publish.prepare_commit(orphan_writer, ["obsolete"], orphan=True, removed=["obsolete"])
+    publish.checked_push(orphan_writer, "main", "synthetic-no-access-token", base)
+    assert contract.output(["git", "--git-dir", str(remote), "rev-list", "--count", "main"]) == "1"
+    assert contract.output(["git", "--git-dir", str(remote), "show", "main:receipt.json"]) == "initial receipt"
+    assert "obsolete" not in contract.output(["git", "--git-dir", str(remote), "ls-tree", "--name-only", "main"]).splitlines()
+    (orphan_writer / "status").write_text("status fixture")
+    publish.prepare_commit(orphan_writer, ["status"])
+    status_commit = publish.checked_push(orphan_writer, "main", "synthetic-no-access-token")
+    assert contract.output(["git", "--git-dir", str(remote), "rev-list", "--count", "main"]) == "2"
+    publish.prepare_commit(orphan_writer, ["status"], orphan=True)
+    rejected = False
+    try:
+        publish.checked_push(orphan_writer, "main", "synthetic-no-access-token", base)
+    except subprocess.CalledProcessError:
+        rejected = True
+    assert rejected and contract.output(["git", "--git-dir", str(remote), "rev-parse", "main"]) == status_commit
     prepared = copy.deepcopy(selected)
     prepared["revision"] = 1
     prepared["target"] = {"build": {"format": "deb"}}
@@ -692,7 +716,8 @@ def main():
         assert rejected and not commit.called and not push.called and not token.called
     assert not list(directory.glob("core-ci-secrets-*")), "temporary key material survived preparation failure"
 
-    for phase, supplied in (("prepare", []), ("push", []), ("prepare", ["--feed", str(writer)]),
+    for phase, supplied in (("prepare", []), ("push", []), ("push", ["--feed", str(writer)]),
+                            ("push", ["--feed", str(writer), "--expected-head", "invalid"]), ("prepare", ["--feed", str(writer)]),
                             ("prepare", ["--feed", str(writer), "--build-result", "result.json"]),
                             ("prepare", ["--feed", str(writer), "--artifacts", "outputs"])):
         invalid = ["publish.py", "--phase", phase, "--assignment", "unused", "--assignment-sha256", "unused", *supplied]
@@ -754,13 +779,13 @@ def main():
     ), patch.object(publish, "update", return_value=empty_receipt), patch.object(
         publish, "retained_receipt", return_value=empty_receipt
     ), patch.object(publish, "render", return_value=[]), patch.object(
-        publish, "prepare_commit"
+        publish, "prepare_commit", return_value="c" * 40
     ) as commit, patch.object(publish, "checked_push") as push, patch.object(publish, "writer_token") as token:
         publish.main()
         assert commit.called and not push.called and not token.called
     public_outputs = dict(line.split("=", 1) for line in output_file.read_text().splitlines())
     assert public_outputs == {"receipt-sha256": contract.file_hash(receipt_file),
-                              "feed-revision": contract.output(["git", "-C", str(writer), "rev-parse", "HEAD"])}
+                              "feed-revision": contract.output(["git", "-C", str(writer), "rev-parse", "HEAD"]), "expected-head": "c" * 40}
     # Confirmation consumes only public outputs and cannot reach privileged preparation.
     prepared["source"]["deployment"]["feed"]["base_url"] = "https://feed.example/packages"
     expected_bytes = b'{"assigned":"receipt"}'

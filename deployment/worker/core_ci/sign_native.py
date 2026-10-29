@@ -306,7 +306,7 @@ def apt_indexes(feed, distribution, suite, arch, gpg, keyring):
 
 def rpm_indexes(feed, distribution, suite, arch, gpg, keyring):
     root = feed / distribution / suite / arch
-    run(["createrepo_c", "--update", str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    run(["createrepo_c", "--update", "--retain-old-md=0", str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     repomd = root / "repodata/repomd.xml"
     signature = sign_file(gpg, keyring, repomd)
     signature.rename(repomd.parent / "repomd.xml.asc")

@@ -65,6 +65,12 @@ for each target. When that version has not published, Available is `—`, even i
 are retained. Set `site.parameters.show_history` to true to include retained publication tables.
 `project.parameters.navigation` maps public navigation labels to trusted deployment URLs.
 The context is also written to `status.json`; the existing `publications` array stays present.
+Rows include only package files still present in the retained feed tree. The field
+`development_export_available` distinguishes retained installation packages from build inputs
+whose development export has expired. Public controller executions cover retained/live work
+and referenced prerequisites; the highest selected source version remains available to the
+presentation even if it has no retained publication. Cleanup progress is shown in the local
+controller view rather than emitted as package publication status.
 
 New receipts retain compact selected-prerequisite references: execution/attempt and assignment
 identities, source, revision, compatibility, packages, development export and feed. They do not

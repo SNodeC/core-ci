@@ -88,7 +88,7 @@ def serve(directory):
                                        "receipt": None, "publication_job": {
                                            "status": "in_progress", "started_at": "2026-10-25T01:02:00Z"}})
                         layout.append({**copy.deepcopy(sample), "id": "failed", "revision": 6,
-                                       "state": "failed", "activity": "failed", "publication_job": {},
+                                       "state": "failed", "activity": "failed", "publication_job": {}, "retryable": True,
                                        "publication_run": None, "receipt": None})
                         layout.append({**copy.deepcopy(sample), "id": "assigned", "revision": 7,
                                        "repository": "Owner/long-project-name-for-layout-inspection",
@@ -156,7 +156,7 @@ def serve(directory):
             elif self.path == "/api/work/retire":
                 with condition:
                     row = next(item for item in executions if item["id"] == "assigned")
-                    row.update(state="failed", retirable=False, failure="operator abandoned unconfirmed dispatch; remote outcome unknown")
+                    row.update(state="failed", retirable=False, retryable=True, failure="operator abandoned unconfirmed dispatch; remote outcome unknown")
                     generation += 1
                     condition.notify_all()
                 (directory / "retirement.json").write_text(json.dumps(value))

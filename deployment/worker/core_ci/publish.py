@@ -98,35 +98,32 @@ def run_identity(selected):
     return result
 
 
-def prepare_commit(feed, expected_paths, message="Publish verified core-ci packages"):
+def prepare_commit(feed, expected_paths, message="Publish verified core-ci packages", orphan=False, removed=()):
+    base = output(["git", "-C", str(feed), "rev-parse", "--verify", "HEAD"]) if orphan else ""
+    require(set(removed) <= set(expected_paths), "unapproved feed deletion")
     run(["git", "-C", str(feed), "add", "--all", "--", *expected_paths])
     staged_paths = output(["git", "-C", str(feed), "diff", "--cached", "--name-only", "--no-renames"]).splitlines()
     require(set(staged_paths) <= set(expected_paths), "feed index contains changes outside the prepared update")
     for path in expected_paths:
-        raw = output(["git", "-C", str(feed), "hash-object", "--no-filters", str(feed / path)])
-        staged = output(["git", "-C", str(feed), "rev-parse", ":" + path])
-        require(raw == staged, "feed index omits or transforms verified package/index bytes")
+        if path in removed:
+            require(not (feed / path).exists() and not (feed / path).is_symlink(), "deleted feed path still exists")
+            run(["git", "-C", str(feed), "cat-file", "-e", "HEAD:" + path], stdout=subprocess.DEVNULL)
+        else:
+            raw = output(["git", "-C", str(feed), "hash-object", "--no-filters", str(feed / path)])
+            staged = output(["git", "-C", str(feed), "rev-parse", ":" + path])
+            require(raw == staged, "feed index omits or transforms verified package/index bytes")
     changed = subprocess.run(["git", "-C", str(feed), "diff", "--cached", "--quiet"], check=False).returncode
     require(changed in (0, 1), "cannot inspect feed changes")
-    if changed == 1:
-        run(
-            [
-                "git",
-                "-C",
-                str(feed),
-                "-c",
-                "user.name=core-ci publisher",
-                "-c",
-                "user.email=core-ci@users.noreply.github.com",
-                "commit",
-                "-m",
-                message,
-            ],
-            stdout=subprocess.DEVNULL,
-        )
+    identity = ["git", "-C", str(feed), "-c", "user.name=core-ci publisher", "-c", "user.email=core-ci@users.noreply.github.com"]
+    if orphan:
+        snapshot = output(identity + ["commit-tree", output(["git", "-C", str(feed), "write-tree"]), "-m", message])
+        run(["git", "-C", str(feed), "update-ref", "HEAD", snapshot, base])
+    elif changed == 1:
+        run(identity + ["commit", "-m", message], stdout=subprocess.DEVNULL)
+    return base
 
 
-def checked_push(feed, branch, token):
+def checked_push(feed, branch, token, base=""):
     authorization = base64.b64encode(("x-access-token:" + token).encode()).decode()
     environment = {
         **os.environ,
@@ -135,9 +132,10 @@ def checked_push(feed, branch, token):
         "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + authorization,
         "GIT_TERMINAL_PROMPT": "0",
     }
-    # A concurrent update is rejected by this normal fast-forward-only push. No force or rebase.
+    require(not base or re.fullmatch(r"[a-f0-9]{40}", base), "invalid expected feed head")
+    lease = ["--force-with-lease=refs/heads/" + branch + ":" + base] if base else []
     run(
-        ["git", "-C", str(feed), "push", "origin", "HEAD:refs/heads/" + branch],
+        ["git", "-C", str(feed), "push", *lease, "origin", "HEAD:refs/heads/" + branch],
         env=environment,
         stdout=subprocess.DEVNULL,
     )
@@ -172,7 +170,7 @@ def wait_for_https(selected, expected):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("prepare", "push", "confirm"), required=True)
+    parser.add_argument("--phase", choices=("prepare", "retain", "push", "confirm"), required=True)
     parser.add_argument("--assignment", required=True)
     parser.add_argument("--assignment-sha256", required=True)
     parser.add_argument("--build-result", default="")
@@ -181,21 +179,24 @@ def main():
     parser.add_argument("--feed", default="")
     parser.add_argument("--receipt-sha256", default="")
     parser.add_argument("--feed-revision", default="")
+    parser.add_argument("--expected-head", default="")
     arguments = parser.parse_args()
-    require(arguments.phase == "confirm" or bool(arguments.feed), "prepare/push require --feed")
+    require(arguments.phase == "confirm" or bool(arguments.feed), "prepare/retain/push require --feed")
     require(
         arguments.phase != "prepare" or bool(arguments.build_result and arguments.artifacts),
         "prepare requires --build-result and --artifacts",
     )
+    require(arguments.phase != "push" or re.fullmatch(r"[a-f0-9]{40}", arguments.expected_head), "push requires the prepared feed head")
     os.umask(0o077)
     selected = assignment(arguments.assignment, arguments.assignment_sha256)
+    require(arguments.phase == "push" or (arguments.phase == "retain") == (selected.get("kind") == "retention"), "phase differs from assignment")
     trusted_deployment(selected)
     require(
         selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"],
         "publication identity mismatch",
     )
     require(
-        arguments.phase != "prepare" or selected["target"]["build"]["format"] not in ("ipk", "apk") or bool(arguments.tools),
+        arguments.phase not in ("prepare", "retain") or selected["target"]["build"]["format"] not in ("ipk", "apk") or bool(arguments.tools),
         "OpenWrt prepare requires --tools",
     )
     if arguments.phase == "confirm":
@@ -212,11 +213,12 @@ def main():
             "apk": ("OPENWRT_APK_KEY", "core-ci-apk.pem"),
         }[package_format]
         identity = run_identity(selected)
+        removed = []
         with tempfile.TemporaryDirectory(prefix="core-ci-secrets-", dir=os.environ["RUNNER_TEMP"]) as temporary:
             root = Path(temporary)
             root.chmod(0o700)
             keys = {}
-            for name in (secret_name,) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
+            for name in (secret_name,) if arguments.phase in ("prepare", "retain") else ("PACKAGES_APP_PRIVATE_KEY",):
                 value = os.environ.pop(name, "")
                 require(bool(value), "missing protected publication secret: " + name)
                 path = root / name
@@ -225,13 +227,17 @@ def main():
                 keys[name] = path
             passphrase = None
             value = os.environ.pop("PACKAGES_GPG_PASSPHRASE", "")
-            if value and arguments.phase == "prepare" and package_format in ("deb", "rpm"):
+            if value and arguments.phase in ("prepare", "retain") and package_format in ("deb", "rpm"):
                 passphrase = root / "passphrase"
                 passphrase.write_text(value)
                 passphrase.chmod(0o600)
-            if arguments.phase == "prepare":
+            if arguments.phase in ("prepare", "retain"):
                 public_key = Path(__file__).resolve().parents[1] / "keys" / public_name
-                if package_format in ("ipk", "apk"):
+                if arguments.phase == "retain":
+                    from retention import update as prune
+
+                    paths, removed = prune(selected, feed, keys[secret_name], passphrase, public_key, root, arguments.tools)
+                elif package_format in ("ipk", "apk"):
                     from sign_openwrt import update as update_openwrt
 
                     receipt = update_openwrt(
@@ -257,16 +263,17 @@ def main():
                         public_key,
                         root,
                     )
-                receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
-                require(receipt is not None, "publication requires the prepared verified receipt")
-                paths = [receipt_path(selected), "keys/" + public_name] + [
-                    item["path"] for item in receipt["packages"] + receipt["indexes"]
-                ]
-                if receipt.get("development_export"):
-                    paths.append(receipt["development_export"]["path"])
+                if arguments.phase == "prepare":
+                    receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
+                    require(receipt is not None, "publication requires the prepared verified receipt")
+                    paths = [receipt_path(selected), "keys/" + public_name] + [
+                        item["path"] for item in receipt["packages"] + receipt["indexes"]
+                    ]
+                    if receipt.get("development_export"):
+                        paths.append(receipt["development_export"]["path"])
             else:
                 token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected["source"]["deployment"]["feed"])
-                revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token)
+                revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, arguments.expected_head)
         if arguments.phase == "push":
             print("Pushed checked feed revision:", revision)
         else:
@@ -281,11 +288,16 @@ def main():
                 < 900 * 1024 * 1024,
                 "new packages would exceed reviewed Pages capacity",
             )
-            prepare_commit(feed, paths)
-            receipt_hash = hashlib.sha256((feed / receipt_path(selected)).read_bytes()).hexdigest()
+            if package_format == "rpm":
+                scope = "/".join([selected["target"][key] for key in ("distribution", "suite", "arch")]) + "/repodata"
+                deleted = output(["git", "-C", str(feed), "ls-files", "--deleted", "--", scope]).splitlines()
+                removed += deleted
+                paths += deleted
+            base = prepare_commit(feed, paths, orphan=True, removed=removed)
+            receipt_hash = hashlib.sha256((feed / receipt_path(selected)).read_bytes()).hexdigest() if arguments.phase == "prepare" else ""
             revision = output(["git", "-C", str(feed), "rev-parse", "HEAD"])
             with open(os.environ["GITHUB_OUTPUT"], "a") as outputs:
-                outputs.write("receipt-sha256=" + receipt_hash + "\nfeed-revision=" + revision + "\n")
+                outputs.write("receipt-sha256=" + receipt_hash + "\nfeed-revision=" + revision + "\nexpected-head=" + base + "\n")
             print("Prepared and locally verified publication; no feed mutation requested")
 
 
