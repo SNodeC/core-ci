@@ -367,6 +367,13 @@ and the uncompressed index is signed with usign as Packages.sig. OpenWrt APK use
 SDK's `apk adbsign`, `mkndx --sign` and verification facilities to produce `packages.adb`.
 It does not generate an Alpine APKINDEX.tar.gz v2 substitute.
 
+For OpenWrt, an unprivileged job prepares publication tools from the independently verified
+SDK before entering the shared feed lock. The publisher verifies the assignment, complete
+SDK environment and every tool's size/hash before using that small handoff. It receives no
+full SDK archive. Signing and index updates remain inside the feed lock; public HTTPS
+confirmation runs afterwards. Build containers mount the pristine SDK read-only; only the
+source hook's private SDK copy is writable.
+
 Packages, affected indexes, receipt/export and status projections are committed together.
 Normal checked updates preserve unrelated paths and retained package identities. A stale
 push is rejected rather than force-pushed or rebased over another publisher.

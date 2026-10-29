@@ -1,6 +1,7 @@
 """Local archive/control boundaries only; SDK execution and signatures require real GitHub acceptance."""
 
 import io
+import copy
 from contextlib import redirect_stdout
 import os
 from pathlib import Path
@@ -135,8 +136,7 @@ def publication_paths(root):
                    check=True, stderr=subprocess.PIPE)
     feed = root / "publication-feed"
     feed.mkdir()
-    archive = root / "supplied-sdk.archive"
-    archive.write_bytes(b"synthetic SDK archive handoff")
+    archive = root / "supplied-tools"
     for package_format, suite in (("ipk", "24.10"), ("apk", "25.12")):
         recorded = []
         for revision in (1, 2):
@@ -158,11 +158,11 @@ def publication_paths(root):
                                    "build": {"format": package_format, "target": "x86/64"}}}
             temporary = root / (package_format + "-temporary-" + str(revision))
             temporary.mkdir()
-            with patch.object(sign_openwrt, "prepare", return_value=(fixture, fixture)) as prepared, patch.object(
+            with patch.object(sign_openwrt, "verified_tools", return_value=fixture) as prepared, patch.object(
                 sign_openwrt, "verify_manifest", return_value=manifest
-            ), patch.dict(os.environ, {"CORE_CI_APK": str(apk)}):
+            ), patch.dict(os.environ, {"CORE_CI_APK": str(apk), "CORE_CI_TOOLS_SHA256": "f" * 64}):
                 receipt = sign_openwrt.update(selected, {}, {}, artifacts, feed, private, public, temporary, archive)
-                prepared.assert_called_once_with(selected["target"], environment, temporary / "sdk", archive)
+                prepared.assert_called_once_with(archive, "f" * 64, selected, environment)
                 folder = "openwrt/" + suite + "/x86_64/"
                 filename = "example_1.0-r" + str(revision) + "_x86_64.ipk" if package_format == "ipk" else (
                     "example-1.0-r" + str(revision) + ".apk")
@@ -179,12 +179,129 @@ def publication_paths(root):
                         feed / folder / "packages.adb").read_text() for value in range(1, revision + 1))
                 before = {path: contract.file_hash(path) for path in feed.rglob("*") if path.is_file()}
                 assert sign_openwrt.update(selected, {}, {}, artifacts, feed, private, public, temporary, archive) == receipt
-                assert prepared.call_count == 1, "replay repeated SDK preparation"
+                assert prepared.call_count == 1, "replay repeated tools verification"
                 assert before == {path: contract.file_hash(path) for path in feed.rglob("*") if path.is_file()}
                 recorded.append(receipt)
         assert recorded[0]["compatibility"]["sdk_sha256"] != recorded[1]["compatibility"]["sdk_sha256"]
         assert Path(recorded[0]["packages"][0]["path"]).parent == Path(recorded[1]["packages"][0]["path"]).parent
 
+
+def tools_boundary(root):
+    # Synthetic ELF dependency responses exercise the production handoff, without executing SDK tools.
+    source = root / "tool-sdk"
+    selected = {"execution": "a" * 64, "attempt": "fixture", "target": {"build": {"format": "ipk"}}}
+    identity = {"sdk": {"sha256": "b" * 64}, "toolchain": {"triple": "fixture"}}
+    library = "staging_dir/host/lib/libfixture.so"
+    for name in sdk.PUBLICATION_FILES["ipk"] | {library}:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic tool")
+    with patch.object(sdk, "output", return_value="(NEEDED) [libfixture.so]"):
+        bundle = root / "verified-tools"
+        expected = sdk.publication_tools(source, selected, identity, bundle)
+    original = contract.read_json(bundle / "tools.json")
+    assert library in {item["path"] for item in original["files"]}
+    assert len(original["files"]) == len(sdk.PUBLICATION_FILES["ipk"]) + 1
+    for field, replacement in (("execution", "other"), ("attempt", "other"), ("target", {}),
+                               ("environment", {}), ("assignment_sha256", "0" * 64), ("schema", 2)):
+        document = copy.deepcopy(original)
+        document[field] = replacement
+        contract.write_json(bundle / "tools.json", document)
+        rejects(lambda: sdk.verified_tools(bundle, contract.file_hash(bundle / "tools.json"), selected, identity))
+    contract.write_json(bundle / "tools.json", original)
+    rejects(lambda: sdk.verified_tools(bundle, "0" * 64, selected, identity))
+    for kind in ("duplicate", "missing", "size", "hash", "traversal"):
+        document = copy.deepcopy(original)
+        if kind == "duplicate":
+            document["files"].append(document["files"][0])
+        elif kind == "missing":
+            document["files"].pop()
+        elif kind == "traversal":
+            document["files"][0]["path"] = "../outside"
+        else:
+            document["files"][0][kind if kind == "size" else "sha256"] = 1 if kind == "size" else "0" * 64
+        contract.write_json(bundle / "tools.json", document)
+        rejects(lambda: sdk.verified_tools(bundle, contract.file_hash(bundle / "tools.json"), selected, identity))
+    contract.write_json(bundle / "tools.json", original)
+    extra = bundle / "unexpected"
+    extra.write_bytes(b"extra")
+    rejects(lambda: sdk.verified_tools(bundle, expected, selected, identity))
+    extra.unlink()
+    tool = bundle / original["files"][0]["path"]
+    before = tool.read_bytes()
+    tool.write_bytes(b"altered executable")
+    rejects(lambda: sdk.verified_tools(bundle, expected, selected, identity))
+    tool.write_bytes(before)
+    assert all(not (bundle / item["path"]).stat().st_mode & 0o111 for item in original["files"])
+    assert sdk.verified_tools(bundle, expected, selected, identity) == bundle
+    assert all((bundle / item["path"]).stat().st_mode & 0o111 for item in original["files"])
+    for index, needed in enumerate(("../outside", "missing.so")):
+        with patch.object(sdk, "output", return_value="(NEEDED) [" + needed + "]"):
+            rejects(lambda: sdk.publication_tools(source, selected, identity, root / ("bad-library-" + str(index))))
+    with patch.object(sdk, "output", return_value="".join("(NEEDED) [lib" + str(i) + ".so]\n" for i in range(33))):
+        for i in range(33):
+            (source / ("staging_dir/host/lib/lib" + str(i) + ".so")).write_bytes(b"library")
+        rejects(lambda: sdk.publication_tools(source, selected, identity, root / "too-many-tools"))
+    large = source / "staging_dir/host/lib/runas.so"
+    with large.open("wb") as opened:
+        opened.truncate(64 * 1024**2 + 1)
+    with patch.object(sdk, "output", return_value=""):
+        rejects(lambda: sdk.publication_tools(source, selected, identity, root / "oversized-tools"))
+    large.write_bytes(b"library")
+    internal = source / "staging_dir/host/bin/mkhash"
+    internal.unlink()
+    internal.symlink_to(source / "staging_dir/host/bin/.mkhash.bin")
+    with patch.object(sdk, "output", return_value=""):
+        sdk.publication_tools(source, selected, identity, root / "internal-tools")
+    assert not (root / "internal-tools/staging_dir/host/bin/mkhash").is_symlink()
+    tool.unlink()
+    missing = copy.deepcopy(original)
+    missing["files"] = [item for item in missing["files"] if item["path"] != original["files"][0]["path"]]
+    contract.write_json(bundle / "tools.json", missing)
+    rejects(lambda: sdk.verified_tools(bundle, contract.file_hash(bundle / "tools.json"), selected, identity))
+    contract.write_json(bundle / "tools.json", original)
+    tool.symlink_to(source / original["files"][0]["path"])
+    rejects(lambda: sdk.verified_tools(bundle, expected, selected, identity))
+    selected["target"]["build"]["format"] = "apk"
+    for name in sdk.PUBLICATION_FILES["apk"]:
+        path = source / name
+        if not path.exists():
+            path.write_bytes(b"APK tool")
+    with patch.object(sdk, "output", return_value=""):
+        apk_tools = root / "apk-tools"
+        apk_hash = sdk.publication_tools(source, selected, identity, apk_tools)
+    with patch.dict(os.environ):
+        sdk.verified_tools(apk_tools, apk_hash, selected, identity)
+        assert os.environ["CORE_CI_APK"] == str(apk_tools / "staging_dir/host/bin/apk")
+    selected["target"]["build"]["format"] = "ipk"
+    escaped = source / "staging_dir/host/bin/usign"
+    escaped.unlink()
+    escaped.symlink_to(root / "synthetic-apk")
+    with patch.object(sdk, "output", return_value=""):
+        rejects(lambda: sdk.publication_tools(source, selected, identity, root / "escaped-tools"))
+
+def tool_selectors(root):
+    import validate
+    selected = {"execution": "fixture", "attempt": "fixture", "target": {"family": "openwrt"}}
+    argv = ["sdk.py", "--assignment", "fixture", "--assignment-sha256", "fixture", "--output", str(root / "selector-tools")]
+    with patch.object(sys, "argv", argv), patch.object(sdk, "assignment", return_value=selected), patch.object(
+        validate, "trusted_deployment"
+    ), patch.dict(os.environ, {"EXECUTION": "fixture", "ATTEMPT": "fixture", "RUNNER_TEMP": str(root),
+                              "GITHUB_OUTPUT": str(root / "tool-output")}), patch.object(sdk, "prepare") as prepare:
+        for raw in (" " * 16385, "{}\n", "[]"):
+            with patch.dict(os.environ, {"CORE_CI_SDK_ENVIRONMENT": raw}):
+                rejects(sdk.main)
+        assert not prepare.called
+        with patch.dict(os.environ, {"CORE_CI_SDK_ENVIRONMENT": "{}"}), patch.object(
+            sdk, "publication_tools", return_value="c" * 64
+        ) as pack:
+            prepare.return_value = (root, root)
+            sdk.main()
+            assert prepare.call_count == 1 and pack.call_count == 1
+            assert (root / "tool-output").read_text() == "tools-sha256=" + "c" * 64 + "\n"
+            prepare.side_effect = lambda target, identity, destination: (identity.update(changed=True), root)
+            rejects(sdk.main)
+            assert pack.call_count == 1
 
 def main():
     directory = Path(sys.argv[1])
@@ -193,6 +310,8 @@ def main():
         root = Path(temporary)
         preparation(root)
         publication_paths(root)
+        tools_boundary(root)
+        tool_selectors(root)
         # A new SDK feed key must not replace the existing APK feed's trust file.
         feed = root / "feed"
         (feed / "keys").mkdir(parents=True)

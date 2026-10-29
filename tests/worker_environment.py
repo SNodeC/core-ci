@@ -194,16 +194,17 @@ def retry_evidence(directory):
             rejects(lambda: environment.previous(selected))
 
 
-def host_manifest(directory):
+def host_manifest(directory, family="native"):
     import native
     import worker
     from contract import evidence, write_json
 
-    selected = worker.selected("deb")
+    selected = worker.selected("deb" if family == "native" else "apk")
+    selected["target"]["family"] = family
     source = directory / "source-fixture"
     (source / "ci").mkdir(parents=True)
     (source / "ci/native.sh").write_text("#!/bin/sh\nexit 0\n")
-    selected["source"].update(title="Fixture", depends_on=[], build={"native": "ci/native.sh"})
+    selected["source"].update(title="Fixture", depends_on=[], build={family: "ci/native.sh"})
     write_json(
         source / "ci/packages.json",
         {
@@ -213,10 +214,16 @@ def host_manifest(directory):
         },
     )
     identity = {"resolved_image": "configured@sha256:" + "e" * 64, "platform": "linux/amd64", "config_digest": "f" * 64}
+    identity = identity if family == "native" else {"host": identity, "sdk": {"sha256": "a" * 64}}
     document = {"assignment_sha256": digest(selected), "environment": identity}
     write_json(directory / "environment.json", document)
     manifest = {**evidence(selected), "environment": identity}
     for field in (None, "environment", "source"):
+        if family == "openwrt":
+            pristine = directory / "core-ci-sdk/extracted/sdk"
+            pristine.mkdir(parents=True)
+            (pristine / "pristine").write_text("SDK fixture")
+        calls = []
         supplied = copy.deepcopy(manifest)
         if field is not None:
             supplied[field] = (
@@ -231,6 +238,20 @@ def host_manifest(directory):
         )
 
         def container(command, **options):
+            calls.append(command)
+            if command[:2] == ["docker", "build"]:
+                context = Path(command[-1])
+                dockerfile = (context / "Dockerfile").read_text()
+                assert "COPY sdk" not in dockerfile and "CORE_CI_APK" not in dockerfile
+                if family == "openwrt":
+                    assert (context / ".dockerignore").read_text() == "sdk\n"
+            if command[:2] == ["docker", "run"] and family == "native":
+                assert not any("target=/sdk" in part or "CORE_CI_APK" in part for part in command)
+            if command[:2] == ["docker", "run"] and family == "openwrt":
+                mounted = [part for part in command if "target=/sdk," in part]
+                assert len(mounted) == 1 and mounted[0].endswith("target=/sdk,readonly")
+                assert (Path(mounted[0].split("source=", 1)[1].split(",")[0]) / "pristine").read_text() == "SDK fixture"
+                assert "CORE_CI_APK=/sdk/staging_dir/host/bin/apk" in command
             if command[:2] == ["docker", "run"] and "--network=none" not in command:
                 write_json(Path(arguments.output) / "outputs.json", {"packages": []})
             return SimpleNamespace(stdout=json.dumps(supplied))
@@ -254,7 +275,7 @@ def host_manifest(directory):
                 selected["source"]["commit"],
                 selected["source"]["deployment"]["worker"]["tooling_sha"],
                 selected["source"]["definition_blob_sha"],
-                json.dumps([{"Id": identity["config_digest"]}]),
+                json.dumps([{"Id": (identity if family == "native" else identity["host"])["config_digest"]}]),
             ],
         ):
             if field is None:
@@ -263,6 +284,7 @@ def host_manifest(directory):
             else:
                 rejects(lambda: native.build(arguments))
                 assert not (Path(arguments.output) / "manifest.json").exists()
+            assert len([call for call in calls if call[:2] == ["docker", "run"]]) == 2
 
 
 def main():
@@ -376,6 +398,8 @@ def main():
     retry_evidence(directory)
     with tempfile.TemporaryDirectory(dir=directory) as fixture:
         host_manifest(Path(fixture))
+    with tempfile.TemporaryDirectory(dir=directory) as fixture:
+        host_manifest(Path(fixture), "openwrt")
     print("PASS worker-only image/SDK resolution fixtures; no Docker or SDK archive was executed")
 
 

@@ -3389,3 +3389,69 @@ Verified final production diff matches the tested identity; all20affected checks
 formatting passed. Only task source/tests, review records and task log hunks are staged.
 Deployment will use the existing private runtime and unchanged service/listener settings,
 with durable graph backup/restoration and asset checks. No fresh build/tag is requested.
+
+## 2026-10-29 — OpenWrt build preparation and publication tool handoff
+
+Owner approved both changes and the publication proposal's implementation bounds, then
+instructed continuation. Canonical checkout: /home/voc/projects/snodec/core-ci; owned branch
+rewrite/slim-graph-controller; HEAD 1250f43c57dee10006cffe68083dac21257b09d5. Remote main
+8f14486e2ac6d4f8af0cbe16442c9f949f88abf7 has the same source tree. No open PR was returned.
+Unrelated dirty documentation/review records are preserved. Private directories were not inspected.
+
+Invariant: source artifacts supply package facts, never executable publication authority.
+The pristine SDK is read-only in both build containers; the hook retains its private writable
+copy. SDK bytes are excluded from the image/context. Native image/mount behavior is unchanged.
+An unprivileged OpenWrt tools job independently prepares the official SDK outside the feed
+lock, extracts bounded wrapper/ELF-library files and binds them to the exact assignment and
+complete SDK environment. The publisher checks the trusted job-output manifest hash, every
+file, identity and bounds before chmod/execution. The full SDK artifact and publisher SDK
+preparation are removed. Signing/indexing/feed mutation stay inside the shared lock; the
+push-step name, uncertainty interpretation, confirmation and receipts stay unchanged.
+
+Production accounting against HEAD (added / removed / net):
+- deployment/source/core-ci-publish-bundle.yml.in: 56 / 5 / +51.
+- deployment/worker/.github/workflows/core-ci-publish.yml: 62 / 5 / +57.
+- deployment/worker/core_ci/native.py: 15 / 15 / 0 (includes moved shared mounts).
+- deployment/worker/core_ci/publish.py: 4 / 4 / 0.
+- deployment/worker/core_ci/sdk.py: 96 / 1 / +95.
+- deployment/worker/core_ci/sign_openwrt.py: 4 / 4 / 0.
+- deployment/worker/core_ci/validate.py: 6 / 1 / +5.
+Total 243 / 35 / +208; YAML +108, Python +100, C++ zero. Approved bounds:
+added260/net230, YAMLnet120/Pythonnet110. Remaining: 17 added / 22 net.
+Tests: openwrt.py 125 / 6 / +119; worker_environment.py 28 / 4 / +24;
+worker_provenance.py 45 / 8 / +37. Total198 / 18 / +180, exactly the approved test bound.
+Task deployment documentation adds seven lines; this log is append-only.
+
+Validation configuration: build/codex/openwrt-worker, Debug, BUILD_TESTING=ON;
+fixtures/TMPDIR/CCACHE_DIR under /tmp/codex/build/core-ci/publication-wait-fix/implementation/.
+Build identity: HEAD above plus production/test diff SHA256
+ b11a917f4e31e05cdb0a135d74ea3dc39ad17afe7980d182195c03a4088b65b4.
+Baseline: ctest --test-dir build/codex/openwrt-worker --output-on-failure -j4
+-R '^(worker-package|openwrt-archive|worker-provenance|worker-environment)-boundaries$':
+4/4 passed before edits (1.94s). Same selection passed after production changes (1.85s).
+Final expanded OpenWrt/provenance/environment checks: 3/3 passed (1.95s); package check
+passed on the same unchanged production source (1.69s). These are test runtimes, not pipeline
+speed measurements. cmake --build build/codex/openwrt-worker --target format-check passed;
+Python AST, both YAML parses, git diff --check and changed production line limit passed.
+A new minimal validator fixture initially lacked target; corrected and rerun successfully.
+
+Official archive SHA256 checks passed. Production extractor/verifier on retained official SDK
+inspection files produced IPK8files/2152850bytes and APK6files/4082672bytes. No SDK executable
+was run. Fresh full extraction hit a full /tmp tmpfs; its partial directory was deleted,
+freeing581MiB. A test attempt blocked by the same capacity issue was rerun successfully.
+Fresh full-extraction proof remains unverified; existing extraction fixture checks pass.
+Evidence: implementation/official-tools-results.json and Claude read-only reviews under the
+same temporary task directory. Claude found no blocking production defect; its four test gaps
+were addressed (validator outputs, exact job condition, file/symlink/APK cases, native mounts).
+
+Bulk SDK transfers decrease from four to three, all outside the feed lock; an additional
+serial OpenWrt job and official download remain outside it. Small artifacts and pip remain
+inside the lock. No speedup or live acceptance is claimed. Real GitHub conditions/artifact
+roundtrip, SDK container execution, IPK/APK signing/indexing and before/after timing still need
+an authorized sandbox run. No commit, push, merge, deployment, restart or live mutation performed.
+
+Claude follow-up confirmed all four gaps closed and no remaining concrete defect. The tools-job
+condition assertion was then scoped to that job; its focused provenance check passed (2.20s).
+Final review records: implementation/claude-review.json and implementation/claude-confirm.json.
+
+Owner subsequently authorized commit, push and merge. Deployment/activation remains separate.

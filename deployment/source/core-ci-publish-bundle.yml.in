@@ -42,6 +42,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       artifact-id: ${{ steps.validated.outputs.artifact-id }}
+      environment: ${{ steps.validation.outputs.environment }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -51,6 +52,7 @@ jobs:
       - name: Install standard package metadata tools
         run: sudo apt-get update && sudo apt-get install -y rpm zstd build-essential
       - name: Validate provenance, archive and actual package metadata
+        id: validation
         env:
           SOURCE_ARTIFACT_TOKEN: ${{ secrets.PACKAGES_OBSERVER_TOKEN }}
         run: |
@@ -64,9 +66,6 @@ jobs:
             --assignment-sha256 "$ASSIGNMENT_SHA256" \
             --build-result "$RUNNER_TEMP/build-result.json" \
             --output "$RUNNER_TEMP/validated/packages"
-      - name: Retain verified official SDK archive
-        if: fromJSON(inputs.assignment).target.family == 'openwrt'
-        run: cp "$RUNNER_TEMP/validation-sdk/sdk.archive" "$RUNNER_TEMP/validated/sdk.archive"
       - id: validated
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -76,9 +75,51 @@ jobs:
           if-no-files-found: error
           overwrite: false
           retention-days: 7
+  tools:
+    name: Extract verified OpenWrt publication tools
+    needs: validate
+    if: fromJSON(inputs.assignment).target.family == 'openwrt'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.tools.outputs.artifact-id }}
+      tools-sha256: ${{ steps.extracted.outputs.tools-sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CORE_CI_TOOLING_SHA }}
+          path: tooling
+          persist-credentials: false
+      - name: Install SDK inspection tools
+        run: sudo apt-get update && sudo apt-get install -y zstd build-essential
+      - name: Prepare verified publication tools
+        id: extracted
+        env:
+          CORE_CI_SDK_ENVIRONMENT: ${{ needs.validate.outputs.environment }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ASSIGNMENT" > "$RUNNER_TEMP/assignment.json"
+          python3 tooling/core_ci/sdk.py --assignment "$RUNNER_TEMP/assignment.json" \
+            --assignment-sha256 "$ASSIGNMENT_SHA256" --output "$RUNNER_TEMP/tools"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: tools
+        with:
+          name: ${{ fromJSON(inputs.assignment).artifact_name }}-tools
+          path: ${{ runner.temp }}/tools/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 7
   publish:
     name: Publish ${{ fromJSON(inputs.assignment).label }}
-    needs: validate
+    needs: [validate, tools]
+    if: >-
+      !cancelled() && needs.validate.result == 'success' &&
+      ((fromJSON(inputs.assignment).target.family == 'openwrt' && needs.tools.result == 'success') ||
+       (fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'))
     concurrency:
       group: core-ci-feed-${{ vars.FEED_REPOSITORY }}-${{ vars.FEED_BRANCH }}
       cancel-in-progress: false
@@ -106,15 +147,25 @@ jobs:
           artifact-ids: ${{ needs.validate.outputs.artifact-id }}
           path: ${{ runner.temp }}/validated
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: fromJSON(inputs.assignment).target.family == 'openwrt'
+        with:
+          artifact-ids: ${{ needs.tools.outputs.artifact-id }}
+          path: ${{ runner.temp }}/tools
+          merge-multiple: true
       - name: Install standard signing and repository tools
+        if: fromJSON(inputs.assignment).target.family == 'native'
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm gnupg apt-utils createrepo-c zstd build-essential python3-venv
+      - name: Install pinned template dependencies
+        run: |
           python3 -m venv "$RUNNER_TEMP/core-ci-status-python"
           "$RUNNER_TEMP/core-ci-status-python/bin/pip" install -r tooling/status-templates/requirements.txt
       - name: Prepare signed feed update
         id: prepared
         env:
+          CORE_CI_TOOLS_SHA256: ${{ needs.tools.outputs.tools-sha256 }}
           CORE_CI_RENDER_PYTHON: ${{ runner.temp }}/core-ci-status-python/bin/python
           GITHUB_TOKEN: ${{ github.token }}
           APT_SIGNING_KEY: >-
@@ -135,7 +186,7 @@ jobs:
             --assignment-sha256 "$ASSIGNMENT_SHA256" \
             --build-result "$RUNNER_TEMP/build-result.json" \
             --artifacts "$RUNNER_TEMP/validated/packages" \
-            --sdk-archive "$RUNNER_TEMP/validated/sdk.archive" \
+            --tools "$RUNNER_TEMP/tools" \
             --feed "$GITHUB_WORKSPACE/feed"
       - name: Publish checked feed update
         env:

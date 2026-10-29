@@ -177,7 +177,7 @@ def main():
     parser.add_argument("--assignment-sha256", required=True)
     parser.add_argument("--build-result", default="")
     parser.add_argument("--artifacts", default="")
-    parser.add_argument("--sdk-archive", default="")
+    parser.add_argument("--tools", default="")
     parser.add_argument("--feed", default="")
     parser.add_argument("--receipt-sha256", default="")
     parser.add_argument("--feed-revision", default="")
@@ -195,8 +195,8 @@ def main():
         "publication identity mismatch",
     )
     require(
-        arguments.phase != "prepare" or selected["target"]["build"]["format"] not in ("ipk", "apk") or bool(arguments.sdk_archive),
-        "OpenWrt prepare requires --sdk-archive",
+        arguments.phase != "prepare" or selected["target"]["build"]["format"] not in ("ipk", "apk") or bool(arguments.tools),
+        "OpenWrt prepare requires --tools",
     )
     if arguments.phase == "confirm":
         require(re.fullmatch(r"[a-f0-9]{40}", arguments.feed_revision) is not None, "invalid prepared feed revision")
@@ -243,7 +243,7 @@ def main():
                         keys[secret_name],
                         public_key,
                         root,
-                        arguments.sdk_archive,
+                        arguments.tools,
                     )
                 else:
                     receipt = update(
