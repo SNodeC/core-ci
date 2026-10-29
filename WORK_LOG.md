@@ -3651,3 +3651,15 @@ local validation. Live controller generation3458 is idle:104published/15waiting/
 No active build/publisher is running; the one failed demo-corev2.1.4 is historical.
 Historical immutable publisher pins remain an explicit activation decision, pending owner
 response; source promotion and release preparation continue independently.
+
+## 2026-10-29 — Same-key sandbox signing validity renewal
+
+Owner explicitly approved extending the existing APT/RPM key by one year. Public fingerprint
+A4B307A9CFD583089547481DE58C165F4340EE99 is unchanged; new expiry 2027-10-29T19:52:02+00:00.
+Renewal job https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40943855027
+verified the fingerprint and sealed the renewed secret directly to GitHub environment secret
+encryption. Only GitHub-encrypted secret data/public metadata left the job. The encrypted API
+value was applied to the existing package-publication APT_SIGNING_KEY; no new credential or
+permission scope. No signing-key plaintext inspected or placed in source/artifacts/logs.
+Public worker key metadata is updated; no compatibility code, C++/Python/YAML/controller
+logic change. Native maintenance failures remain visible, before push, pending explicit recovery.
