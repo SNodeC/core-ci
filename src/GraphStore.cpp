@@ -95,8 +95,7 @@ namespace coreci {
                 if (stage == "building" || stage == "publishing") {
                     const auto& facts = row.at(stage == "building" ? "build_job" : "publication_job");
                     row["activity"] =
-                        stage + ": " +
-                        facts.value("status", stage == "publishing" ? "publication run unconfirmed" : "build run unconfirmed");
+                        stage + ": " + facts.value("job_status", "awaiting job status; workflow " + facts.value("status", "unconfirmed"));
                     if (stage == "building" && !attempt.at("build_result").is_null()) {
                         row["activity"] = "build complete; waiting for publication";
                     }

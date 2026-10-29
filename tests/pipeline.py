@@ -677,7 +677,7 @@ def exercise(arguments):
             assert all(value in execution_log for value in ('"stage":"publication"', '"submitted":true', '"status":0', '"transport":'))
             assert all(value in status_log for value in ('"generation":', '"submitted":true', '"status":0', '"transport":'))
             assert "synthetic-token" not in diagnostic
-            assert row()["activity"] == "publishing: publication run unconfirmed" and row()["publication_run"] is None
+            assert row()["activity"] == "publishing: awaiting job status; workflow unconfirmed" and row()["publication_run"] is None
             assert api("/api/work/retry", {"execution": execution})[0] == 409
             if arguments.case == "unconfirmed-run":
                 inspection["jobs"] = True
@@ -884,7 +884,7 @@ def exercise(arguments):
                 assert not any("/repos/Owner/core/git/" in item[2] for item in trace[offset:]), "cold reconciliation repeated immutable workflow proof"
             proof_offset = len(trace)
             assert report(first, status="in_progress")[0] == 202
-            wait(lambda: any(row["build_run"] for row in api("/api/graph")[1]["executions"]), "run progress was not persisted")
+            wait(lambda: any(row["build_run"] and row["activity"] == "building: awaiting job status; workflow in_progress" for row in api("/api/graph")[1]["executions"]), "workflow progress appeared as a running job")
             time.sleep(0.5)
             if arguments.case == "changed":
                 assert any("/repos/Owner/core/commits/" + runs[1000]["head_sha"] in item[2] for item in trace[proof_offset:]), "changed run commit reused stale preflight proof"
