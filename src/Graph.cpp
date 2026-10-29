@@ -13,10 +13,20 @@
 namespace coreci {
     namespace graph {
         namespace {
+            const std::string retiredUncertain = "operator abandoned unconfirmed dispatch; remote outcome unknown";
             bool newer(const Json& a, const Json& b) {
                 const auto order = Version(a.at("tag")).compare(Version(b.at("tag")));
                 return order > 0 || (order == 0 && (a.at("tag") != b.at("tag") || a.at("tag_object_sha") != b.at("tag_object_sha") ||
                                                     a.at("commit") != b.at("commit")));
+            }
+
+            Json feedCoordinates(const Json& target) {
+                auto result = coordinates(target);
+                for (const auto* key : {"family", "platform", "target"}) {
+                    result.erase(key);
+                }
+                result["distribution"] = target.at("family") == "openwrt" ? Json("openwrt") : target.at("distribution");
+                return result;
             }
 
             Json closure(const Json& state, const Json& node) {
@@ -56,19 +66,24 @@ namespace coreci {
                 return attempt;
             }
 
-            Json assignment(const Json& state, const Json& node) {
-                const auto& attempt = node.at("attempts").back();
-                auto dependencies = Json::array();
-                if (node.at("attempts").size() > 1) {
-                    dependencies = node.at("attempts").front().at("assignment").at("dependencies");
-                } else {
+            Json dependencies(const Json& state, const Json& node) {
+                const auto& assigned = node.at("attempts").front().at("assignment");
+                auto result = assigned.is_null() ? Json::array() : assigned.at("dependencies");
+                if (assigned.is_null()) {
                     for (const auto& id : node.at("prerequisites")) {
                         const auto& other = state.at("executions").at(id.get<std::string>()).at("attempts").back();
                         auto receipt = other.at("receipt");
-                        receipt.erase("indexes");
-                        dependencies.push_back({{"execution", id}, {"attempt", other.at("id")}, {"receipt", receipt}});
+                        if (receipt.is_object()) {
+                            receipt.erase("indexes");
+                        }
+                        result.push_back({{"execution", id}, {"attempt", other.at("id")}, {"receipt", receipt}});
                     }
                 }
+                return result;
+            }
+
+            Json assignment(const Json& state, const Json& node) {
+                const auto& attempt = node.at("attempts").back();
                 const auto& source = node.at("source");
                 const auto& target = node.at("target_row");
                 const auto revision = std::to_string(attempt.at("revision").get<std::uint64_t>());
@@ -84,7 +99,7 @@ namespace coreci {
                             {"artifact_name", "core-ci-build-" + node.at("id").get<std::string>() + "-r" + revision},
                             {"source", source},
                             {"target", target},
-                            {"dependencies", dependencies}};
+                            {"dependencies", dependencies(state, node)}};
                 auto previous = Json::array();
                 for (const auto& earlier : node.at("attempts")) {
                     if (earlier.at("id") != attempt.at("id") && !earlier.at("build_run").is_null()) {
@@ -102,6 +117,34 @@ namespace coreci {
                 return result;
             }
         } // namespace
+
+        bool eligible(const Json& state, const Json& node, bool pending) {
+            const auto& current = node.at("attempts").back();
+            auto result = node.at("superseded_by") == "" && !current.contains("expired_by");
+            for (const auto& dependency : dependencies(state, node)) {
+                const auto& other = state.at("executions").at(dependency.at("execution").get<std::string>());
+                const auto& attempts = other.at("attempts");
+                const bool available = std::any_of(attempts.begin(), attempts.end(), [&](const auto& attempt) {
+                    return attempt.at("id") == dependency.at("attempt") && attempt.at("state") == "published" &&
+                           !attempt.contains("expired_by");
+                });
+                result = result && (available || (pending && attempts.back().at("id") == dependency.at("attempt") &&
+                                                  attempts.back().at("state") != "failed" && eligible(state, other, true)));
+            }
+            return result;
+        }
+
+        std::vector<std::string> workIds(const Json& state) {
+            std::vector<std::string> ids;
+            for (const auto* collection : {"executions", "retention"}) {
+                if (state.contains(collection)) {
+                    for (const auto& [id, node] : state.at(collection).items()) {
+                        ids.push_back(id);
+                    }
+                }
+            }
+            return ids;
+        }
 
         Json empty() {
             return {{"generation", 0}, {"next_revision", 1}, {"repositories", Json::object()}, {"executions", Json::object()}};
@@ -121,11 +164,7 @@ namespace coreci {
         std::vector<std::string> validateSources(const Json& sources, const Json& executions) {
             std::map<std::pair<std::string, std::string>, std::string> namespaces;
             const auto reserve = [&](const std::string& repository, const std::string& package, const Json& target) {
-                auto coordinate = coordinates(target);
-                for (const auto* key : {"family", "platform", "target"}) {
-                    coordinate.erase(key);
-                }
-                const auto space = std::make_pair(coordinate.dump(), package);
+                const auto space = std::make_pair(feedCoordinates(target).dump(), package);
                 for (const auto& [previous, owner] : namespaces) {
                     require(owner == repository || previous.first != space.first ||
                                 (previous.second != package && !previous.second.starts_with(package + "-") &&
@@ -219,7 +258,7 @@ namespace coreci {
                                         original.at("definition_blob_sha") == sources.at(other).at("definition_blob_sha") &&
                                         original.at("deployment") == sources.at(other).at("deployment") &&
                                         coordinates(candidate.at("target_row")) == coordinates(target) &&
-                                        candidate.at("superseded_by") == "" &&
+                                        candidate.at("superseded_by") == "" && !candidate.at("attempts").back().contains("expired_by") &&
                                         candidate.at("attempts").back().at("revision").get<std::uint64_t>() > newest) {
                                         prerequisite = id;
                                         newest = candidate.at("attempts").back().at("revision").get<std::uint64_t>();
@@ -236,6 +275,9 @@ namespace coreci {
                             identity["reactivated"] = state.at("next_revision");
                             id = digest(identity);
                         }
+                        require(!state.at("executions").contains(id) ||
+                                    !state.at("executions").at(id).at("attempts").back().contains("expired_by"),
+                                "requested historical input expired by retention");
                         if (!state.at("executions").contains(id)) {
                             Json node{{"id", id},
                                       {"source", source},
@@ -281,19 +323,15 @@ namespace coreci {
             if (node.at("superseded_by") != "") {
                 result.push_back("superseded by " + node.at("superseded_by").get<std::string>());
             }
-            for (const auto& id : node.at("prerequisites")) {
-                if (!state.at("executions").contains(id.get<std::string>()) ||
-                    state.at("executions").at(id.get<std::string>()).at("attempts").back().at("state") != "published") {
-                    result.push_back("waiting for published prerequisite " + id.get<std::string>());
-                }
-            }
             const auto& attempt = node.at("attempts").back();
+            if (result.empty() && !eligible(state, node, false)) {
+                result.push_back(attempt.contains("expired_by") ? "inputs expired by retention"
+                                                                : "exact prerequisite inputs expired or not published");
+            }
             const bool publish = attempt.at("state") == "building" && !attempt.at("build_result").is_null();
             if (result.empty() && (attempt.at("state") == "waiting" || publish)) {
                 auto candidate = node;
-                if (!publish) {
-                    candidate["attempts"].back()["assignment"] = assignment(state, node);
-                }
+                candidate["attempts"].back()["assignment"] = publish ? attempt.at("assignment") : assignment(state, node);
                 const auto payload = inputs(candidate, publish);
                 if (payload.at("assignment").get_ref<const std::string&>().size() > 60000 || payload.dump().size() > 65535) {
                     result.push_back("GitHub dispatch payload exceeds supported input bounds");
@@ -309,7 +347,7 @@ namespace coreci {
                         {"attempt", attempt.at("id")},
                         {"assignment_sha256", digest(assigned)},
                         {"assignment", assigned.dump()}};
-            if (publication) {
+            if (publication && !assigned.contains("kind")) {
                 result["build_result"] = attempt.at("build_result").dump();
             }
             return result;
@@ -331,17 +369,165 @@ namespace coreci {
                 const bool build = attempt.at("state") == "waiting";
                 const bool publish = attempt.at("state") == "building" && !attempt.at("build_result").is_null();
                 if ((build || publish) && blockers(state, node).empty()) {
-                    auto candidate = node;
-                    auto& next = candidate.at("attempts").back();
                     if (build) {
-                        next["assignment"] = assignment(state, node);
+                        attempt["assignment"] = assignment(state, node);
                     }
-                    next["state"] = publish ? "publishing" : "building";
-                    dispatches.push_back({{"execution", id}, {"attempt", next.at("id")}, {"publication", publish}});
-                    node = std::move(candidate);
+                    attempt["state"] = publish ? "publishing" : "building";
+                    dispatches.push_back({{"execution", id}, {"attempt", attempt.at("id")}, {"publication", publish}});
                 }
             }
             return dispatches;
+        }
+
+        Json retain(Json& state, const Json& deployment) {
+            std::map<std::string, Json*> publications;
+            std::map<std::string, const Json*> owners;
+            std::map<std::string, std::vector<std::string>> groups;
+            std::set<std::string> inputs, packages, claimed, keep, busy;
+            for (const auto& operation : state.value("retention", Json::object())) {
+                const auto& attempt = operation.at("attempts").back();
+                if (operation.at("source").at("deployment").at("feed") == deployment.at("feed")) {
+                    if (attempt.at("state") != "published") {
+                        busy.insert(attempt.at("assignment").at("scope"));
+                    }
+                    for (const auto& object : attempt.at("assignment").at("objects")) {
+                        claimed.insert(object.at("path"));
+                    }
+                }
+            }
+            for (auto& node : state.at("executions")) {
+                const auto scope = Json{node.at("source").at("repository_id"), feedCoordinates(node.at("target_row"))}.dump();
+                for (auto& attempt : node.at("attempts")) {
+                    if (attempt.at("failure") == retiredUncertain ||
+                        (attempt.at("id") == node.at("attempts").back().at("id") &&
+                         (attempt.at("state") == "building" || attempt.at("state") == "publishing" ||
+                          (attempt.at("state") == "waiting" && eligible(state, node, true))))) {
+                        for (const auto& dependency : dependencies(state, node)) {
+                            inputs.insert(dependency.at("attempt"));
+                        }
+                    }
+                    if (attempt.at("state") == "published" && attempt.at("receipt").at("feed") == deployment.at("feed")) {
+                        const auto reference = attempt.at("id").get<std::string>();
+                        publications[reference] = &attempt;
+                        owners[reference] = &node;
+                        groups[scope].push_back(reference);
+                    }
+                }
+            }
+            for (auto& [scope, order] : groups) {
+                std::sort(order.begin(), order.end(), [&](const auto& left, const auto& right) {
+                    const auto comparison =
+                        Version(owners.at(left)->at("source").at("tag")).compare(Version(owners.at(right)->at("source").at("tag")));
+                    return comparison == 0 ? publications.at(left)->at("revision") > publications.at(right)->at("revision")
+                                           : comparison > 0;
+                });
+                std::string previous;
+                unsigned int versions = 0;
+                for (const auto& reference : order) {
+                    const auto tag = owners.at(reference)->at("source").at("tag").get<std::string>();
+                    if (previous.empty() || Version(previous).compare(Version(tag)) != 0) {
+                        if (++versions <= 3 && !publications.at(reference)->contains("expired_by")) {
+                            inputs.insert(reference);
+                        }
+                        previous = tag;
+                    }
+                }
+            }
+            std::function<void(const std::string&)> visit = [&](const std::string& reference) {
+                if (publications.contains(reference) && packages.insert(reference).second) {
+                    for (const auto& dependency : publications.at(reference)->at("assignment").at("dependencies")) {
+                        visit(dependency.at("attempt"));
+                    }
+                }
+            };
+            for (const auto& reference : inputs) {
+                visit(reference);
+            }
+            for (const auto& [reference, attempt] : publications) {
+                for (const auto& object : attempt->at("receipt").at("packages")) {
+                    if (packages.contains(reference)) {
+                        keep.insert(object.at("path"));
+                    }
+                }
+                const auto& development = attempt->at("receipt").at("development_export");
+                if (inputs.contains(reference) && !development.is_null()) {
+                    keep.insert(development.at("path"));
+                }
+            }
+            auto commands = Json::array();
+            for (const auto& [scope, order] : groups) {
+                if (!busy.contains(scope)) {
+                    const auto& basis = *owners.at(order.front());
+                    const auto id = digest(Json{scope, state.at("next_revision")});
+                    Json request{{"schema", 1},
+                                 {"kind", "retention"},
+                                 {"scope", scope},
+                                 {"source", {{"deployment", deployment}}},
+                                 {"target", basis.at("target_row")},
+                                 {"environment", publications.at(order.front())->at("receipt").at("environment")},
+                                 {"objects", Json::array()},
+                                 {"execution", id},
+                                 {"attempt", id + ":" + state.at("next_revision").dump()},
+                                 {"revision", state.at("next_revision")},
+                                 {"label", "retention " + id},
+                                 {"artifact_name", "core-ci-retention-" + id}};
+                    auto expires = Json::array();
+                    for (auto iterator = order.rbegin(); iterator != order.rend(); ++iterator) {
+                        const auto& reference = *iterator;
+                        const auto& attempt = *publications.at(reference);
+                        if (!inputs.contains(reference)) {
+                            const auto offset = request.at("objects").size();
+                            bool fits = true;
+                            auto objects = attempt.at("receipt").at("packages");
+                            const auto& development = attempt.at("receipt").at("development_export");
+                            if (!development.is_null()) {
+                                objects.push_back(development);
+                            }
+                            if (std::none_of(attempt.at("receipt").at("packages").begin(),
+                                             attempt.at("receipt").at("packages").end(),
+                                             [&](const auto& object) {
+                                                 return keep.contains(object.at("path"));
+                                             })) {
+                                auto receipt = attempt.at("receipt");
+                                receipt.erase("feed_revision");
+                                receipt.erase("publication_verified_utc");
+                                const auto bytes = receipt.dump() + "\n";
+                                const auto path = "receipts/" + owners.at(reference)->at("id").get<std::string>() + "/" +
+                                                  attempt.at("revision").dump() + ".json";
+                                objects.push_back({{"path", path}, {"size", bytes.size()}, {"sha256", hash(bytes, EVP_sha256())}});
+                            }
+                            for (auto object = objects.begin(); object != objects.end() && fits; ++object) {
+                                const auto path = object->at("path").get<std::string>();
+                                if (!keep.contains(path) && claimed.insert(path).second) {
+                                    request["objects"].push_back(
+                                        {{"path", path}, {"size", object->at("size")}, {"sha256", object->at("sha256")}});
+                                    const Json node{{"id", id}, {"attempts", {{{"id", request.at("attempt")}, {"assignment", request}}}}};
+                                    fits = request.dump().size() <= 60000 && graph::inputs(node, true).dump().size() <= 65535;
+                                    if (!fits) {
+                                        request["objects"].erase(request["objects"].end() - 1);
+                                        claimed.erase(path);
+                                    }
+                                }
+                            }
+                            require(fits || !request.at("objects").empty(), "indivisible retention object exceeds dispatch bounds");
+                            if ((fits || request.at("objects").size() > offset) && !attempt.contains("expired_by")) {
+                                expires.push_back(reference);
+                            }
+                        }
+                    }
+                    if (!request.at("objects").empty() || !expires.empty()) {
+                        auto attempt = waiting(state, id);
+                        attempt["assignment"] = request;
+                        attempt["state"] = "publishing";
+                        for (const auto& reference : expires) {
+                            (*publications.at(reference))["expired_by"] = id;
+                        }
+                        state["retention"][id] = {{"id", id}, {"source", request.at("source")}, {"attempts", {attempt}}};
+                        commands.push_back({{"execution", id}, {"attempt", attempt.at("id")}, {"publication", true}});
+                    }
+                }
+            }
+            return commands;
         }
 
         bool retirable(const Json& node) {
@@ -353,12 +539,13 @@ namespace coreci {
         void retire(Json& state, const std::string& id, const std::string& attemptId) {
             auto& node = state.at("executions").at(id);
             require(node.at("attempts").back().at("id") == attemptId && retirable(node), "publication cannot be retired");
-            failed(node, attemptId, "operator abandoned unconfirmed dispatch; remote outcome unknown");
+            failed(node, attemptId, retiredUncertain);
         }
 
         void retry(Json& state, const std::string& id) {
             auto& node = state.at("executions").at(id);
             require(node.at("attempts").back().at("state") == "failed" && node.at("superseded_by") == "", "execution cannot be retried");
+            require(eligible(state, node, false), "historical retry input expired or unavailable");
             node["attempts"].push_back(waiting(state, id));
         }
 

@@ -185,6 +185,20 @@ def publication_paths(root):
         assert recorded[0]["compatibility"]["sdk_sha256"] != recorded[1]["compatibility"]["sdk_sha256"]
         assert Path(recorded[0]["packages"][0]["path"]).parent == Path(recorded[1]["packages"][0]["path"]).parent
 
+        import retention
+        objects = recorded[0]["packages"]
+        command = {**selected, "kind": "retention", "objects": objects, "environment": environment}
+        preserved = feed / recorded[1]["packages"][0]["path"]
+        retained_hash = contract.file_hash(preserved)
+        with patch.object(sign_openwrt, "verified_tools", return_value=fixture), patch.dict(
+            os.environ, {"CORE_CI_APK": str(apk), "CORE_CI_TOOLS_SHA256": "f" * 64}
+        ):
+            _, removed = retention.update(command, feed, private, None, public, temporary, archive)
+        assert removed == [objects[0]["path"]] and not (feed / removed[0]).exists()
+        assert contract.file_hash(preserved) == retained_hash
+        index = feed / folder / ("Packages" if package_format == "ipk" else "packages.adb")
+        assert Path(removed[0]).name not in index.read_text() and preserved.name in index.read_text()
+
 
 def tools_boundary(root):
     # Synthetic ELF dependency responses exercise the production handoff, without executing SDK tools.

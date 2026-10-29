@@ -210,7 +210,7 @@ def main():
     trusted_deployment(selected)
     require(selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"]
             and selected["target"]["family"] == "openwrt", "publication tools assignment mismatch")
-    raw = os.environ["CORE_CI_SDK_ENVIRONMENT"]
+    raw = canonical(selected["environment"]) if selected.get("kind") == "retention" else os.environ["CORE_CI_SDK_ENVIRONMENT"]
     require(len(raw.encode()) <= 16384 and "\n" not in raw and "\r" not in raw, "invalid SDK environment selector")
     environment = json.loads(raw)
     require(isinstance(environment, dict), "SDK environment selector must be an object")

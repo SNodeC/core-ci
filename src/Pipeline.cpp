@@ -12,9 +12,14 @@ namespace coreci {
     }
     void Pipeline::change(const std::function<Json(Json&)>& derive, const Callback& callback) {
         store.change(
-            [derive](Json& state) {
+            [this, derive](Json& state) {
                 const auto value = derive(state);
-                return Json{{"value", value}, {"dispatches", graph::advance(state)}};
+                auto work = graph::advance(state);
+                if (!state.at("executions").empty()) {
+                    const auto cleanup = graph::retain(state, config.deployment(app, github, config.publicationRef));
+                    work.insert(work.end(), cleanup.begin(), cleanup.end());
+                }
+                return Json{{"value", value}, {"dispatches", work}};
             },
             [this, callback](const DatabaseResult& result, const Json& outcome) {
                 if (result.error.empty()) {
@@ -29,7 +34,7 @@ namespace coreci {
     void Pipeline::fail(const std::string& id, const std::string& attempt, const std::string& reason) {
         change(
             [=](Json& state) {
-                graph::failed(state.at("executions").at(id), attempt, reason);
+                graph::failed(graph::work(state, id), attempt, reason);
                 return Json{{"execution", id}};
             },
             log);
@@ -102,7 +107,7 @@ namespace coreci {
             const auto id = work.at("execution").get<std::string>();
             const auto attemptId = work.at("attempt").get<std::string>();
             const bool publication = work.at("publication");
-            const auto node = store.graph().at("executions").at(id);
+            const auto node = graph::work(store.graph(), id);
             const auto assigned = node.at("attempts").back().at("assignment");
             const auto deployment = assigned.at("source").at("deployment");
             const auto workflow = deployment.at(publication ? "publication_workflow" : "source_workflow");
@@ -115,32 +120,31 @@ namespace coreci {
                     if (!proof.error.empty() || proof.blobSha != workflow.at("blob_sha").get<std::string>()) {
                         fail(id, attemptId, "approved dispatch workflow is unavailable or changed");
                     } else {
-                        store.change(
+                        change(
                             [=](Json& state) {
-                                auto& attempt = state.at("executions").at(id).at("attempts").back();
+                                auto& attempt = graph::work(state, id).at("attempts").back();
                                 require(attempt.at("id") == attemptId && attempt.at("state") == (publication ? "publishing" : "building"),
                                         "dispatch attempt changed before preflight commit");
                                 attempt["preflight"][publication ? "publication" : "build"] = {{"commit", proof.source.at("commit")},
                                                                                                {"blob_sha", proof.blobSha}};
-                                return graph::inputs(state.at("executions").at(id), publication);
+                                return graph::inputs(graph::work(state, id), publication);
                             },
-                            [=, this](const DatabaseResult& committed, const Json& inputs) {
-                                if (!committed.error.empty()) {
-                                    log({503, {{"error", committed.error}, {"uncertain", committed.uncertain}}});
-                                } else {
+                            [=, this](const PipelineResult& committed) {
+                                log(committed);
+                                if (committed.status == 200) {
                                     const auto path = workflow.at("path").get<std::string>();
                                     github.request(
                                         repository,
                                         "POST",
                                         "/actions/workflows/" + httputils::url_encode(path.substr(path.rfind('/') + 1)) + "/dispatches",
-                                        {{"ref", workflow.at("ref")}, {"inputs", inputs}},
+                                        {{"ref", workflow.at("ref")}, {"inputs", committed.body}},
                                         {{"actions", "write"}},
                                         [=, this](const GitHubResult& response) {
                                             if (response.status == 200 && response.error.empty() &&
                                                 response.body.contains("workflow_run_id")) {
-                                                store.change(
+                                                change(
                                                     [=](Json& state) {
-                                                        auto& attempt = state.at("executions").at(id).at("attempts").back();
+                                                        auto& attempt = graph::work(state, id).at("attempts").back();
                                                         require(attempt.at("id") == attemptId,
                                                                 "dispatch response belongs to an older attempt");
                                                         auto& identity = attempt["dispatch"][publication ? "publication" : "build"];
@@ -149,11 +153,7 @@ namespace coreci {
                                                         identity = response.body.at("workflow_run_id");
                                                         return Json();
                                                     },
-                                                    [](const DatabaseResult& result, const Json&) {
-                                                        if (!result.error.empty()) {
-                                                            log({503, {{"error", result.error}, {"uncertain", result.uncertain}}});
-                                                        }
-                                                    });
+                                                    log);
                                             } else if (!response.submitted || (response.status >= 400 && !response.uncertain())) {
                                                 fail(id, attemptId, "GitHub definitively rejected dispatch");
                                             } else {
@@ -197,7 +197,7 @@ namespace coreci {
     void Pipeline::record(const std::string& id, const std::string& attemptId, bool publication, const Json& run, const Json& evidence) {
         change(
             [=](Json& state) {
-                auto& node = state.at("executions").at(id);
+                auto& node = graph::work(state, id);
                 const auto before = node;
                 graph::observe(node, attemptId, publication, run, evidence);
                 return Json{{"changed", before != node}};
@@ -205,7 +205,7 @@ namespace coreci {
             [=, this](const PipelineResult& result) {
                 log(result);
                 if (result.status == 200 && result.body.at("changed") &&
-                    store.graph().at("executions").at(id).at("attempts").back().at("id") == attemptId) {
+                    graph::work(store.graph(), id).at("attempts").back().at("id") == attemptId) {
                     complete(id, publication);
                 }
             });
@@ -216,11 +216,13 @@ namespace coreci {
             require(report.at("run_attempt") == 1 && runId.is_number_unsigned() && runId.get<std::uint64_t>() > 0 &&
                         std::regex_match(report.at("head_sha").get<std::string>(), std::regex("^[a-f0-9]{40}$")),
                     "report does not identify an immutable attempt-one run");
-            for (const auto& [id, node] : store.graph().at("executions").items()) {
+            for (const auto& id : graph::workIds(store.graph())) {
+                const auto& node = graph::work(store.graph(), id);
                 for (const auto& attempt : node.at("attempts")) {
                     if (!attempt.at("assignment").is_null()) {
                         const auto deployment = node.at("source").at("deployment");
-                        for (const bool publication : {false, true}) {
+                        for (int phase = attempt.at("assignment").value("kind", "") == "retention" ? 1 : 0; phase < 2; ++phase) {
+                            const bool publication = phase == 1;
                             const auto stage = publication ? "publication" : "build";
                             const auto expectedRepository =
                                 publication ? deployment.at("worker").at("repository") : node.at("source").at("repository");
@@ -309,7 +311,7 @@ namespace coreci {
         }
     }
     void Pipeline::complete(const std::string& id, bool publication) {
-        const auto node = store.graph().at("executions").at(id);
+        const auto node = graph::work(store.graph(), id);
         const auto attempt = node.at("attempts").back();
         const auto stage = publication ? "publication" : "build";
         const auto evidence = attempt.at("evidence").value(stage, Json::object());
@@ -326,6 +328,17 @@ namespace coreci {
                                          evidence.value("job_conclusion", "") == "success";
             if ((!publication && failedRun) || (publication && skippedPush)) {
                 fail(id, attempt.at("id"), publication ? "verified publication failure before feed update" : "verified build failure");
+            } else if (attempt.at("assignment").value("kind", "") == "retention") {
+                if (successfulBuild && evidence.value("push_conclusion", "") == "success") {
+                    change(
+                        [=](Json& state) {
+                            auto& current = graph::work(state, id).at("attempts").back();
+                            require(current.at("id") == attempt.at("id") && current.at("state") != "failed", "cleanup attempt changed");
+                            current["state"] = "published";
+                            return Json{{"retention", id}};
+                        },
+                        log);
+                }
             } else if ((publication && terminalRun && evidence.value("job_status", "") == "completed") ||
                        (!publication && successfulBuild && attempt.at("build_result").is_null())) {
                 completionReads.insert(key);
@@ -334,7 +347,7 @@ namespace coreci {
                         if (result.error.empty()) {
                             change(
                                 [=](Json& state) {
-                                    graph::published(state.at("executions").at(id), attempt.at("id"), result.source);
+                                    graph::published(graph::work(state, id), attempt.at("id"), result.source);
                                     return Json{{"execution", id}};
                                 },
                                 [=, this](const PipelineResult& outcome) {
@@ -344,7 +357,7 @@ namespace coreci {
                         } else {
                             completionReads.erase(key);
                             log({503, {{"error", result.error}, {"execution", id}, {"uncertain", true}}});
-                            const auto& current = store.graph().at("executions").at(id).at("attempts").back();
+                            const auto& current = graph::work(store.graph(), id).at("attempts").back();
                             if (current.at("id") == attempt.at("id") && current.at("evidence").value(stage, Json::object()) != evidence) {
                                 complete(id, publication);
                             }
@@ -398,7 +411,7 @@ namespace coreci {
                                 }
                                 change(
                                     [=](Json& state) {
-                                        auto& current = state.at("executions").at(id);
+                                        auto& current = graph::work(state, id);
                                         if (missing) {
                                             graph::failed(current, attempt.at("id"), "required artifacts missing/expired");
                                         } else {
@@ -461,7 +474,7 @@ namespace coreci {
         }
     }
     void Pipeline::inspect(const std::string& id, const Callback& callback) {
-        const auto node = store.graph().at("executions").at(id);
+        const auto node = graph::work(store.graph(), id);
         const auto attempt = node.at("attempts").back();
         const bool publication = attempt.at("state") == "publishing";
         const auto stage = publication ? "publication" : "build";
@@ -546,7 +559,8 @@ namespace coreci {
         change(
             [restored](Json& state) {
                 auto ids = Json::array();
-                for (auto& [id, node] : state.at("executions").items()) {
+                for (const auto& id : graph::workIds(state)) {
+                    auto& node = graph::work(state, id);
                     const auto& attempt = node.at("attempts").back();
                     const bool publication = attempt.at("state") == "publishing";
                     if (publication || (attempt.at("state") == "building" && attempt.at("build_result").is_null())) {

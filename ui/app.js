@@ -198,7 +198,7 @@ function renderExecution(execution, panel, open) {
         const retry = button("Retry with a new rebuild revision", () => operation(async () => {
             feedback(await api("/api/work/retry", {execution: execution.id}));
         }), "primary");
-        retry.disabled = busy;
+        retry.disabled = busy || !execution.retryable;
         actions.append(retry);
     }
     const technical = node("details");
@@ -268,9 +268,12 @@ function renderWork() {
         }
     }
     element("visible-count").textContent = visible.length + " of " + graph.executions.length + " executions";
+    const cleanup = (graph.retention || []).filter((work) => work.state !== "published");
     const stageLabels = {building: "in build stage", publishing: "in publication stage", waiting: "waiting", failed: "failed"};
     element("counts").textContent = ["building", "publishing", "waiting", "failed"].map((value) =>
         graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + stageLabels[value]).join(" · ");
+    element("counts").textContent += cleanup.length ? " · " + cleanup.length + " cleanup pending or failed" : "";
+    element("counts").title = cleanup.length ? JSON.stringify(cleanup, null, 2) : "";
 }
 function preview(definition) {
     element("definition").value = JSON.stringify(definition, null, 2);

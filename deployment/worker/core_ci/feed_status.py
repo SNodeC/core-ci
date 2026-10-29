@@ -79,35 +79,38 @@ def render(feed, templates=None):
             duration = (finish - start).total_seconds()
         for package in receipt["packages"]:
             relative_path(package["path"])
-            rows.append(
-                {
-                    "execution": receipt.get("execution"),
-                    "attempt": receipt.get("attempt"),
-                    "repository": repository,
-                    "target": "/".join(coordinates[key] for key in ("distribution", "suite", "arch", "format")),
-                    "coordinates": coordinates,
-                    "target_row": receipt.get("target"),
-                    "package": package["name"],
-                    "version": package["version"],
-                    "source": source,
-                    "revision": receipt.get("revision", int(path.stem)),
-                    "dependencies": receipt.get("dependencies"),
-                    "source_commit": receipt["source_commit"],
-                    "sha256": package["sha256"],
-                    "package_url": base + quote(package["path"]),
-                    "package_directory": quote(package["path"].rpartition("/")[0]) + "/",
-                    "feed_tree_url": feed_tree_url,
-                    "receipt_url": base + quote(path.relative_to(feed).as_posix()),
-                    "build_url": build,
-                    "publication_url": publication,
-                    "build_job": job,
-                    "build_duration_seconds": duration,
-                    "environment": receipt.get("environment"),
-                    "summary": receipt.get("summary"),
-                    "published_utc": recorded["publication_verified_utc"] if recorded and recorded["attempt"] == receipt.get("attempt")
-                                     else receipt.get("published_utc"),
-                }
-            )
+            if (feed / package["path"]).is_file():
+                rows.append(
+                    {
+                        "execution": receipt.get("execution"),
+                        "attempt": receipt.get("attempt"),
+                        "repository": repository,
+                        "target": "/".join(coordinates[key] for key in ("distribution", "suite", "arch", "format")),
+                        "coordinates": coordinates,
+                        "target_row": receipt.get("target"),
+                        "package": package["name"],
+                        "version": package["version"],
+                        "source": source,
+                        "revision": receipt.get("revision", int(path.stem)),
+                        "dependencies": receipt.get("dependencies"),
+                        "source_commit": receipt["source_commit"],
+                        "sha256": package["sha256"],
+                        "package_url": base + quote(package["path"]),
+                        "package_directory": quote(package["path"].rpartition("/")[0]) + "/",
+                        "feed_tree_url": feed_tree_url,
+                        "receipt_url": base + quote(path.relative_to(feed).as_posix()),
+                        "build_url": build,
+                        "publication_url": publication,
+                        "build_job": job,
+                        "build_duration_seconds": duration,
+                        "environment": receipt.get("environment"),
+                        "development_export_available": bool(receipt.get("development_export") and
+                            (feed / receipt["development_export"]["path"]).is_file()),
+                        "summary": receipt.get("summary"),
+                        "published_utc": recorded["publication_verified_utc"] if recorded and recorded["attempt"] == receipt.get("attempt")
+                                         else receipt.get("published_utc"),
+                    }
+                )
     rows.sort(key=lambda row: (row["repository"], row["target"], row["package"], row["version"], row["receipt_url"]))
     projects = []
     selected_projects = {item["repository"]: item for item in controller["projects"]} if controller else {}
