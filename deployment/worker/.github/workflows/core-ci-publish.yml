@@ -212,7 +212,7 @@ jobs:
             --artifacts "$RUNNER_TEMP/validated/packages" \
             --feed "$GITHUB_WORKSPACE/feed"
   confirm:
-    if: fromJSON(inputs.assignment).kind != 'retention'
+    if: ${{ !cancelled() && needs.publish.result == 'success' && fromJSON(inputs.assignment).kind != 'retention' }}
     name: Confirm public receipt
     needs: publish
     runs-on: ubuntu-24.04
