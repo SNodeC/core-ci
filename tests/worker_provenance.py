@@ -840,6 +840,12 @@ def main():
     confirm_section = publication_workflow.split("  confirm:\n", 1)[1]
     assert "concurrency:" not in publication_workflow.split("jobs:\n", 1)[0]
     assert "group: core-ci-feed-" in publish_section and "group: core-ci-feed-" in status_workflow
+    validate_job = bundle.split("  validate:\n", 1)[1].split("  tools:\n", 1)[0]
+    assert "apt-get" not in validate_job and "apt-get" not in tools_job
+    assert "target.build.format == 'rpm'" in publish_section and "sudo apt-get install -y createrepo-c\n" in publish_section
+    assert "build-essential" not in publish_section and "zstd" not in publish_section
+    assert all("--without-pip" in writer and '--python "$RUNNER_TEMP/core-ci-status-python/bin/python"' in writer
+               for writer in (publish_section, status_workflow))
     assert "needs: publish" in confirm_section and "environment:" not in confirm_section
     assert "secrets." not in confirm_section and "always()" not in confirm_section
     assert "--phase confirm" in confirm_section and "--receipt-sha256" in confirm_section

@@ -3689,3 +3689,29 @@ Production69+/31- (net38); tests184+/8- (net176); C++3829/3830.
 Exact source/build hashes, reviews and fixture evidence: /tmp/codex/build/core-ci/retention-reduction/.
 No live scheduling, timing, clients or publication acceptance claimed by these local checks.
 Unrelated dirty hunks/private directories preserved; promotion and activation follow.
+
+### Live-code review and setup reduction — 2026-10-30
+
+Owner requested correction under the global principles and a review of actual live code with Claude.
+Read-only SSH confirmed PID266230 and deployed binary SHA256 1f6ee18f6fa2e70b81f3be06e5c312cbcd5f8ff7a0eb9af4ecf60218190d9160.
+Live publisher blob6c1dc8f7edb6c5b3d0adb26a062f3c39aa9fae21 uses worker c850cf3bf37eab9a8e034a88c68d22a2f72b47d2.
+Reviewed deployed worker modules match canonical code. The older status pin has identical executed helpers and all seven
+status-template entries; Claude withdrew the suggested deployment-drift defect. No needless status re-pin performed.
+Three Claude exchanges covered deployed source, candidate code, final applied diff and six new workflow-contract guards.
+Final patch removes validate/tools apt setup, restricts publisher installation to createrepo-c for RPM package work,
+and uses the existing host pip to populate the same isolated renderer venv without bootstrapping another pip copy.
+Production YAML +12/-20/net-8; tests +6/-0. C++ unchanged at3829. No new job, image, helper, schema or controller mechanism.
+Rejected local image prototype files and its requirements hunk removed, with exact evidence retained under publication-boundary/.
+Preserved unrelated dirty docs and private directories. No local commit/push/merge or live activation performed.
+Local API diagnostic proves clean-environment rendering from the pip-less venv; its timings are not hosted-runner proof.
+worker-provenance-boundaries2.15s, worker-package-boundaries2.84s, openwrt-archive-boundaries1.20s passed independently.
+YAML syntax, identical publication copies, changed production line lengths, format-check and git diff --check passed.
+Build/source identity: HEAD8339fefa38ecd38cfe24bd7456b1489ddd4c0f62; task diff SHA256
+3533894b63843525afe495ff00b4a7943c48f54dd7716dbc98a1546c713509b1. Source and tests unchanged after those checks.
+Claude found no concrete defect in the final patch and agrees it is only a partial setup reduction. Remaining whole-job
+writer queuing, hosted tool/pip behavior and actual performance require further evidence; complete-delay acceptance is not claimed.
+Claude withdrew current-tree presence/absence as a safe generic recovery algorithm for uncertain cleanup. Git2.56 source
+plus r436's public error strongly locate that command's403 at ref discovery before update transmission, subject to binary
+provenance limits. This does not explain the authorization denial or authorize a general parser, state change or replay.
+Bound uncertain cleanup recovery remains an explicit policy/authority issue; r436 and its claims were left unchanged.
+Evidence and all three reviews: /tmp/codex/build/core-ci/publication-boundary/.

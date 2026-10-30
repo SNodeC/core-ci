@@ -50,8 +50,6 @@ jobs:
           ref: ${{ env.CORE_CI_TOOLING_SHA }}
           path: tooling
           persist-credentials: false
-      - name: Install standard package metadata tools
-        run: sudo apt-get update && sudo apt-get install -y rpm zstd build-essential
       - name: Validate provenance, archive and actual package metadata
         id: validation
         env:
@@ -96,8 +94,6 @@ jobs:
           ref: ${{ env.CORE_CI_TOOLING_SHA }}
           path: tooling
           persist-credentials: false
-      - name: Install SDK inspection tools
-        run: sudo apt-get update && sudo apt-get install -y zstd build-essential
       - name: Prepare verified publication tools
         id: extracted
         env:
@@ -161,19 +157,19 @@ jobs:
           artifact-ids: ${{ needs.tools.outputs.artifact-id }}
           path: ${{ runner.temp }}/tools
           merge-multiple: true
-      - name: Install standard signing and repository tools
+      - name: Install RPM repository tools
         if: >-
-          fromJSON(inputs.assignment).target.family == 'native' &&
+          fromJSON(inputs.assignment).target.build.format == 'rpm' &&
           (fromJSON(inputs.assignment).kind != 'retention' ||
            contains(format(' {0}', join(fromJSON(inputs.assignment).objects.*.path, ' ')),
                     format(' {0}/', fromJSON(inputs.assignment).target.distribution)))
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm gnupg apt-utils createrepo-c zstd build-essential python3-venv
+          sudo apt-get install -y createrepo-c
       - name: Install pinned template dependencies
         run: |
-          python3 -m venv "$RUNNER_TEMP/core-ci-status-python"
-          "$RUNNER_TEMP/core-ci-status-python/bin/pip" install -r tooling/status-templates/requirements.txt
+          python3 -m venv --without-pip "$RUNNER_TEMP/core-ci-status-python"
+          python3 -m pip --python "$RUNNER_TEMP/core-ci-status-python/bin/python" install -r tooling/status-templates/requirements.txt
       - name: Prepare signed feed update
         id: prepared
         env:
