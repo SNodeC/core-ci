@@ -528,7 +528,9 @@ def main():
     assert "needs.validate.outputs.environment" in tools_job
     assert "needs: [validate, tools]" in bundle
     assert "needs.validate.result == 'success'" in bundle and "needs.validate.result == 'skipped'" in bundle
-    assert "fromJSON(inputs.assignment).target.family == 'openwrt' && needs.tools.result == 'success'" in bundle
+    assert "needs.tools.result == 'skipped'" in bundle and "objects.*.path" in tools_job
+    assert "needs.tools.result == 'success'" in bundle.split("  publish:\n")[1].split("  confirm:\n")[0]
+    assert "if: needs.tools.result == 'success'" in bundle
     assert "fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'" in bundle
     assert "if: ${{ !cancelled() && needs.publish.result == 'success' && fromJSON(inputs.assignment).kind != 'retention' }}" in bundle.split("  confirm:\n")[1]
     assert "CORE_CI_TOOLS_SHA256: ${{ needs.tools.outputs.tools-sha256 }}" in bundle
@@ -536,10 +538,11 @@ def main():
     assert "retention-days: 7" in bundle and bundle.count('--artifacts "$RUNNER_TEMP/validated/packages"') == 2
     import validate
     import sdk
-    for family, value in (("native", {}), ("openwrt", {"sdk": {"sha256": "e" * 64}}), ("openwrt", {"oversize": "x" * 16384})):
+    for family, package_format, value in (("native", "deb", {}), ("openwrt", "ipk", {"sdk": {"sha256": "e" * 64}}),
+                                          ("openwrt", "apk", {"sdk": {"sha256": "e" * 64}}), ("openwrt", "apk", {"oversize": "x" * 16384})):
         selected_output = copy.deepcopy(selected)
-        selected_output["target"] = {"family": family}
-        output = directory / ("selector-" + family + str(len(str(value))))
+        selected_output["target"] = {"family": family, "build": {"format": package_format}}
+        output = directory / ("selector-" + package_format + str(len(str(value))))
         contract.write_json(directory / "manifest.json", {"environment": value})
         with patch.object(sys, "argv", ["validate.py", "--assignment", "unused", "--assignment-sha256", "unused",
                           "--build-result", "unused", "--output", str(directory)]), patch.dict(os.environ, {
@@ -547,7 +550,7 @@ def main():
             "RUNNER_TEMP": str(directory), "GITHUB_OUTPUT": str(output)
         }), patch.object(validate, "assignment", return_value=selected_output), patch.object(validate, "trusted_deployment"), patch.object(
             validate, "artifact", return_value={}
-        ), patch.object(validate, "read_json", return_value={"environment": value}), patch.object(sdk, "prepare"), patch.object(
+        ), patch.object(validate, "read_json", return_value={"environment": value}), patch.object(sdk, "prepare") as prepared, patch.object(
             validate, "verify_manifest", return_value={"environment": value}
         ):
             if "oversize" in value:
@@ -562,6 +565,7 @@ def main():
                 validate.main()
                 assert (output.read_text() if output.exists() else "") == (
                     "environment=" + contract.canonical(value) + "\n" if family == "openwrt" else "")
+            assert prepared.call_count == (1 if package_format == "apk" else 0)
     rendered = directory / "publication.yml"
     rendered_info = contract.output([sys.executable, str(repository / "deployment/render-source-workflow.py"), "--worker", "Owner/worker",
          "--tooling-sha", "a" * 40, "--template", str(bundle_template), "--output", str(rendered)])
