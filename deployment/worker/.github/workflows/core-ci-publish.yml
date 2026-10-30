@@ -81,7 +81,8 @@ jobs:
     needs: validate
     if: >-
       !cancelled() && fromJSON(inputs.assignment).target.family == 'openwrt' &&
-      (needs.validate.result == 'success' || (fromJSON(inputs.assignment).kind == 'retention' && needs.validate.result == 'skipped'))
+      (needs.validate.result == 'success' || (fromJSON(inputs.assignment).kind == 'retention' && needs.validate.result == 'skipped')) &&
+      (fromJSON(inputs.assignment).kind != 'retention' || contains(join(fromJSON(inputs.assignment).objects.*.path, ' '), 'openwrt/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -122,7 +123,9 @@ jobs:
     if: >-
       !cancelled() && (needs.validate.result == 'success' ||
        (fromJSON(inputs.assignment).kind == 'retention' && needs.validate.result == 'skipped')) &&
-      ((fromJSON(inputs.assignment).target.family == 'openwrt' && needs.tools.result == 'success') ||
+      ((fromJSON(inputs.assignment).target.family == 'openwrt' && (needs.tools.result == 'success' ||
+        (fromJSON(inputs.assignment).kind == 'retention' && needs.tools.result == 'skipped' &&
+         !contains(join(fromJSON(inputs.assignment).objects.*.path, ' '), 'openwrt/')))) ||
        (fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'))
     concurrency:
       group: core-ci-feed-${{ vars.FEED_REPOSITORY }}-${{ vars.FEED_BRANCH }}
@@ -153,13 +156,17 @@ jobs:
           path: ${{ runner.temp }}/validated
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        if: fromJSON(inputs.assignment).target.family == 'openwrt'
+        if: needs.tools.result == 'success'
         with:
           artifact-ids: ${{ needs.tools.outputs.artifact-id }}
           path: ${{ runner.temp }}/tools
           merge-multiple: true
       - name: Install standard signing and repository tools
-        if: fromJSON(inputs.assignment).target.family == 'native'
+        if: >-
+          fromJSON(inputs.assignment).target.family == 'native' &&
+          (fromJSON(inputs.assignment).kind != 'retention' ||
+           contains(format(' {0}', join(fromJSON(inputs.assignment).objects.*.path, ' ')),
+                    format(' {0}/', fromJSON(inputs.assignment).target.distribution)))
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm gnupg apt-utils createrepo-c zstd build-essential python3-venv

@@ -515,13 +515,13 @@ namespace coreci {
                             }
                         }
                     }
-                    if (!request.at("objects").empty() || !expires.empty()) {
+                    for (const auto& reference : expires) {
+                        (*publications.at(reference))["expired_by"] = request.at("objects").empty() ? Json("retention policy") : Json(id);
+                    }
+                    if (!request.at("objects").empty()) {
                         auto attempt = waiting(state, id);
                         attempt["assignment"] = request;
                         attempt["state"] = "publishing";
-                        for (const auto& reference : expires) {
-                            (*publications.at(reference))["expired_by"] = id;
-                        }
                         state["retention"][id] = {{"id", id}, {"source", request.at("source")}, {"attempts", {attempt}}};
                         commands.push_back({{"execution", id}, {"attempt", attempt.at("id")}, {"publication", true}});
                     }
@@ -542,11 +542,27 @@ namespace coreci {
             failed(node, attemptId, retiredUncertain);
         }
 
-        void retry(Json& state, const std::string& id) {
-            auto& node = state.at("executions").at(id);
-            require(node.at("attempts").back().at("state") == "failed" && node.at("superseded_by") == "", "execution cannot be retried");
-            require(eligible(state, node, false), "historical retry input expired or unavailable");
-            node["attempts"].push_back(waiting(state, id));
+        Json retry(Json& state, const std::string& id) {
+            auto& node = work(state, id);
+            require(node.at("attempts").back().at("state") == "failed", "work cannot be retried");
+            auto commands = Json::array();
+            auto attempt = waiting(state, id);
+            if (state.at("executions").contains(id)) {
+                require(node.at("superseded_by") == "", "execution cannot be retried");
+                require(eligible(state, node, false), "historical retry input expired or unavailable");
+            } else {
+                attempt["assignment"] = node.at("attempts").back().at("assignment");
+                attempt["assignment"]["attempt"] = attempt.at("id");
+                attempt["assignment"]["revision"] = attempt.at("revision");
+                attempt["assignment"]["label"] = "retention " + id + " | r" + attempt.at("revision").dump();
+                attempt["state"] = "publishing";
+                const Json candidate{{"id", id}, {"attempts", {attempt}}};
+                require(attempt.at("assignment").dump().size() <= 60000 && inputs(candidate, true).dump().size() <= 65535,
+                        "GitHub dispatch payload exceeds supported input bounds");
+                commands.push_back({{"execution", id}, {"attempt", attempt.at("id")}, {"publication", true}});
+            }
+            node["attempts"].push_back(attempt);
+            return commands;
         }
 
         void observe(Json& node, const std::string& attemptId, bool publication, const Json& run, const Json& facts) {

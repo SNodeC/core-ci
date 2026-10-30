@@ -13,11 +13,16 @@ namespace coreci {
     void Pipeline::change(const std::function<Json(Json&)>& derive, const Callback& callback) {
         store.change(
             [this, derive](Json& state) {
-                const auto value = derive(state);
+                auto value = derive(state);
                 auto work = graph::advance(state);
                 if (!state.at("executions").empty()) {
                     const auto cleanup = graph::retain(state, config.deployment(app, github, config.publicationRef));
                     work.insert(work.end(), cleanup.begin(), cleanup.end());
+                }
+                if (value.is_object() && value.contains("dispatches")) {
+                    const auto& commands = value.at("dispatches");
+                    work.insert(work.end(), commands.begin(), commands.end());
+                    value.erase("dispatches");
                 }
                 return Json{{"value", value}, {"dispatches", work}};
             },
@@ -97,8 +102,7 @@ namespace coreci {
     void Pipeline::retry(const std::string& execution, const Callback& callback) {
         change(
             [execution](Json& state) {
-                graph::retry(state, execution);
-                return Json{{"execution", execution}};
+                return Json{{"execution", execution}, {"dispatches", graph::retry(state, execution)}};
             },
             callback);
     }

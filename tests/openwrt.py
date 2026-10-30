@@ -186,6 +186,22 @@ def publication_paths(root):
         assert Path(recorded[0]["packages"][0]["path"]).parent == Path(recorded[1]["packages"][0]["path"]).parent
 
         import retention
+        metadata_feed = root / (package_format + "-metadata-only")
+        shutil.copytree(feed, metadata_feed)
+        receipt_file = metadata_feed / "receipts" / selected["execution"] / (str(selected["revision"]) + ".json")
+        metadata = {"path": str(receipt_file.relative_to(metadata_feed)), "size": receipt_file.stat().st_size, "sha256": contract.file_hash(receipt_file)}
+        before_metadata = {path: path.read_bytes() for path in metadata_feed.rglob("*") if path.is_file()}
+        with patch.object(sign_openwrt, "signing_tools") as signing, patch.object(sign_openwrt, "verified_tools") as verified, patch.object(
+            sign_openwrt, "indexes"
+        ) as indexed:
+            paths, removed = retention.update({**selected, "objects": [metadata]}, metadata_feed, private, None, public, temporary, root / "absent-tools")
+            assert paths == removed == [metadata["path"]] and not signing.called and not verified.called and not indexed.called
+        assert all(path.read_bytes() == data for path, data in before_metadata.items() if path != receipt_file)
+        missing_feed = root / (package_format + "-missing-tools")
+        shutil.copytree(feed, missing_feed)
+        with patch.dict(os.environ, {"CORE_CI_TOOLS_SHA256": "f" * 64}):
+            rejects(lambda: retention.update({**selected, "objects": recorded[1]["packages"], "environment": environment},
+                                             missing_feed, private, None, public, temporary, root / "absent-tools"))
         objects = recorded[0]["packages"]
         command = {**selected, "kind": "retention", "objects": objects, "environment": environment}
         preserved = feed / recorded[1]["packages"][0]["path"]

@@ -3663,3 +3663,29 @@ value was applied to the existing package-publication APT_SIGNING_KEY; no new cr
 permission scope. No signing-key plaintext inspected or placed in source/artifacts/logs.
 Public worker key metadata is updated; no compatibility code, C++/Python/YAML/controller
 logic change. Native maintenance failures remain visible, before push, pending explicit recovery.
+
+### Retention work reduction implemented and locally verified — 2026-10-30
+
+Owner approved explicit retention retry, revision-specific labels and bounds of
++40 production/+190 tests/C++3830, then authorized commit/push/merge/deploy and a
+fresh VOC-Experiments graph, subject to Claude reviewing the diff before applying.
+Claude reviewed every hunk; two fixture defects and one missing assertion were
+corrected before its explicit agreement to reviewed-revision.patch09fc76aa.
+Applied the reviewed source; one runtime fixture exceeded argv size. Claude agreed
+to targeted JSON_REMOVE plus an exact seeding assertion; the rerun passed.
+Single graph/FIFO and commit-before-dispatch remain; unknown outcomes are not retried.
+Empty expiry is graph-only; metadata-only deletion skips SDK/native/index/signing
+work. Failed cleanup can be explicitly retried via the existing API with exact
+objects/pins/history and a unique label. IPK validation omits duplicate SDK setup;
+APK parsing and independent publication-tool verification remain. Actual shared
+writes, protection-release waves, public progress and Pages proof remain necessary.
+Release build core-ci/graph-test/graph-store-test and format-check passed. Each
+focused ctest target ran separately: graph-state-boundaries0.10s, persistence-graph
+1.32s, pipeline-retention5.01s, openwrt-archive-boundaries1.21s,
+worker-package-boundaries2.36s, worker-provenance-boundaries1.98s, pipeline-chain9.18s.
+Real isolated MariaDB/synthetic GitHub; unchanged eight-report burst zero HTTP;
+full synthetic chain635 HTTP including16 token/20 artifact requests, not live throughput.
+Production69+/31- (net38); tests184+/8- (net176); C++3829/3830.
+Exact source/build hashes, reviews and fixture evidence: /tmp/codex/build/core-ci/retention-reduction/.
+No live scheduling, timing, clients or publication acceptance claimed by these local checks.
+Unrelated dirty hunks/private directories preserved; promotion and activation follow.

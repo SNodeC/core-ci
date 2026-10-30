@@ -142,6 +142,51 @@ namespace {
               "cleanup lost its independent authority or exact removal set");
         const auto before = state;
         check(graph::retain(state, deployment).empty() && state == before, "unchanged retention replayed cleanup");
+        auto emptyOnly = before;
+        const auto cleanupId = commands.front().at("execution").get<std::string>();
+        graph::work(emptyOnly, cleanupId)["attempts"].back()["state"] = "published";
+        emptyOnly["executions"][ids.front()]["attempts"].back().erase("expired_by");
+        const auto revision = emptyOnly.at("next_revision");
+        check(graph::retain(emptyOnly, deployment).empty() && emptyOnly.at("next_revision") == revision &&
+                  emptyOnly.at("retention").size() == before.at("retention").size() &&
+                  emptyOnly.at("executions").at(ids.front()).at("attempts").back().at("expired_by") == "retention policy",
+              "graph-only expiry consumed a revision or created cleanup");
+        const auto unchanged = emptyOnly;
+        check(graph::retain(emptyOnly, deployment).empty() && emptyOnly == unchanged, "graph-only expiry repeated");
+        check(graph::blockers(emptyOnly, emptyOnly.at("executions").at(ids.front())).front() == "inputs expired by retention",
+              "graph-only expiry lost its blocker");
+        auto recovery = before;
+        auto& cleanupNode = graph::work(recovery, cleanupId);
+        graph::failed(cleanupNode, cleanupNode.at("attempts").back().at("id"), "verified failure before push");
+        const auto failedAttempt = cleanupNode.at("attempts").back();
+        const auto retryCommands = graph::retry(recovery, cleanupId);
+        const auto& renewed = cleanupNode.at("attempts").back();
+        auto expectedAssignment = failedAttempt.at("assignment");
+        expectedAssignment["attempt"] = renewed.at("id");
+        expectedAssignment["revision"] = renewed.at("revision");
+        expectedAssignment["label"] = "retention " + cleanupId + " | r" + renewed.at("revision").dump();
+        check(retryCommands.size() == 1 && retryCommands.front().at("attempt") == renewed.at("id") &&
+                  retryCommands.front().at("publication") == true && renewed.at("assignment") == expectedAssignment &&
+                  renewed.at("state") == "publishing" && renewed.at("evidence").empty() && renewed.at("publication_run").is_null() &&
+                  !renewed.contains("preflight") && !renewed.contains("dispatch") && cleanupNode.at("attempts").front() == failedAttempt,
+              "explicit cleanup retry lost history, pins or exact authority");
+        check(graph::retain(recovery, deployment).empty() &&
+                  recovery.at("executions").at(ids.front()).at("attempts").back().at("expired_by") == cleanupId,
+              "cleanup retry released claims or rewrote expiry");
+        rejects(
+            [&] {
+                graph::retry(recovery, cleanupId);
+            },
+            "active cleanup retry accepted");
+        auto oversized = before;
+        auto& invalid = graph::work(oversized, cleanupId);
+        graph::failed(invalid, invalid.at("attempts").back().at("id"), "verified failure before push");
+        invalid["attempts"].back()["assignment"]["objects"][0]["path"] = std::string(60000, 'x');
+        rejects(
+            [&] {
+                graph::retry(oversized, cleanupId);
+            },
+            "oversized cleanup retry accepted");
         auto& dependent = held["executions"][consumer];
         build(dependent, 800);
         graph::advance(held);

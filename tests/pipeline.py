@@ -236,7 +236,9 @@ def exercise(arguments):
                     if stage == "publication" and holds["publication"]:
                         publication_started.set()
                         assert publication_release.wait(15), "test publication hold was not released"
-                    if unconfirmed and stage == "publication":
+                    if stage == "publication" and holds["publication"] == "drop":
+                        self.close_connection = True
+                    elif unconfirmed and stage == "publication":
                         inspection["candidate"] = dict(runs[run_id])
                         if arguments.case != "unconfirmed-run":
                             del runs[run_id]
@@ -369,7 +371,7 @@ def exercise(arguments):
                    "pipeline.usign-key-sha256": "b" * 64, "pipeline.apk-key-sha256": "c" * 64}
         config.write_text("\n".join(name + "=" + json.dumps(value) for name, value in options.items()) + "\n")
         controller_socket = socket
-        if arguments.case == "status-uncertain":
+        if arguments.case in ("status-uncertain", "retention"):
             proxy = enrollment.DatabaseProxy(root / "p.sock", socket)
             proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
             proxy_thread.start()
@@ -493,6 +495,57 @@ def exercise(arguments):
             assert removal["sha256"] == hashlib.sha256(public_files[removal["path"]]).hexdigest() and removal["size"] == len(public_files[removal["path"]])
             assert next(x for x in graph["executions"] if x["id"] == publications[0]["execution"])["expired_by"] == cleanup["selected"]["execution"]
             assert api("/api/work/retry", {"execution": failed[0]["selected"]["execution"]})[0] == 409
+            cleanup_id = cleanup["selected"]["execution"]
+            for retry_number in range(2):
+                assert report(cleanup, job=True, conclusion="failure", wrong={
+                    "steps": [{"name": "Publish checked feed update", "conclusion": "skipped"}]
+                })[0] == 202
+                wait(lambda: next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)["state"] == "failed",
+                     "definite cleanup failure not applied")
+                row = next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)
+                assert row["retryable"] is True
+                count = len(dispatches)
+                assert api("/api/work/reconcile", {})[0] == 200 and len(dispatches) == count
+                if retry_number == 0:
+                    proxy.drop_commit, proxy.drop_query = True, b"UPDATE GRAPH_STATE"
+                    status, outcome = api("/api/work/retry", {"execution": cleanup_id})
+                    assert status == 503 and outcome["uncertain"] is True and proxy.dropped == 1
+                    assert len(dispatches) == count and api("/api/graph")[1]["mutations_allowed"] is False
+                    lifecycle.stop(application)
+                    application = subprocess.Popen(command, stdout=(root / "retry-lost-ack.log").open("w"), stderr=subprocess.STDOUT)
+                    lifecycle.wait_http(port, application)
+                    wait(lambda: next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)["state"] == "failed",
+                         "unsubmitted restored retry not classified definitely")
+                    assert len(dispatches) == count
+                publication_started.clear()
+                publication_release.clear()
+                holds["publication"] = True if retry_number == 0 else "drop"
+                assert api("/api/work/retry", {"execution": cleanup_id}) == (200, {"execution": cleanup_id})
+                assert publication_started.wait(5), "retry dispatch did not reach held response"
+                wait(lambda: len(dispatches) == count + 1, "explicit cleanup retry not dispatched once")
+                previous, cleanup = cleanup, dispatches[-1]
+                expected = {**previous["selected"], "attempt": cleanup["selected"]["attempt"], "revision": cleanup["selected"]["revision"],
+                            "label": "retention " + cleanup_id + " | r" + str(cleanup["selected"]["revision"])}
+                assert report(previous, conclusion="failure")[0] == 202
+                assert report(previous, job=True, conclusion="skipped", wrong={
+                    "name": "Publish ${{ fromJSON(inputs.assignment).label }}",
+                    "steps": [{"name": "Publish checked feed update", "conclusion": "skipped"}]
+                })[0] == 202
+                current = next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)
+                assert current["state"] == "publishing" and current["publication_run"] is None
+                publication_release.set()
+                if retry_number == 1:
+                    wait(lambda: "dispatch outcome is uncertain" in (root / "retry-lost-ack.log").read_text(), "lost response not reported")
+                    hidden = runs.pop(cleanup["id"])
+                    assert api("/api/work/reconcile", {})[0] == 200
+                    assert next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)["publication_run"] is None
+                    runs[cleanup["id"]] = hidden
+                holds["publication"] = False
+                assert cleanup["selected"] == expected and cleanup["selected"]["attempt"] != previous["selected"]["attempt"]
+                assert api("/api/work/retry", {"execution": cleanup_id})[0] == 409
+                assert api("/api/work/reconcile", {})[0] == 200 and len(dispatches) == count + 1
+                current = next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)
+                assert current["retryable"] is False and current["publication_run"]["id"] == cleanup["id"]
             count = len(dispatches)
             assert report(cleanup, status="in_progress")[0] == 202
             lifecycle.stop(application)
@@ -505,7 +558,33 @@ def exercise(arguments):
             assert report(cleanup)[0] == 202 and report(cleanup, job=True)[0] == 202
             time.sleep(0.15)
             assert len(trace) == offset and len(dispatches) == count, "cleanup duplicates caused reads or dispatch"
-            finish_boundary("expiry before dispatch, frozen retry refusal, late first proof and cleanup restart without replay")
+            # Seed the same isolated fixture without its expiry marker: all exact objects are already claimed.
+            lifecycle.stop(application)
+            stored = json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip()))
+            stored["executions"][publications[0]["execution"]]["attempts"][-1].pop("expired_by")
+            path = '$.executions."' + publications[0]["execution"] + '".attempts[' + str(len(stored["executions"][publications[0]["execution"]]["attempts"]) - 1) + '].expired_by'
+            lifecycle.query(socket, "UPDATE boundary.graph_state SET document=JSON_REMOVE(document, '" + path + "')")
+            assert json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip())) == stored
+            offset = len(trace)
+            application = subprocess.Popen(command, stdout=(root / "graph-only.log").open("w"), stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
+            wait(lambda: next(x for x in api("/api/graph")[1]["executions"] if x["id"] == publications[0]["execution"]).get("expired_by") == "retention policy",
+                 "graph-only expiry not applied")
+            stored_after = json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip()))
+            assert stored_after["next_revision"] == stored["next_revision"] and len(dispatches) == count
+            public = api("/public/status")[1]
+            assert all(item["id"] != publications[0]["execution"] for item in public["executions"])
+            cleanup_traffic = [entry for entry in trace[offset:] if "/core-ci-publish.yml/dispatches" in entry[2]]
+            assert not cleanup_traffic, cleanup_traffic
+            print("Graph-only expiry HTTP total/status/token:", len(trace[offset:]),
+                  sum("core-ci-status.yml/dispatches" in item[2] for item in trace[offset:]),
+                  sum(item[2].startswith("/app/installations/") for item in trace[offset:]))
+            lifecycle.stop(application)
+            application = subprocess.Popen(command, stdout=(root / "graph-only-restored.log").open("w"), stderr=subprocess.STDOUT)
+            lifecycle.wait_http(port, application)
+            assert next(x for x in api("/api/graph")[1]["executions"] if x["id"] == publications[0]["execution"])["expired_by"] == "retention policy"
+            assert len(dispatches) == count
+            finish_boundary("graph-only expiry, explicit cleanup retry, late first proof and restart without replay")
         elif arguments.case in review_cases:
             if arguments.case == "status-approval-recovery":
                 message = "approved public status workflow is unavailable"

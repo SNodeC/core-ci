@@ -382,6 +382,16 @@ rebase replaces it. Status updates remain ordinary parented commits with fast-fo
 Retention activation requires resolving historical retries pinned to the older publisher;
 see [the retention design](../proposals/publication-retention-design.md).
 
+An expiry with no physical objects is recorded only in the graph. Metadata-only cleanup
+removes the exact receipt/export bytes without SDK preparation, signing or index updates.
+To retry definitely failed cleanup, find its `id` and `retryable: true` in the `retention`
+list from `GET /api/graph`, then send `POST /api/work/retry` with `{"execution":"<id>"}`.
+This creates one new attempt with the same objects and tooling/workflow pins, and a
+revision-specific label that prevents old reports from binding to it. Unknown
+outcomes cannot be retried; another definite failure requires another explicit action.
+IPK validation reads metadata without preparing an SDK; independent publication-tool
+verification remains. APK validation retains its SDK parser.
+
 The worker enforces a conservative 900 MiB site bound. GitHub Pages limits published sites
 to 1 GB, has a soft 100 GB/month bandwidth limit and a ten-minute deployment timeout.
 Review the current [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)

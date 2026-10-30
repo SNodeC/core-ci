@@ -11,6 +11,7 @@ import sys
 import tarfile
 import zipfile
 from xml.etree import ElementTree
+from unittest.mock import patch
 
 
 def rejected(operation, message):
@@ -323,6 +324,37 @@ def main():
             link.parent.mkdir(exist_ok=True)
             link.symlink_to(kept.parent, target_is_directory=True)
             rejected(lambda: retention.update(linked, pruning, private, passphrase, public, directory, ""), "linked parent accepted")
+            for bad in ({**objects[0], "size": 0}, {**objects[0], "size": objects[0]["size"] + 1}):
+                rejected(lambda: retention.update({**command, "objects": [bad]}, pruning, private, passphrase, public, directory, ""),
+                         "invalid removal size accepted")
+            rejected(lambda: retention.update({**command, "objects": objects + objects[:1]}, pruning, private, passphrase, public, directory, ""),
+                     "duplicate removal accepted")
+            assert all((pruning / item["path"]).exists() for item in objects)
+            metadata_feed = directory / (package_format + "-metadata-only")
+            shutil.copytree(feed, metadata_feed)
+            metadata = [item for item in objects if item not in receipt["packages"]]
+            prior_bytes = {str(path.relative_to(metadata_feed)): path.read_bytes() for path in metadata_feed.rglob("*") if path.is_file()}
+            with patch.object(retention, "signing_key") as signing, patch.object(retention, "apt_indexes") as apt, patch.object(
+                retention, "rpm_indexes"
+            ) as rpm:
+                paths, removed = retention.update({**command, "objects": metadata}, metadata_feed, private, passphrase, public, directory, "")
+                assert removed == paths == [item["path"] for item in metadata]
+                assert not signing.called and not apt.called and not rpm.called
+            assert {str(path.relative_to(metadata_feed)): path.read_bytes() for path in metadata_feed.rglob("*") if path.is_file()} == {
+                name: data for name, data in prior_bytes.items() if name not in removed
+            }
+            # Distribution names that resemble metadata roots still require real package signing/indexing.
+            for distribution in ("exports", "receipts"):
+                named_feed = directory / (package_format + "-" + distribution)
+                shutil.copytree(feed, named_feed)
+                shutil.copytree(named_feed / request["target"]["distribution"], named_feed / distribution, dirs_exist_ok=True)
+                shutil.rmtree(named_feed / request["target"]["distribution"])
+                named_package = {**receipt["packages"][0], "path": distribution + "/" + receipt["packages"][0]["path"].split("/", 1)[1]}
+                named_command = {**command, "target": {**command["target"], "distribution": distribution}, "objects": [named_package]}
+                indexer = "apt_indexes" if package_format == "deb" else "rpm_indexes"
+                with patch.object(retention, indexer, wraps=getattr(retention, indexer)) as indexed:
+                    retention.update(named_command, named_feed, private, passphrase, public, directory, "")
+                    indexed.assert_called_once()
             paths, removed = retention.update(command, pruning, private, passphrase, public, directory, "")
             assert removed == [item["path"] for item in objects] and all(not (pruning / name).exists() for name in removed)
             assert contract.file_hash(preserved) == prior and all((pruning / name).is_file() for name in set(paths) - set(removed))

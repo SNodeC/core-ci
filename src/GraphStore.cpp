@@ -102,6 +102,7 @@ namespace coreci {
                 }
                 executions.push_back(std::move(row));
             } else {
+                row["retryable"] = attempt.at("state") == "failed";
                 retention.push_back(std::move(row));
             }
         }

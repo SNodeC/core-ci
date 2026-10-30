@@ -60,7 +60,7 @@ def main():
     token = os.environ["SOURCE_ARTIFACT_TOKEN"]
     require(bool(token), "configure read-only source Actions artifact access before activation")
     job = artifact(selected, read_json(arguments.build_result), token, arguments.output)
-    if selected["target"]["family"] == "openwrt":
+    if selected["target"]["build"]["format"] == "apk":
         from sdk import prepare
 
         environment = read_json(Path(arguments.output) / "manifest.json")["environment"]
