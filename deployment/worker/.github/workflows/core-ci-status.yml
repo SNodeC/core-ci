@@ -42,8 +42,8 @@ jobs:
           persist-credentials: false
       - name: Install pinned template dependencies
         run: |
-          python3 -m venv "$RUNNER_TEMP/core-ci-status-python"
-          "$RUNNER_TEMP/core-ci-status-python/bin/pip" install -r tooling/status-templates/requirements.txt
+          python3 -m venv --without-pip "$RUNNER_TEMP/core-ci-status-python"
+          python3 -m pip --python "$RUNNER_TEMP/core-ci-status-python/bin/python" install -r tooling/status-templates/requirements.txt
       - name: Prepare public status
         env:
           CORE_CI_RENDER_PYTHON: ${{ runner.temp }}/core-ci-status-python/bin/python
