@@ -85,17 +85,17 @@ def main():
                         time.sleep(0.05)
                 assert ready, (root / "server.log").read_text()
                 run(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-e",
-                     "CREATE DATABASE race; CREATE DATABASE rejection; CREATE DATABASE unknown_commit;"])
+                     "CREATE DATABASE race; CREATE DATABASE rejection; CREATE DATABASE unknown_commit; CREATE DATABASE projection; CREATE DATABASE reject_projection; CREATE DATABASE unknown_projection; CREATE DATABASE internal;"])
                 config = root / "empty.conf"
                 config.touch()
                 binary = root / "isolated-store-test"
                 binary.symlink_to(build / "store-contract-test")
                 for mode, database in [("race", "race"), ("restart", "race"), ("reject", "rejection"),
-                                       ("unknown", "unknown_commit"), ("restart", "unknown_commit")]:
+                                       ("unknown", "unknown_commit"), ("restart", "unknown_commit"), ("projection", "projection"), ("reject_projection", "reject_projection"), ("unknown_projection", "unknown_projection"), ("internal", "internal")]:
                     front = backend
                     proxy = None
-                    if mode == "unknown":
-                        front = root / "proxy.sock"
+                    if mode.startswith("unknown"):
+                        front = root / f"{mode}-proxy.sock"
                         proxy = threading.Thread(target=drop_commit_reply, args=(front, backend), daemon=True)
                         proxy.start()
                         while not front.exists():

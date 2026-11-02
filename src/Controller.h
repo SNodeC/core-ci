@@ -1,6 +1,7 @@
 #ifndef CORE_CI_CONTROLLER_H
 #define CORE_CI_CONTROLLER_H
 
+#include <algorithm>
 #include <database/mariadb/MariaDBClient.h>
 #include <functional>
 #include <memory>
@@ -42,6 +43,17 @@ namespace ci {
     void retry(Json& graph, const std::string& execution);
     void retire(Json& graph, const std::string& execution, const std::string& acknowledgement);
     Json artifactManifest(const std::string& bytes, const Json& assignment);
+
+    template <typename Records>
+    auto findId(Records& records, const Json& id) {
+        const auto found = std::find_if(records.begin(), records.end(), [&id](const auto& item) {
+            return item.at("id") == id;
+        });
+        return found == records.end() ? nullptr : &*found;
+    }
+
+    Json projectWork(const Json& work, std::size_t index);
+    Json projectRepositories(const Json& repositories);
 
     class Store {
     public:

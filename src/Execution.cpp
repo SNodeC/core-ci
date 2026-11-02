@@ -14,31 +14,27 @@ namespace ci {
                     const Json response = Json::parse(body, nullptr, false);
                     store.change(
                         [action, status, response, context](Json& graph) {
-                            for (auto& work : graph.at("executions")) {
-                                if (work.at("id") == action.at("execution")) {
-                                    for (auto& attempt : work.at("attempts")) {
-                                        if (attempt.at("id") == action.at("attempt")) {
-                                            const std::string stage = action.at("stage");
-                                            attempt["facts"][stage + "_send"] = {
-                                                {"http_status", status},
-                                                {"context", context},
-                                                {"at", utc()},
-                                                {"outcome", status == 200 || status == 204 ? "accepted" : "unresolved"}};
-                                            if (status == 200 && response.contains("workflow_run_id")) {
-                                                require(!attempt.at("facts").contains(stage + "_run_id") ||
-                                                            attempt.at("facts").at(stage + "_run_id") == response.at("workflow_run_id"),
-                                                        "Dispatch response conflicts with original run binding");
-                                                attempt["facts"][stage + "_run_id"] = response.at("workflow_run_id");
-                                            }
-                                            const bool awaiting = (stage == "build" && attempt.at("state") == "building") ||
-                                                                  (stage == "publish" && attempt.at("state") == "publishing");
-                                            if (status >= 400 && status < 500 && status != 408 && awaiting &&
-                                                !attempt.at("facts").contains(stage + "_run")) {
-                                                attempt["state"] = "failed";
-                                                attempt["failure_kind"] = "definite";
-                                                attempt["failure"] = "GitHub rejected workflow dispatch: HTTP " + std::to_string(status);
-                                            }
-                                        }
+                            if (auto* work = findId(graph.at("executions"), action.at("execution"))) {
+                                if (auto* attempt = findId(work->at("attempts"), action.at("attempt"))) {
+                                    const std::string stage = action.at("stage");
+                                    (*attempt)["facts"][stage + "_send"] = {
+                                        {"http_status", status},
+                                        {"context", context},
+                                        {"at", utc()},
+                                        {"outcome", status == 200 || status == 204 ? "accepted" : "unresolved"}};
+                                    if (status == 200 && response.contains("workflow_run_id")) {
+                                        require(!attempt->at("facts").contains(stage + "_run_id") ||
+                                                    attempt->at("facts").at(stage + "_run_id") == response.at("workflow_run_id"),
+                                                "Dispatch response conflicts with original run binding");
+                                        (*attempt)["facts"][stage + "_run_id"] = response.at("workflow_run_id");
+                                    }
+                                    const bool awaiting = (stage == "build" && attempt->at("state") == "building") ||
+                                                          (stage == "publish" && attempt->at("state") == "publishing");
+                                    if (status >= 400 && status < 500 && status != 408 && awaiting &&
+                                        !attempt->at("facts").contains(stage + "_run")) {
+                                        (*attempt)["state"] = "failed";
+                                        (*attempt)["failure_kind"] = "definite";
+                                        (*attempt)["failure"] = "GitHub rejected workflow dispatch: HTTP " + std::to_string(status);
                                     }
                                 }
                             }
@@ -269,20 +265,14 @@ namespace ci {
             done(error);
         };
         store.read(checked(finish, [this, execution, identity, candidate, done, finish](const Json& snapshot) {
-            Json selected;
-            for (const auto& work : snapshot.at("graph").at("executions")) {
-                if (work.at("id") == execution) {
-                    selected = work;
-                    if (!identity.empty()) {
-                        for (const auto& attempt : work.at("attempts")) {
-                            if (attempt.at("id") == identity) {
-                                selected["attempts"] = Json::array({attempt});
-                            }
-                        }
-                    }
+            const auto* work = findId(snapshot.at("graph").at("executions"), execution);
+            require(work != nullptr, "Unknown execution");
+            Json selected = *work;
+            if (!identity.empty()) {
+                if (const auto* attempt = findId(work->at("attempts"), identity)) {
+                    selected["attempts"] = Json::array({*attempt});
                 }
             }
-            require(!selected.is_null(), "Unknown execution");
             const auto& active = selected.at("attempts").back();
             require(active.contains("assignment"), "Work has no assigned remote execution");
             const std::string stage = active.contains("publish_assignment") ? "publish" : "build";

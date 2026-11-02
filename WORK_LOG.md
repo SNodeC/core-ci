@@ -1318,3 +1318,128 @@ Claude final confirmation closed the UI/static evidence questions and reaffirmed
 no blocking findings. Reviews were tool-disabled single-turn calls; its prose
 claim to run commands is unsupported by the CLI record. Actual command, source,
 count and preservation checks were executed here and supplied to the reviewer.
+
+
+### Compact UI Phase 0/1 baseline and growth barrier — 2026-11-02
+
+Source remains 21ef6b9, feat/graph-controller, 2403 physical C++ lines. No production
+or tracked test changes. Used isolated MariaDB and unchanged production objects
+with a TEST-ONLY Store-boundary fixture wrapper; actual HTTP/SSE and Chromium.
+Final measurement completed successfully after fixing temporary harness setup and
+shutdown issues. No GitHub or vchrist contact. Initial 170-record snapshot measured
+6685847 SSE bytes; realistic 20-record addition constructed 82155 SSE bytes and
+closed the stream, followed by browser reconnect. Step/timestamp events were
+125/129 bytes. Debug Store CPU excluding fixture mutation was about 1170–1188 ms;
+this is not production Release or REST-to-GitHub overhead. No speedup claim.
+
+Detailed measurements, toolchain/source identity, preservation manifest and the
+per-file production growth ceilings are in
+/tmp/codex/build/core-ci/compact-ui-20261102/phase1-report.txt. Proposed allowance:
+Store.cpp +70, main.cpp +18, Controller.h +2 = +90 C++ maximum (2403->2493);
+app.js +20 maximum; HTML/CSS and other production files unchanged. These are
+proposed limits, not measured final diffs or already-approved growth. The previous
++45–55 C++ was preliminary. Stop before production edits pending explicit approval.
+
+
+### Compact UI implementation stopped before the hard cap — 2026-11-02
+
+After owner approved +90 C++/+20 JS, documented the draft SSE contract and
+measured full canonically formatted candidates before applying source. The first
+Store candidate was +103; a flat shared selector table was larger (+114); a
+hierarchical whitelist and library-keyed diffs reduced it to +96. Startup/resync
+main.cpp reduced from +34 to +26. With two header declarations the current
+unapplied candidate totals 2527 (+124), 34 above approval and 27 above the hard
+2500 cap. This is not a proven minimum or a validated final implementation.
+
+Stopped without applying C++/UI or tracked test changes. No behaviour tests,
+commit, deployment, restart or live action for this implementation occurred.
+Only draft contract documentation and this append changed. Details and unapplied
+review artifacts: /tmp/codex/build/core-ci/compact-ui-20261102/hard-cap-stop.txt.
+Need explicit cap/allowance revision or a revised design before proceeding.
+
+
+### Completed C++ cap feasibility check — 2026-11-02
+
+The previous 2527-line stop was not a complete reduction review. A complete
+unapplied, canonical candidate now fits at 2493 (+90 over 2403), maximum column
+146. Reused checked()/native error callbacks and SSE response/sender paths;
+consolidated repeated execution/attempt ID searches without changing readiness
+predicates, exact authority, history or uncertainty rules. No blank/comment
+stripping, statement compression, hidden/generated logic or JS business logic.
+
+Per-file measured changes: Controller.h +12, Graph.cpp -18, Execution.cpp -10,
+Store.cpp +91, main.cpp +15; other C++ unchanged. This stays within the approved
+total +90 but redistributes the prior per-file ceiling table; production remains
+unapplied pending that allocation decision. Existing production is still 2403.
+UI/test source files are untouched; JS integration and browser verification remain.
+
+Candidate compilation/link, existing graph invariants, pure projection checks,
+isolated real MariaDB commit/duplicate/rejection/lost-ack/restart checks and real
+loopback HTTP/SSE startup/20-record update/silence/projection-failure checks pass.
+The null optional-verification projection defect was caught and corrected in the
+unapplied draft. Test harness declaration/ABI/CRLF/socket assumptions were also
+corrected; final checks pass. Twenty-record patch is 16698 SSE event bytes (16718
+conservative bound accounting); startup 170 records is 306583 event-message bytes,
+largest event 4960, largest record 1972. Payload-only measurements, no timing or
+system speedup claim. Full buffer/64KiB limits and future pagination remain.
+
+Report, exact counts, candidate hashes, checks/failures and unresolved acceptance:
+/tmp/codex/build/core-ci/compact-ui-20261102/cap-check/thorough-cap-check.txt.
+Current checkout is main/084e2fd; local reflog records the existing checkout from
+feat/graph-controller. No branch change was made here; production content equals
+21ef6b9. Build reused Debug GCC16.2.0 with installed SNode.C2.1.0; no installation.
+Protected files match the task manifest; WORK_LOG original prefix is unchanged.
+No production edits, commit/push, GitHub/vchrist contact or live controller action.
+
+
+### Review diff created — 2026-11-02
+
+Owner requested the diff for the checked C++ candidate and its cleanup. Created
+/tmp/codex/build/core-ci/compact-ui-20261102/cap-check/compact-ui-cpp-with-cleanup.patch
+against main/084e2fd without applying production changes or changing branches.
+All five candidate SHA256 values match the verified cap-check artifacts.
+`git apply --check --whitespace=error`, `--stat` and `--numstat` pass.
+The patch contains 292 added / 202 removed production C++ lines, net +90
+(2403->2493). No tests or documentation are bundled in the patch. It is the C++
+portion only: the compact UI client and persistent focused tests remain pending;
+it must not be deployed alone against the existing browser client. Nothing was
+committed, pushed, applied, deployed or restarted. Prior protected files preserved.
+
+
+### Compact UI source application authorized — 2026-11-02
+
+Owner explicitly requested apply, commit, push, merge and deploy after reviewing
+the +90 C++ redistribution. Applied the checked five-file patch and matching
+compact browser client (+7 JS; HTML/CSS unchanged). C++ remains 2493.
+No branch switch; the checkout is currently main/084e2fd. A dedicated feature
+ref/PR will carry only this task before the authorized merge. Pre-existing dirty
+AGENTS, WORK_LOG prefix and untracked reports/PNGs remain protected.
+Management wire projection stays ephemeral; raw MariaDB graph alone governs
+readiness/assignments. No workflows/pins or deployment assets changed.
+
+
+### Compact delivery final source validation — 2026-11-02
+
+Owner's apply/commit/push/merge/deploy authorization covers this change. Final
+production: 2493 C++ (+90), app.js361 (+7), HTML/CSS unchanged; CMake net0.
+Source/build detail, per-file counts, measurements and limits are recorded in
+docs/compact-ui-delivery.md. Focused graph/Store/publication/HTTP/SSE/Chromium
+checks pass. Store additionally checks silent internal commits and no-op revisions.
+Pressure used 3000 realistic records, no padding, passed121.63s; CMake test timeout
+raised to180s. The disposable fixture packet allowance was raised after its first
+large INSERT failed at the default packet limit. Production database unchanged.
+Final browser/heartbeat/startup test passed103.98s, covering new history/actions
+and both definition refresh orderings. No unrelated suite was run.
+
+Measured20-record patch16698 event bytes versus82155 rejected baseline. Initial
+170-record stream306583 event bytes versus6685847; largest event4960. Step and
+timestamp patches150/166 bytes. Scheduled Store CPU remains approximately
+1173–1234ms after excluding fixture mutation, not a controller speedup claim.
+Browser delivery samples are isolated Debug samples, with briefly overlapping
+fixture workloads, not production or build-chain timing guarantees.
+
+Current main checkout is retained without switching; the reviewed commit will be
+made available on a dedicated feature ref for the PR. Staging WORK_LOG uses HEAD
+plus only this task's appendices; protected pre-existing prefix remains unchanged
+in the working tree. AGENTS and protected untracked files are excluded.
+No deployment/ assets, public keys, workflows or pins are changed.

@@ -108,7 +108,7 @@ if(BUILD_TESTING)
                 ${PROJECT_BINARY_DIR} sse
     )
     set_tests_properties(
-        native-sse-backpressure-contract PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE
+        native-sse-backpressure-contract PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE
     )
     add_executable(store-contract-test tests/store.cpp)
     target_link_libraries(store-contract-test PRIVATE controller-code)

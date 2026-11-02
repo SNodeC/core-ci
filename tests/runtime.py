@@ -15,7 +15,7 @@ import tempfile
 import time
 
 from persistence import run
-from sse import check_delivery
+from sse import check_delivery, read_snapshot
 
 
 def main():
@@ -85,12 +85,12 @@ def main():
              "--auth-root-authentication-method=normal", "--skip-test-db"])
         log = (root / "server.log").open("w")
         server = subprocess.Popen(["/usr/sbin/mariadbd", "--no-defaults", f"--datadir={datadir}", f"--socket={backend}",
-            f"--pid-file={root / 'server.pid'}", "--skip-networking", f"--user={os.geteuid()}"], stdout=log, stderr=log)
+            f"--pid-file={root / 'server.pid'}", "--skip-networking", "--max-allowed-packet=134217728", f"--user={os.geteuid()}"], stdout=log, stderr=log)
         controller = None
         limitations = []
 
         def sql(statement):
-            return run(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-N", "-B"], input=statement)
+            return run(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-N", "-B", "--max-allowed-packet=134217728"], input=statement)
 
         def wait_http(expected=5):
             ready = False
@@ -160,7 +160,7 @@ def main():
             response.read()
             request.close()
             print("Native startup, real HTTP graph and TLS/HMAC listener separation passed")
-            locker = subprocess.Popen(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-N", "-B", "--unbuffered"],
+            locker = subprocess.Popen(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-N", "-B", "--max-allowed-packet=134217728", "--unbuffered"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 locker.stdin.write("LOCK TABLES runtime.ci_graph WRITE; SELECT 'locked';\n")
@@ -193,9 +193,13 @@ def main():
                 stream.request("GET", "/events")
                 events = stream.getresponse()
                 assert events.status == 200 and events.getheader("Content-Type").startswith("text/event-stream")
-                snapshot = events.readline()
-                assert snapshot.startswith(b"data: ") and json.loads(snapshot[6:]) == graph
-                assert events.readline() == b"\n"
+                snapshot, sizes = read_snapshot(events)
+                assert len(snapshot["executions"]) == len(graph["executions"])
+                for name, entry in snapshot["repositories"].items():
+                    assert set(entry) == {"title", "ref", "commit", "definition"}
+                    assert entry["definition"] == graph["repositories"][name]["definition"]
+                assert all("attempts" not in work and "definition" not in work for work in snapshot["executions"].values())
+                print(f"Individual compact SSE startup: {len(sizes)} events, {sum(sizes)} bytes")
                 started = time.monotonic()
                 for count in range(3):
                     heartbeat = events.readline()

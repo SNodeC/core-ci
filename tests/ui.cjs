@@ -5,6 +5,38 @@ const {execFileSync} = require('node:child_process');
 const http = require('node:http');
 const {chromium} = require(`${process.env.CI_BROWSER_MODULES}/playwright`);
 
+async function readProjection(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/events`);
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let buffer = '', snapshot;
+  try {
+    while (!snapshot?.ready) {
+      const chunk = await reader.read();
+      assert.ok(!chunk.done, 'Initial snapshot must complete');
+      buffer += decoder.decode(chunk.value, {stream: true});
+      while (buffer.includes('\n\n')) {
+        const end = buffer.indexOf('\n\n'), message = buffer.slice(0, end).trim();
+        buffer = buffer.slice(end + 2);
+        if (message.startsWith('data: ')) {
+          const value = JSON.parse(message.slice(6));
+          if (!Array.isArray(value)) {
+            snapshot = value;
+          } else {
+            for (const change of value) {
+              if (change.path === '/ready') { snapshot.ready = change.value; }
+              else { snapshot.executions[change.value.id] = change.value; }
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    await reader.cancel();
+  }
+  return snapshot;
+}
+
 async function main() {
   const graph = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
   const bundle = graph.executions.at(-2);
@@ -108,11 +140,12 @@ async function main() {
     assert.deepEqual(await packageLinks.allTextContents(), ['Packages ↗']);
     assert.equal(await page.locator(`#work-${bundle.id} .state`).textContent(), 'building');
     assert.equal(await page.locator(`#work-${independent.id} .state`).textContent(), 'failed');
+    assert.ok((await page.locator(`#execution-${independent.id}`).textContent()).includes('Fixture operator acknowledges unknown'));
     const retirementUpdates = messages.slice(beforeRetirement);
     assert.equal(retirementUpdates.length, 1);
     assert.ok(Array.isArray(retirementUpdates[0]));
     assert.ok(JSON.stringify(retirementUpdates[0]).length < 1500);
-    assert.ok(retirementUpdates[0].every(change => change.path.startsWith('/executions/4/attempts/')));
+    assert.ok(retirementUpdates[0].every(change => change.path.startsWith(`/executions/${independent.id}/active/`)));
     assert.equal(await page.locator('.chevron[aria-expanded="true"]').count(), 3);
     assert.equal((await state.boundingBox()).width, width);
     assert.equal((await page.locator(`#work-${bundle.id}`).boundingBox()).height, rowHeight);
@@ -160,14 +193,25 @@ async function main() {
       {input: `UPDATE runtime.ci_graph SET body=CONVERT(0x${restored} USING utf8mb4),revision=revision+1 WHERE id=1;`});
     await context.close();
     let stream, reconnect;
-    const fixture = structuredClone(graph);
+    const fixture = await readProjection(process.argv[4]);
+    let initial = true, pendingPost, graphFetches = 0;
     const endpoint = http.createServer(async (request, response) => {
       if (request.url === '/events') {
         response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store'});
-        response.write(`data: ${JSON.stringify(fixture)}\n\n`);
+        response.write(`data: ${JSON.stringify({repositories: fixture.repositories, executions: {}, ready: false})}\n\n`);
+        if (!initial) {
+          for (const work of Object.values(fixture.executions).sort((a, b) => a.index - b.index)) {
+            response.write(`data: ${JSON.stringify([{op: 'add', path: `/executions/${work.id}`, value: work}])}\n\n`);
+          }
+          response.write('data: [{"op":"replace","path":"/ready","value":true}]\n\n');
+        }
+        initial = false;
         stream = response;
         if (reconnect) { reconnect(); }
+      } else if (request.method === 'POST') {
+        pendingPost = response;
       } else {
+        if (request.url === '/api/graph') { graphFetches += 1; }
         const source = await fetch(`http://127.0.0.1:${process.argv[4]}${request.url}`);
         response.writeHead(source.status, {'Content-Type': source.headers.get('Content-Type')});
         response.end(Buffer.from(await source.arrayBuffer()));
@@ -179,37 +223,48 @@ async function main() {
       const changing = await protocol.newPage();
       changing.on('pageerror', error => errors.push(error.message));
       await changing.goto(`http://127.0.0.1:${endpoint.address().port}/`);
+      await changing.locator('#connection').filter({hasText: 'Loading'}).waitFor();
+      for (const work of Object.values(fixture.executions).sort((a, b) => a.index - b.index)) {
+        stream.write(`data: ${JSON.stringify([{op: 'add', path: `/executions/${work.id}`, value: work}])}\n\n`);
+      }
+      stream.write('data: [{"op":"replace","path":"/ready","value":true}]\n\n');
       await changing.locator('#connection').filter({hasText: 'Live'}).waitFor();
       const at = '2026-10-31T14:23:45Z', started = Date.now();
       const repository = Object.keys(fixture.repositories)[0];
       const path = repository.replace(/~/g, '~0').replace(/\//g, '~1');
-      const replacement = {...receipt.packages[1], file: 'replacement.deb'};
+      const old = {id: 'old-attempt', revision: 0, state: 'failed', failure_kind: 'retirement',
+        retirement: {acknowledgement: '<em>Owner acknowledged unknown</em>', at, remote_outcome: 'unknown'}};
       const updates = [
-        {op: 'replace', path: '/executions/3/attempts/0/facts/build_run/jobs/0/steps/0/name', value: 'Link changed fixture'},
-        {op: 'replace', path: '/executions/3/attempts/0/facts/build_run/jobs/0/started_at', value: at},
-        {op: 'remove', path: '/executions/0/attempts/0/receipt/packages/1'},
-        {op: 'add', path: '/executions/0/attempts/0/receipt/packages/-', value: replacement},
+        {op: 'replace', path: `/executions/${bundle.id}/build/step`, value: 'Link changed fixture'},
+        {op: 'replace', path: `/executions/${bundle.id}/build/job/started_at`, value: at},
+        {op: 'add', path: `/executions/${foundation.id}/previous/-`, value: old},
+        {op: 'remove', path: `/executions/${foundation.id}/previous/0`},
+        {op: 'add', path: `/executions/${foundation.id}/previous/-`, value: old},
+        {op: 'replace', path: `/repositories/${path}/title`, value: 'Updated repository title'},
         {op: 'replace', path: `/repositories/${path}/definition/title`, value: 'Updated repository title'}
       ];
-      fixture.executions[3].attempts[0].facts.build_run.jobs[0].steps[0].name = 'Link changed fixture';
-      fixture.executions[3].attempts[0].facts.build_run.jobs[0].started_at = at;
+      fixture.executions[bundle.id].build.step = 'Link changed fixture';
+      fixture.executions[bundle.id].build.job.started_at = at;
+      fixture.repositories[repository].title = 'Updated repository title';
       fixture.repositories[repository].definition.title = 'Updated repository title';
-      fixture.executions[0].attempts[0].receipt.packages[1] = replacement;
+      fixture.executions[foundation.id].previous = [old];
       stream.write(`data: ${JSON.stringify(updates)}\n\n`);
       await changing.locator(`#work-${bundle.id} .activity`).filter({hasText: 'Link changed fixture'}).waitFor();
       const visibleAfter = Date.now() - started;
       assert.equal(await changing.locator(`#work-${bundle.id} .state`).textContent(), 'building');
       assert.equal(await changing.locator(`#work-${bundle.id} time`).first().getAttribute('datetime'), new Date(at).toISOString());
       await changing.locator(`[data-expand="${bundle.id}"]`).click();
-      assert.deepEqual(JSON.parse(await changing.locator(`#execution-${bundle.id} pre`).textContent()), fixture.executions[3]);
+      assert.equal(await changing.locator('.execution-details pre').count(), 0);
       await changing.locator(`[data-expand="${foundation.id}"]`).click();
-      assert.deepEqual(JSON.parse(await changing.locator(`#execution-${foundation.id} pre`).textContent()), fixture.executions[0]);
+      assert.ok((await changing.locator(`#execution-${foundation.id}`).textContent()).includes('<em>Owner acknowledged unknown</em>'));
+      assert.equal(await changing.locator(`#execution-${foundation.id} em`).count(), 0);
+      assert.equal(await changing.locator(`[data-operation="retry"][data-id="${foundation.id}"]`).count(), 0);
       assert.equal(await changing.locator('#repositories > button').filter({hasText: 'Updated repository title'}).count(), 1);
       const uncertaintyLine = changing.locator(`#work-${bundle.id} .activity`);
       const dimensions = await changing.locator(`#work-${bundle.id}`).boundingBox();
       const uncertainty = {at, stage: 'build', kind: 'evidence', reason: 'Artifact evidence unavailable '.repeat(10)};
-      fixture.executions[3].attempts[0].uncertainty = uncertainty;
-      stream.write(`data: ${JSON.stringify([{op: 'add', path: '/executions/3/attempts/0/uncertainty', value: uncertainty}])}\n\n`);
+      fixture.executions[bundle.id].active.uncertainty = uncertainty;
+      stream.write(`data: ${JSON.stringify([{op: 'add', path: `/executions/${bundle.id}/active/uncertainty`, value: uncertainty}])}\n\n`);
       await uncertaintyLine.filter({hasText: 'Unresolved build evidence:'}).waitFor();
       assert.ok((await uncertaintyLine.getAttribute('title')).includes('Latest recorded failure still awaiting the required successful check'));
       assert.equal(await changing.locator(`#work-${bundle.id} .state`).textContent(), 'building');
@@ -217,16 +272,68 @@ async function main() {
       assert.ok(await uncertaintyLine.evaluate(element => getComputedStyle(element).textOverflow === 'ellipsis' &&
         getComputedStyle(element).whiteSpace === 'nowrap'));
       assert.ok((await changing.locator(`#execution-${bundle.id}`).textContent()).includes('First recorded for this reason:'));
-      stream.write(`data: ${JSON.stringify([{op: 'replace', path: '/executions/3/attempts/0/facts/build_run/status', value: 'in_progress'}])}\n\n`);
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/build/status`, value: 'in_progress'}])}\n\n`);
       await uncertaintyLine.filter({hasText: 'Unresolved build evidence:'}).waitFor();
-      delete fixture.executions[3].attempts[0].uncertainty;
-      fixture.executions[3].attempts[0].state = 'publishing';
-      stream.write(`data: ${JSON.stringify([{op: 'remove', path: '/executions/3/attempts/0/uncertainty'},
-        {op: 'replace', path: '/executions/3/attempts/0/state', value: 'publishing'}])}\n\n`);
+      delete fixture.executions[bundle.id].active.uncertainty;
+      fixture.executions[bundle.id].active.state = 'publishing';
+      stream.write(`data: ${JSON.stringify([{op: 'remove', path: `/executions/${bundle.id}/active/uncertainty`},
+        {op: 'replace', path: `/executions/${bundle.id}/active/state`, value: 'publishing'}])}\n\n`);
       await changing.locator(`#work-${bundle.id} .state`).filter({hasText: 'publishing'}).waitFor();
       assert.ok(!(await uncertaintyLine.textContent()).includes('Unresolved'));
       assert.equal((await changing.locator(`#work-${bundle.id}`).boundingBox()).height, dimensions.height);
+      assert.equal(await changing.locator(`[data-operation="reconcile"][data-id="${bundle.id}"]`).count(), 1);
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/active/state`, value: 'failed'},
+        {op: 'add', path: `/executions/${bundle.id}/active/failure_kind`, value: 'definite'}])}\n\n`);
+      await changing.locator(`[data-operation="retry"][data-id="${bundle.id}"]`).waitFor();
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/active/failure_kind`, value: 'retirement'}])}\n\n`);
+      await changing.locator(`[data-operation="retry"][data-id="${bundle.id}"]`).waitFor({state: 'detached'});
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/active/state`, value: 'publishing'},
+        {op: 'remove', path: `/executions/${bundle.id}/active/failure_kind`},
+        {op: 'replace', path: `/executions/${bundle.id}/active/publish_run_bound`, value: false}])}\n\n`);
+      await changing.locator(`[data-operation="retire"][data-id="${bundle.id}"]`).waitFor();
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/active/publish_run_bound`, value: true}])}\n\n`);
+      await changing.locator(`[data-operation="retire"][data-id="${bundle.id}"]`).waitFor({state: 'detached'});
+      fixture.executions[bundle.id].active.publish_run_bound = true;
       console.log('Chromium: uncertainty line, full tooltip, first-recorded time, SSE clearance and stable layout passed');
+      await changing.locator('#repositories-tab').click();
+      await changing.locator('#repositories > button').first().click();
+      await changing.locator('#branch').fill('unsaved branch');
+      await changing.locator('#tag').fill('v9.0.0');
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/build/step`, value: 'Unrelated progress'}])}\n\n`);
+      await changing.waitForFunction(() => document.querySelector('#connection').textContent.includes('Live'));
+      assert.equal(await changing.locator('#branch').inputValue(), 'unsaved branch');
+      assert.equal(await changing.locator('#tag').inputValue(), 'v9.0.0');
+      await changing.locator('#repository').fill('Fixture/new');
+      await changing.locator('#import').click();
+      await new Promise(resolve => {
+        const wait = () => pendingPost ? resolve() : setTimeout(wait, 10);
+        wait();
+      });
+      pendingPost.writeHead(200, {'Content-Type': 'application/json'});
+      pendingPost.end('{"error":""}');
+      pendingPost = null;
+      await changing.locator('#revision').filter({hasText: 'Awaiting committed definition'}).waitFor();
+      const metadata = {title: 'New definition', ref: 'committed branch', commit: 'a'.repeat(40), definition: {title: 'New definition'}};
+      fixture.repositories['Fixture/new'] = metadata;
+      stream.write(`data: ${JSON.stringify([{op: 'add', path: '/repositories/Fixture~1new', value: metadata}])}\n\n`);
+      await changing.waitForFunction(() => document.querySelector('#definition').value.includes('New definition'));
+      assert.equal(await changing.locator('#branch').inputValue(), 'unsaved branch');
+      assert.equal(await changing.locator('#tag').inputValue(), 'v9.0.0');
+      await changing.locator('#import').click();
+      await new Promise(resolve => {
+        const wait = () => pendingPost ? resolve() : setTimeout(wait, 10);
+        wait();
+      });
+      metadata.definition.title = 'SSE before POST response';
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: '/repositories/Fixture~1new', value: metadata}])}\n\n`);
+      await changing.waitForFunction(() => document.querySelector('#definition').value.includes('SSE before POST response'));
+      pendingPost.writeHead(200, {'Content-Type': 'application/json'});
+      pendingPost.end('{"error":""}');
+      pendingPost = null;
+      await changing.locator('#import').waitFor({state: 'visible'});
+      assert.equal(await changing.locator('#branch').inputValue(), 'unsaved branch');
+      assert.equal(graphFetches, 0, 'The UI never fetches the raw graph');
+      console.log('Chromium: progressive Loading/Live, array patches, plain-text history and both definition refresh orders passed');
       const reconnected = new Promise(resolve => { reconnect = resolve; });
       stream.destroy();
       await Promise.race([reconnected, new Promise((_, reject) => setTimeout(() => reject(new Error('No SSE reconnect')), 7000))]);

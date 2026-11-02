@@ -107,6 +107,86 @@ namespace {
                     "Retry creates a new attempt; old failures and their uncertainty remain unchanged");
     }
 
+    void compactProjection() {
+        using ci::Json;
+        Json selected = {{"Fixture/base", fixture::selected("base", Json::array())},
+                         {"Fixture/client", fixture::selected("client", Json::array({"base"}))},
+                         {"Fixture/tool", fixture::selected("tool", Json::array({"base"}))},
+                         {"Fixture/bundle", fixture::selected("bundle", Json::array({"base", "client", "tool"}))}};
+        for (auto& entry : selected) {
+            for (int i = 1; i < 5; ++i) {
+                auto target = fixture::target();
+                target["id"] = "target-" + std::to_string(i);
+                target["suite"] = "suite-" + std::to_string(i);
+                entry["definition"]["matrix"].push_back(target);
+            }
+        }
+        Json graph = fixture::graph();
+        ci::selectRequest(graph, selected, "Fixture/base");
+        Json projected = Json::object();
+        std::size_t largest = 0;
+        for (std::size_t i = 0; i < graph.at("executions").size(); ++i) {
+            const auto& work = graph.at("executions").at(i);
+            const auto row = ci::projectWork(work, i);
+            ci::require(row.at("created") == work.at("attempts").at(0).at("created") &&
+                            row.at("prerequisites") == work.at("prerequisites") && row.at("index") == i,
+                        "Projection preserves ordering, identity and exact prerequisites");
+            ci::require(!row.contains("definition") && !row.at("source").contains("deployment") && !row.at("source").contains("commit") &&
+                            !row.at("active").contains("assignment"),
+                        "Definitions, internal pins and assignments never enter execution records");
+            ci::require(row.at("active").at("uncertainty").is_null() && !row.at("active").contains("proof"),
+                        "Absent optional facts remain absent/null");
+            projected[work.at("id").get<std::string>()] = row;
+            largest = std::max(largest, row.dump().size());
+        }
+        const auto patch = Json::diff(Json::object(), projected, "/executions");
+        ci::require(patch.size() == 20 && patch.dump().size() + 28 <= 49152,
+                    "Twenty-record chain selection has framing headroom below 48 KiB");
+        Json work = graph.at("executions").at(0);
+        auto& active = work["attempts"].back();
+        active["uncertainty"] = {{"at", "2026-11-02T12:00:00Z"},
+                                 {"stage", "publish"},
+                                 {"kind", "evidence"},
+                                 {"reason", "Receipt awaited"},
+                                 {"extra", "EXCLUDED_SENTINEL"}};
+        active["retirement"] = {{"at", "2026-11-02T12:00:00Z"},
+                                {"acknowledgement", "Owner acknowledges unknown"},
+                                {"remote_outcome", "unknown"},
+                                {"extra", "EXCLUDED_SENTINEL"}};
+        active["failure_kind"] = "retirement";
+        active["facts"]["unshown"] = "EXCLUDED_SENTINEL";
+        active["facts"]["build_run"] = {
+            {"job_id", 1},
+            {"jobs",
+             Json::array({{{"id", 2}, {"steps", Json::array({{{"status", "in_progress"}, {"name", "Other job progress"}}})}},
+                          {{"id", 1}, {"status", "queued"}, {"started_at", nullptr}, {"extra", "EXCLUDED_SENTINEL"}}})}};
+        work["attempts"].push_back(active);
+        const auto row = ci::projectWork(work, 0);
+        ci::require(row.at("build").at("step") == "Other job progress" && row.at("build").at("job").at("status") == "queued",
+                    "Current step searches all jobs but timestamps remain bound to the matched job");
+        ci::require(row.dump().find("EXCLUDED_SENTINEL") == std::string::npos && row.at("active").at("uncertainty").size() == 4 &&
+                        row.at("active").at("retirement").size() == 3 && row.at("previous").at(0).at("retirement").size() == 3,
+                    "Current and historical uncertainty/retirement exclude extra data");
+        auto& published = work["attempts"].back();
+        published["state"] = "published";
+        published["receipt"] = {{"feed", {{"repository", "Fixture/feed"}}},
+                                {"packages", Json::array({{{"path", "dir ü/!'()*#+%/package.deb"}}})}};
+        published["proof"] = {{"feed_revision", "exact-revision"}, {"verified_at", "2026-11-02T12:00:01Z"}};
+        ci::require(ci::projectWork(work, 0).at("packages") ==
+                        "https://github.com/Fixture/feed/tree/exact-revision/dir%20%C3%BC/!'()*%23%2B%25",
+                    "Packages links encode individual directory segments like encodeURIComponent");
+        const Json definition = {{"title", "Definition"}, {"matrix", Json::array({fixture::target()})}, {"extra", true}};
+        const Json repos = {{"Fixture/~example",
+                             {{"definition", definition}, {"ref", "main"}, {"commit", "displayed"}, {"deployment", "EXCLUDED_SENTINEL"}}}};
+        const auto metadata = ci::projectRepositories(repos);
+        ci::require(metadata.at("Fixture/~example").size() == 4 && metadata.at("Fixture/~example").at("definition") == definition &&
+                        metadata.dump().find("EXCLUDED_SENTINEL") == std::string::npos,
+                    "Repository metadata preserves the complete parsed definition exactly once with four whitelisted fields");
+        const auto escaped = Json::diff(Json::object(), metadata, "/repositories");
+        ci::require(escaped.at(0).at("path") == "/repositories/Fixture~1~0example", "JSON library escapes pointer tokens");
+        std::cout << "Compact projection: twenty-record patch " << patch.dump().size() + 8 << " SSE bytes; largest row " << largest << '\n';
+    }
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -114,6 +194,7 @@ int main(int argc, char* argv[]) {
     try {
         using namespace fixture;
         observationUncertainty();
+        compactProjection();
         const Json tags = Json::array({{{"name", "v1.0.0"}}, {{"name", "v1.5.0"}}, {{"name", "v2.0.0"}}, {{"name", "not-a-version"}}});
         ci::require(ci::sourceTag(tags, "v1.2.0") == "v1.2.0" && ci::sourceTag(tags, "") == "v2.0.0",
                     "Explicit older source and highest prerequisite");
