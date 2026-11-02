@@ -502,3 +502,15 @@ is not discovered by this pass. All durable unfinished assignments are eligible;
 there is no age filter or new policy for abandoning history. Startup recovery is
 source-tested independently of historical sandbox acceptance; replacing/restarting
 the running controller and any resulting live continuation require authorization.
+
+## Observation failures (2026-11-02)
+
+No external wire contract changes. The existing graph uncertainty fact is now
+attempt/stage guarded and records `{at, stage, kind, reason}`. Kind is the required
+clearance level; missing legacy kind means evidence, and missing stage means the
+current guarded awaited stage. Identical normalized failures preserve at and
+produce no write/notification. Read success cannot clear evidence uncertainty.
+Only validated stage completion clears that requirement; Failed/retired history
+remains intact. See [the observation policy](observation-uncertainty.md) for the
+bounded per-GET reissue policy, token/POST limit, safe logs, Store commit-order
+semantics, single-writer assumption, no-polling consequence and unknown cause.

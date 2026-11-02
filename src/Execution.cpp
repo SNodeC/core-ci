@@ -10,10 +10,10 @@ namespace ci {
     void Controller::send(const Json& authorized) {
         token([this, authorized](const std::string& access, const std::string& error) {
             for (const auto& action : authorized) {
-                const auto record = [this, action](int status, const std::string& body) {
-                    Json response = Json::parse(body, nullptr, false);
+                const auto record = [this, action](int status, const std::string& body, const std::string& context) {
+                    const Json response = Json::parse(body, nullptr, false);
                     store.change(
-                        [action, status, response](Json& graph) {
+                        [action, status, response, context](Json& graph) {
                             for (auto& work : graph.at("executions")) {
                                 if (work.at("id") == action.at("execution")) {
                                     for (auto& attempt : work.at("attempts")) {
@@ -21,6 +21,7 @@ namespace ci {
                                             const std::string stage = action.at("stage");
                                             attempt["facts"][stage + "_send"] = {
                                                 {"http_status", status},
+                                                {"context", context},
                                                 {"at", utc()},
                                                 {"outcome", status == 200 || status == 204 ? "accepted" : "unresolved"}};
                                             if (status == 200 && response.contains("workflow_run_id")) {
@@ -50,7 +51,7 @@ namespace ci {
                         });
                 };
                 if (!error.empty()) {
-                    record(0, "");
+                    record(0, "", error);
                 } else {
                     Json inputs = {{"execution", action.at("execution")},
                                    {"attempt", action.at("attempt")},
@@ -66,8 +67,8 @@ namespace ci {
                           "POST",
                           Json{{"ref", command.at("ref")}, {"inputs", inputs}}.dump(),
                           access,
-                          [record](int status, const std::string& body, const std::string&) {
-                              record(status, body);
+                          [record](int status, const std::string& body, const std::string&, const std::string& context) {
+                              record(status, body, context);
                           });
                 }
             }
@@ -170,21 +171,21 @@ namespace ci {
 
     void Controller::buildResult(const std::string& token, const Json& work, const Json& run, const Value& done) {
         const Json assignment = work.at("attempts").back().at("assignment");
-        require(run.at("status") == "completed" && run.at("conclusion") == "success", "Build is not successful");
-        Json selected;
-        for (const auto& job : run.at("jobs")) {
-            if (job.at("id") == run.at("job_id")) {
-                selected = job;
-            }
-        }
-        require(!selected.is_null() && selected.at("status") == "completed" && selected.at("conclusion") == "success",
-                "Invalid assigned build job");
         const std::string prefix = "/repos/" + work.at("source").at("repository").get<std::string>();
         pages(
             token,
             prefix + "/actions/runs/" + run.at("identity").at("id").dump() + "/artifacts",
             "artifacts",
-            checked(done, [this, token, work, run, assignment, selected, prefix, done](const Json& artifacts) {
+            checked(done, [token, run, assignment, prefix, done](const Json& artifacts) {
+                Json selected;
+                for (const auto& job : run.at("jobs")) {
+                    if (job.at("id") == run.at("job_id")) {
+                        selected = job;
+                    }
+                }
+                require(!selected.is_null() && selected.at("status") == "completed" && selected.at("conclusion") == "success",
+                        "Invalid assigned build job");
+
                 Json artifact;
                 for (const auto& item : artifacts) {
                     if (item.at("name") == assignment.at("artifact_name")) {
@@ -203,7 +204,8 @@ namespace ci {
                     "GET",
                     "",
                     token,
-                    [artifact, assignment, selected, run, done](int status, const std::string&, const std::string& location) {
+                    [artifact, assignment, selected, run, done](
+                        int status, const std::string&, const std::string& location, const std::string& context) {
                         checked(done, [artifact, assignment, selected, run, done, status, location](const Json&) {
                             require(
                                 status == 302 &&
@@ -216,7 +218,8 @@ namespace ci {
                                   "GET",
                                   "",
                                   "",
-                                  [artifact, assignment, selected, run, done](int status, const std::string& bytes, const std::string&) {
+                                  [artifact, assignment, selected, run, done](
+                                      int status, const std::string& bytes, const std::string&, const std::string& context) {
                                       checked(done, [artifact, assignment, selected, run, done, status, bytes](const Json&) {
                                           require(status == 200 && bytes.size() == artifact.at("size_in_bytes") &&
                                                       artifact.at("digest") == "sha256:" + hash(bytes),
@@ -231,9 +234,9 @@ namespace ci {
                                                                               {"digest", artifact.at("digest")},
                                                                               {"size_bytes", artifact.at("size_in_bytes")}}})}};
                                           done({{"result", result}, {"manifest", manifest}}, "");
-                                      })({}, "");
+                                      })({}, status == 200 ? "" : context);
                                   });
-                        })({}, "");
+                        })({}, status == 302 ? "" : context);
                     });
             }));
     }
@@ -267,7 +270,7 @@ namespace ci {
         };
         store.read(checked(finish, [this, execution, identity, candidate, done, finish](const Json& snapshot) {
             Json selected;
-            for (auto work : snapshot.at("graph").at("executions")) {
+            for (const auto& work : snapshot.at("graph").at("executions")) {
                 if (work.at("id") == execution) {
                     selected = work;
                     if (!identity.empty()) {
@@ -283,20 +286,28 @@ namespace ci {
             const auto& active = selected.at("attempts").back();
             require(active.contains("assignment"), "Work has no assigned remote execution");
             const std::string stage = active.contains("publish_assignment") ? "publish" : "build";
-            token([this, selected, stage, candidate, done, finish](const std::string& access, const std::string& error) {
-                checked(finish, [this, selected, stage, candidate, access, done, finish](const Json&) {
+            const auto record = [this, selected, stage, done](const Json& observed, const Json& evidence, const std::string& error) {
+                store.change(
+                    [selected, stage, observed, evidence, error](Json& graph) {
+                        return applyEvidence(graph, selected, stage, observed, evidence, error);
+                    },
+                    [done, error, execution = selected.at("attempts").back().at("id").get<std::string>()](const std::string& failure) {
+                        done(failure.empty() && error.empty() ? ""
+                                                              : "Observation " + execution + ": " + (failure.empty() ? error : failure));
+                    });
+            };
+            const Value unread = [record](const Json&, const std::string& error) {
+                record(nullptr, {}, error);
+            };
+            token([this, selected, stage, candidate, record, unread](const std::string& access, const std::string& error) {
+                checked(unread, [this, selected, stage, candidate, access, record, unread](const Json&) {
                     run(access,
                         selected,
                         stage,
-                        checked(finish,
-                                [this, selected, stage, access, done](const Json& observed) {
-                                    const auto apply = [this, selected, stage, observed, done](const Json& evidence,
-                                                                                               const std::string& error) {
-                                        store.change(
-                                            [selected, stage, observed, evidence, error](Json& graph) {
-                                                return applyEvidence(graph, selected, stage, observed, evidence, error);
-                                            },
-                                            done);
+                        checked(unread,
+                                [this, selected, stage, access, record](const Json& observed) {
+                                    const Value apply = [record, observed](const Json& evidence, const std::string& error) {
+                                        record(observed, evidence, error);
                                     };
                                     const auto& active = selected.at("attempts").back();
                                     if (stage == "build" && active.at("state") == "building" && observed.at("status") == "completed" &&
@@ -362,17 +373,16 @@ namespace ci {
                     const auto id = notification.at(event == "workflow_run" ? "id" : "run_id").get<std::uint64_t>();
                     for (const auto& work : snapshot.at("graph").at("executions")) {
                         for (const auto& attempt : work.at("attempts")) {
-                            for (const std::string stage : {"build", "publish"}) {
-                                if (attempt.contains(stage + "_assignment") &&
-                                    attempt.at(stage + "_assignment").at("repository") == repository) {
-                                    const std::string title = (stage == "build" ? "Build " : "Publish ") +
-                                                              attempt.at("assignment").at("label").get<std::string>();
-                                    const std::string label = notification.value(event == "workflow_run" ? "display_title" : "name", "");
-                                    if (label == title || label.ends_with(" / " + title) ||
-                                        attempt.at("facts").value(stage + "_run_id", Json()) == id) {
-                                        ++matches;
-                                        observe(work.at("id"), done, id, attempt.at("id"));
-                                    }
+                            const std::string stage = attempt.contains("publish_assignment") ? "publish" : "build";
+                            if (attempt.contains(stage + "_assignment") &&
+                                attempt.at(stage + "_assignment").at("repository") == repository) {
+                                const std::string title =
+                                    (stage == "build" ? "Build " : "Publish ") + attempt.at("assignment").at("label").get<std::string>();
+                                const std::string label = notification.value(event == "workflow_run" ? "display_title" : "name", "");
+                                if (label == title || label.ends_with(" / " + title) ||
+                                    attempt.at("facts").value(stage + "_run_id", Json()) == id) {
+                                    ++matches;
+                                    observe(work.at("id"), done, id, attempt.at("id"));
                                 }
                             }
                         }

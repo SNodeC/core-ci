@@ -205,11 +205,33 @@ async function main() {
       await changing.locator(`[data-expand="${foundation.id}"]`).click();
       assert.deepEqual(JSON.parse(await changing.locator(`#execution-${foundation.id} pre`).textContent()), fixture.executions[0]);
       assert.equal(await changing.locator('#repositories > button').filter({hasText: 'Updated repository title'}).count(), 1);
+      const uncertaintyLine = changing.locator(`#work-${bundle.id} .activity`);
+      const dimensions = await changing.locator(`#work-${bundle.id}`).boundingBox();
+      const uncertainty = {at, stage: 'build', kind: 'evidence', reason: 'Artifact evidence unavailable '.repeat(10)};
+      fixture.executions[3].attempts[0].uncertainty = uncertainty;
+      stream.write(`data: ${JSON.stringify([{op: 'add', path: '/executions/3/attempts/0/uncertainty', value: uncertainty}])}\n\n`);
+      await uncertaintyLine.filter({hasText: 'Unresolved build evidence:'}).waitFor();
+      assert.ok((await uncertaintyLine.getAttribute('title')).includes('Latest recorded failure still awaiting the required successful check'));
+      assert.equal(await changing.locator(`#work-${bundle.id} .state`).textContent(), 'building');
+      assert.equal((await changing.locator(`#work-${bundle.id}`).boundingBox()).height, dimensions.height);
+      assert.ok(await uncertaintyLine.evaluate(element => getComputedStyle(element).textOverflow === 'ellipsis' &&
+        getComputedStyle(element).whiteSpace === 'nowrap'));
+      assert.ok((await changing.locator(`#execution-${bundle.id}`).textContent()).includes('First recorded for this reason:'));
+      stream.write(`data: ${JSON.stringify([{op: 'replace', path: '/executions/3/attempts/0/facts/build_run/status', value: 'in_progress'}])}\n\n`);
+      await uncertaintyLine.filter({hasText: 'Unresolved build evidence:'}).waitFor();
+      delete fixture.executions[3].attempts[0].uncertainty;
+      fixture.executions[3].attempts[0].state = 'publishing';
+      stream.write(`data: ${JSON.stringify([{op: 'remove', path: '/executions/3/attempts/0/uncertainty'},
+        {op: 'replace', path: '/executions/3/attempts/0/state', value: 'publishing'}])}\n\n`);
+      await changing.locator(`#work-${bundle.id} .state`).filter({hasText: 'publishing'}).waitFor();
+      assert.ok(!(await uncertaintyLine.textContent()).includes('Unresolved'));
+      assert.equal((await changing.locator(`#work-${bundle.id}`).boundingBox()).height, dimensions.height);
+      console.log('Chromium: uncertainty line, full tooltip, first-recorded time, SSE clearance and stable layout passed');
       const reconnected = new Promise(resolve => { reconnect = resolve; });
       stream.destroy();
       await Promise.race([reconnected, new Promise((_, reject) => setTimeout(() => reject(new Error('No SSE reconnect')), 7000))]);
       await changing.locator('#connection').filter({hasText: 'Live'}).waitFor();
-      assert.equal(await changing.locator(`#work-${bundle.id} .state`).textContent(), 'building');
+      assert.equal(await changing.locator(`#work-${bundle.id} .state`).textContent(), 'publishing');
       console.log(`Chromium field-only progress/timestamp update observed within ${visibleAfter} ms; `
         + `update/reconnect scenario ${Date.now() - started} ms; updates=${JSON.stringify(updates).length} bytes`);
       assert.deepEqual(errors, []);

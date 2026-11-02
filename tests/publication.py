@@ -40,7 +40,10 @@ def main():
                          'wrong_job_run', 'wrong_job_attempt', 'wrong_actor', 'wrong_workflow', 'wrong_run_attempt',
                          'wrong_blob', 'missing_receipt', 'wrong_receipt', 'complete', 'duplicate_event', 'out_of_order', 'reject', 'unknown',
                          'resume_complete', 'resume_running', 'resume_unbound', 'resume_mixed', 'resume_race',
-                         'resume_build', 'resume_build_running', 'resume_reject', 'resume_unknown']
+                         'resume_build', 'resume_build_running', 'resume_reject', 'resume_unknown', 'malformed_receipt',
+                         'diagnostic_read', 'diagnostic_token', 'diagnostic_evidence', 'diagnostic_legacy',
+                         'diagnostic_reject', 'diagnostic_unknown', 'diagnostic_ack', 'diagnostic_order_FS', 'diagnostic_order_SF', 'late_build_run_bound', 'late_build_run_unbound',
+                         'late_build_job_bound', 'late_build_job_unbound', 'build_missing_job', 'build_skipped_job']
                 failures = []
                 for number, case in enumerate(cases):
                     try:
@@ -49,7 +52,7 @@ def main():
                         env = dict(os.environ, CI_PUBLICATION_CASE=case, CI_TEST_DATABASE=database,
                                    CI_TEST_SOCKET=str(backend), CI_TEST_BACKEND=str(backend))
                         command = [str(binary), '--config-file', str(config), '--log-file', str(root / f'{case}.log'), '--quiet=true']
-                        if case in ['reject', 'unknown', 'resume_reject', 'resume_unknown']:
+                        if case in ['reject', 'unknown', 'resume_reject', 'resume_unknown', 'diagnostic_reject', 'diagnostic_unknown']:
                             env['CI_PUBLICATION_CASE'] = 'running'
                             print(run(command, env=env).strip())
                             env.update(CI_PUBLICATION_CASE=case, CI_PUBLICATION_PREPARED='1')

@@ -20,7 +20,10 @@ function view(work) {
     const progress = active.state === 'building' ? build : publish;
     const running = (progress?.jobs || []).flatMap(job => job.steps || []).find(step => step.status === 'in_progress');
     const send = active.facts[active.state === 'building' ? 'build_send' : 'publish_send'];
-    const activity = active.state === 'publishing' && publishJob?.conclusion === 'success' ? 'Awaiting publisher receipt'
+    const uncertainty = active.uncertainty;
+    const activity = uncertainty ? `Unresolved ${uncertainty.stage || (active.publish_assignment ? 'publish' : 'build')} `
+        + `${uncertainty.kind || 'evidence'}: ${uncertainty.reason}`
+        : active.state === 'publishing' && publishJob?.conclusion === 'success' ? 'Awaiting publisher receipt'
         : running ? `Last reported: ${running.name}` : [progress?.status, progress?.conclusion].filter(Boolean).join(' · ')
             || (active.state === 'waiting' ? 'Exact prerequisites pending'
                 : send?.outcome === 'accepted' ? 'Awaiting GitHub evidence' : 'Dispatch unconfirmed');
@@ -30,7 +33,8 @@ function state(work) {
     const {active, activity} = view(work), result = node('span', '', 'execution-state');
     result.append(node('span', active.state, 'state ' + active.state));
     if (!['published', 'failed'].includes(active.state)) {
-        result.append(Object.assign(node('span', activity, 'secondary activity'), {title: activity}));
+        result.append(Object.assign(node('span', activity, 'secondary activity'), {title: activity + (active.uncertainty
+            ? ' — Latest recorded failure still awaiting the required successful check; verified facts retained.' : '')}));
     }
     return result;
 }
@@ -134,7 +138,8 @@ function renderExecution(work, panel, open) {
     }
     facts.append(values, timings);
     if (active.failure || active.uncertainty) {
-        facts.append(node('p', active.failure || `Unresolved: ${active.uncertainty.reason}`, active.failure ? 'error' : 'secondary'));
+        facts.append(node('p', active.failure || `${activity} — First recorded for this reason: ${
+            fullDateFormat.format(new Date(active.uncertainty.at))}`, active.failure ? 'error' : 'secondary'));
     }
     const dependencies = node('div'), list = node('ul', '', 'dependencies');
     for (const id of work.prerequisites) {
