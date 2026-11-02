@@ -92,7 +92,7 @@ def main():
         def sql(statement):
             return run(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-N", "-B"], input=statement)
 
-        def wait_http():
+        def wait_http(expected=5):
             ready = False
             deadline = time.monotonic() + 10
             while not ready and time.monotonic() < deadline and controller.poll() is None:
@@ -100,7 +100,7 @@ def main():
                     connection = http.client.HTTPConnection("127.0.0.1", web_port, timeout=1)
                     connection.request("GET", "/api/graph")
                     response = connection.getresponse()
-                    ready = response.status == 200 and len(json.loads(response.read())["executions"]) == 5
+                    ready = response.status == 200 and len(json.loads(response.read())["executions"]) == expected
                     connection.close()
                 except (OSError, http.client.HTTPException):
                     time.sleep(0.05)
@@ -134,10 +134,12 @@ def main():
                 body = json.dumps(value).encode().hex()
                 sql(f"REPLACE INTO runtime.ci_graph VALUES (1,0,CONVERT(0x{body} USING utf8mb4))")
 
-            seed()
+            seed({"repositories": {}, "executions": []})
             output = (root / "controller-output.log").open("w")
             controller = subprocess.Popen(base + ["webhook", "--disabled=false", "tls", "--cert", str(certificate), "--cert-key", str(key)],
                 stdout=output, stderr=output)
+            wait_http(0)
+            seed()
             wait_http()
             threads = [task.joinpath("comm").read_text().strip() for task in Path(f"/proc/{controller.pid}/task").iterdir()]
             print(f"Native process has {len(threads)} OS threads; controller runs in the single SNode.C event loop")
@@ -214,6 +216,7 @@ def main():
             controller.wait(timeout=10)
             controller = None
             assert server.poll() is None and sql("SELECT 1").strip() == "1", "Unmanaged server remains alive"
+            seed({"repositories": {}, "executions": []})
             server.terminate()
             server.wait(timeout=20)
             managed_failure = list(base) + ["--managed-datadir", str(datadir)]
@@ -244,7 +247,7 @@ def main():
             print("Required listener bind failure releases startup resources without starting the webhook")
             controller = subprocess.Popen(seed_command, stdout=output, stderr=output)
             try:
-                wait_http()
+                wait_http(0)
                 managed_pid = int((datadir / "core-ci.pid").read_text())
                 assert managed_pid != server.pid, "Managed mode must own its own process"
                 controller.send_signal(signal.SIGTERM)

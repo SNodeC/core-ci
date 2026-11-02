@@ -107,5 +107,24 @@ Remove the superseded controller, schema, tests and obsolete documentation. Keep
 existing deployment/ GitHub worker/workflow assets and public keys byte-identical;
 they are external execution contracts, not a second controller. Do not inspect
 those worker implementations as controller architecture. The reference checkout's
-unrelated dirty work remains untouched. Automatic startup reconciliation is still
-unimplemented and is not part of this checkpoint.
+unrelated dirty work remains untouched. Automatic startup reconciliation was outside that checkpoint.
+
+
+The owner subsequently authorized startup recovery with a +20–30 production C++
+line estimate. One pass after successful management-listener startup reads the
+MariaDB graph, then observes each latest assigned Building/Publishing attempt
+through the existing immutable-attempt observation path. Independent errors do
+not block other observations. No polling, redispatch of old assignments, new
+queue/state/cache or source-tag discovery is added. Terminal/unassigned work is
+skipped. New verified evidence may authorize the next stage or exact dependents
+only through normal successful graph commits. This source-work approval does not
+authorize restarting the live controller or starting live GitHub work.
+
+
+The owner subsequently authorized committing the startup-recovery change, running
+it locally with the existing sandbox inputs/database, triggering one fresh core
+full-chain build, deliberately stopping core-ci during active builds, waiting for
+those GitHub builds to finish while offline, and restarting to verify automatic
+continuation. Do not redeliver webhooks, manually reconcile, retry or re-trigger
+completion during this acceptance. Preserve assignments/history and observe only.
+This does not authorize production deployment or production GitHub resources.

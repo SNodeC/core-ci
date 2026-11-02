@@ -1,9 +1,9 @@
 # Graph CI controller
 
 Fresh implementation in `/home/voc/projects/snodec/core-ci-new` on
-`feat/graph-controller`. An authorized sandbox instance runs on Jupiter and
-dispatches the existing VOC-Experiments workflows. No production installation
-or deployment has occurred.
+`feat/graph-controller`. The authorized VOC-Experiments controller runs on
+`core.vchrist.at`. The owner authorized replacing that deployment with this
+reviewed revision. Existing production workflows, feeds and credentials are unchanged.
 
 Focused checks pass, including managed/unmanaged startup, commit uncertainty,
 publication confirmation, bounded incremental SSE and the populated management
@@ -15,9 +15,20 @@ reconciliation was used. See [the full acceptance report](docs/core-v2.1.19-run.
 and [publication correction and checks](docs/publication-confirmation-acceptance.md).
 Production deployment remains unverified.
 
-Restart preserves assigned work without replay. Missed execution notifications
-can be recovered by explicit reconciliation; automatic startup reconciliation
-is not implemented.
+After the management listener starts successfully, startup performs one observation
+pass over the latest assigned Building/Publishing attempts. Existing GitHub runs
+and receipts can recover missed execution notifications through the normal state
+machine; newly eligible stages/dependents dispatch only after a successful commit.
+Unbound, running or uncertain assignments are preserved without dispatch replay.
+Explicit reconciliation remains available. There is no polling or recovery of a
+source-tag event that was missed before any selection existed.
+
+Observation GETs now have a bounded, request-local no-response reissue policy,
+with durable attempt/stage uncertainty and safe diagnostics. This is best-effort,
+without polling, and does not fix an identified outage cause. POSTs and received
+responses are never retried. See [policy, clearance and limits](docs/observation-uncertainty.md).
+Activation is recorded separately in WORK_LOG.md; clean interruption acceptance
+for this change remains unexecuted.
 
 The invariant is one MariaDB graph authority. Selections freeze source,
 committed definition, target, tooling/workflow pins and prerequisite executions.

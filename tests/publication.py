@@ -38,7 +38,12 @@ def main():
                 binary.symlink_to(build / 'publication-contract-test')
                 cases = ['queued', 'running', 'missing', 'skipped', 'failure', 'duplicate', 'publish_failed',
                          'wrong_job_run', 'wrong_job_attempt', 'wrong_actor', 'wrong_workflow', 'wrong_run_attempt',
-                         'wrong_blob', 'missing_receipt', 'wrong_receipt', 'complete', 'duplicate_event', 'out_of_order', 'reject', 'unknown']
+                         'wrong_blob', 'missing_receipt', 'wrong_receipt', 'complete', 'duplicate_event', 'out_of_order', 'reject', 'unknown',
+                         'resume_complete', 'resume_running', 'resume_unbound', 'resume_mixed', 'resume_race',
+                         'resume_build', 'resume_build_running', 'resume_reject', 'resume_unknown', 'malformed_receipt',
+                         'diagnostic_read', 'diagnostic_token', 'diagnostic_evidence', 'diagnostic_legacy',
+                         'diagnostic_reject', 'diagnostic_unknown', 'diagnostic_ack', 'diagnostic_order_FS', 'diagnostic_order_SF', 'late_build_run_bound', 'late_build_run_unbound',
+                         'late_build_job_bound', 'late_build_job_unbound', 'build_missing_job', 'build_skipped_job']
                 failures = []
                 for number, case in enumerate(cases):
                     try:
@@ -47,25 +52,28 @@ def main():
                         env = dict(os.environ, CI_PUBLICATION_CASE=case, CI_TEST_DATABASE=database,
                                    CI_TEST_SOCKET=str(backend), CI_TEST_BACKEND=str(backend))
                         command = [str(binary), '--config-file', str(config), '--log-file', str(root / f'{case}.log'), '--quiet=true']
-                        if case in ['reject', 'unknown']:
+                        if case in ['reject', 'unknown', 'resume_reject', 'resume_unknown', 'diagnostic_reject', 'diagnostic_unknown']:
                             env['CI_PUBLICATION_CASE'] = 'running'
                             print(run(command, env=env).strip())
                             env.update(CI_PUBLICATION_CASE=case, CI_PUBLICATION_PREPARED='1')
-                            if case == 'reject':
+                            if case.endswith('reject'):
                                 run(['mariadb', '--no-defaults', f'--socket={backend}', '-uroot', database, '-e',
                                      "CREATE TRIGGER reject_update BEFORE UPDATE ON ci_graph FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='isolated rejection'"])
                             else:
-                                front = root / 'proxy.sock'
+                                front = root / f'{case}-proxy.sock'
                                 proxy = threading.Thread(target=drop_commit_reply, args=(front, backend), daemon=True)
                                 proxy.start()
                                 while not front.exists():
                                     time.sleep(0.01)
                                 env['CI_TEST_SOCKET'] = str(front)
                         print(run(command, env=env).strip())
-                        if case == 'unknown':
+                        if case.endswith('unknown'):
                             proxy.join(5)
                             assert not proxy.is_alive()
-                            env.update(CI_TEST_SOCKET=str(backend), CI_PUBLICATION_CASE='restart')
+                            env.update(CI_TEST_SOCKET=str(backend), CI_PUBLICATION_CASE='resume_again' if case == 'resume_unknown' else 'restart')
+                            print(run(command, env=env).strip())
+                        if case == 'resume_complete':
+                            env.update(CI_PUBLICATION_CASE='resume_again', CI_PUBLICATION_PREPARED='1')
                             print(run(command, env=env).strip())
                     except Exception as error:
                         failures.append(f'{case}: {error}')

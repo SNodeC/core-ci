@@ -77,6 +77,16 @@ if(BUILD_TESTING)
              COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/https.py
                      ${PROJECT_BINARY_DIR}
     )
+    add_executable(diagnostics-contract-test tests/diagnostics.cpp)
+    target_link_libraries(diagnostics-contract-test PRIVATE controller-code)
+    target_link_options(
+        diagnostics-contract-test
+        PRIVATE
+        "-Wl,--wrap=_ZN2ci5httpsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_S7_S7_RKSt8functionIFviS7_S7_S7_EE"
+    )
+    add_test(NAME github-json-diagnostics-contract
+             COMMAND diagnostics-contract-test
+    )
     add_executable(artifact-contract-test tests/artifact.cpp)
     target_link_libraries(artifact-contract-test PRIVATE controller-code)
     add_test(

@@ -16,42 +16,41 @@ namespace ci {
     }
 
     void Controller::token(const std::function<void(const std::string&, const std::string&)>& done) {
-        Json ids = Json::array();
-        for (const auto& id : deployment.at("repositories")) {
-            ids.push_back(id);
-        }
-        const Json scope = {{"repository_ids", ids}, {"permissions", {{"contents", "read"}, {"actions", "write"}}}};
-        https("https://api.github.com/app/installations/" + installation + "/access_tokens",
-              "POST",
-              scope.dump(),
-              appJwt(key, app),
-              [done](int status, const std::string& body, const std::string&) {
-                  std::string value;
-                  std::string error;
-                  try {
-                      require(status == 201 && body.size() <= 2 * 1024 * 1024, "GitHub installation token unavailable");
-                      value = Json::parse(body).at("token");
-                      require(!value.empty() && value.size() < 10000, "Invalid installation token");
-                  } catch (const std::exception& failure) {
-                      error = failure.what();
-                  }
-                  done(value, error);
-              });
+        const Value complete = [done](const Json& value, const std::string& error) {
+            done(value.is_string() ? value.get<std::string>() : "", error);
+        };
+        checked(complete, [this, complete](const Json&) {
+            Json ids = Json::array();
+            for (const auto& id : deployment.at("repositories")) {
+                ids.push_back(id);
+            }
+            https("https://api.github.com/app/installations/" + installation + "/access_tokens",
+                  "POST",
+                  Json{{"repository_ids", ids}, {"permissions", {{"contents", "read"}, {"actions", "write"}}}}.dump(),
+                  appJwt(key, app),
+                  [complete](int status, const std::string& body, const std::string&, const std::string& context) {
+                      checked(complete, [complete, status, body, context](const Json&) {
+                          require(status == 201 && body.size() <= 2 * 1024 * 1024, context);
+                          const std::string value = Json::parse(body).at("token");
+                          require(!value.empty() && value.size() < 10000, "Invalid installation token");
+                          complete(value, "");
+                      })({}, "");
+                  });
+        })({}, "");
     }
 
     void Controller::api(const std::string& token, const std::string& path, const Value& done) {
         require(path.starts_with("/") && !path.starts_with("//"), "Invalid GitHub path");
-        https("https://api.github.com" + path, "GET", "", token, [done](int status, const std::string& body, const std::string&) {
-            Json result;
-            std::string error;
-            try {
-                require(status == 200 && body.size() <= 2 * 1024 * 1024, "GitHub read unavailable: HTTP " + std::to_string(status));
-                result = Json::parse(body);
-            } catch (const std::exception& failure) {
-                error = failure.what();
-            }
-            done(result, error);
-        });
+        https("https://api.github.com" + path,
+              "GET",
+              "",
+              token,
+              [done](int status, const std::string& body, const std::string&, const std::string& context) {
+                  checked(done, [done, status, body, context](const Json&) {
+                      require(status == 200 && body.size() <= 2 * 1024 * 1024, context);
+                      done(Json::parse(body), "");
+                  })({}, "");
+              });
     }
 
     void Controller::pages(

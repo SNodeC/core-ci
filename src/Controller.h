@@ -13,7 +13,7 @@ namespace ci {
     using Json = nlohmann::json;
     using Done = std::function<void(const std::string&)>;
     using Value = std::function<void(const Json&, const std::string&)>;
-    using HttpDone = std::function<void(int, const std::string&, const std::string&)>;
+    using HttpDone = std::function<void(int, const std::string&, const std::string&, const std::string&)>;
     struct Selection {
         Json sources = Json::object();
         std::size_t pending = 0;
@@ -36,7 +36,7 @@ namespace ci {
     bool selectedTag(const Json& graph, const std::string& repository, const std::string& tag, const std::string& commit);
     Json selectRequest(Json& graph, const Json& selection, const std::string& repository, const std::string& commit = "");
     Json applyEvidence(
-        Json& graph, const Json& selected, const std::string& stage, const Json& observed, const Json& evidence, const std::string& error);
+        Json& graph, const Json& selected, const std::string& stage, const Json& observed, const Json& evidence, std::string error);
     std::string
     selectWork(Json& graph, const Json& selection, const std::string& repository, const Json& target, std::vector<std::string> path = {});
     void retry(Json& graph, const std::string& execution);
@@ -80,6 +80,7 @@ namespace ci {
         void publicationReceipt(const std::string& token, const Json& work, const Value& done);
         void webhook(const std::string& event, const Json& payload, const Done& done);
         void reconcile(const std::string& execution, const Done& done);
+        void resume(const Done& done);
         const Json deployment;
 
     private:

@@ -15,12 +15,105 @@ namespace {
         ci::require(rejected, message);
     }
 
+    void observationUncertainty() {
+        using namespace fixture;
+        Json graph = fixture::graph();
+        const Json selection = {{"Fixture/base", selected("base", Json::array())},
+                                {"Fixture/client", selected("client", Json::array({"base"}))}};
+        ci::selectRequest(graph, selection, "Fixture/base");
+        const auto id = graph.at("executions").at(0).at("id").get<std::string>();
+        const Json original = work(graph, id);
+        auto& active = ci::current(work(graph, id));
+        active["facts"]["build_send"] = {{"outcome", "accepted"}};
+        const auto assignment = active.at("assignment");
+        ci::require(ci::applyEvidence(graph, original, "build", nullptr, {}, "read F").empty(), "Early errors authorize nothing");
+        ci::require(active.at("uncertainty").at("kind") == "read" && active.at("uncertainty").at("stage") == "build" &&
+                        active.at("state") == "building" && active.at("assignment") == assignment &&
+                        !active.at("facts").contains("build_run") && active.at("facts").at("build_send").at("outcome") == "accepted",
+                    "Attempt-id guard accepts dispatch acknowledgement without fabricating run facts");
+        const auto duplicate = graph.dump();
+        ci::applyEvidence(graph, original, "build", nullptr, {}, "read F");
+        ci::require(graph.dump() == duplicate, "Identical read failures preserve the entire object and first-recorded at");
+        const auto running = observation(original, "build", "in_progress", "");
+        ci::applyEvidence(graph, original, "build", running, {}, "");
+        ci::require(!active.contains("uncertainty"), "A successful read clears read-level uncertainty");
+        active["uncertainty"] = {{"at", "2026-01-01T00:00:00Z"}, {"stage", "build"}, {"kind", "read"}, {"reason", "same reason"}};
+        ci::applyEvidence(graph, original, "build", running, {}, "same reason");
+        ci::require(active.at("uncertainty").at("kind") == "evidence" && active.at("uncertainty").at("at") == "2026-01-01T00:00:00Z",
+                    "Strengthening the clearance level retains the first-recorded time for an unchanged reason");
+        ci::applyEvidence(graph, original, "build", running, {}, "evidence E");
+        ci::require(active.at("uncertainty").at("kind") == "evidence", "Validated-run evidence error needs evidence clearance");
+        ci::applyEvidence(graph, original, "build", nullptr, {}, "read F");
+        const auto evidence = active.at("uncertainty");
+        ci::require(evidence.at("kind") == "evidence" && evidence.at("reason") == "read F", "Read failure cannot downgrade evidence");
+        ci::applyEvidence(graph, original, "build", running, {}, "");
+        ci::require(active.at("uncertainty") == evidence, "E -> F -> S retains evidence-level uncertainty carrying F's reason");
+        active["uncertainty"] = {{"at", "2026-01-01T00:00:00Z"}, {"reason", "legacy E"}};
+        const auto legacy = active.at("uncertainty").dump();
+        ci::applyEvidence(graph, original, "build", nullptr, {}, "legacy E");
+        ci::require(active.at("uncertainty").dump() == legacy, "Identical normalized legacy context stays byte-identical");
+        ci::applyEvidence(graph, original, "build", running, {}, "");
+        ci::require(active.at("uncertainty").dump() == legacy, "A status read cannot clear kindless/stageless legacy evidence");
+        ci::applyEvidence(graph, original, "build", nullptr, {}, "new F");
+        ci::require(active.at("uncertainty").at("kind") == "evidence" && active.at("uncertainty").at("stage") == "build",
+                    "A changed legacy reason writes explicit clearance level and stage");
+        const auto changed = graph.dump();
+        ci::applyEvidence(graph, original, "build", nullptr, {}, "new F");
+        ci::applyEvidence(graph, original, "build", running, {}, "");
+        ci::require(graph.dump() == changed, "E -> F -> F -> S preserves evidence uncertainty without touching at");
+        finishBuild(graph, id);
+        ci::require(!active.contains("uncertainty") && active.at("state") == "publishing", "Validated build completion clears evidence");
+        auto before = graph.dump();
+        ci::applyEvidence(graph, original, "build", nullptr, {}, "late build");
+        ci::require(graph.dump() == before, "A late build read failure during Publishing is ignored");
+        const auto publishing = work(graph, id);
+        ci::applyEvidence(graph, publishing, "publish", nullptr, {}, "publication read");
+        ci::require(active.at("uncertainty").at("kind") == "read" && active.at("uncertainty").at("stage") == "publish",
+                    "Publication reads during Publishing are recorded for that stage");
+        active["uncertainty"]["stage"] = "build";
+        active["uncertainty"]["kind"] = "evidence";
+        ci::applyEvidence(graph, publishing, "publish", nullptr, {}, "new-stage read");
+        ci::require(active.at("uncertainty").at("kind") == "read", "An old-stage entry does not strengthen a new-stage read error");
+        for (const std::string state : {"built", "failed", "published"}) {
+            Json terminal = graph;
+            ci::current(work(terminal, id))["state"] = state;
+            const auto saved = terminal.dump();
+            ci::applyEvidence(terminal, publishing, "publish", nullptr, {}, "late read");
+            ci::require(terminal.dump() == saved, "Nonawaiting/terminal work cannot gain or clear diagnostics");
+        }
+        Json retired = graph;
+        ci::retire(retired, id, "Operator acknowledges the unknown publication outcome");
+        const auto history = ci::current(work(retired, id));
+        ci::applyEvidence(retired, publishing, "publish", nullptr, {}, "late retired read");
+        ci::require(ci::current(work(retired, id)) == history && history.contains("uncertainty"), "Retirement preserves uncertainty");
+        rejects(
+            [&]() {
+                ci::retry(retired, id);
+            },
+            "Retired work is not eligible for retry");
+        rejects(
+            [&]() {
+                ci::retry(graph, id);
+            },
+            "Retry is only from definite Failed");
+        active["state"] = "failed";
+        active["failure_kind"] = "definite";
+        const auto failed = active;
+        ci::retry(graph, id);
+        const auto retried = graph.dump();
+        ci::applyEvidence(graph, publishing, "publish", nullptr, {}, "old attempt read");
+        ci::applyEvidence(graph, publishing, "publish", observation(publishing, "publish"), {}, "old evidence");
+        ci::require(graph.dump() == retried && work(graph, id).at("attempts").at(0) == failed,
+                    "Retry creates a new attempt; old failures and their uncertainty remain unchanged");
+    }
+
 } // namespace
 
 int main(int argc, char* argv[]) {
     int result = 0;
     try {
         using namespace fixture;
+        observationUncertainty();
         const Json tags = Json::array({{{"name", "v1.0.0"}}, {{"name", "v1.5.0"}}, {{"name", "v2.0.0"}}, {{"name", "not-a-version"}}});
         ci::require(ci::sourceTag(tags, "v1.2.0") == "v1.2.0" && ci::sourceTag(tags, "") == "v2.0.0",
                     "Explicit older source and highest prerequisite");
@@ -205,16 +298,11 @@ int main(int argc, char* argv[]) {
         finishBuild(receiptMismatch, bundle);
         Json wrongReceipt = fixture::receipt(work(receiptMismatch, bundle));
         wrongReceipt["attempt"] = "unrelated";
-        rejects(
-            [&]() {
-                ci::applyEvidence(receiptMismatch,
-                                  work(graph, bundle),
-                                  "publish",
-                                  observation(work(graph, bundle), "publish"),
-                                  {{"receipt", wrongReceipt}},
-                                  "");
-            },
-            "A receipt for a different attempt cannot release dependents");
+        const auto rejectedCommands = ci::applyEvidence(
+            receiptMismatch, work(graph, bundle), "publish", observation(work(graph, bundle), "publish"), {{"receipt", wrongReceipt}}, "");
+        ci::require(rejectedCommands.empty() && ci::current(work(receiptMismatch, bundle)).at("state") == "publishing" &&
+                        ci::current(work(receiptMismatch, bundle)).at("uncertainty").at("kind") == "evidence",
+                    "A receipt for a different attempt retains evidence uncertainty and cannot release dependents");
         Json failed = work(graph, independent);
         ci::applyEvidence(graph, failed, "build", observation(failed, "build", "completed", "failure"), {}, "");
         const Json old = ci::current(work(graph, independent));

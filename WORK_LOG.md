@@ -1015,3 +1015,306 @@ Pagination, production resources, commits, pushes and deployments were untouched
 - Attach the replacement commit directly to main's existing history, push the
   existing task branch and open/merge one PR. No controller deployment, GitHub
   workflow activation, live tag/build, data migration/reset or key change.
+
+
+## Implement one-time startup reconciliation (2026-11-02)
+
+- Owner authorized implementation against the estimated +20–30 production C++
+  lines after merging the accepted baseline. Existing task branch remains
+  feat/graph-controller at 87061ab; origin/main merge 3fce12d has the identical
+  baseline tree. Tracked work was clean; eight unrelated pasted images preserved.
+- Invariant: startup observes original assigned attempts, never resends them.
+  Only newly verified evidence and a successful authoritative graph commit can
+  authorize a next stage or exact dependent. Errors must not block independence.
+- Traced listener/DB ownership -> graph snapshot -> immutable-attempt observation
+  -> GitHub validation -> applyEvidence/commands -> Store.change -> dispatch/SSE.
+  Existing reconcile delegates to the same observation path. Reduction/change
+  alone cannot add the missing startup invocation/selection; approved addition
+  reuses that path, adds no parallel validation or state machine.
+- Controller::resume reads once, scans latest assigned Building/Publishing work,
+  and observes each exact attempt ID. main invokes it after successful management
+  listen, with ordinary error reporting. No timer/thread/cache/flag/ready queue,
+  retry/replay or source-tag discovery. Actual production +17 lines: header +1,
+  Execution.cpp +15, main.cpp +1; total 2348, below estimate and hard 2500 bound.
+- Extended existing publication test's public GitHub-boundary doubles with real
+  observation/Store/Graph and isolated MariaDB. Covers missed publication release,
+  running/unbound work, terminal/unassigned skips, independent error/success,
+  concurrent webhook (one dispatch), missed definite build failure, running build,
+  separate-process repeated restart, rejected and lost-ack commits with no replay.
+- First focused run exposed test-only build workflow hash and reused proxy socket
+  defects; corrected those fixtures without weakening assertions. Extended
+  publication-confirmation-contract then passed in 3.32s. Other relevant checks
+  pending. UI/runtime fixtures now populate after empty startup, preventing fake
+  assignments from querying real GitHub; populated/changing assertions retained.
+- Build isolated under /tmp/codex/build/core-ci/startup-recovery-20261102 (GCC
+  16.2.0 Debug, installed SNode.C); original live binary/configuration untouched.
+  No restart/reconciliation/live build, workflow/deployment change, commit/push or
+  additional checkout authorized/performed for this new source change.
+
+
+## Startup recovery final verification (2026-11-02)
+
+- Final strengthened publication-confirmation-contract passed (3.52s): 29 primary
+  cases plus prepared and separate-process restart phases. Actual webhook race
+  reads twice/dispatches once; an error before independent success does not block.
+  Rejected/unknown commit emits zero dispatch/SSE, and restart never replays.
+- Native startup/HTTP/real-browser UI passed 104.99s; native SSE backpressure
+  18.43s; MariaDB commit/restart 1.11s; graph/receipt 0.06s. Canonical format-check,
+  changed Python syntax, 160-column production check and git whitespace check pass.
+- Final production 2348 C++ lines (+17). Tests +97 net, no production hooks or
+  test framework. No CMake/UI/external worker/workflow changes. Full per-file
+  counts, checks and limits in docs/startup-recovery.md.
+- Final manifest 443789c8bd53fb3b5f50203092dbb23480c73335556e8406510771070b2d515c; binary 185c18b622e7db3c6c2535fc2ba44ff9131f21e08a7da38ff58b36f2af260777.
+  Uncommitted source on feat/graph-controller at base 87061ab; separate temporary
+  GCC 16.2.0 Debug build. No live binary replacement/restart, execution observation,
+  new build/tag, deployment, DB migration/reset, commit or push for this change.
+
+
+## Authorized live restart-recovery acceptance (2026-11-02)
+
+- Owner explicitly authorized committing the recovery source, going live locally,
+  one fresh core-triggered chain, a deliberate outage during active builds, then
+  restart after GitHub finishes those builds. No redelivery/manual reconciliation
+  or completion retrigger: startup alone must recover and resume the full chain.
+- Pre-upgrade graph: 150 executions, 124 Published, 4 Publishing, 2 Building,
+  16 Waiting, 4 Failed. PID 412713 runs the previous binary. No data reset,
+  migration, feed lock, key/pin/workflow change or historical assignment replacement.
+- The normal startup pass observes every unfinished assignment, including existing
+  ones; acceptance tracks the fresh v2.1.20 tree separately. Confirmed v2.1.19
+  highest existing tag and v2.1.20 absent, using approved source fc3acdb94779dafb879c183143c20e19b435e766.
+- Evidence under /tmp/codex/build/core-ci/restart-chain-20261102; reuse the separately
+  built/tested 2348-line controller. Existing sandbox credentials are passed only
+  by approved paths; no credential contents inspected or printed.
+
+
+## Local recovery live; controlled acceptance blocked before selection (2026-11-02)
+
+- Committed implementation as 1e76e9a, not pushed/merged. Graceful local upgrade
+  succeeded; new binary SHA 185c18b622e7db3c6c2535fc2ba44ff9131f21e08a7da38ff58b36f2af260777
+  runs PID 487201 with preserved DB/inputs. 8080 and 8443 listen; local real-name
+  TLS GET verifies certificate and returns 404. Production count unchanged 2348.
+- Created core v2.1.20 exactly once. GitHub source push webhook returned 502,
+  failed to connect to host at 10:35:35.454 UTC before planned interruption.
+  Public endpoint connection also fails; current Jupiter LAN 10.20.99.86 differs
+  from documented forwarding target 192.168.1.239. No network/router changes.
+- Verified zero v2.1.20 selections and zero matching core runs. The active-build
+  interruption driver never stopped the controller; no completion events replayed,
+  manual reconciliation, retry or additional tag. Diagnostic observers stopped;
+  recovery controller remains running. Existing startup observations are normal.
+- Full new chain/restart acceptance remains unexecuted pending reachable public
+  callback route. Detailed findings and continuation in
+  docs/restart-recovery-acceptance.md; raw evidence under
+  /tmp/codex/build/core-ci/restart-chain-20261102. Preserve existing tag/assignments.
+
+
+## 2026-11-02 — bounded GET reissue and attempt-bound uncertainty
+
+Owner authorized implementation with an initial +50 C++ ceiling, then explicitly
+approved +55 after the measured review patch exceeded +50. JavaScript allowance
+remained +2–5. No commit, push, deployment, restart or live action is part of this
+change. Pre-existing AGENTS.md, reports, prompts, PNGs and WORK_LOG prefix were
+preserved; only this entry is appended to WORK_LOG.md.
+
+Invariant: one latched final outcome per transport attempt, at most one final
+callback per HTTPS call, and uncertainty writes/clearances guarded by the committed
+latest attempt and exact awaited stage. Store success remains the authority for
+commands and SSE. No-change operations remain write/revision/notification-free.
+
+Trace: token POST and API GET in GitHub.cpp, dispatch POST plus artifact redirect
+and blob GET in Execution.cpp all use HttpDone. The extra safe-context argument
+survives all five callers. Observation selects the immutable attempt, routes early
+errors as null-observed facts through applyEvidence, and shares the existing
+Store.change path with validated evidence. MariaDB's deque keeps the appended
+UPDATE in its read's command sequence; autocommit/single connection/single writer
+establish Store commit order. No lock, sequence, cache or second pass was added.
+Store was not modified; only acknowledged writes dispatch and send field patches.
+
+Production changes: request-local direct callback GET reissue (three attempts
+maximum), unchanged strict TLS and disabled native retry/reconnect, fixed ERR
+context, JSON exception-id classification in checked(), consolidated token/API
+parsing, durable read/evidence clearance levels with legacy/idempotence guards,
+and the existing UI activity line/tooltip/expanded first-recorded detail.
+Receipt identity rejection is handled at its existing Graph authority before
+completion, leaving evidence uncertainty instead of losing the diagnostic on a
+thrown operation. Exact bindings remain required. No bootstrap, wire contract,
+workflow, pin, worker, readiness policy, deployment asset or listener change.
+
+Physical controller-owned C++ recount command:
+`rg --files --hidden -g '!.git' -g '!build'`, select .cpp/.h/.hpp/.cc/.cxx outside
+tests, enumerate physical splitlines; assert that all identified production files
+are src/*.{cpp,h}. Compare baseline using `git show HEAD:<path>`.
+
+| File | Before | After | Net |
+| --- | ---: | ---: | ---: |
+| src/Auth.cpp | 137 | 137 | +0 |
+| src/Auth.h | 17 | 17 | +0 |
+| src/Controller.h | 95 | 95 | +0 |
+| src/Evidence.cpp | 272 | 272 | +0 |
+| src/Execution.cpp | 389 | 400 | +11 |
+| src/GitHub.cpp | 307 | 306 | -1 |
+| src/Graph.cpp | 437 | 454 | +17 |
+| src/Http.cpp | 130 | 158 | +28 |
+| src/Managed.cpp | 161 | 161 | +0 |
+| src/Managed.h | 24 | 24 | +0 |
+| src/Store.cpp | 103 | 103 | +0 |
+| src/main.cpp | 276 | 276 | +0 |
+| **Total** | **2348** | **2403** | **+55** |
+
+No difference from the reported baseline. Below 2500 by 97 lines; exactly at the
+approved +55. C++ diff: 202 inserted/147 deleted. UI app.js: 8 inserted/3 deleted,
+net +5. Maximum C++ width 146; maximum app.js width 157, both <=160. No blank or
+comment deletion, statement merging, generated runtime logic or hidden library
+was used to fit the allowance.
+
+Tests: net +504 lines in tests (599 inserted/95 deleted, including the new
+80-line diagnostics.cpp); CMake adds 10 lines solely for the diagnostics test.
+Focused additions cover TLS/response close/recovery/concurrent budgets, POST and
+received error finality, parse latching, strict certificate rejection, safe logs,
+malformed token/API/receipt JSON, no fake facts, E-F-S/legacy clearance, exact
+legacy zero UPDATE/revision/SSE, duplicate F, commit ordering, interleaved dispatch
+acknowledgement, failed/unknown diagnostic commits, history guards, retry policy,
+restart without replay, receipt completion and browser SSE/layout behavior.
+Documentation: README +6; contracts +12; new observation-uncertainty.md +130;
+this WORK_LOG entry only appended. Existing dirty documentation is untouched.
+
+Source identity: /home/voc/projects/snodec/core-ci-new, feat/graph-controller,
+HEAD 6ed69016d632caf9da44ad6611f4de3c098f8395 plus uncommitted task changes.
+Production/CMake/UI fileset SHA-256 (sorted path + NUL + bytes + NUL):
+`e08e5bd2791afe39a4274310f30bebb0a8a839f4820b3efa02b9aec442cb20d0`.
+The exact files and counts are in the task directory's accounting.json.
+Build: Debug, /usr/bin/c++ (GCC 16.2.0), installed SNode.C from /usr/local,
+OpenSSL 3.6.5, nlohmann_json 3.11.3, Zlib 1.3.2.
+Directory: /tmp/codex/build/core-ci/bounded-read-20261102/build.
+Binary SHA-256: 738cf9f37791bf6b3aa734cbf6d93bdd300ec3c0a4eba41d78c57b7f9a0b3452.
+ELF build ID: 8cd95ac08e7457770dc4205afecceefe5972e7dd.
+
+Exact checks (commands run from the checkout; TASK below is
+/tmp/codex/build/core-ci/bounded-read-20261102):
+
+- `TMPDIR=$TASK/tmp cmake -S . -B $TASK/build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON`
+  and `TMPDIR=$TASK/tmp cmake --build $TASK/build -j4`: pass. Initial GCC 16
+  internal compiler error at the dependent Instance::getSubCommand expression
+  was resolved using an explicit existing Client shared_ptr type. A first attempt
+  to disconnect through the response callback's Request base failed compilation;
+  the original MasterRequest capture/lifetime pattern was retained. No framework
+  or runtime wrapper was introduced. Final build output: final-build.log.
+- `ctest --test-dir $TASK/build -R 'native-https-contract|github-json-diagnostics-contract|artifact-bytes-contract|mariadb-commit-and-restart-contract|publication-confirmation-contract|graph-and-receipt-contract' --output-on-failure`:
+  6/6 pass, 10.65s; final-tests.log. Additional final real-Store legacy no-write
+  assertion: publication-confirmation-contract passes in 5.74s; legacy-tests.log.
+- `CI_HTTPS_MEMCHECK=$TASK/memcheck python3 tests/https.py $TASK/build`: pass
+  for six selected native lifetime cases. Installed Valgrind reports zero errors
+  and zero bytes/blocks at exit for every case; lifetime-tests.log and memcheck/.
+  No production hooks. Earlier failed attempts remain logged before success.
+- `PLAYWRIGHT_BROWSERS_PATH=/tmp/codex/build/core-ci/browser/browsers CI_BROWSER_MODULES=/tmp/codex/build/core-ci/browser/node_modules ctest --test-dir $TASK/build -R native-startup-http-contract --output-on-failure`:
+  pass, 104.12s; browser-final.log. Populated/changing Chromium SSE checks cover
+  full initial data, small updates, progress/timestamps, diagnostic line/tooltip,
+  first-recorded detail, evidence clearance with stage transition, stable row
+  height/columns and reconnect. An initial run failed because Playwright looked
+  in its default cache; the existing installed browser path resolved it. No tools
+  or browsers installed. Three existing 30-second heartbeats also passed.
+- `ctest --test-dir $TASK/build -R native-sse-backpressure-contract --output-on-failure`:
+  pass, 17.83s, recorded in browser-tests.log. This test was not repeated after
+  unrelated const annotations/test-only edits. SSE implementation is unchanged.
+- `cmake --build $TASK/build --target format` and `--target format-check`:
+  pass; final-format-check.log. `node --check ui/app.js`, `node --check tests/ui.cjs`,
+  `git diff --check`, complete production line/column checks: pass.
+- `cmake --build $TASK/build --target analyze -j1`: exit 0, with 24 reported
+  user-source warnings plus suppressed dependency diagnostics; analyze.log.
+  Three touched-code warnings were addressed without growth. Final
+  `clang-tidy -p $TASK/build src/Http.cpp src/Execution.cpp` exits 0 with five
+  warnings in unchanged lines: two declaration parameter-name mismatches,
+  webhook copy, protectedFile fdopen analysis and its const suggestion.
+  Full target also reports unchanged Auth/Managed/Store/main warnings, including
+  Store potential-leak analysis. These are recorded, not claimed resolved.
+
+Earlier focused test failures/output remain in first-tests.log, second-tests.log
+and third-tests.log: incorrect raw-header/log-destination fixture assumptions;
+old assertions disallowing newly required diagnostic SSE; legacy test incorrectly
+requiring normalized fields; unknown-commit fixture trying a disconnected DB
+connection; and out-of-range status 600 rejected by SNode.C. Fixtures now use
+real native behavior, independent committed DB reads for unknown outcomes, and
+explicit new invariants rather than suppressing failures.
+
+Transport observations: incomplete Content-Length reaches synthetic no-response
+in this installed framework and exhausts three attempts. Malformed HTTP reaches
+one latched delivery/parse failure. Status 600 is rejected before a response is
+reported, so only terminal parse failure is exposed; no SNode.C modification is
+required or made. Connect FATAL/DISABLED and X509 setup failure paths are governed
+by the explicit source predicate but were not individually fault-forced. Public
+TLS/HTTP fixture tests exercise ERROR, TLS end, response end, parse, POST, normal
+and received error responses, including Retry-After without retry.
+
+No controller-overhead or GitHub timing claim is made. Test elapsed times and
+fixture-to-browser delivery are isolated validation, not live controller/GitHub
+queue/setup/build/publication/Pages timing or evidence of overall speedup.
+
+Limits: bounded best-effort, no polling and no guarantee after arbitrary outage;
+token POST and all received responses are never retried. Exhausted observations
+stay awaited until a webhook observation, next startup pass or explicit Reconcile
+supplies the required successful check. Underlying outage cause remains unknown;
+this is not a root-cause fix. No promise that every request eventually completes.
+Live clean single-restart full-chain interruption acceptance remains unexecuted.
+
+Preservation check: SHA-256 manifest from task start verifies every pre-existing
+dirty/untracked file, including AGENTS.md and all eight PNGs, byte-for-byte;
+WORK_LOG prefix matches its original hash. Nothing added to the git index.
+No commit/push/PR/deployment/restart/live action. Public vchrist listener and
+runtime remain untouched. No extra checkout. Disposable TLS/database fixtures
+clean themselves; retained task build, logs, accounting and preservation manifest
+are handover artifacts, removable after review and when the build is no longer
+needed. No pre-existing temporary directories were removed.
+
+
+## 2026-11-02 — Claude review and owner-authorized publication/deployment
+
+Owner clarified "cpmd" as commit, push, merge and deploy on vchrist. This supersedes
+the implementation phase's no-live-actions restriction for those stages only; no
+new tag, workflow change, manual reconciliation, retry or new chain is requested.
+
+Claude reviewed the exact fresh source/contracts/tests and public SNode.C interfaces
+with all tools disabled. The initial blocking B1 webhook-stage finding was real:
+late build events could become publish observations and overwrite uncertainty.
+Removing the two-stage loop fixes it without adding policy. D1 job validation was
+moved inside the existing evidence callback; the duplicate completed-success
+predicate remains solely in observe. Same-reason kind upgrades preserve at.
+Synchronous signing failures now reach token's callback. These four corrections
+remain within the approved +55: Execution399, GitHub306, Graph455, Http158,
+Controller.h95; total2403. All other production file counts remain unchanged.
+JS remains +5, max157; C++ max146. No framework/bootstrap/readiness changes.
+
+Regression tests add real late build webhook cases, missing/skipped assigned jobs,
+invalid signing keys, same-reason kind upgrades and lifetime probes that expire
+before framework stop. All18 HTTPS cases pass Valgrind with zero bytes retained
+and zero errors. Unusual in-range226/427 preserve status with one connection.
+The additional test-only timer is confined to tests/https.cpp, never production.
+
+Recheck: review-tests.log records6/6 affected CTests passing (11.56s). Existing
+browser-final104.12s and SSE17.83s checks cover unchanged UI/transport code.
+review-final-format.log passes. review-analyze.log checks all corrected production
+files; remaining warnings are on unchanged lines. No new tools installed.
+
+Claude's re-review verdict: **No blocking findings**. It verified B1/D1/D3, signing
+failure routing and adequate pre-shutdown lifetime proof. Non-blocking continuation
+throw convention, JSON-id wording, receipt Store-status reporting and unforced
+faults are documented in docs/bounded-read-claude-review.md. Full app.js scope and
+final static/count evidence were sent to close the remaining evidence questions.
+
+Commit scope excludes the pre-existing dirty AGENTS.md and protected untracked
+reports/prompts/PNGs. WORK_LOG is staged selectively: HEAD content plus task-only
+appendices, leaving its pre-existing dirty prefix unchanged in the worktree.
+The source hash manifest is refreshed against the prospective committed tree,
+including HEAD's AGENTS bytes rather than the protected dirty working copy.
+
+The vchrist candidate native Release build succeeds with GCC14.2.0 against its
+existing private SNode.C prefix. No framework or system libraries changed. Public
+pre-deployment graph:170 executions (163 Published,4 Failed,3 Waiting); no assigned
+Building/Publishing work currently needs recovery. PID318583 remains active.
+After reviewed commit/merge, deploy the exact committed artifact, preserving the
+existing service configuration, credentials, database, public0.0.0.0:8080 binding
+and private runtime. Activation and actual identities will be appended separately.
+No new full-chain or clean interruption acceptance is implied by this deployment.
+
+Claude final confirmation closed the UI/static evidence questions and reaffirmed
+no blocking findings. Reviews were tool-disabled single-turn calls; its prose
+claim to run commands is unsupported by the CLI record. Actual command, source,
+count and preservation checks were executed here and supplied to the reviewer.

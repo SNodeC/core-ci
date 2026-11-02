@@ -245,6 +245,7 @@ int main(int argc, char* argv[]) {
                                             report(state.what());
                                         }
                                     });
+                                    controller->resume(report);
                                 } else if (state == core::socket::State::ERROR || state == core::socket::State::FATAL) {
                                     report(state.what());
                                     release();
