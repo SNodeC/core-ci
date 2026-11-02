@@ -1,97 +1,171 @@
-# core-ci
+# Graph CI controller
 
-**core-ci turns versioned source repositories into a dependency-aware, signed package feed.**
-It is a small C++ controller built on SNode.C, a MariaDB database, a local web interface,
-and GitHub Actions workflows. The controller decides what may run. GitHub performs the
-builds, package validation, signing, indexing and publication.
+Fresh implementation in `/home/voc/projects/snodec/core-ci-new` on
+`feat/graph-controller`. An authorized sandbox instance runs on Jupiter and
+dispatches the existing VOC-Experiments workflows. No production installation
+or deployment has occurred.
 
-A version tag can start a chain of builds. Each dependent waits for the exact prerequisite
-executions selected for it. A project depending on two branches of a diamond waits for both;
-one successful branch cannot stand in for the other. A restart preserves assigned GitHub
-work instead of starting replacements.
+Focused checks pass, including managed/unmanaged startup, commit uncertainty,
+publication confirmation, bounded incremental SSE and the populated management
+interface. The core v2.1.19 source trigger automatically completed core → app/side
+→ join across all five targets: 20/20 Published, with 20 successful build workflows,
+20 successful publication workflows and 20 successful Pages workflows. Native
+confirmation ran after intentionally skipped OpenWrt tools; no manual retry or
+reconciliation was used. See [the full acceptance report](docs/core-v2.1.19-run.md)
+and [publication correction and checks](docs/publication-confirmation-acceptance.md).
+Production deployment remains unverified.
 
-## Read the documentation
+Restart preserves assigned work without replay. Missed execution notifications
+can be recovered by explicit reconciliation; automatic startup reconciliation
+is not implemented.
 
-| You want to… | Start here |
-| --- | --- |
-| Understand the terms and find a reading path | [Documentation guide](docs/README.md) |
-| Understand selection, graph traversal, state transitions and recovery | [Architecture and algorithms](docs/architecture/README.md) |
-| Enroll a project, write a hook, add targets or extend supported behavior | [Extension guide](docs/extensions/README.md) |
-| Install and configure the complete system, keys, GitHub Apps, HTTPS and MariaDB | [Deployment and operations](docs/deployment/README.md) |
-| Find the deployable workflow and worker files | [Deployment files](deployment/README.md) |
-| Inspect the configured example graph and current live verification | [VOC-Experiments sandbox](deployment/sandbox/README.md) |
+The invariant is one MariaDB graph authority. Selections freeze source,
+committed definition, target, tooling/workflow pins and prerequisite executions.
+An attempt freezes its exact prerequisite publication receipts before building.
+Only a successfully acknowledged atomic graph update authorizes dispatch.
+Unknown commit/send outcomes preserve their original assignment without replay.
+Verified publication and newly ready dependents commit together, then every
+authorized command dispatches immediately in graph creation order.
 
-The guides describe the current implementation. Engineering instructions are in
-[AGENTS.md](AGENTS.md); implementation decisions and check records are in
-[WORK_LOG.md](WORK_LOG.md).
+The small implementation has three responsibilities: graph/state/persistence,
+GitHub authentication and evidence/proof, and native bootstrap/REST/UI delivery.
+There is no scheduler, persisted ready queue, admission policy, controller timer,
+feed lock, worker execution, portal or definition/workflow editor.
 
-## What happens when a tag is pushed?
+## Build and focused checks
 
-1. GitHub sends an authenticated notification to core-ci.
-2. Core-ci resolves exact source commits and reads their `ci/packages.json` definitions.
-3. The graph selects repository/target executions and their prerequisite relationships.
-4. Eligible build assignments are committed to MariaDB before GitHub is contacted.
-5. A thin workflow in each source repository calls pinned tooling in a trusted worker repository.
-6. A separate trusted workflow verifies, signs and publishes the packages.
-7. Core-ci verifies publication evidence before releasing dependent work.
-
-The configuration-writing UI stays local. Only the signed webhook endpoint needs public
-HTTPS access. There is no application login, identity provider or role-management system.
-
-## Where the responsibilities live
-
-| Location | Owns |
-| --- | --- |
-| Controller and MariaDB | Enrollment, graph, immutable selections, attempts, dispatch authority and verified results |
-| Source repository | Build definition, source, project-specific hooks and recipes |
-| Trusted worker repository | Reusable builders, independent validators, publisher and trusted public keys |
-| Feed repository and HTTPS host | Packages, development exports, publication receipts, indexes and public verification keys |
-
-The controller does not run package builds or containers. Containers, SDK discovery and
-package-manager tools run in GitHub jobs. Supported package paths are native DEB/RPM and
-OpenWrt IPK/APK v3; distributions and runner choices come from explicit source-owned rows.
-
-## Build the controller
-
-Install the public SNode.C development packages, OpenSSL and nlohmann-json development
-packages, a C++20 compiler, CMake 3.25 or later, and Ninja. The required SNode.C CMake
-components are listed in [CMakeLists.txt](CMakeLists.txt). No personal framework source
-path belongs in the build configuration.
+Dependencies are installed SNode.C public CMake components, C++20, OpenSSL 3,
+nlohmann_json, zlib and MariaDB server/client utilities. Tests additionally use
+Python 3 and OpenSSL's CLI. No controller SDK or external custom logic is used;
+all controller-owned C++ is in `src/` and counted toward 2,500 physical lines.
 
 ```sh
-cmake -S . -B build/codex/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build/codex/debug -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build/codex/debug -j2
+ctest --test-dir build/codex/debug --output-on-failure
 cmake --build build/codex/debug --target format-check
 ```
 
-Building does not configure a database, install a service or activate GitHub. Follow the
-[deployment guide](docs/deployment/README.md) for those steps. It also explains the required
-private files and why the configuration template is not a ready-to-run installation.
+Temporary checks use `/tmp/codex/build/core-ci/<task>`. The focused CTest entries
+exercise authentication, generic graph/receipt rules, real MariaDB commit and
+restart boundaries, actual TLS transport, and native startup/HTTP interfaces.
+They create and remove their own databases and generated keys; they never read
+private configuration or connect to a configured external database. The startup
+tests require free loopback ports 18080/18443. All controller tasks run in SNode.C's
+single event loop; there are no controller threads. Tests continue independently
+when a different test fails.
 
-For a change to selection, dispatch or worker evidence, relevant focused checks include:
+For the optional real Chromium UI check, install Playwright and its Chromium
+runtime under the permitted temporary build location, then set
+`CI_BROWSER_MODULES` to that installation's `node_modules` and
+`PLAYWRIGHT_BROWSERS_PATH` to its browser directory before running
+`native-startup-http-contract`. It checks populated and changing authoritative
+graph facts, multiple expansion, prerequisite navigation, local dates and real
+retirement through REST/SSE. The screenshot is a fixture, not live execution.
+The separate `native-sse-backpressure-contract` uses a blocked TCP reader and a
+healthy reader against isolated MariaDB; it does not repeat the 90-second idle test.
 
-```sh
-ctest --test-dir build/codex/debug --output-on-failure \
-  -R '^(graph-state-boundaries|pipeline-.*|worker-environment-boundaries|worker-provenance-boundaries)$'
-```
+`format`, `format-check` and optional `analyze` are explicit development targets.
+Canonical formatter/analysis files are repository-local byte copies. Analysis
+uses this checkout's `.clang-tidy` and exported compile database. Point clangd
+at the chosen build directory; source files are never rewritten during a normal
+compile. There are no generated production sources.
 
-Pipeline tests use real isolated MariaDB with synthetic GitHub/HTTPS services. Those are
-local boundary checks, not live GitHub acceptance. Package-tool and live client checks have
-additional requirements described in the extension and deployment guides.
+## Deployment inputs
 
-## Operational guarantees and limits
+External interfaces are specified precisely in [docs/contracts.md](docs/contracts.md).
+No credentials, public identity values or approved pins are provided as defaults.
+An operator must supply a public deployment JSON object with these fields:
 
-Source selections and assigned inputs are immutable. Explicit retries reserve a new package
-rebuild revision. Unknown dispatches, database commits and possible feed writes are preserved
-as uncertain; they are never a reason to launch a replacement automatically.
+| Field | Required value |
+| --- | --- |
+| owner | Authorized GitHub owner boundary |
+| repositories | Object mapping granted owner/repository names to stable numeric IDs |
+| controller_app_bot_id | Approved numeric GitHub App bot ID |
+| worker | repository, repository_id, approved 40-hex tooling_sha |
+| source_workflow | approved path and 40-hex blob_sha |
+| publication_workflow | approved path, 40-hex blob_sha and dispatch ref |
+| feed | public repository, repository_id, branch and HTTPS base_url |
+| signing | approved gpg_fingerprint, usign_key_sha256, apk_key_sha256 |
 
-Validated webhook notifications are acknowledged promptly, while asynchronous work continues.
-If the controller crashes before a new tag selection reaches MariaDB, the operator must
-explicitly rescan/request the tag or redeliver the notification. This accepted boundary does
-not have a durable notification inbox.
+These are deployment inputs, not a replacement for committed source definitions.
+Enrollment supplies each source repository's definition/workflow branch. Each
+selection resolves its workflow commit, verifies the approved blob and freezes
+that identity. An unexpected branch move remains unresolved; it does not relax
+evidence binding or authorize replay. Source tags resolve using `refs/tags/`.
+SemVer precedence selects prerequisites once; equal-precedence distinct highest
+tags or ambiguous matching targets are rejected rather than silently chosen.
+Assignments must fit the existing worker's 60,000-byte input bound.
 
-This source branch contains a fresh controller implementation. Its 20-node pipeline checks
-use isolated MariaDB and synthetic GitHub/HTTPS endpoints. The rewrite has not been deployed
-or accepted through a real signed package publication. Existing sandbox deployment evidence
-does not validate this binary. See the architecture guide for its persistence and activation
-limits.
+Runtime root options are `--deployment-file`, `--app-id`, `--installation-id`,
+`--app-key-file`, `--webhook-secret-file`, `--database`, `--database-user`,
+`--database-socket`, optional `--database-password-file`, `--managed-datadir`
+and `--ui-root`. Supplying `--managed-datadir` starts the configured MariaDB server
+executable with that already initialized directory, no defaults and networking
+disabled. A SNode.C read receiver observes its standard readiness notification;
+only then does the controller connect once. Another SNode.C read receiver observes
+process exit. Framework shutdown signals and reaps that owned process without a
+blocking wait. No controller polling, timer, thread or retry is involved.
+The database socket must be absent before managed startup. Unmanaged mode
+performs no server lifecycle action.
+Protected input files must be regular, owned by the effective
+user, non-symlinks, mode 0600 or stricter, and at most 64 KiB. Keys are loaded
+only by the running application from explicit paths. A webhook secret has at
+least 32 bytes. Database/server initialization, migration, reset and production
+configuration changes are not performed.
+
+Management binds to loopback port 8080 with the existing trusted local access
+requirement. `webhook` is a separate named TLS instance, disabled until explicitly
+configured with its certificate/key and enabled through native SNode.C options.
+Use native `--help` with an explicit config file to inspect listener options.
+Do not expose management externally without the separately agreed access setup.
+
+## Public management and evidence boundaries
+
+`GET /api/graph` and `GET /events` expose durable facts, with SSE updates for
+within-state evidence as well as domain transitions. Management JSON POSTs are:
+
+| Path | JSON fields |
+| --- | --- |
+| /api/enroll, /api/refresh | repository, ref |
+| /api/request | repository, tag (empty means highest SemVer) |
+| /api/retry | execution; only a definite failure permits a new attempt |
+| /api/reconcile | execution; observation only, never dispatch replay |
+| /api/retire | execution, acknowledgement; only unbound publication |
+
+Each `/events` connection receives a complete graph object first. Subsequent
+`data:` messages contain RFC 6902 arrays with only changed fields (`add`,
+`remove`, `replace`), derived from the same before/after transaction values.
+An unchanged operation performs no UPDATE, revision increment or broadcast.
+Notifications and GitHub commands follow successful commit acknowledgement;
+uncertain or rejected writes emit neither. Initial subscription and commit
+callbacks run in the same event loop, preserving snapshot/update order.
+
+SSE uses direct sends, without a custom pipe/source or delivery queue. Each peer
+may buffer its remaining initial framed snapshot plus 64 KiB of updates and
+heartbeats, including conservative HTTP framing allowance. The initial allowance
+shrinks with SNode.C's cumulative sent-byte counter. An event that exceeds the
+remaining budget closes that peer immediately; even a healthy peer reconnects
+for a fresh snapshot if a single patch is too large. Existing 30-second heartbeat
+comments and EventSource reconnect behavior remain. This bounds application
+output buffering, not browser or operating-system TCP buffers. Changed graph
+transactions still persist the complete authoritative graph in MariaDB.
+
+`POST /github/webhook` exists only on the TLS instance and authenticates the exact
+raw body with GitHub's standard HMAC. Repository/installation IDs and REST-read
+run/actor/workflow/job/artifact identities constrain evidence. Source notifications
+reuse already committed selections; duplicate notifications cannot select newer
+prerequisites or replay dispatch. Explicit new requests may select current inputs
+while preserving earlier frozen work.
+
+Build results require the assigned successful run/job and exact artifact bytes
+and manifest. Publication requires the immutable execution receipt from a trusted
+committed feed revision to equal its independently served public HTTPS bytes,
+with exact attempt/source/result/publication/package bindings. A later shared
+index mutation is irrelevant. No current-index membership or hash is a readiness
+condition. Unavailable/mismatched proof preserves the publication assignment.
+
+No full-system or speedup claim follows from local tests. GitHub queue/setup,
+build/publication and public HTTPS/Pages availability were observed in the
+authorized sandbox acceptance. External writer/Pages waiting remains present;
+no overall speedup has been established.

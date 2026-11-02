@@ -1,66 +1,111 @@
-# core-ci engineering
+# Fresh controller
 
-The current owner specification is a fresh implementation. Do not recover requirements,
-source, architecture or protocols from discarded core-ci history. No migration or
-legacy compatibility. There is no IdP integration.
+This independent repository is /home/voc/projects/snodec/core-ci-new. The owner
+authorized its creation instead of changing /home/voc/projects/snodec/core-ci.
+Branch: feat/graph-controller. The owner authorized committing, pushing and merging
+the accepted fresh controller into the existing SNodeC/core-ci repository, replacing
+its old controller. Production deployment remains separately authorized.
 
-Canonical checkout: /home/voc/projects/snodec/core-ci. GitHub: SNodeC/core-ci.
-Use feature branches based on main. External integration is restricted to explicitly
-authorized VOC-Experiments repositories. Never change production SNodeC workflows,
-credentials, tags or feeds. Commit, push, activation and publication are separate stages.
+Use only the current task specification and extracted external contracts in
+docs/contracts.md as controller design inputs. The reference repository may be
+read solely for source definitions, workflow YAML, worker JSON contract
+validators/serializers and documented authorization. Never read its controller,
+tests, UI, SQL schema, proposals, reports, history or logs for implementation.
+Never inspect credentials, private configuration, secrets/, .qtcreator/ or
+.local-credentials/ in either repository.
 
-Use persistent builds under build/codex/<configuration> and temporary checks under
-/tmp/codex/build/core-ci/<task>. No additional source checkouts without approval.
-Ignore build/, checkouts/ and credential directories. Preserve .qtcreator/ and
-.local-credentials/; do not inspect or commit their contents.
+The limit is 2,500 physical controller-owned C++ source/header lines everywhere,
+including bootstrap, utilities, comments and blank lines. Lines are at most 160
+characters. No generated business logic or custom external implementation.
+Use braces, one final return and no avoidable break/continue.
 
-Study SNode.C src/apps and relevant MQTTSuite applications before implementation.
-Use installed public SNode.C package targets, one thread and one framework event loop.
-Keep blocking storage, network operations and subprocess waits out of event handlers.
-Register configuration and named instances before core::SNodeC::init(). Call init once.
-Start managed MariaDB if selected and call MariaDBClient::connect() explicitly once.
-Only initial database success configures the application and starts the listener.
-On initial failure, log and release resources at the database boundary, leaving no
-listener or pending startup work. End main with return core::SNodeC::start().
-No startup polling, retry loops, deferred startup, explicit stop/exit or custom help.
-Later commands may use framework lazy establishment after the connection disappears;
-never replay uncertain mutations. Unmanaged mode must leave the external server alone.
-Keep configuration and route registration visible in main and useful callbacks inline.
-Separate successive tasks with blank lines.
+MariaDB is the sole durable graph/state authority. Immutable selections and exact
+prerequisite attempts govern readiness. Persist assignment authority successfully
+before dispatch; preserve unknown outcomes without replay across restart.
+All controller tasks use one installed SNode.C event loop; no controller threads, timer, scheduler,
+ready queue, cache, admission policy, feed lock or worker execution.
 
-GitHub ci/packages.json is authoritative for build definitions. MariaDB stores enrollment,
-immutable selections, dependency relationships and execution evidence. One graph/state
-authority; no persisted ready queue or generic workflow engine. Commit dispatch authority
-before calling GitHub. Unknown outcomes preserve assignments and uncertainty.
-A join waits for all relevant prerequisites; verified publication alone satisfies an edge.
-An explicitly acknowledged operator retirement may mark an unbound publication failed
-while preserving its assignment/history and unknown remote outcome; it never replays work.
-Builds, signing and publication run on GitHub, with privileged publication kept separate.
-Image/SDK discovery and registry authentication also belong to GitHub worker tooling.
-The controller dispatches selected source/target/prerequisite inputs and records verified
-execution evidence; do not introduce controller registry/SDK clients.
-Keep deployment secrets out of source definitions, browser code, artifacts and logs.
+Persistent builds: build/codex/<configuration>. Temporary builds and fixtures:
+/tmp/codex/build/core-ci/<task>. No additional checkout. Commit applicable
+canonical formatting files/modules from ~/.codex/formatting byte-for-byte.
+Use repository copies for explicit formatting/check targets.
 
-Use braces for compound statements, one return at function end and no avoidable
-break/continue. Changed production lines are at most 160 characters. Copy applicable
-canonical files and cmake modules from ~/.codex/formatting byte-for-byte before the
-first C++/CMake implementation commit. Use committed copies for formatting/check targets
-covering src/ and tests/, excluding generated/third-party files and .qtcreator/.
-Do not introduce unused build tooling in the design-only checkpoint.
+Document extracted contracts before dependent implementation. Missing contract
+semantics must be resolved explicitly, never recovered from the old controller.
+Public deployment identities/pins are supplied inputs, never invented defaults.
+Live VOC-Experiments acceptance needs separate authorization. Never mutate
+production SNodeC workflows, feeds, tags, keys, databases or services.
 
-Record significant decisions and verification in WORK_LOG.md. Report production,
-test and documentation changes separately. Distinguish local proof from live acceptance.
-Before net production-code growth, present the design and estimate and obtain the
-explicit approval required by the global engineering instructions. Do not claim completion
-until the real graph-driven package pipeline and required acceptance have been verified.
+Record significant decisions and checks in WORK_LOG.md. Report production, test
+and documentation changes separately, exact source/build identity, physical C++
+counts and unavailable acceptance. Do not call the full system working without
+the specified end-to-end sandbox acceptance.
 
-The owner approved the fresh controller implementation with a maximum of 3,830 physical
-C++ source/header lines under src/, including main.cpp. Reused UI assets and GitHub worker
-tooling are separate; do not move controller logic there to evade the bound. This replaces
-the earlier implementation estimate. Re-estimate before exceeding the bound or introducing
-unagreed architecture. Runtime dependency declarations remain source-owned compatible
-ranges; build artifact selection stays exact.
+Formatting targets cover src/ and tests/ explicitly. The optional analyze target
+uses the repository's canonical .clang-tidy with the selected build's compile
+database; configure clangd with that same build directory. No third-party or
+generated source is part of these checks.
 
-Canonical formatting files/modules are byte copies. The top-level build extends the
-canonical format target to tests/ and adds format-check for src/ and tests/. Source
-and CMake discovery excludes generated builds, checkouts and user-owned .qtcreator/.
+The owner permits reading the reference src/main.cpp specifically for SNode.C
+runtime usage patterns. Its controller behavior remains excluded as design input.
+Use SNode.C patterns wherever they solve the problem; ask before substituting
+another pattern. Managed MariaDB may use small nonblocking ownership code in that
+event loop. Configure before init, start database work directly after init, and
+let the framework own event dispatch and shutdown.
+
+The owner subsequently authorized live VOC-Experiments sandbox acceptance and
+routing its existing App webhook to the foreground Jupiter controller through
+existing WAN 8443 forwarding. This does not authorize production resources,
+commits/pushes, a system installation, key rotation or workflow source edits.
+The acceptance database must retain original selections and execution history.
+Existing renewed sandbox workflow pins and certificate provenance are recorded
+in docs/contracts.md; changing runtime inputs does not rebind assigned work.
+
+The owner subsequently authorized copying the reference ui/index.html,
+ui/style.css and ui/app.js as a presentation/layout template. This permission is
+limited to UI assets; old controller logic remains excluded. Adapt presentation
+to the fresh graph/API, preserve the current retry/retirement rules, and use the
+browser locale's hour format. UI filtering/order cannot affect graph readiness.
+
+The owner subsequently authorized an SSE-only heartbeat using the previous
+implementation's SNode.C timer pattern. Each connected SSE stream sends a comment
+every 30 seconds; disconnect cancels its timer and removes the response. This is
+transport maintenance only, never graph polling, scheduling or reconciliation.
+
+The owner subsequently required source-triggered forward propagation in addition
+to accepted recursive prerequisite creation, with no net production-code growth.
+Every source selects its transitive enrolled dependents; reuse existing exact
+prerequisites. The newest selected tree is shown together in reverse dependency
+order above older work; presentation never governs activation. The owner also
+explicitly removed independent HTTPS and duplicate publication-content proofs.
+The owner corrected publication authority: require the matched Publish job and
+exactly one Confirm public receipt job to complete successfully in the same
+authenticated pinned run/attempt, then read its committed receipt for dependent
+inputs. Retain execution/attempt matching and terminal historical facts. Do not
+repeat the workflow's HTTPS confirmation or signing/package/index checks.
+
+The owner subsequently approved direct incremental SSE delivery and net growth
+of 35–55 C++ and 20–30 JavaScript lines. Each connection gets one full initial
+snapshot, then committed RFC 6902 field updates. No-change operations do not
+write or notify. Pending SSE output is bounded to the remaining initial framed
+snapshot plus 64 KiB; the initial allowance shrinks as bytes leave the socket.
+Updates and heartbeat comments share this bound, including framing allowance.
+Close an over-limit peer immediately; EventSource reconnects with a new snapshot.
+No custom pipe/source, delivery replay queue, polling timer or graph cache.
+This source-work approval does not authorize replacing the running sandbox.
+
+The owner authorized the publication gate's net growth of 7 production C++ lines
+(2328 to 2335), the sandbox native-confirmation workflow condition correction
+and corresponding approved pin update, local restart and one new core-triggered
+full-chain acceptance. No controller commit/push or production SNodeC resource
+change is authorized. Existing assignments retain their frozen workflow pins.
+
+
+The owner authorized the 2026-11-02 checkpoint before startup recovery work.
+Preserve existing Git history by parenting the replacement to current origin/main.
+Remove the superseded controller, schema, tests and obsolete documentation. Keep
+existing deployment/ GitHub worker/workflow assets and public keys byte-identical;
+they are external execution contracts, not a second controller. Do not inspect
+those worker implementations as controller architecture. The reference checkout's
+unrelated dirty work remains untouched. Automatic startup reconciliation is still
+unimplemented and is not part of this checkpoint.
