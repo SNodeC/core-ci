@@ -119,9 +119,10 @@ required successful check. There is no additional startup pass or dispatch repla
 
 ## Presentation and validation
 
-The existing activity line shows `Unresolved <stage> <read|evidence>: <reason>`,
-with full detail and meaning in its tooltip. Expanded facts label at as first
-recorded for the current reason. Badge, columns, layout and job timestamps retain
+The activity line and hover tooltip show the recorded reason only, without
+presentation prefixes or explanatory suffixes. The hover uses a pointer cursor.
+Expanded details retain `Unresolved <stage> <read|evidence>: <reason>` and label
+`at` as first recorded for the current reason. Badge, columns, layout and job timestamps retain
 their meanings. SSE continues to carry committed field updates only.
 
 Focused checks use local trusted TLS fixtures, isolated real MariaDB, public

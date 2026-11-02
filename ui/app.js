@@ -19,10 +19,9 @@ function view(work) {
     const progress = active.state === 'building' ? build : publish;
     const running = progress?.step, send = progress?.send;
     const uncertainty = active.uncertainty;
-    const activity = uncertainty ? `Unresolved ${uncertainty.stage || (active.publish_assigned ? 'publish' : 'build')} `
-        + `${uncertainty.kind || 'evidence'}: ${uncertainty.reason}`
+    const activity = uncertainty ? uncertainty.reason
         : active.state === 'publishing' && publishJob?.conclusion === 'success' ? 'Awaiting publisher receipt'
-        : running ? `Last reported: ${running}` : [progress?.status, progress?.conclusion].filter(Boolean).join(' · ')
+        : running ? running : [progress?.status, progress?.conclusion].filter(Boolean).join(' · ')
             || (active.state === 'waiting' ? 'Exact prerequisites pending'
                 : send === 'accepted' ? 'Awaiting GitHub evidence' : 'Dispatch unconfirmed');
     return {active, build, publish, buildJob, publishJob, activity};
@@ -31,8 +30,7 @@ function state(work) {
     const {active, activity} = view(work), result = node('span', '', 'execution-state');
     result.append(node('span', active.state, 'state ' + active.state));
     if (!['published', 'failed'].includes(active.state)) {
-        result.append(Object.assign(node('span', activity, 'secondary activity'), {title: activity + (active.uncertainty
-            ? ' — Latest recorded failure still awaiting the required successful check; verified facts retained.' : '')}));
+        result.append(Object.assign(node('span', activity, 'secondary activity'), {title: activity}));
     }
     return result;
 }
