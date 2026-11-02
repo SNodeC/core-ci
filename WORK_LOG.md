@@ -1085,3 +1085,23 @@ Pagination, production resources, commits, pushes and deployments were untouched
 - Evidence under /tmp/codex/build/core-ci/restart-chain-20261102; reuse the separately
   built/tested 2348-line controller. Existing sandbox credentials are passed only
   by approved paths; no credential contents inspected or printed.
+
+
+## Local recovery live; controlled acceptance blocked before selection (2026-11-02)
+
+- Committed implementation as 1e76e9a, not pushed/merged. Graceful local upgrade
+  succeeded; new binary SHA 185c18b622e7db3c6c2535fc2ba44ff9131f21e08a7da38ff58b36f2af260777
+  runs PID 487201 with preserved DB/inputs. 8080 and 8443 listen; local real-name
+  TLS GET verifies certificate and returns 404. Production count unchanged 2348.
+- Created core v2.1.20 exactly once. GitHub source push webhook returned 502,
+  failed to connect to host at 10:35:35.454 UTC before planned interruption.
+  Public endpoint connection also fails; current Jupiter LAN 10.20.99.86 differs
+  from documented forwarding target 192.168.1.239. No network/router changes.
+- Verified zero v2.1.20 selections and zero matching core runs. The active-build
+  interruption driver never stopped the controller; no completion events replayed,
+  manual reconciliation, retry or additional tag. Diagnostic observers stopped;
+  recovery controller remains running. Existing startup observations are normal.
+- Full new chain/restart acceptance remains unexecuted pending reachable public
+  callback route. Detailed findings and continuation in
+  docs/restart-recovery-acceptance.md; raw evidence under
+  /tmp/codex/build/core-ci/restart-chain-20261102. Preserve existing tag/assignments.
