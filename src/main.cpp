@@ -30,7 +30,7 @@ namespace {
             const auto pending = connection->getTotalQueued() - std::max(connection->getTotalSent(), snapshotEnd);
             // Reserve the maximum hexadecimal HTTP chunk length plus its two CRLF pairs.
             const auto framed = event.size() + 2 * sizeof(std::size_t) + 4;
-            if (pending > 65536 || framed > 65536 - pending) {
+            if (event.empty() || pending > 65536 || framed > 65536 - pending) {
                 connection->close();
             } else {
                 response->sendFragment(event);
@@ -84,6 +84,49 @@ int main(int argc, char* argv[]) {
         managed.stop();
     };
     std::map<std::shared_ptr<express::Response>, std::size_t> clients;
+    const auto eventStream = [&](const auto&, const auto& response) {
+        store.read([&, response](const ci::Json& snapshot, const std::string& error) {
+            if (response->isConnected()) {
+                try {
+                    ci::require(error.empty(), error);
+                    const auto repositories = ci::projectRepositories(snapshot.at("graph").at("repositories"));
+                    response->getSocketContext()->getSocketConnection()->setReadTimeout(core::DescriptorEventReceiver::TIMEOUT::DISABLE);
+                    const auto heartbeat = std::make_shared<core::timer::Timer>(core::timer::Timer::intervalTimer(
+                        [&, weak = std::weak_ptr<express::Response>(response)] {
+                            const auto client = weak.lock();
+                            if (client && clients.contains(client)) {
+                                sendEvent(client, clients.at(client), ": keep-alive\n\n");
+                            }
+                        },
+                        30));
+                    response->getSocketContext()->setOnDisconnected([&, client = response.get(), heartbeat]() {
+                        heartbeat->cancel();
+                        std::erase_if(clients, [client](const auto& candidate) {
+                            return candidate.first.get() == client;
+                        });
+                    });
+                    response->type("text/event-stream").set("Cache-Control", "no-store").sendHeader();
+                    response->sendFragment("data: {\"repositories\":" + repositories.dump() + ",\"executions\":{},\"ready\":false}\n\n");
+                    for (const auto& [index, work] : snapshot.at("graph").at("executions").items()) {
+                        const auto path = ci::Json::json_pointer("/executions") / work.at("id").get<std::string>();
+                        const auto value = ci::projectWork(work, std::stoull(index));
+                        const ci::Json patch = {{{"op", "add"}, {"path", path.to_string()}, {"value", value}}};
+                        response->sendFragment("data: " + patch.dump() + "\n\n");
+                    }
+                    response->sendFragment("data: [{\"op\":\"replace\",\"path\":\"/ready\",\"value\":true}]\n\n");
+                    if (response->isConnected()) {
+                        clients.emplace(response, response->getSocketContext()->getSocketConnection()->getTotalQueued());
+                    }
+                } catch (...) {
+                    if (response->header("Content-Type") == "text/event-stream") {
+                        response->getSocketContext()->getSocketConnection()->close();
+                    } else {
+                        response->sendStatus(503);
+                    }
+                }
+            }
+        });
+    };
     core::SNodeC::init(argc, argv);
     try {
         ci::require(!deploymentFile.empty() && !database.empty() && !username.empty() && !socket.empty(),
@@ -135,7 +178,8 @@ int main(int argc, char* argv[]) {
                                 controller->send(actions);
                             };
                             store.changed = [&](const ci::Json& updates) {
-                                const std::string event = "data: " + updates.dump() + "\n\n";
+                                const std::string event = updates.is_null() ? "" : "data: " + updates.dump() + "\n\n";
+                                report(updates.is_null() ? "UI projection failed; SSE reconnect required" : "");
                                 const auto connected = clients;
                                 for (const auto& [client, snapshotEnd] : connected) {
                                     sendEvent(client, snapshotEnd, event);
@@ -150,36 +194,7 @@ int main(int argc, char* argv[]) {
                                     }
                                 });
                             });
-                            web.get("/events", [&](const auto&, const auto& response) {
-                                store.read([&, response](const ci::Json& snapshot, const std::string& error) {
-                                    if (error.empty() && response->isConnected()) {
-                                        response->getSocketContext()->getSocketConnection()->setReadTimeout(
-                                            core::DescriptorEventReceiver::TIMEOUT::DISABLE);
-                                        const auto heartbeat = std::make_shared<core::timer::Timer>(core::timer::Timer::intervalTimer(
-                                            [&, weak = std::weak_ptr<express::Response>(response)] {
-                                                const auto client = weak.lock();
-                                                if (client && clients.contains(client)) {
-                                                    sendEvent(client, clients.at(client), ": keep-alive\n\n");
-                                                }
-                                            },
-                                            30));
-                                        response->getSocketContext()->setOnDisconnected([&, client = response.get(), heartbeat]() {
-                                            heartbeat->cancel();
-                                            std::erase_if(clients, [client](const auto& candidate) {
-                                                return candidate.first.get() == client;
-                                            });
-                                        });
-                                        response->type("text/event-stream").set("Cache-Control", "no-store").sendHeader();
-                                        response->sendFragment("data: " + snapshot.at("graph").dump() + "\n\n");
-                                        if (response->isConnected()) {
-                                            clients.emplace(response,
-                                                            response->getSocketContext()->getSocketConnection()->getTotalQueued());
-                                        }
-                                    } else if (response->isConnected()) {
-                                        response->sendStatus(503);
-                                    }
-                                });
-                            });
+                            web.get("/events", eventStream);
                             for (const std::string operation : {"enroll", "refresh", "request", "retry", "reconcile", "retire"}) {
                                 web.post("/api/" + operation, [&, operation](const auto& request, const auto& response) {
                                     const ci::Done done = [response](const std::string& error) {

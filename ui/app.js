@@ -1,7 +1,7 @@
 'use strict';
 const element = id => document.getElementById(id);
-let graph = {repositories: {}, executions: []};
-let selected = null, events = null, busy = false;
+let graph = {repositories: {}, executions: {}, ready: false};
+let selected = null, events = null, busy = false, renderPending = false;
 const expanded = new Set();
 
 function node(tag, text = '', className = '') {
@@ -14,19 +14,17 @@ function button(text, action, className = '') {
     return result;
 }
 function view(work) {
-    const active = work.attempts.at(-1), build = active.facts.build_run, publish = active.facts.publish_run;
-    const buildJob = build?.jobs?.find(job => job.id === build.job_id);
-    const publishJob = publish?.jobs?.find(job => job.id === publish.job_id);
+    const {active, build, publish} = work;
+    const buildJob = build?.job, publishJob = publish?.job;
     const progress = active.state === 'building' ? build : publish;
-    const running = (progress?.jobs || []).flatMap(job => job.steps || []).find(step => step.status === 'in_progress');
-    const send = active.facts[active.state === 'building' ? 'build_send' : 'publish_send'];
+    const running = progress?.step, send = progress?.send;
     const uncertainty = active.uncertainty;
-    const activity = uncertainty ? `Unresolved ${uncertainty.stage || (active.publish_assignment ? 'publish' : 'build')} `
+    const activity = uncertainty ? `Unresolved ${uncertainty.stage || (active.publish_assigned ? 'publish' : 'build')} `
         + `${uncertainty.kind || 'evidence'}: ${uncertainty.reason}`
         : active.state === 'publishing' && publishJob?.conclusion === 'success' ? 'Awaiting publisher receipt'
-        : running ? `Last reported: ${running.name}` : [progress?.status, progress?.conclusion].filter(Boolean).join(' · ')
+        : running ? `Last reported: ${running}` : [progress?.status, progress?.conclusion].filter(Boolean).join(' · ')
             || (active.state === 'waiting' ? 'Exact prerequisites pending'
-                : send?.outcome === 'accepted' ? 'Awaiting GitHub evidence' : 'Dispatch unconfirmed');
+                : send === 'accepted' ? 'Awaiting GitHub evidence' : 'Dispatch unconfirmed');
     return {active, build, publish, buildJob, publishJob, activity};
 }
 function state(work) {
@@ -107,7 +105,15 @@ function link(label, url) {
     const allowed = typeof url === 'string' && url.startsWith('https://github.com/');
     return allowed ? Object.assign(node('a', label + ' ↗'), {href: url, target: '_blank', rel: 'noopener noreferrer'}) : node('span');
 }
-function renderExecution(work, panel, open) {
+function attemptDetail(attempt) {
+    const u = attempt.uncertainty, retirement = attempt.retirement;
+    const stage = u?.stage || (attempt.publish_assigned === undefined ? 'stage not recorded' : attempt.publish_assigned ? 'publish' : 'build');
+    return [attempt.failure_kind, attempt.failure, u ? `Unresolved ${stage} ${u.kind || 'evidence'}: ${u.reason}`
+        + ` — First recorded for this reason: ${fullDateFormat.format(new Date(u.at))}` : '', retirement
+        ? `${retirement.acknowledgement} · ${fullDateFormat.format(new Date(retirement.at))} · Remote outcome: ${retirement.remote_outcome}`
+        : ''].filter(Boolean).join(' · ');
+}
+function renderExecution(work, panel) {
     const {active, build, publish, buildJob, publishJob, activity} = view(work);
     const columns = node('div', '', 'detail-grid'), facts = node('div'), values = node('dl'), timings = node('table', '', 'timings');
     values.append(node('dt', 'Activity'), node('dd', ['published', 'failed'].includes(active.state) ? active.state : activity));
@@ -137,13 +143,12 @@ function renderExecution(work, panel, open) {
         }
     }
     facts.append(values, timings);
-    if (active.failure || active.uncertainty) {
-        facts.append(node('p', active.failure || `${activity} — First recorded for this reason: ${
-            fullDateFormat.format(new Date(active.uncertainty.at))}`, active.failure ? 'error' : 'secondary'));
+    if (active.failure || active.uncertainty || active.retirement) {
+        facts.append(node('p', attemptDetail(active), active.failure ? 'error' : 'secondary'));
     }
     const dependencies = node('div'), list = node('ul', '', 'dependencies');
     for (const id of work.prerequisites) {
-        const prerequisite = graph.executions.find(candidate => candidate.id === id), item = node('li');
+        const prerequisite = graph.executions[id], item = node('li');
         const control = node('a', prerequisite ? `${prerequisite.source.package} ${prerequisite.source.tag} · ${prerequisite.target.id}` : id);
         Object.assign(control, {href: '#work-' + id, onclick: () => showExecution(id)});
         control.dataset.go = id;
@@ -162,13 +167,12 @@ function renderExecution(work, panel, open) {
     actions.append(link('GitHub build run', build?.identity?.html_url), link('Build logs', buildJob?.html_url),
         link('GitHub publication run', publish?.identity?.html_url), link('Publisher logs', publishJob?.html_url));
     if (active.state === 'published') {
-        const directory = active.receipt.packages[0].path.split('/').slice(0, -1).map(encodeURIComponent).join('/');
-        actions.append(link('Packages', `https://github.com/${active.receipt.feed.repository}/tree/${active.proof.feed_revision}/${directory}`));
+        actions.append(link('Packages', work.packages));
     }
     for (const [name, label, enabled] of [
-        ['reconcile', 'Reconcile', Boolean(active.assignment)],
+        ['reconcile', 'Reconcile', active.assigned],
         ['retry', 'Retry definite failure', active.state === 'failed' && active.failure_kind === 'definite'],
-        ['retire', 'Acknowledge publication retirement', active.state === 'publishing' && !active.facts.publish_run_id]
+        ['retire', 'Acknowledge publication retirement', active.state === 'publishing' && !active.publish_run_bound]
     ]) {
         if (enabled) {
             const control = button(label, () => operation(async () => {
@@ -187,30 +191,30 @@ function renderExecution(work, panel, open) {
             actions.append(control);
         }
     }
-    const technical = node('details');
-    technical.open = open;
-    technical.append(node('summary', 'Frozen inputs, attempts and execution evidence'), node('pre', JSON.stringify(work, null, 2)));
     const content = panel.appendChild(node('div', '', 'execution-content'));
-    content.append(columns, actions, technical);
+    content.append(columns, actions);
+    for (const prior of work.previous) {
+        content.append(node('p', `Attempt ${prior.id} · r${prior.revision} · ${prior.state} · ${attemptDetail(prior)}`, 'secondary'));
+    }
 }
 function renderWork() {
     const query = element('search').value.toLowerCase(), filter = element('state-filter').value, levels = new Map(), groups = new Map(), created = new Map();
-    const technicalOpen = new Set([...document.querySelectorAll('.execution-details details[open]')].map(detail => detail.closest('td').id));
-    for (const [index, work] of graph.executions.entries()) {
-        const time = work.attempts[0].created;
+    const items = Object.values(graph.executions).sort((a, b) => a.index - b.index);
+    for (const work of items) {
+        const time = work.created, index = work.index;
         if (!created.has(time)) {
             created.set(time, index);
         }
         groups.set(work.id, work.selection ?? created.get(time));
         levels.set(work.id, 1 + Math.max(-1, ...work.prerequisites.map(id => levels.get(id))));
     }
-    for (const work of [...graph.executions].reverse()) {
+    for (const work of [...items].reverse()) {
         for (const id of work.prerequisites) {
             groups.set(id, Math.max(groups.get(id), groups.get(work.id)));
         }
     }
-    const visible = graph.executions.filter(work => {
-        const active = work.attempts.at(-1), target = work.target;
+    const visible = items.filter(work => {
+        const active = work.active, target = work.target;
         const matches = filter === 'all' || (filter === 'active' && active.state !== 'published') || active.state === filter;
         return matches && [work.source.repository, work.source.tag, target.distribution, target.suite, target.arch, target.build.format]
             .join(' ').toLowerCase().includes(query);
@@ -258,31 +262,32 @@ function renderWork() {
             const details = node('tr'), panel = node('td', '', 'execution-details');
             panel.colSpan = 7;
             panel.id = 'execution-' + work.id;
-            renderExecution(work, panel, technicalOpen.has(panel.id));
+            renderExecution(work, panel);
             details.append(panel);
             element('graph').append(details);
         }
     }
-    element('visible-count').textContent = `${visible.length} of ${graph.executions.length} executions`;
+    element('visible-count').textContent = `${visible.length} of ${items.length} executions`;
     element('counts').textContent = ['building', 'publishing', 'waiting', 'failed', 'published'].map(value =>
-        `${graph.executions.filter(work => work.attempts.at(-1).state === value).length} ${value}`).join(' · ');
+        `${items.filter(work => work.active.state === value).length} ${value}`).join(' · ');
 }
 function selectRepository(name = null, entry = graph.repositories[name]) {
     selected = name;
     element('repository').value = name || '';
     element('branch').value = entry?.ref || '';
-    element('definition').value = entry ? JSON.stringify(entry.definition, null, 2) : '';
-    element('revision').textContent = entry ? `Committed configuration: ${entry.ref} · ${entry.commit.slice(0, 12)}`
-        : 'No committed revision selected';
     element('tag').value = '';
     renderRepositories();
 }
 function renderRepositories() {
+    const entry = graph.repositories[selected];
+    element('definition').value = entry ? JSON.stringify(entry.definition, null, 2) : '';
+    element('revision').textContent = entry ? `Committed configuration: ${entry.ref} · ${entry.commit.slice(0, 12)}`
+        : selected ? 'Awaiting committed definition' : 'No committed revision selected';
     const names = Object.keys(graph.repositories), owners = new Set(names.map(name => name.split('/')[0]));
     element('owner').textContent = owners.size === 1 ? [...owners][0] : 'Local administration';
     element('repositories').replaceChildren();
     for (const name of names) {
-        const control = button(graph.repositories[name].definition.title, () => selectRepository(name));
+        const control = button(graph.repositories[name].title, () => selectRepository(name));
         control.append(node('span', name, 'secondary'));
         control.setAttribute('aria-pressed', String(name === selected));
         control.disabled = busy;
@@ -318,10 +323,16 @@ function connect() {
         } else {
             graph = update;
         }
-        element('connection').textContent = 'Live · GitHub job events';
-        element('reconnect').hidden = true;
-        renderRepositories();
-        renderWork();
+        if (!renderPending) {
+            renderPending = true;
+            requestAnimationFrame(() => {
+                renderPending = false;
+                element('connection').textContent = graph.ready ? 'Live · GitHub job events' : 'Loading…';
+                element('reconnect').hidden = true;
+                renderRepositories();
+                renderWork();
+            });
+        }
     };
     events.onerror = () => {
         element('connection').textContent = 'Reconnecting…';
@@ -340,11 +351,7 @@ element('editor').addEventListener('submit', event => {
     operation(async () => {
         const name = element('repository').value.trim(), ref = element('branch').value.trim();
         feedback(await api(graph.repositories[name] ? 'refresh' : 'enroll', {repository: name, ref}));
-        const response = await fetch('/api/graph');
-        if (!response.ok) {
-            throw new Error('Could not read committed definition');
-        }
-        selectRepository(name, (await response.json()).repositories[name]);
+        selected = name;
     });
 });
 element('request-build').addEventListener('click', () => operation(async () => {

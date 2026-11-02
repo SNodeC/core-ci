@@ -6,6 +6,15 @@
 #include <iostream>
 #include <utils/Config.h>
 
+ci::Json projectGraph(const ci::Json& graph) {
+    ci::Json result = {{"repositories", ci::projectRepositories(graph.at("repositories"))}, {"executions", ci::Json::object()}};
+    for (std::size_t i = 0; i < graph.at("executions").size(); ++i) {
+        const auto& work = graph.at("executions").at(i);
+        result["executions"][work.at("id").get<std::string>()] = ci::projectWork(work, i);
+    }
+    return result;
+}
+
 int main(int argc, char* argv[]) {
     ci::Store store;
     int result = 0;
@@ -13,7 +22,7 @@ int main(int argc, char* argv[]) {
     unsigned int completions = 0;
     unsigned int connections = 0;
     unsigned int notifications = 0;
-    ci::Json displayed = {{"repositories", ci::Json::object()}, {"executions", ci::Json::array()}};
+    ci::Json displayed = {{"repositories", ci::Json::object()}, {"executions", ci::Json::object()}};
     bool started = false;
     const std::string mode = std::getenv("CI_TEST_MODE");
     const std::string socket = std::getenv("CI_TEST_SOCKET");
@@ -57,16 +66,21 @@ int main(int argc, char* argv[]) {
         });
     };
     store.changed = [&](const ci::Json& updates) {
-        ci::require(updates.is_array() && !updates.empty(), "Only nonempty field updates are notified");
-        displayed = displayed.patch(updates);
-        ++notifications;
-        boundary([&](MYSQL* reader) {
-            ci::require(mysql_query(reader, "SELECT revision,body FROM ci_graph WHERE id=1") == 0, "Read before notification");
-            std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(reader), mysql_free_result);
-            const auto row = mysql_fetch_row(rows.get());
-            ci::require(std::stoul(row[0]) == notifications && ci::Json::parse(row[1]) == displayed,
-                        "Updates reconstruct independently visible committed state, without redundant revisions");
-        });
+        if (mode == "projection") {
+            ci::require(updates.is_null(), "Projection failure is an internal resync marker");
+            ++notifications;
+        } else {
+            ci::require(updates.is_array() && !updates.empty(), "Only nonempty field updates are notified");
+            displayed = displayed.patch(updates);
+            ++notifications;
+            boundary([&](MYSQL* reader) {
+                ci::require(mysql_query(reader, "SELECT revision,body FROM ci_graph WHERE id=1") == 0, "Read before notification");
+                std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(reader), mysql_free_result);
+                const auto row = mysql_fetch_row(rows.get());
+                ci::require(std::stoul(row[0]) == notifications && projectGraph(ci::Json::parse(row[1])) == displayed,
+                            "Updates reconstruct independently visible committed state, without redundant revisions");
+            });
+        }
     };
     core::SNodeC::init(argc, argv);
     core::EventReceiver::atNextTick([&]() {
@@ -102,7 +116,7 @@ int main(int argc, char* argv[]) {
                                         finish("");
                                     }));
                             } else {
-                                if (mode == "reject") {
+                                if (mode.starts_with("reject")) {
                                     boundary([](MYSQL* reader) {
                                         const int status =
                                             mysql_query(reader,
@@ -111,7 +125,7 @@ int main(int argc, char* argv[]) {
                                         ci::require(status == 0, "Install isolated rejection: " + std::string(mysql_error(reader)));
                                     });
                                 }
-                                const auto operation = [](ci::Json& graph) {
+                                const auto operation = [mode](ci::Json& graph) {
                                     ci::Json selected = {{"Fixture/base", fixture::selected("base", ci::Json::array())},
                                                          {"Fixture/client", fixture::selected("client", ci::Json::array({"base"}))},
                                                          {"Fixture/other", fixture::selected("other", ci::Json::array())}};
@@ -120,11 +134,14 @@ int main(int argc, char* argv[]) {
                                     for (const auto& command : ci::commands(graph)) {
                                         authorized.push_back(command);
                                     }
+                                    if (mode.ends_with("projection")) {
+                                        graph["executions"][0]["attempts"][0].erase("created");
+                                    }
                                     return authorized;
                                 };
                                 const ci::Done changed = [&](const std::string& message) {
                                     try {
-                                        if (mode == "reject" || mode == "unknown") {
+                                        if (mode.starts_with("reject") || mode.starts_with("unknown")) {
                                             ci::require(!message.empty() && effects == 0 && notifications == 0,
                                                         "Failed/unknown commit cannot dispatch or notify");
                                             boundary([&](MYSQL* reader) {
@@ -133,52 +150,92 @@ int main(int argc, char* argv[]) {
                                                 std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(reader),
                                                                                                               mysql_free_result);
                                                 const auto graph = ci::Json::parse(mysql_fetch_row(rows.get())[0]);
-                                                ci::require(graph.at("executions").size() == (mode == "unknown" ? 3 : 0),
+                                                ci::require(graph.at("executions").size() == (mode.starts_with("unknown") ? 3 : 0),
                                                             "Actual commit outcome retained");
                                             });
+                                            finish("");
+                                        } else if (mode == "projection") {
+                                            ci::require(message.empty() && effects == 2 && notifications == 1,
+                                                        "Projection failure cannot suppress committed dispatch or done");
                                             finish("");
                                         } else {
                                             ci::require(message.empty(), message);
                                             ++completions;
-                                            if (completions == 20) {
+                                            if (completions == (mode == "internal" ? 1U : 20U)) {
                                                 ci::require(effects == 2,
                                                             "Concurrent duplicate selections dispatch every root exactly once");
                                                 ci::require(notifications == 1, "Nineteen duplicate requests cannot write or notify");
-                                                store.read(ci::checked(
-                                                    [&](const ci::Json&, const std::string& error) {
-                                                        finish(error);
-                                                    },
-                                                    [&](const ci::Json& snapshot) {
-                                                        const std::string base = snapshot.at("graph").at("executions").at(0).at("id");
-                                                        store.change(
-                                                            [base](ci::Json& graph) {
-                                                                return fixture::finishBuild(graph, base);
-                                                            },
-                                                            [&, base](const std::string& error) {
-                                                                if (!error.empty()) {
-                                                                    finish(error);
-                                                                } else {
-                                                                    store.change(
-                                                                        [base](ci::Json& graph) {
-                                                                            ci::Json indexes = ci::Json::array();
-                                                                            for (int index = 0; index < 300; ++index) {
-                                                                                indexes.push_back(
-                                                                                    {{"path",
-                                                                                      "rpm/stable/repodata/" + std::string(70, 'a') +
-                                                                                          std::to_string(index) + ".xml.gz"},
-                                                                                     {"size", 1},
-                                                                                     {"sha256", std::string(64, '9')}});
-                                                                            }
-                                                                            return fixture::publish(graph, base, indexes);
-                                                                        },
-                                                                        [&](const std::string& failure) {
-                                                                            finish(failure.empty() && effects != 4
-                                                                                       ? "Atomic dependent release missing"
-                                                                                       : failure);
-                                                                        });
-                                                                }
-                                                            });
-                                                    }));
+                                                if (mode == "internal") {
+                                                    const auto hidden = [](ci::Json& graph) {
+                                                        ci::current(graph["executions"][0])["facts"]["internal_only"] = "durable";
+                                                        return ci::Json::array();
+                                                    };
+                                                    const auto verify = [&]() {
+                                                        boundary([&](MYSQL* reader) {
+                                                            ci::require(
+                                                                mysql_query(reader, "SELECT revision,body FROM ci_graph WHERE id=1") == 0,
+                                                                "Read silent committed facts");
+                                                            std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(
+                                                                mysql_store_result(reader), mysql_free_result);
+                                                            const auto row = mysql_fetch_row(rows.get());
+                                                            const auto raw = ci::Json::parse(row[1]);
+                                                            ci::require(std::stoul(row[0]) == 2 && notifications == 1 && effects == 2 &&
+                                                                            raw.at("executions")
+                                                                                    .at(0)
+                                                                                    .at("attempts")
+                                                                                    .back()
+                                                                                    .at("facts")
+                                                                                    .at("internal_only") == "durable",
+                                                                        "Internal facts commit silently; repeating them cannot write, "
+                                                                        "notify or dispatch");
+                                                        });
+                                                    };
+                                                    store.change(hidden, [&, hidden, verify](const std::string& error) {
+                                                        ci::require(error.empty(), error);
+                                                        verify();
+                                                        store.change(hidden, [&, verify](const std::string& repeated) {
+                                                            ci::require(repeated.empty(), repeated);
+                                                            verify();
+                                                            finish("");
+                                                        });
+                                                    });
+                                                } else {
+                                                    store.read(ci::checked(
+                                                        [&](const ci::Json&, const std::string& error) {
+                                                            finish(error);
+                                                        },
+                                                        [&](const ci::Json& snapshot) {
+                                                            const std::string base = snapshot.at("graph").at("executions").at(0).at("id");
+                                                            store.change(
+                                                                [base](ci::Json& graph) {
+                                                                    return fixture::finishBuild(graph, base);
+                                                                },
+                                                                [&, base](const std::string& error) {
+                                                                    if (!error.empty()) {
+                                                                        finish(error);
+                                                                    } else {
+                                                                        store.change(
+                                                                            [base](ci::Json& graph) {
+                                                                                ci::Json indexes = ci::Json::array();
+                                                                                for (int index = 0; index < 300; ++index) {
+                                                                                    indexes.push_back(
+                                                                                        {{"path",
+                                                                                          "rpm/stable/repodata/" + std::string(70, 'a') +
+                                                                                              std::to_string(index) + ".xml.gz"},
+                                                                                         {"size", 1},
+                                                                                         {"sha256", std::string(64, '9')}});
+                                                                                }
+                                                                                return fixture::publish(graph, base, indexes);
+                                                                            },
+                                                                            [&](const std::string& failure) {
+                                                                                finish(failure.empty() && effects != 4
+                                                                                           ? "Atomic dependent release missing"
+                                                                                           : failure);
+                                                                            });
+                                                                    }
+                                                                });
+                                                        }));
+                                                }
                                             }
                                         }
                                     } catch (const std::exception& failure) {

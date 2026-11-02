@@ -514,3 +514,64 @@ Only validated stage completion clears that requirement; Failed/retired history
 remains intact. See [the observation policy](observation-uncertainty.md) for the
 bounded per-GET reissue policy, token/POST limit, safe logs, Store commit-order
 semantics, single-writer assumption, no-polling consequence and unknown cause.
+
+
+## Compact management SSE contract (implementation task, 2026-11-02)
+
+Status: source implementation and focused validation complete; activation is
+recorded separately. See [checks and limits](compact-ui-delivery.md).
+
+The management browser receives an ephemeral presentation projection, never the
+raw durable graph. `/api/graph` keeps its existing raw read contract. MariaDB
+remains the sole authority; readiness and assignments never read projected data.
+
+One `/events` read supplies a consistent snapshot: a reset document containing
+`repositories`, empty ID-keyed `executions`, and `ready:false`; individual RFC 6902
+`add` events for each execution in committed array order; then `ready:true`.
+Repository entries contain only title/ref/commit/definition. The definition is
+the stored parsed value, once per repository. Execution records contain only
+identity/order/labels, exact prerequisite IDs, readable attempt summaries, matched
+job/run status and times, current step, uncertainty/failure/retirement summaries,
+action-enabling facts and the Packages directory URL. No definition matrix,
+deployment pins, assignments, receipts, artifacts, full jobs/steps or raw facts
+are included in execution records. Current and previous retirement summaries
+whitelist acknowledgement/time/unknown remote outcome; they never imply retry.
+
+A successful changing commit emits at most one RFC 6902 array containing only
+changed presentation fields. Paths use execution IDs and escape JSON-pointer
+tokens (`~0`, `~1`). Internal-only facts can commit without a UI message. A
+failed/uncertain commit emits no message or dispatch. Projection errors cannot
+abort the state commit: after successful commit an internal resync marker closes
+SSE connections without sending JSON null; reconnect reads a fresh snapshot.
+
+Initial records are projected/enqueued synchronously within the read callback,
+then the client is registered before later commit callbacks. There is no event
+history, revision-gap check, replay queue or cached graph. Initial delivery is
+still fully buffered per connection and grows with history: individual records
+permit progressive browser delivery, not producer backpressure. The existing
+remaining-initial-output allowance plus 64 KiB incremental bound, including
+framing, and 30-second heartbeat/disconnect cleanup remain unchanged. Large
+commits can still exceed that bound; pagination is a separate task.
+
+The record projection is hierarchical. It carries id/index/selection/created and
+exact prerequisite IDs; source repository/package/tag; target
+id/distribution/suite/arch/build.format; active id/revision/state/failure and
+failure_kind; uncertainty stage/kind/reason/at; retirement
+acknowledgement/at/remote_outcome; assigned/publish_assigned/publish_run_bound;
+verification_started_at and proof.verified_at. Earlier attempts are concise
+previous entries with identity/revision/state/failure/failure_kind and the same
+uncertainty/retirement whitelists only. No earlier raw facts are transferred.
+
+Each build/publish run carries status/conclusion/identity.html_url, send outcome,
+the matched job's status/conclusion/started_at/completed_at/html_url, and the
+first in_progress step name across all jobs. Published records carry one Packages
+GitHub directory URL derived from the exact receipt and proof feed revision,
+with directory segments encoded like encodeURIComponent. No receipt list crosses
+the UI boundary. Absent optional facts remain absent or null.
+
+Repository metadata has exactly title/ref/commit/definition, preserving the
+committed definition as parsed JSON. Definition matrices occur there once per
+repository, never in execution records. Payloads exclude assignments, deployment
+settings, workflow/source/tool pin objects, raw receipts/artifacts/manifests, raw
+jobs/steps/facts and source SHAs without display purpose. The public raw graph
+endpoint retains those durable facts and is not fetched by the UI.

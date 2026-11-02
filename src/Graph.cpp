@@ -180,11 +180,7 @@ namespace ci {
         }
         const Json identity = {{"source", selected.at("source")}, {"target", target}, {"prerequisites", prerequisites}};
         const std::string id = hash(identity.dump());
-        bool exists = false;
-        for (const auto& work : graph.at("executions")) {
-            exists = exists || work.at("id") == id;
-        }
-        if (!exists) {
+        if (findId(graph.at("executions"), id) == nullptr) {
             Json work = identity;
             work["workflows"] = selected.at("workflows");
             work["definition"] = selected.at("definition");
@@ -300,35 +296,25 @@ namespace ci {
     }
 
     void retry(Json& graph, const std::string& execution) {
-        bool found = false;
-        for (auto& work : graph.at("executions")) {
-            if (work.at("id") == execution) {
-                found = true;
-                const Json previous = current(work);
-                require(previous.at("state") == "failed" && previous.value("failure_kind", "") == "definite",
-                        "Only definite failures permit retry");
-                work["attempts"].push_back(attempt(graph, work));
-            }
-        }
-        require(found, "Unknown execution");
+        auto* work = findId(graph.at("executions"), execution);
+        require(work != nullptr, "Unknown execution");
+        const Json previous = current(*work);
+        require(previous.at("state") == "failed" && previous.value("failure_kind", "") == "definite",
+                "Only definite failures permit retry");
+        (*work)["attempts"].push_back(attempt(graph, *work));
     }
 
     void retire(Json& graph, const std::string& execution, const std::string& acknowledgement) {
         require(!acknowledgement.empty() && acknowledgement.size() <= 4096, "Explicit retirement acknowledgement required");
-        bool found = false;
-        for (auto& work : graph.at("executions")) {
-            if (work.at("id") == execution) {
-                found = true;
-                auto& active = current(work);
-                require(active.at("state") == "publishing" && !active.at("facts").contains("publish_run") &&
-                            !active.at("facts").contains("publish_run_id"),
-                        "Only an unbound publication may retire");
-                active["state"] = "failed";
-                active["failure_kind"] = "retirement";
-                active["retirement"] = {{"acknowledgement", acknowledgement}, {"at", utc()}, {"remote_outcome", "unknown"}};
-            }
-        }
-        require(found, "Unknown execution");
+        auto* work = findId(graph.at("executions"), execution);
+        require(work != nullptr, "Unknown execution");
+        auto& active = current(*work);
+        require(active.at("state") == "publishing" && !active.at("facts").contains("publish_run") &&
+                    !active.at("facts").contains("publish_run_id"),
+                "Only an unbound publication may retire");
+        active["state"] = "failed";
+        active["failure_kind"] = "retirement";
+        active["retirement"] = {{"acknowledgement", acknowledgement}, {"at", utc()}, {"remote_outcome", "unknown"}};
     }
 
     namespace {
@@ -375,72 +361,68 @@ namespace ci {
     Json applyEvidence(
         Json& graph, const Json& selected, const std::string& stage, const Json& observed, const Json& evidence, std::string error) {
         bool ready = false;
-        for (auto& work : graph.at("executions")) {
-            if (work.at("id") == selected.at("id")) {
-                for (auto& active : work.at("attempts")) {
-                    if (active.at("id") == selected.at("attempts").back().at("id")) {
-                        const bool awaiting = active.at("id") == work.at("attempts").back().at("id") &&
-                                              ((stage == "build" && active.at("state") == "building") ||
-                                               (stage == "publish" && active.at("state") == "publishing"));
-                        if (awaiting) {
-                            if (evidence.contains("receipt") && (!evidence.at("receipt").is_object() ||
-                                                                 evidence.at("receipt").value("execution", Json()) != selected.at("id") ||
-                                                                 evidence.at("receipt").value("attempt", Json()) != active.at("id"))) {
-                                error = "Unrelated publisher receipt";
-                            }
-                            const Json previous = active.value("uncertainty", Json::object());
-                            const std::string kind = observed.is_null() && previous.value("stage", stage) == stage
-                                                         ? previous.value("kind", previous.empty() ? "read" : "evidence")
-                                                         : (observed.is_null() ? "read" : "evidence");
-                            if (!error.empty()) {
-                                if (previous.value("stage", stage) != stage || previous.value("kind", "evidence") != kind ||
-                                    previous.value("reason", "") != error) {
-                                    const Json at = previous.value("reason", "") == error ? previous.at("at") : Json(utc());
-                                    active["uncertainty"] = {{"at", at}, {"stage", stage}, {"kind", kind}, {"reason", error}};
+        if (auto* work = findId(graph.at("executions"), selected.at("id"))) {
+            if (auto* active = findId(work->at("attempts"), selected.at("attempts").back().at("id"))) {
+                const bool awaiting = active->at("id") == work->at("attempts").back().at("id") &&
+                                      ((stage == "build" && active->at("state") == "building") ||
+                                       (stage == "publish" && active->at("state") == "publishing"));
+                if (awaiting) {
+                    if (evidence.contains("receipt") &&
+                        (!evidence.at("receipt").is_object() || evidence.at("receipt").value("execution", Json()) != selected.at("id") ||
+                         evidence.at("receipt").value("attempt", Json()) != active->at("id"))) {
+                        error = "Unrelated publisher receipt";
+                    }
+                    const Json previous = active->value("uncertainty", Json::object());
+                    const std::string kind = observed.is_null() && previous.value("stage", stage) == stage
+                                                 ? previous.value("kind", previous.empty() ? "read" : "evidence")
+                                                 : (observed.is_null() ? "read" : "evidence");
+                    if (!error.empty()) {
+                        if (previous.value("stage", stage) != stage || previous.value("kind", "evidence") != kind ||
+                            previous.value("reason", "") != error) {
+                            const Json at = previous.value("reason", "") == error ? previous.at("at") : Json(utc());
+                            (*active)["uncertainty"] = {{"at", at}, {"stage", stage}, {"kind", kind}, {"reason", error}};
+                        }
+                    } else if (observed.is_object() && previous.value("stage", stage) == stage &&
+                               previous.value("kind", "evidence") == "read") {
+                        active->erase("uncertainty");
+                    }
+                }
+                if (!observed.is_null() && (error.empty() || awaiting)) {
+                    merge((*active)["facts"][stage + "_run"], observed);
+                    if (evidence.contains("verification_started_at")) {
+                        const std::string started = evidence.at("verification_started_at");
+                        (*active)["verification_started_at"] = std::min(active->value("verification_started_at", started), started);
+                    }
+                    const auto& facts = active->at("facts").at(stage + "_run");
+                    (*active)["facts"][stage + "_run_id"] = observed.at("identity").at("id");
+                    if (awaiting && error.empty() && stage == "build" && evidence.contains("result")) {
+                        (*active)["build_result"] = evidence.at("result");
+                        (*active)["build_manifest"] = evidence.at("manifest");
+                        (*active)["state"] = "built";
+                        (*active)["built_at"] = utc();
+                        active->erase("uncertainty");
+                        ready = true;
+                    } else if (awaiting && error.empty() && stage == "publish" && evidence.contains("receipt")) {
+                        (*active)["receipt"] = evidence.at("receipt");
+                        (*active)["proof"] = evidence;
+                        (*active)["proof"].erase("receipt");
+                        active->erase("uncertainty");
+                        (*active)["state"] = "published";
+                        ready = true;
+                    } else if (awaiting && facts.at("status") == "completed" && facts.at("conclusion") == "failure") {
+                        bool definite = stage == "build";
+                        for (const auto& job : facts.at("jobs")) {
+                            if (job.at("id") == facts.at("job_id")) {
+                                for (const auto& step : job.at("steps")) {
+                                    definite = definite ||
+                                               (step.at("name") == "Publish checked feed update" && step.at("conclusion") == "skipped");
                                 }
-                            } else if (observed.is_object() && previous.value("stage", stage) == stage &&
-                                       previous.value("kind", "evidence") == "read") {
-                                active.erase("uncertainty");
                             }
                         }
-                        if (!observed.is_null() && (error.empty() || awaiting)) {
-                            merge(active["facts"][stage + "_run"], observed);
-                            if (evidence.contains("verification_started_at")) {
-                                const std::string started = evidence.at("verification_started_at");
-                                active["verification_started_at"] = std::min(active.value("verification_started_at", started), started);
-                            }
-                            const auto& facts = active.at("facts").at(stage + "_run");
-                            active["facts"][stage + "_run_id"] = observed.at("identity").at("id");
-                            if (awaiting && error.empty() && stage == "build" && evidence.contains("result")) {
-                                active["build_result"] = evidence.at("result");
-                                active["build_manifest"] = evidence.at("manifest");
-                                active["state"] = "built";
-                                active["built_at"] = utc();
-                                active.erase("uncertainty");
-                                ready = true;
-                            } else if (awaiting && error.empty() && stage == "publish" && evidence.contains("receipt")) {
-                                active["receipt"] = evidence.at("receipt");
-                                active["proof"] = evidence;
-                                active["proof"].erase("receipt");
-                                active.erase("uncertainty");
-                                active["state"] = "published";
-                                ready = true;
-                            } else if (awaiting && facts.at("status") == "completed" && facts.at("conclusion") == "failure") {
-                                bool definite = stage == "build";
-                                for (const auto& job : facts.at("jobs")) {
-                                    if (job.at("id") == facts.at("job_id")) {
-                                        for (const auto& step : job.at("steps")) {
-                                            definite = definite || (step.at("name") == "Publish checked feed update" &&
-                                                                    step.at("conclusion") == "skipped");
-                                        }
-                                    }
-                                }
-                                if (definite) {
-                                    active["state"] = "failed";
-                                    active["failure_kind"] = "definite";
-                                    active["failure"] = "Verified workflow/job failed before publication could mutate the feed";
-                                }
-                            }
+                        if (definite) {
+                            (*active)["state"] = "failed";
+                            (*active)["failure_kind"] = "definite";
+                            (*active)["failure"] = "Verified workflow/job failed before publication could mutate the feed";
                         }
                     }
                 }
