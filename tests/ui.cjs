@@ -114,7 +114,7 @@ async function main() {
           Math.abs(box.top + box.height / 2 - button.top - button.height / 2) < 1;
       });
     }));
-    assert.ok((await page.locator(`#work-${bundle.id} .activity`).textContent()).includes('Last reported: Compile fixture'));
+    assert.equal(await page.locator(`#work-${bundle.id} .activity`).textContent(), 'Compile fixture');
     await page.locator('#search').fill('No matching source');
     assert.equal(await page.locator('tr[id^="work-"]').count(), 0);
     await page.locator('#search').fill('');
@@ -152,6 +152,9 @@ async function main() {
     assert.deepEqual(await page.locator('.execution-row').evaluateAll(rows => rows.map(row => row.id)), rowOrder);
     const activity = page.locator(`#work-${bundle.id} .activity`);
     assert.equal(await activity.getAttribute('title'), await activity.textContent());
+    assert.equal(await activity.textContent(), bundle.attempts.at(-1).facts.build_run.jobs[0].steps[0].name);
+    await activity.hover();
+    assert.equal(await activity.evaluate(element => getComputedStyle(element).cursor), 'pointer');
     assert.ok(await activity.evaluate(element => element.scrollWidth > element.clientWidth &&
       getComputedStyle(element).textOverflow === 'ellipsis' && getComputedStyle(element).whiteSpace === 'nowrap'));
     await page.locator('#feedback-summary').filter({hasText: 'Operation recorded'}).waitFor();
@@ -265,15 +268,17 @@ async function main() {
       const uncertainty = {at, stage: 'build', kind: 'evidence', reason: 'Artifact evidence unavailable '.repeat(10)};
       fixture.executions[bundle.id].active.uncertainty = uncertainty;
       stream.write(`data: ${JSON.stringify([{op: 'add', path: `/executions/${bundle.id}/active/uncertainty`, value: uncertainty}])}\n\n`);
-      await uncertaintyLine.filter({hasText: 'Unresolved build evidence:'}).waitFor();
-      assert.ok((await uncertaintyLine.getAttribute('title')).includes('Latest recorded failure still awaiting the required successful check'));
+      await uncertaintyLine.filter({hasText: uncertainty.reason}).waitFor();
+      assert.equal(await uncertaintyLine.textContent(), uncertainty.reason);
+      assert.equal(await uncertaintyLine.getAttribute('title'), uncertainty.reason);
       assert.equal(await changing.locator(`#work-${bundle.id} .state`).textContent(), 'building');
       assert.equal((await changing.locator(`#work-${bundle.id}`).boundingBox()).height, dimensions.height);
       assert.ok(await uncertaintyLine.evaluate(element => getComputedStyle(element).textOverflow === 'ellipsis' &&
         getComputedStyle(element).whiteSpace === 'nowrap'));
       assert.ok((await changing.locator(`#execution-${bundle.id}`).textContent()).includes('First recorded for this reason:'));
+      assert.ok((await changing.locator(`#execution-${bundle.id}`).textContent()).includes('Unresolved build evidence:'));
       stream.write(`data: ${JSON.stringify([{op: 'replace', path: `/executions/${bundle.id}/build/status`, value: 'in_progress'}])}\n\n`);
-      await uncertaintyLine.filter({hasText: 'Unresolved build evidence:'}).waitFor();
+      await uncertaintyLine.filter({hasText: uncertainty.reason}).waitFor();
       delete fixture.executions[bundle.id].active.uncertainty;
       fixture.executions[bundle.id].active.state = 'publishing';
       stream.write(`data: ${JSON.stringify([{op: 'remove', path: `/executions/${bundle.id}/active/uncertainty`},

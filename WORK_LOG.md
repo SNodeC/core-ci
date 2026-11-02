@@ -1443,3 +1443,23 @@ made available on a dedicated feature ref for the PR. Staging WORK_LOG uses HEAD
 plus only this task's appendices; protected pre-existing prefix remains unchanged
 in the working tree. AGENTS and protected untracked files are excluded.
 No deployment/ assets, public keys, workflows or pins are changed.
+
+
+### UI message/hover cpmd authorized — 2026-11-02
+
+Owner approved the reviewed diff and requested commit, push, merge and deployment.
+Invariant: the message row/tooltip show the actual recorded message without UI
+prefixes; diagnostic metadata remains in expanded details. Applied reviewed
+ui/app.js and ui/style.css changes: JS -2 physical lines, CSS net0, C++ unchanged
+at2493. Existing browser assertions now verify exact message/tooltip, the pointer
+cursor, preserved ellipsis/row height and retained expanded uncertainty context.
+No controller restart is authorized or necessary: deploy static assets only.
+No build trigger, workflow, pin, graph, database or service lifecycle change.
+
+Browser validation passed104.96s (native-startup-http-contract with Chromium).
+First run failed on a stale assertion expecting "Last reported: Compile fixture";
+updated it to require exactly "Compile fixture". Final check verifies message-only
+row/title, pointer cursor, retained expanded diagnostics, fixed row height and
+ellipsis. node --check for app/test and git diff --check pass.
+Production: C++ unchanged2493, app.js359(-2), style.css88(net0). Test changes +5
+lines; policy documentation +1. No full suite or C++ rebuild was needed.
