@@ -1,10 +1,7 @@
 /build/
 /checkouts/
-/.local-credentials/
 /secrets/
+/.local-credentials/
 /.qtcreator/
-/local/
-*.swp
-
 __pycache__/
 *.pyc

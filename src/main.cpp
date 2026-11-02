@@ -1,341 +1,275 @@
-#include "Database.h"
-#include "DatabaseConfig.h"
-#include "Enrollment.h"
-#include "GitHub.h"
-#include "ManagedDatabase.h"
-#include "Pipeline.h"
-#include "PipelineConfig.h"
-#include "UiAssets.h"
+#include "Auth.h"
+#include "Controller.h"
+#include "Managed.h"
 
 #include <Log.h>
+#include <algorithm>
+#include <core/DescriptorEventReceiver.h>
 #include <core/SNodeC.h>
+#include <core/socket/stream/SocketConnection.h>
 #include <core/timer/Timer.h>
-#include <database/mariadb/MariaDBClient.h>
-#include <exception>
-#include <express/Response.h>
 #include <express/legacy/in/WebApp.h>
 #include <express/tls/in/WebApp.h>
-#include <list>
-#include <memory>
-#include <utility>
+#include <fstream>
+#include <map>
+#include <regex>
 #include <utils/Config.h>
-#include <web/http/ConfigHttpParser.h>
-#include <web/http/server/ConfigHttpServer.h>
 #include <web/http/server/SocketContext.h>
 
-int main(int argc, char* argv[]) {
-    auto* databaseConfig = utils::Config::configRoot.newSubCommand<coreci::DatabaseConfig>();
+namespace {
 
-    auto* githubConfig = utils::Config::configRoot.newSubCommand<coreci::GitHubConfig>();
-    coreci::GitHub github(*githubConfig);
-    coreci::SourceReader sources(github);
-
-    auto* pipelineConfig = utils::Config::configRoot.newSubCommand<coreci::PipelineConfig>();
-
-    coreci::FeedProof feeds(*pipelineConfig, github, sources);
-
-    const express::legacy::in::WebApp app("web");
-    app.getConfig()->setReuseAddress();
-    app.getConfig()->Local::setHost("127.0.0.1")->setPort(8080);
-
-    app.getConfig()
-        ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
-        ->getParserConfig()
-        ->setMaximumBodyBytes(2 * 1024 * 1024);
-
-    const express::tls::in::WebApp webhooks("webhook");
-    webhooks.getConfig()->setDisabled();
-    webhooks.getConfig()->setReuseAddress();
-    webhooks.getConfig()->Local::setHost("127.0.0.1")->setPort(8443);
-    webhooks.getConfig()
-        ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
-        ->getParserConfig()
-        ->setMaximumBodyBytes(2 * 1024 * 1024);
-
-    core::SNodeC::init(argc, argv);
-
-    std::unique_ptr<coreci::ManagedDatabase> managed;
-    std::unique_ptr<database::mariadb::MariaDBClient> database;
-    std::unique_ptr<coreci::Database> store;
-    std::unique_ptr<coreci::GraphStore> graphStore;
-    std::unique_ptr<coreci::Enrollment> enrollment;
-    std::unique_ptr<coreci::Pipeline> pipeline;
-    const auto release = [&] {
-        pipeline.reset();
-        enrollment.reset();
-        graphStore.reset();
-        store.reset();
-        database.reset();
-        if (managed) {
-            managed->stop();
+    void report(const std::string& error) {
+        if (!error.empty()) {
+            snode::log::application().error() << error;
         }
-    };
-    bool initialConnection = true;
-    std::list<std::shared_ptr<express::Response>> eventReceivers;
-    const auto sendEvent = [](const auto& response, const std::string& event, const std::string& data) {
+    }
+
+    void sendEvent(const std::shared_ptr<express::Response>& response, std::size_t snapshotEnd, const std::string& event) {
         if (response->isConnected()) {
-            response->sendFragment("event:" + event);
-            response->sendFragment("data:" + data);
-            response->sendFragment();
-        }
-    };
-
-    const auto onEnrolled = [&](const auto& res) {
-        return [&, res](const coreci::EnrollmentResult& result) {
-            if (result.status == 200 && result.body.value("new_enrollment", false)) {
-                pipeline->request(
-                    result.body.at("repository").get<std::string>(), "", true, [res, result](const coreci::PipelineResult& work) {
-                        auto response = result.body;
-                        response["work"] = {{"status", work.status}, {"result", work.body}};
-                        res->status(result.status).type("application/json").send(response.dump());
-                    });
+            auto* connection = response->getSocketContext()->getSocketConnection();
+            const auto pending = connection->getTotalQueued() - std::max(connection->getTotalSent(), snapshotEnd);
+            // Reserve the maximum hexadecimal HTTP chunk length plus its two CRLF pairs.
+            const auto framed = event.size() + 2 * sizeof(std::size_t) + 4;
+            if (pending > 65536 || framed > 65536 - pending) {
+                connection->close();
             } else {
-                res->status(result.status).type("application/json").send(result.body.dump());
+                response->sendFragment(event);
             }
-        };
+        }
+    }
+
+} // namespace
+
+int main(int argc, char* argv[]) {
+    std::string deploymentFile;
+    std::string appId;
+    std::string installation;
+    std::string keyFile;
+    std::string webhookFile;
+    std::string database;
+    std::string username;
+    std::string passwordFile;
+    std::string socket;
+    std::string managedDirectory;
+    std::string uiRoot = CORE_CI_UI_ROOT;
+    auto& config = utils::Config::configRoot;
+    for (const auto& option : std::vector<std::pair<std::string, std::string*>>{{"deployment-file", &deploymentFile},
+                                                                                {"app-id", &appId},
+                                                                                {"installation-id", &installation},
+                                                                                {"app-key-file", &keyFile},
+                                                                                {"webhook-secret-file", &webhookFile},
+                                                                                {"database", &database},
+                                                                                {"database-user", &username},
+                                                                                {"database-password-file", &passwordFile},
+                                                                                {"database-socket", &socket},
+                                                                                {"managed-datadir", &managedDirectory},
+                                                                                {"ui-root", &uiRoot}}) {
+        config.addOptionVariable(
+            "--" + option.first, *option.second, option.first, "TEXT", *option.second, CLI::TypeValidator<std::string>());
+    }
+    express::legacy::in::WebApp web("web");
+    express::tls::in::WebApp webhook("webhook");
+    web.getConfig()->setReuseAddress();
+    webhook.getConfig()->setReuseAddress();
+    web.getConfig()->Local::setHost("127.0.0.1")->setPort(8080);
+    webhook.getConfig()->Local::setHost("127.0.0.1")->setPort(8443);
+    webhook.getConfig()->Instance::setDisabled(true);
+
+    ci::Store store;
+    ci::ManagedDatabase managed;
+    std::unique_ptr<ci::Controller> controller;
+    const auto release = [&]() {
+        controller.reset();
+        store.db.reset();
+        managed.stop();
     };
-
+    std::map<std::shared_ptr<express::Response>, std::size_t> clients;
+    core::SNodeC::init(argc, argv);
     try {
-        github.loadCredentials();
-        feeds.configure();
+        ci::require(!deploymentFile.empty() && !database.empty() && !username.empty() && !socket.empty(),
+                    "Explicit deployment/database inputs required");
+        std::ifstream input(deploymentFile);
+        const ci::Json deployment = ci::Json::parse(input);
+        ci::require(!appId.empty() && !installation.empty() && deployment.at("repositories").is_object() &&
+                        !deployment.at("repositories").empty(),
+                    "GitHub App identities and repository grants required");
+        for (const auto& [repository, id] : deployment.at("repositories").items()) {
+            ci::require(std::regex_match(repository, std::regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) && id.is_number_unsigned() &&
+                            id.get<std::uint64_t>() > 0 && repository.starts_with(deployment.at("owner").get<std::string>() + "/"),
+                        "Invalid repository grant");
+        }
+        for (const auto& pin : {deployment.at("worker").at("tooling_sha"),
+                                deployment.at("source_workflow").at("blob_sha"),
+                                deployment.at("publication_workflow").at("blob_sha")}) {
+            ci::require(std::regex_match(pin.get<std::string>(), std::regex("[a-f0-9]{40}")), "Approved immutable pins required");
+        }
+        ci::require(deployment.at("repositories").at(deployment.at("worker").at("repository").get<std::string>()) ==
+                        deployment.at("worker").at("repository_id"),
+                    "Worker grant identity mismatch");
+        ci::require(deployment.at("feed").at("base_url").get<std::string>().starts_with("https://"), "HTTPS feed required");
+        const std::string key = ci::protectedFile(keyFile);
+        const std::string secret = ci::protectedFile(webhookFile);
+        ci::require(secret.size() >= 32, "Webhook secret must contain at least 32 bytes");
+        ci::appJwt(key, appId);
 
-        database = std::make_unique<database::mariadb::MariaDBClient>(
-            databaseConfig->connection(), [&](const database::mariadb::MariaDBState& state) {
-                if (state.error != 0) {
-                    snode::log::application().error() << "MariaDB connection failed: " << state.errorMessage << " [" << state.error << "]";
-                    if (std::exchange(initialConnection, false)) {
-                        release();
-                    }
-                } else if (state.connected && std::exchange(initialConnection, false)) {
-                    snode::log::application().info() << "Initial MariaDB connection established";
-
-                    graphStore->restore([&](const coreci::DatabaseResult& restored) {
-                        if (!restored.error.empty()) {
-                            snode::log::application().error() << "Database schema/configuration failed: " << restored.error;
+        const database::mariadb::MariaDBConnectionDetails details = {.connectionName = "controller",
+                                                                     .hostname = "localhost",
+                                                                     .username = username,
+                                                                     .password =
+                                                                         passwordFile.empty() ? "" : ci::protectedFile(passwordFile),
+                                                                     .database = database,
+                                                                     .port = 0,
+                                                                     .socket = socket,
+                                                                     .flags = 0};
+        store.db = std::make_unique<database::mariadb::MariaDBClient>(
+            details,
+            [&, deployment, key, secret](const database::mariadb::MariaDBState& state) {
+                if (state.connected && !controller) {
+                    controller = std::make_unique<ci::Controller>(store, deployment, appId, installation, key);
+                    store.initialize([&, secret](const std::string& error) {
+                        if (!error.empty()) {
+                            report(error);
                             release();
                         } else {
-                            webhooks.post("/github/webhook", [&] APPLICATION(req, res) {
-                                pipeline->event(req->get("X-GitHub-Event"),
-                                                req->get("X-Hub-Signature-256"),
-                                                std::string(req->body.begin(), req->body.end()),
-                                                [res](const coreci::PipelineResult& result) {
-                                                    res->status(result.status).type("application/json").send(result.body.dump());
-                                                });
-                            });
-
-                            const auto publicStatus = [&] APPLICATION(req, res) {
-                                res->set("Cache-Control", "no-store").type("application/json");
-                                if (pipelineConfig->statusWorkflow.empty()) {
-                                    res->status(404).send(R"({"error":"public status is disabled"})");
-                                } else if (!store->mutationsAllowed()) {
-                                    res->status(503).send(R"({"error":"graph authority is unavailable"})");
-                                } else {
-                                    auto facts = graphStore->publicView();
-                                    facts["generation"] = graphStore->graph().at("generation");
-                                    facts["feed"] = {{"repository", pipelineConfig->feedRepository},
-                                                     {"repository_id", pipelineConfig->feedId},
-                                                     {"branch", pipelineConfig->feedBranch}};
-                                    res->send(facts.dump());
+                            store.dispatch = [&](const ci::Json& actions) {
+                                controller->send(actions);
+                            };
+                            store.changed = [&](const ci::Json& updates) {
+                                const std::string event = "data: " + updates.dump() + "\n\n";
+                                const auto connected = clients;
+                                for (const auto& [client, snapshotEnd] : connected) {
+                                    sendEvent(client, snapshotEnd, event);
                                 }
                             };
-                            webhooks.get("/public/status", publicStatus);
-                            app.get("/public/status", publicStatus);
-
-                            app.use([&] MIDDLEWARE(req, res, next) {
-                                res->set("Cache-Control", "no-store");
-                                res->set("X-Content-Type-Options", "nosniff");
-                                res->set("Content-Security-Policy",
-                                         "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
-                                if (req->method == "POST" && !store->mutationsAllowed()) {
-                                    res->status(503)
-                                        .type("application/json")
-                                        .send(R"({"error":"database mutation authority unavailable","uncertain":true})");
-                                } else if (req->method == "POST" && req->get("Content-Type").find("application/json") != 0) {
-                                    res->status(403).send(R"({"error":"configuration writes require JSON"})");
-                                } else {
-                                    next();
-                                }
-                            });
-
-                            app.get("/", [] APPLICATION(req, res) {
-                                res->type("text/html").send(coreci::ui::html);
-                            });
-                            app.get("/style.css", [] APPLICATION(req, res) {
-                                res->type("text/css").send(coreci::ui::css);
-                            });
-                            app.get("/app.js", [] APPLICATION(req, res) {
-                                res->type("application/javascript").send(coreci::ui::javascript);
-                            });
-
-                            app.get("/api/graph", [&] APPLICATION(req, res) {
-                                res->type("application/json").send(graphStore->view().dump());
-                            });
-
-                            graphStore->onChanged = [&](bool repositoriesChanged) {
-                                pipeline->refreshStatus();
-                                if (!eventReceivers.empty()) {
-                                    const auto graph = graphStore->view().dump();
-                                    for (const auto& response : eventReceivers) {
-                                        sendEvent(response, "graph", graph);
+                            web.get("/api/graph", [&](const auto&, const auto& response) {
+                                store.read([response](const ci::Json& snapshot, const std::string& error) {
+                                    if (error.empty()) {
+                                        response->json(snapshot.at("graph"));
+                                    } else {
+                                        response->status(503).json({{"error", error}});
                                     }
-                                }
-                                if (repositoriesChanged && !eventReceivers.empty()) {
-                                    const auto data = enrollment->list().dump();
-                                    for (const auto& response : eventReceivers) {
-                                        sendEvent(response, "repositories", data);
-                                    }
-                                }
-                            };
-
-                            app.get("/api/events", [&] APPLICATION(req, res) {
-                                res->set("Content-Type", "text/event-stream").set("Connection", "keep-alive").sendHeader();
-                                eventReceivers.push_back(res);
-                                const auto heartbeat = std::make_shared<core::timer::Timer>(core::timer::Timer::intervalTimer(
-                                    [response = std::weak_ptr<express::Response>(res)] {
-                                        const auto receiver = response.lock();
-                                        if (receiver && receiver->isConnected()) {
-                                            receiver->sendFragment(":keep-alive");
-                                            receiver->sendFragment();
-                                        }
-                                    },
-                                    30));
-                                res->getSocketContext()->setOnDisconnected([&, receiver = res.get(), heartbeat]() {
-                                    heartbeat->cancel();
-                                    eventReceivers.remove_if([receiver](const auto& response) {
-                                        return response.get() == receiver;
-                                    });
                                 });
-                                sendEvent(res, "graph", graphStore->view().dump());
-                                sendEvent(res, "repositories", enrollment->list().dump());
                             });
-
-                            app.get("/api/repositories", [&] APPLICATION(req, res) {
-                                res->type("application/json").send(enrollment->list().dump());
-                            });
-
-                            app.post("/api/repositories/save", [&] APPLICATION(req, res) {
-                                try {
-                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    enrollment->save(body, onEnrolled(res));
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid enrollment JSON"})");
-                                }
-                            });
-
-                            app.post("/api/repositories/refresh", [&] APPLICATION(req, res) {
-                                try {
-                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    enrollment->refresh(body, onEnrolled(res));
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid enrollment JSON"})");
-                                }
-                            });
-
-                            app.post("/api/repositories/workflow", [&] APPLICATION(req, res) {
-                                try {
-                                    enrollment->workflow(nlohmann::json::parse(req->body.begin(), req->body.end()),
-                                                         [res](const coreci::EnrollmentResult& result) {
-                                                             res->status(result.status).type("application/json").send(result.body.dump());
-                                                         });
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid workflow request JSON"})");
-                                }
-                            });
-
-                            app.post("/api/work/request", [&] APPLICATION(req, res) {
-                                try {
-                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    pipeline->request(body.at("repository").get<std::string>(),
-                                                      body.value("tag", std::string{}),
-                                                      false,
-                                                      [res](const coreci::PipelineResult& result) {
-                                                          res->status(result.status).type("application/json").send(result.body.dump());
-                                                      });
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid source request JSON"})");
-                                }
-                            });
-                            for (const std::string action : {"retry", "retire"}) {
-                                app.post("/api/work/" + action, [&, action] APPLICATION(req, res) {
-                                    try {
-                                        const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                        const auto done = [res](const coreci::PipelineResult& result) {
-                                            res->status(result.status).type("application/json").send(result.body.dump());
-                                        };
-                                        if (action == "retire") {
-                                            coreci::require(body.at("acknowledge_unknown_outcome") == true,
-                                                            "acknowledge the unknown outcome");
-                                            pipeline->retire(body.at("execution"), body.at("attempt"), done);
-                                        } else {
-                                            pipeline->retry(body.at("execution"), done);
+                            web.get("/events", [&](const auto&, const auto& response) {
+                                store.read([&, response](const ci::Json& snapshot, const std::string& error) {
+                                    if (error.empty() && response->isConnected()) {
+                                        response->getSocketContext()->getSocketConnection()->setReadTimeout(
+                                            core::DescriptorEventReceiver::TIMEOUT::DISABLE);
+                                        const auto heartbeat = std::make_shared<core::timer::Timer>(core::timer::Timer::intervalTimer(
+                                            [&, weak = std::weak_ptr<express::Response>(response)] {
+                                                const auto client = weak.lock();
+                                                if (client && clients.contains(client)) {
+                                                    sendEvent(client, clients.at(client), ": keep-alive\n\n");
+                                                }
+                                            },
+                                            30));
+                                        response->getSocketContext()->setOnDisconnected([&, client = response.get(), heartbeat]() {
+                                            heartbeat->cancel();
+                                            std::erase_if(clients, [client](const auto& candidate) {
+                                                return candidate.first.get() == client;
+                                            });
+                                        });
+                                        response->type("text/event-stream").set("Cache-Control", "no-store").sendHeader();
+                                        response->sendFragment("data: " + snapshot.at("graph").dump() + "\n\n");
+                                        if (response->isConnected()) {
+                                            clients.emplace(response,
+                                                            response->getSocketContext()->getSocketConnection()->getTotalQueued());
                                         }
-                                    } catch (const std::exception&) {
-                                        res->status(422).type("application/json").send("{\"error\":\"invalid " + action + " JSON\"}");
+                                    } else if (response->isConnected()) {
+                                        response->sendStatus(503);
+                                    }
+                                });
+                            });
+                            for (const std::string operation : {"enroll", "refresh", "request", "retry", "reconcile", "retire"}) {
+                                web.post("/api/" + operation, [&, operation](const auto& request, const auto& response) {
+                                    const ci::Done done = [response](const std::string& error) {
+                                        response->status(error.empty() ? 200 : 409).json({{"error", error}});
+                                    };
+                                    try {
+                                        ci::require(request->get("Content-Type").starts_with("application/json"), "JSON request required");
+                                        const auto body = ci::Json::parse(request->body);
+                                        if (operation == "enroll" || operation == "refresh") {
+                                            controller->enroll(body.at("repository"), body.at("ref"), done);
+                                        } else if (operation == "request") {
+                                            controller->request(body.at("repository"), body.value("tag", ""), done);
+                                        } else if (operation == "reconcile") {
+                                            controller->reconcile(body.at("execution"), done);
+                                        } else {
+                                            store.change(
+                                                [operation, body](ci::Json& graph) {
+                                                    ci::Json authorized = ci::Json::array();
+                                                    if (operation == "retry") {
+                                                        ci::retry(graph, body.at("execution"));
+                                                        authorized = ci::commands(graph);
+                                                    } else {
+                                                        ci::retire(graph, body.at("execution"), body.at("acknowledgement"));
+                                                    }
+                                                    return authorized;
+                                                },
+                                                done);
+                                        }
+                                    } catch (const std::exception& failure) {
+                                        done(failure.what());
                                     }
                                 });
                             }
-                            app.post("/api/work/reconcile", [&] APPLICATION(req, res) {
-                                pipeline->refreshStatus();
-                                pipeline->reconcile(false, [res](const coreci::PipelineResult& result) {
-                                    res->status(result.status).type("application/json").send(result.body.dump());
-                                });
-                            });
-
-                            app.get("/api/status", [&] APPLICATION(req, res) {
-                                store->query("SELECT JSON_OBJECT('database', 'available')", [res](const coreci::DatabaseResult& result) {
-                                    res->type("application/json");
-                                    if (result.error.empty() && result.rows.size() == 1) {
-                                        res->send(result.rows.front().dump());
+                            webhook.post("/github/webhook", [&, secret](const auto& request, const auto& response) {
+                                try {
+                                    const std::string body(request->body.begin(), request->body.end());
+                                    ci::require(ci::validWebhook(secret, body, request->get("X-Hub-Signature-256")),
+                                                "Invalid GitHub signature");
+                                    if (request->get("X-GitHub-Event") == "ping") {
+                                        response->sendStatus(200);
                                     } else {
-                                        res->status(503);
-                                        res->send(R"({"database":"unavailable"})");
+                                        controller->webhook(request->get("X-GitHub-Event"), ci::Json::parse(body), report);
+                                        response->sendStatus(202);
                                     }
-                                });
+                                } catch (const std::exception&) {
+                                    response->sendStatus(401);
+                                }
                             });
-
-                            app.listen([&](const auto& address, const core::socket::State& listenerState) {
-                                if (listenerState == core::socket::State::OK) {
-                                    snode::log::application().info() << "Listening on " << address.toString();
-                                    webhooks.listen([](const auto& webhookAddress, const core::socket::State& webhookState) {
-                                        if (webhookState == core::socket::State::OK) {
-                                            snode::log::application().info() << "Webhooks listening on " << webhookAddress.toString();
-                                        } else if (webhookState == core::socket::State::ERROR ||
-                                                   webhookState == core::socket::State::FATAL) {
-                                            snode::log::application().error() << "Webhook listener failed: " << webhookState.what();
+                            for (const auto& [route, file] : std::map<std::string, std::string>{
+                                     {"/", "index.html"}, {"/app.js", "app.js"}, {"/style.css", "style.css"}}) {
+                                web.get(route, [&, file](const auto&, const auto& response) {
+                                    response->sendFile(uiRoot + "/" + file, [response](int error) {
+                                        if (error != 0) {
+                                            response->sendStatus(404);
                                         }
                                     });
-
-                                    pipeline->refreshStatus();
-                                    pipeline->reconcile(true, [](const coreci::PipelineResult& result) {
-                                        snode::log::application().info() << "Startup graph reconciliation: " << result.body.dump();
+                                });
+                            }
+                            web.listen([&](const auto&, const core::socket::State& state) {
+                                if (state == core::socket::State::OK) {
+                                    webhook.listen([](const auto&, const core::socket::State& state) {
+                                        if (state == core::socket::State::ERROR || state == core::socket::State::FATAL) {
+                                            report(state.what());
+                                        }
                                     });
-                                } else if (listenerState == core::socket::State::ERROR || listenerState == core::socket::State::FATAL) {
-                                    snode::log::application().error() << "Listener failed: " << listenerState.what();
+                                } else if (state == core::socket::State::ERROR || state == core::socket::State::FATAL) {
+                                    report(state.what());
                                     release();
                                 }
                             });
                         }
                     });
+                } else if (state.error != 0) {
+                    report(state.errorMessage);
+                    if (!controller) {
+                        release();
+                    }
                 }
-            });
-
-        store = std::make_unique<coreci::Database>(*database);
-        graphStore = std::make_unique<coreci::GraphStore>(*store);
-        enrollment = std::make_unique<coreci::Enrollment>(github, *graphStore, sources, *pipelineConfig);
-        pipeline = std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, *graphStore, feeds);
-
-        if (databaseConfig->mode == "managed") {
-            managed = std::make_unique<coreci::ManagedDatabase>();
-            managed->start(*databaseConfig, [&]() {
-                database->connect();
-            });
+            },
+            "database");
+        if (managedDirectory.empty()) {
+            store.db->connect();
         } else {
-            database->connect();
+            managed.start(managedDirectory, socket, [&]() {
+                store.db->connect();
+            });
         }
     } catch (const std::exception& error) {
-        snode::log::application().error() << "Controller startup failed: " << error.what();
+        report(error.what());
         release();
     }
-
     return core::SNodeC::start();
 }

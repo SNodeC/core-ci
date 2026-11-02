@@ -1,222 +1,307 @@
-#include "GitHub.h"
+#include "Auth.h"
+#include "Controller.h"
 
-#include "PrivateFile.h"
-
-#include <charconv>
-#include <iomanip>
-#include <openssl/hmac.h>
-#include <openssl/pem.h>
+#include <algorithm>
 #include <regex>
 #include <set>
-#include <sstream>
 
-namespace coreci {
-    GitHubConfig::GitHubConfig(utils::SubCommand* parent)
-        : SubCommand(parent, this, "GitHub App") {
-        const std::pair<const char*, std::uint64_t&> numbers[]{{"app-id", appId}, {"installation-id", installationId}, {"bot-id", botId}};
-        for (const auto& [name, value] : numbers) {
-            setConfigurable(
-                addOptionVariable(std::string("--") + name, value, name, "id", std::uint64_t{0}, CLI::TypeValidator<std::uint64_t>()),
-                true);
+namespace ci {
+
+    Controller::Controller(Store& store, Json deployment, std::string app, std::string installation, std::string key)
+        : deployment(std::move(deployment))
+        , store(store)
+        , app(std::move(app))
+        , installation(std::move(installation))
+        , key(std::move(key)) {
+    }
+
+    void Controller::token(const std::function<void(const std::string&, const std::string&)>& done) {
+        Json ids = Json::array();
+        for (const auto& id : deployment.at("repositories")) {
+            ids.push_back(id);
         }
-        const std::pair<const char*, std::string&> strings[]{
-            {"private-key-file", privateKeyFile}, {"webhook-secret-file", webhookSecretFile}, {"allowed-owner", allowedOwner}};
-        for (const auto& [name, value] : strings) {
-            setConfigurable(addOptionVariable(std::string("--") + name, value, name, "string", CLI::TypeValidator<std::string>()), true);
-        }
-        setConfigurable(
-            addOptionVariable(
-                "--api-version", apiVersion, "REST API version", "version", std::string("2026-03-10"), CLI::TypeValidator<std::string>()),
-            true);
-        setConfigurable(
-            addOptionVariable("--repository", repositories, "Authorized repository=id", "grant", CLI::TypeValidator<std::string>())
-                ->take_all(),
-            true);
+        const Json scope = {{"repository_ids", ids}, {"permissions", {{"contents", "read"}, {"actions", "write"}}}};
+        https("https://api.github.com/app/installations/" + installation + "/access_tokens",
+              "POST",
+              scope.dump(),
+              appJwt(key, app),
+              [done](int status, const std::string& body, const std::string&) {
+                  std::string value;
+                  std::string error;
+                  try {
+                      require(status == 201 && body.size() <= 2 * 1024 * 1024, "GitHub installation token unavailable");
+                      value = Json::parse(body).at("token");
+                      require(!value.empty() && value.size() < 10000, "Invalid installation token");
+                  } catch (const std::exception& failure) {
+                      error = failure.what();
+                  }
+                  done(value, error);
+              });
     }
-    GitHub::GitHub(const GitHubConfig& config)
-        : config(config)
-        , http("github-http", "api.github.com") {
-    }
-    bool GitHub::validRepository(const std::string& repository) {
-        static const std::regex syntax("^[A-Za-z0-9_-]{1,128}/[A-Za-z0-9_.-]{1,128}$");
-        const auto name = repository.substr(repository.find('/') + 1);
-        return std::regex_match(repository, syntax) && name != "." && name != "..";
-    }
-    std::uint64_t GitHub::repositoryId(const std::string& repository) const {
-        return repositories.at(repository);
-    }
-    void GitHub::loadCredentials() {
-        http.configure();
-        if (!config.webhookSecretFile.empty()) {
-            secret = readPrivateFile(config.webhookSecretFile, 4096);
-            require(secret.size() >= 32, "webhook HMAC secret must contain at least 32 bytes");
-        }
-        if (!config.privateKeyFile.empty()) {
-            require(config.appId && config.installationId && !config.allowedOwner.empty(), "configure the GitHub App and authorized owner");
-            std::set<std::uint64_t> ids;
-            for (const auto& grant : config.repositories) {
-                const auto split = grant.find('=');
-                const auto name = grant.substr(0, split);
-                require(split != std::string::npos && validRepository(name) && name.starts_with(config.allowedOwner + "/"),
-                        "invalid repository grant");
-                std::uint64_t id = 0;
-                const auto parsed = std::from_chars(grant.data() + split + 1, grant.data() + grant.size(), id);
-                require(parsed.ec == std::errc{} && parsed.ptr == grant.data() + grant.size() && id && ids.insert(id).second &&
-                            repositories.emplace(name, id).second,
-                        "invalid or duplicate repository grant ID");
+
+    void Controller::api(const std::string& token, const std::string& path, const Value& done) {
+        require(path.starts_with("/") && !path.starts_with("//"), "Invalid GitHub path");
+        https("https://api.github.com" + path, "GET", "", token, [done](int status, const std::string& body, const std::string&) {
+            Json result;
+            std::string error;
+            try {
+                require(status == 200 && body.size() <= 2 * 1024 * 1024, "GitHub read unavailable: HTTP " + std::to_string(status));
+                result = Json::parse(body);
+            } catch (const std::exception& failure) {
+                error = failure.what();
             }
-            require(!repositories.empty(), "configure explicit repository grants");
-            const auto pem = readPrivateFile(config.privateKeyFile, 65536);
-            std::unique_ptr<BIO, decltype(&BIO_free)> input(BIO_new_mem_buf(pem.data(), pem.size()), BIO_free);
-            require(bool(input), "cannot load App key");
-            key.reset(PEM_read_bio_PrivateKey(
-                input.get(),
-                nullptr,
-                [](char*, int, int, void*) {
-                    return 0;
-                },
-                nullptr));
-            require(key && EVP_PKEY_base_id(key.get()) == EVP_PKEY_RSA, "App key must be unencrypted RSA PEM");
-        }
-    }
-    bool GitHub::verifyWebhook(const std::string& body, const std::string& signature) const {
-        unsigned char output[EVP_MAX_MD_SIZE];
-        unsigned int size = 0;
-        const auto* result = HMAC(
-            EVP_sha256(), secret.data(), secret.size(), reinterpret_cast<const unsigned char*>(body.data()), body.size(), output, &size);
-        const auto expected = "sha256=" + hex(output, result ? size : 0);
-        return !secret.empty() && result && size == 32 && signature.size() == expected.size() &&
-               CRYPTO_memcmp(signature.data(), expected.data(), expected.size()) == 0;
-    }
-    std::string GitHub::jwt() const {
-        require(bool(key), "GitHub App key is not configured");
-        const auto encode = [](const std::string& text) {
-            auto result = base64(text);
-            std::replace(result.begin(), result.end(), '+', '-');
-            std::replace(result.begin(), result.end(), '/', '_');
-            result.erase(result.find_last_not_of('=') + 1);
-            return result;
-        };
-        const auto now = std::time(nullptr);
-        const auto content = encode(R"({"alg":"RS256","typ":"JWT"})") + "." +
-                             encode(Json{{"iat", now - 60}, {"exp", now + 540}, {"iss", std::to_string(config.appId)}}.dump());
-        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-        std::string signature(EVP_PKEY_get_size(key.get()), '\0');
-        std::size_t size = signature.size();
-        require(context && EVP_DigestSignInit(context.get(), nullptr, EVP_sha256(), nullptr, key.get()) == 1 &&
-                    EVP_DigestSign(context.get(),
-                                   reinterpret_cast<unsigned char*>(signature.data()),
-                                   &size,
-                                   reinterpret_cast<const unsigned char*>(content.data()),
-                                   content.size()) == 1,
-                "App JWT signing failed");
-        signature.resize(size);
-        return content + "." + encode(signature);
-    }
-    void GitHub::send(
-        const std::string& method, const std::string& path, const std::string& authorization, const Json& body, const Callback& callback) {
-        HttpClient::Headers headers{{"Accept", "application/vnd.github+json"},
-                                    {"Content-Type", "application/json"},
-                                    {"X-GitHub-Api-Version", config.apiVersion},
-                                    {"Authorization", "Bearer " + authorization}};
-        http.request(method, path, headers, body.is_null() ? "" : body.dump(), [callback](const HttpResult& response) {
-            GitHubResult result{response.status, nullptr, response.error, response.submitted};
-            if (!response.body.empty()) {
-                result.body = Json::parse(response.body, nullptr, false);
-                if (result.body.is_discarded()) {
-                    result.error = "GitHub response is not valid bounded JSON";
-                }
-            }
-            callback(result);
+            done(result, error);
         });
     }
-    void GitHub::authorize(const Json& grant, const Callback& callback) {
-        const auto scope = grant.dump();
-        auto& token = tokens[scope];
-        if (token.expires > std::time(nullptr) + 300) {
-            callback(token.result);
-        } else {
-            const auto authorization = token.waiting.empty() ? jwt() : std::string{};
-            token.waiting.push_back(callback);
-            if (token.waiting.size() == 1) {
-                send("POST",
-                     "/app/installations/" + std::to_string(config.installationId) + "/access_tokens",
-                     authorization,
-                     grant,
-                     [this, scope](const GitHubResult& response) {
-                         auto& entry = tokens.at(scope);
-                         auto result = response;
-                         try {
-                             if (result.status == 201 && result.error.empty()) {
-                                 const auto expiry = result.body.at("expires_at").get<std::string>();
-                                 std::tm time{};
-                                 std::istringstream input(expiry);
-                                 input >> std::get_time(&time, "%Y-%m-%dT%H:%M:%SZ");
-                                 const auto expires = ::timegm(&time);
-                                 std::ostringstream normalized;
-                                 normalized << std::put_time(&time, "%Y-%m-%dT%H:%M:%SZ");
-                                 require(!input.fail() && normalized.str() == expiry && expires > std::time(nullptr) &&
-                                             !result.body.at("token").get<std::string>().empty(),
-                                         "invalid installation token identity/expiry");
-                                 entry.result = result;
-                                 entry.expires = expires;
-                             }
-                         } catch (const std::exception&) {
-                             result = {502, nullptr, "invalid GitHub installation token"};
-                         }
-                         const auto waiting = std::move(entry.waiting);
-                         entry.waiting.clear();
-                         for (const auto& done : waiting) {
-                             done(result);
-                         }
-                     });
-            }
-        }
+
+    void Controller::pages(
+        const std::string& token, const std::string& path, const std::string& field, const Value& done, int page, Json collected) {
+        api(token,
+            path + (path.find('?') == std::string::npos ? "?" : "&") + "per_page=100&page=" + std::to_string(page),
+            checked(done, [this, token, path, field, done, page, collected](const Json& result) mutable {
+                const Json& items = field.empty() ? result : result.at(field);
+                require(items.is_array(), "Expected GitHub result list");
+                collected.insert(collected.end(), items.begin(), items.end());
+                if (items.size() == 100) {
+                    pages(token, path, field, done, page + 1, collected);
+                } else {
+                    done(collected, "");
+                }
+            }));
     }
-    void GitHub::publicRead(const std::string& repository, const std::string& suffix, const Callback& callback) {
-        request(repository, "GET", suffix, nullptr, {{"contents", "read"}}, callback, true);
+
+    void Controller::contents(
+        const std::string& token, const std::string& repository, const std::string& path, const std::string& ref, const Value& done) {
+        api(token, "/repos/" + repository + "/contents/" + path + "?ref=" + encode(ref), checked(done, [done](const Json& file) {
+                require(file.at("type") == "file" && file.at("encoding") == "base64", "Expected committed regular GitHub file");
+                const std::string bytes = unbase64(file.at("content"));
+                require(bytes.size() <= 2 * 1024 * 1024 &&
+                            file.at("sha") == hash("blob " + std::to_string(bytes.size()) + std::string(1, '\0') + bytes, "SHA1"),
+                        "Committed Git blob does not match bytes");
+                done({{"bytes", bytes}, {"sha", file.at("sha")}}, "");
+            }));
     }
-    void GitHub::request(const std::string& repository,
-                         const std::string& method,
-                         const std::string& suffix,
-                         const Json& body,
-                         const Json& permissions,
-                         const Callback& callback,
-                         bool publicRead) {
-        Callback complete = callback;
-        try {
-            require(validRepository(repository) && (suffix.empty() || suffix.front() == '/'), "invalid GitHub repository/path");
-            const bool publicContents = publicRead && method == "GET" && body.is_null() && permissions == Json{{"contents", "read"}};
-            require(publicContents || (repository.starts_with(config.allowedOwner + "/") && repositories.contains(repository)),
-                    "repository is not authorized");
-            require(!repositories.empty(), "GitHub repository grants are not configured");
-            bool execute = true;
-            if (method == "GET") {
-                const auto question = Json{repository, suffix, permissions, publicContents}.dump();
-                auto& waiting = reads[question];
-                waiting.push_back(callback);
-                execute = waiting.size() == 1;
-                complete = [this, question](const GitHubResult& result) {
-                    const auto waiting = std::move(reads.at(question));
-                    reads.erase(question);
-                    for (const auto& done : waiting) {
-                        done(result);
+
+    void Controller::enroll(const std::string& repository, const std::string& ref, const Done& done) {
+        const Value finish = [done](const Json&, const std::string& error) {
+            done(error);
+        };
+        require(deployment.at("repositories").contains(repository) &&
+                    repository.starts_with(deployment.at("owner").get<std::string>() + "/"),
+                "Repository is outside authorized grants");
+        require(!ref.empty(), "Enrollment requires an explicit definition/workflow branch");
+        token([this, repository, ref, finish, done](const std::string& access, const std::string& error) {
+            checked(finish, [this, repository, ref, access, finish, done](const Json&) {
+                api(access, "/repos/" + repository, checked(finish, [this, repository, ref, access, finish, done](const Json& metadata) {
+                        require(metadata.at("id") == deployment.at("repositories").at(repository) && metadata.at("full_name") == repository,
+                                "Repository stable identity differs from grant");
+                        api(access,
+                            "/repos/" + repository + "/commits/" + encode(ref),
+                            checked(finish, [this, repository, ref, access, finish, done](const Json& commit) {
+                                contents(access,
+                                         repository,
+                                         "ci/packages.json",
+                                         commit.at("sha"),
+                                         checked(finish, [this, repository, ref, commit, done](const Json& file) {
+                                             const Json definition = Json::parse(file.at("bytes").get<std::string>());
+                                             require(definition.at("schema") == 1 && definition.at("matrix").is_array(),
+                                                     "Invalid definition schema");
+                                             store.change(
+                                                 [repository, ref, commit, file, definition](Json& graph) {
+                                                     for (const auto& [name, enrolled] : graph.at("repositories").items()) {
+                                                         require(name == repository ||
+                                                                     enrolled.at("definition").at("package") != definition.at("package"),
+                                                                 "Package belongs to another enrolled repository");
+                                                     }
+                                                     graph["repositories"][repository] = {{"ref", ref},
+                                                                                          {"commit", commit.at("sha")},
+                                                                                          {"blob", file.at("sha")},
+                                                                                          {"definition", definition},
+                                                                                          {"refreshed", utc()}};
+                                                     return Json::array();
+                                                 },
+                                                 done);
+                                         }));
+                            }));
+                    }));
+            })({}, error);
+        });
+    }
+
+    void Controller::resolve(const std::string& token,
+                             const Json& enrollment,
+                             const std::string& repository,
+                             const std::string& tag,
+                             const std::shared_ptr<Selection>& selection) {
+        if (!selection->sources.contains(repository)) {
+            selection->sources[repository] = nullptr;
+            ++selection->pending;
+            const Value failed = [selection](const Json&, const std::string& error) {
+                if (!error.empty() && selection->done) {
+                    auto finish = std::exchange(selection->done, {});
+                    finish({}, error);
+                }
+            };
+            const auto selectedTag = [this, token, enrollment, repository, tag, selection, failed](const Json& tags) {
+                const std::string chosen = sourceTag(tags, tag);
+                api(token,
+                    "/repos/" + repository + "/commits/" + encode("refs/tags/" + chosen),
+                    checked(failed, [this, token, enrollment, repository, chosen, selection, failed](const Json& commit) {
+                        contents(
+                            token,
+                            repository,
+                            "ci/packages.json",
+                            commit.at("sha"),
+                            checked(failed, [this, token, enrollment, repository, chosen, commit, selection, failed](const Json& file) {
+                                const Json definition = Json::parse(file.at("bytes").get<std::string>());
+                                require(definition.at("schema") == 1 && definition.at("matrix").is_array() &&
+                                            !definition.at("matrix").empty(),
+                                        "Invalid source definition");
+                                require(
+                                    std::regex_match(definition.at("package").get<std::string>(), std::regex("[a-z0-9][a-z0-9+.-]{0,127}")),
+                                    "Invalid package namespace");
+                                std::set<std::string> unique;
+                                for (const auto& dependency : definition.at("depends_on")) {
+                                    require(dependency.is_string() && unique.insert(dependency.get<std::string>()).second,
+                                            "Invalid duplicate dependency");
+                                }
+                                unique.clear();
+                                for (const auto& target : definition.at("matrix")) {
+                                    coordinates(target);
+                                    require(unique.insert(target.at("id").get<std::string>()).second, "Duplicate target ID");
+                                    require(definition.at("build").contains(target.at("family").get<std::string>()), "Missing build hook");
+                                }
+                                Json source = definition;
+                                source.erase("matrix");
+                                source.erase("schema");
+                                Json pins;
+                                for (const auto& key :
+                                     {"controller_app_bot_id", "worker", "source_workflow", "publication_workflow", "feed", "signing"}) {
+                                    pins[key] = deployment.at(key);
+                                }
+                                source.update({{"repository", repository},
+                                               {"repository_id", deployment.at("repositories").at(repository)},
+                                               {"tag", chosen},
+                                               {"commit", commit.at("sha")},
+                                               {"definition_revision", commit.at("sha")},
+                                               {"definition_blob_sha", file.at("sha")},
+                                               {"deployment", pins}});
+                                const std::string ref = enrollment.at(repository).at("ref");
+                                api(token,
+                                    "/repos/" + repository + "/commits/" + encode(ref),
+                                    checked(failed,
+                                            [this, token, enrollment, repository, ref, source, definition, selection, failed](
+                                                const Json& commit) {
+                                                contents(
+                                                    token,
+                                                    repository,
+                                                    deployment.at("source_workflow").at("path"),
+                                                    commit.at("sha"),
+                                                    checked(
+                                                        failed,
+                                                        [this, token, enrollment, repository, ref, source, definition, commit, selection](
+                                                            const Json& file) {
+                                                            require(file.at("sha") == deployment.at("source_workflow").at("blob_sha"),
+                                                                    "Unapproved source workflow");
+                                                            selection->sources[repository] = {
+                                                                {"source", source},
+                                                                {"definition", definition},
+                                                                {"workflows",
+                                                                 {{"build",
+                                                                   {{"repository", repository},
+                                                                    {"repository_id", source.at("repository_id")},
+                                                                    {"ref", ref},
+                                                                    {"commit", commit.at("sha")},
+                                                                    {"path", deployment.at("source_workflow").at("path")},
+                                                                    {"blob_sha", file.at("sha")}}}}}};
+                                                            for (const auto& dependency : definition.at("depends_on")) {
+                                                                std::string match;
+                                                                for (const auto& [name, value] : enrollment.items()) {
+                                                                    if (value.at("definition").at("package") == dependency) {
+                                                                        require(match.empty(), "Ambiguous enrolled package");
+                                                                        match = name;
+                                                                    }
+                                                                }
+                                                                require(!match.empty(), "Dependency repository is not enrolled");
+                                                                resolve(token, enrollment, match, "", selection);
+                                                            }
+                                                            --selection->pending;
+                                                            if (selection->pending == 0 && selection->done) {
+                                                                auto finish = std::exchange(selection->done, {});
+                                                                finish(selection->sources, "");
+                                                            }
+                                                        }));
+                                            }));
+                            }));
+                    }));
+            };
+            api(token, "/repos/" + repository, checked(failed, [this, token, repository, tag, failed, selectedTag](const Json& metadata) {
+                    require(metadata.at("id") == deployment.at("repositories").at(repository) && metadata.at("full_name") == repository,
+                            "Selected repository stable identity mismatch");
+                    if (tag.empty()) {
+                        pages(token, "/repos/" + repository + "/tags", "", checked(failed, selectedTag));
+                    } else {
+                        checked(failed, selectedTag)(Json::array(), "");
                     }
-                };
-            }
-            if (execute) {
-                const auto id = repositories.contains(repository) ? repositoryId(repository) : repositories.begin()->second;
-                authorize({{"repository_ids", {id}}, {"permissions", permissions}},
-                          [this, repository, method, suffix, body, complete](const GitHubResult& token) {
-                              if (token.status == 201 && token.error.empty()) {
-                                  send(method, "/repos/" + repository + suffix, token.body.at("token"), body, complete);
-                              } else {
-                                  complete({token.status, nullptr, "GitHub installation token request failed; verify repository grants"});
-                              }
-                          });
-            }
-        } catch (const std::exception& error) {
-            complete({0, nullptr, error.what()});
+                }));
         }
     }
-} // namespace coreci
+
+    void Controller::request(const std::string& repository, const std::string& tag, const Done& done, const std::string& expected) {
+        const Value finish = [done](const Json&, const std::string& error) {
+            done(error);
+        };
+        store.read(checked(finish, [this, repository, tag, expected, done, finish](const Json& snapshot) {
+            const Json enrollment = snapshot.at("graph").at("repositories");
+            require(enrollment.contains(repository), "Repository is not enrolled");
+            if (!expected.empty() && selectedTag(snapshot.at("graph"), repository, tag, expected)) {
+                done("");
+            } else {
+                token([this, repository, tag, expected, enrollment, done, finish](const std::string& access, const std::string& error) {
+                    checked(finish, [this, repository, tag, expected, enrollment, access, done, finish](const Json&) {
+                        const Json publisher = deployment.at("publication_workflow");
+                        const Json worker = deployment.at("worker");
+                        api(access,
+                            "/repos/" + worker.at("repository").get<std::string>() + "/commits/" + encode(publisher.at("ref")),
+                            checked(
+                                finish,
+                                [this, repository, tag, expected, enrollment, access, publisher, worker, done, finish](const Json& commit) {
+                                    contents(
+                                        access,
+                                        worker.at("repository"),
+                                        publisher.at("path"),
+                                        commit.at("sha"),
+                                        checked(
+                                            finish,
+                                            [this, repository, tag, expected, enrollment, access, publisher, worker, commit, done, finish](
+                                                const Json& file) {
+                                                require(file.at("sha") == publisher.at("blob_sha"), "Unapproved publication workflow");
+                                                auto selection = std::make_shared<Selection>();
+                                                selection->done = checked(
+                                                    finish,
+                                                    [this, repository, expected, publisher, worker, commit, done](const Json& result) {
+                                                        Json selection = result, workflow = publisher;
+                                                        workflow.update({{"repository", worker.at("repository")},
+                                                                         {"repository_id", worker.at("repository_id")},
+                                                                         {"commit", commit.at("sha")}});
+                                                        for (auto& selected : selection) {
+                                                            selected["workflows"]["publish"] = workflow;
+                                                        }
+                                                        store.change(
+                                                            [selection, repository, expected](Json& graph) {
+                                                                return selectRequest(graph, selection, repository, expected);
+                                                            },
+                                                            done);
+                                                    });
+                                                for (const auto& name : affectedRepositories(enrollment, repository)) {
+                                                    resolve(access, enrollment, name, name == repository ? tag : "", selection);
+                                                }
+                                            }));
+                                }));
+                    })({}, error);
+                });
+            }
+        }));
+    }
+
+} // namespace ci
