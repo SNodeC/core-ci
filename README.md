@@ -15,9 +15,13 @@ reconciliation was used. See [the full acceptance report](docs/core-v2.1.19-run.
 and [publication correction and checks](docs/publication-confirmation-acceptance.md).
 Production deployment remains unverified.
 
-Restart preserves assigned work without replay. Missed execution notifications
-can be recovered by explicit reconciliation; automatic startup reconciliation
-is not implemented.
+After the management listener starts successfully, startup performs one observation
+pass over the latest assigned Building/Publishing attempts. Existing GitHub runs
+and receipts can recover missed execution notifications through the normal state
+machine; newly eligible stages/dependents dispatch only after a successful commit.
+Unbound, running or uncertain assignments are preserved without dispatch replay.
+Explicit reconciliation remains available. There is no polling or recovery of a
+source-tag event that was missed before any selection existed.
 
 The invariant is one MariaDB graph authority. Selections freeze source,
 committed definition, target, tooling/workflow pins and prerequisite executions.

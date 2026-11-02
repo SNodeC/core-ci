@@ -11,56 +11,71 @@ namespace {
     ci::Json receipt;
     std::string scenario;
     std::size_t reads = 0;
+    std::size_t discoveries = 0;
 
     void observeRemote(const ci::Json& work) {
-        const auto& command = work.at("attempts").back().at("publish_assignment");
-        remoteRun = {{"id", 502},
-                     {"repository", {{"id", command.at("repository_id")}}},
-                     {"head_repository", {{"id", command.at("repository_id")}}},
-                     {"actor", {{"id", 41}}},
-                     {"event", "workflow_dispatch"},
-                     {"run_attempt", 1},
-                     {"head_sha", command.at("commit")},
-                     {"path", command.at("path")},
-                     {"display_title", "Publish " + work.at("attempts").back().at("assignment").at("label").get<std::string>()},
-                     {"status", "in_progress"},
-                     {"conclusion", nullptr},
-                     {"html_url", "https://github.com/Fixture/worker/actions/runs/502"}};
-        remoteJobs = fixture::observation(work, "publish").at("jobs");
-        ci::Json confirm = remoteJobs.at(0);
-        confirm["id"] = 703;
-        confirm["name"] = "Confirm public receipt";
-        if (scenario == "queued" || scenario == "running") {
-            confirm["status"] = scenario == "queued" ? "queued" : "in_progress";
-            confirm["conclusion"] = nullptr;
-            confirm["completed_at"] = nullptr;
-        } else if (scenario == "skipped" || scenario == "failure") {
-            confirm["conclusion"] = scenario;
-            remoteRun["status"] = "completed";
-            remoteRun["conclusion"] = scenario == "failure" ? "failure" : "success";
-        }
-        if (scenario != "missing") {
-            remoteJobs.push_back(confirm);
-        }
-        if (scenario == "duplicate") {
-            confirm["id"] = 704;
-            remoteJobs.push_back(confirm);
-        } else if (scenario == "wrong_job_run") {
-            remoteJobs.back()["run_id"] = 999;
-        } else if (scenario == "wrong_job_attempt") {
-            remoteJobs.back()["run_attempt"] = 2;
-        } else if (scenario == "wrong_actor") {
-            remoteRun["actor"]["id"] = 999;
-        } else if (scenario == "wrong_workflow") {
-            remoteRun["path"] = ".github/workflows/untrusted.yml";
-        } else if (scenario == "wrong_run_attempt") {
-            remoteRun["run_attempt"] = 2;
-        } else if (scenario == "publish_failed") {
-            remoteJobs.at(0)["conclusion"] = "failure";
-        }
-        receipt = fixture::receipt(work);
-        if (scenario == "wrong_receipt") {
-            receipt["attempt"] = "unrelated:1";
+        const std::string stage = scenario == "resume_build" || scenario == "resume_build_running" ? "build" : "publish";
+        const auto& command = work.at("attempts").back().at(stage + "_assignment");
+        const auto observation = fixture::observation(work, stage);
+        remoteRun = {
+            {"id", observation.at("identity").at("id")},
+            {"repository", {{"id", command.at("repository_id")}}},
+            {"head_repository", {{"id", command.at("repository_id")}}},
+            {"actor", {{"id", 41}}},
+            {"event", "workflow_dispatch"},
+            {"run_attempt", 1},
+            {"head_sha", command.at("commit")},
+            {"path", command.at("path")},
+            {"display_title",
+             (stage == "build" ? "Build " : "Publish ") + work.at("attempts").back().at("assignment").at("label").get<std::string>()},
+            {"status", "in_progress"},
+            {"conclusion", nullptr},
+            {"html_url", "https://github.com/Fixture/worker/actions/runs/502"}};
+        remoteJobs = observation.at("jobs");
+        if (stage == "publish") {
+            ci::Json confirm = remoteJobs.at(0);
+            confirm["id"] = 703;
+            confirm["name"] = "Confirm public receipt";
+            if (scenario == "queued" || scenario == "running" || scenario == "resume_running") {
+                confirm["status"] = scenario == "queued" ? "queued" : "in_progress";
+                confirm["conclusion"] = nullptr;
+                confirm["completed_at"] = nullptr;
+            } else if (scenario == "skipped" || scenario == "failure") {
+                confirm["conclusion"] = scenario;
+                remoteRun["status"] = "completed";
+                remoteRun["conclusion"] = scenario == "failure" ? "failure" : "success";
+            }
+            if (scenario != "missing") {
+                remoteJobs.push_back(confirm);
+            }
+            if (scenario == "duplicate") {
+                confirm["id"] = 704;
+                remoteJobs.push_back(confirm);
+            } else if (scenario == "wrong_job_run") {
+                remoteJobs.back()["run_id"] = 999;
+            } else if (scenario == "wrong_job_attempt") {
+                remoteJobs.back()["run_attempt"] = 2;
+            } else if (scenario == "wrong_actor") {
+                remoteRun["actor"]["id"] = 999;
+            } else if (scenario == "wrong_workflow") {
+                remoteRun["path"] = ".github/workflows/untrusted.yml";
+            } else if (scenario == "wrong_run_attempt") {
+                remoteRun["run_attempt"] = 2;
+            } else if (scenario == "publish_failed") {
+                remoteJobs.at(0)["conclusion"] = "failure";
+            }
+            receipt = fixture::receipt(work);
+            if (scenario == "wrong_receipt") {
+                receipt["attempt"] = "unrelated:1";
+            }
+        } else {
+            remoteRun["status"] = scenario == "resume_build" ? "completed" : "in_progress";
+            remoteRun["conclusion"] = scenario == "resume_build" ? ci::Json("failure") : ci::Json();
+            remoteJobs.at(0)["status"] = remoteRun.at("status");
+            remoteJobs.at(0)["conclusion"] = remoteRun.at("conclusion");
+            if (scenario == "resume_build_running") {
+                remoteJobs.at(0)["completed_at"] = nullptr;
+            }
         }
     }
 } // namespace
@@ -92,13 +107,18 @@ namespace ci {
     }
 
     void Controller::pages(const std::string&, const std::string& path, const std::string& field, const Value& done, int, Json) {
-        require(field == "jobs" && path.ends_with("/attempts/1/jobs"), "Unexpected pagination");
-        done(remoteJobs, "");
+        if (field == "workflow_runs") {
+            ++discoveries;
+            done(scenario == "resume_unbound" ? Json::array() : Json::array({remoteRun}), "");
+        } else {
+            require(field == "jobs" && path.ends_with("/attempts/1/jobs"), "Unexpected pagination");
+            done(remoteJobs, "");
+        }
     }
 
     void Controller::contents(const std::string&, const std::string&, const std::string& path, const std::string&, const Value& done) {
         if (path.starts_with(".github/workflows/")) {
-            done({{"sha", std::string(40, scenario == "wrong_blob" ? 'd' : 'c')}}, "");
+            done({{"sha", std::string(40, scenario == "wrong_blob" ? 'd' : path.ends_with("build.yml") ? 'b' : 'c')}}, "");
         } else {
             require(path.starts_with("receipts/"), "Unexpected contents request");
             done({{"bytes", receipt.dump()}}, "");
@@ -112,12 +132,15 @@ namespace ci {
 
 int main(int argc, char* argv[]) {
     ci::Store store;
-    ci::Controller controller(store, fixture::deployment(), "fixture", "fixture", "unused");
+    ci::Controller controller(store, fixture::deployment(), "fixture", "17", "unused");
     int result = 0;
     bool started = false;
     std::size_t effects = 0;
     std::size_t notifications = 0;
+    std::size_t recovered = 0;
+    std::size_t errors = 0;
     scenario = std::getenv("CI_PUBLICATION_CASE");
+    const std::size_t parentIndex = scenario == "resume_mixed" ? 2 : 0;
     const bool prepared = std::getenv("CI_PUBLICATION_PREPARED") != nullptr;
     const std::string database = std::getenv("CI_TEST_DATABASE");
     const auto persisted = [&]() {
@@ -144,8 +167,8 @@ int main(int argc, char* argv[]) {
             ci::Json expected = receipt;
             expected.erase("indexes");
             ci::require(action.at("execution") == execution.at("id") &&
-                            graph.at("executions").at(0).at("attempts").back().at("state") == "published" &&
-                            input.at("attempt") == graph.at("executions").at(0).at("attempts").back().at("id") &&
+                            graph.at("executions").at(parentIndex).at("attempts").back().at("state") == "published" &&
+                            input.at("attempt") == graph.at("executions").at(parentIndex).at("attempts").back().at("id") &&
                             input.at("receipt") == expected,
                         "Exact proof and dispatch authority must be committed together");
             ++effects;
@@ -161,7 +184,59 @@ int main(int argc, char* argv[]) {
             },
             [&](const ci::Json& snapshot) {
                 ci::Json graph = snapshot.at("graph");
-                if (scenario == "restart") {
+                if (scenario.starts_with("resume_")) {
+                    const auto original = graph;
+                    observeRemote(graph.at("executions").at(parentIndex));
+                    const ci::Done recoveredOne = [&, original](const std::string& error) {
+                        ++recovered;
+                        errors += !error.empty();
+                        const bool concurrent = scenario == "resume_mixed" || scenario == "resume_race";
+                        if (recovered == (concurrent ? 2U : 1U)) {
+                            try {
+                                const auto saved = persisted();
+                                const auto& active = saved.at("executions").at(parentIndex).at("attempts").back();
+                                const bool complete = scenario == "resume_complete" || concurrent;
+                                const bool published = complete || scenario == "resume_unknown" || scenario == "resume_again";
+                                const bool rejected = scenario == "resume_reject" || scenario == "resume_unknown";
+                                ci::require(effects == (complete ? 1U : 0U), "Recovery cannot replay an old assignment");
+                                ci::require((active.at("state") == "published") == published, "Missed publication recovery");
+                                ci::require(errors == (rejected || scenario == "resume_unbound" || scenario == "resume_again" ||
+                                                               scenario == "resume_mixed"
+                                                           ? 1U
+                                                           : 0U),
+                                            "Independent recovery errors: " + error);
+                                ci::require(active.at("assignment") ==
+                                                original.at("executions").at(parentIndex).at("attempts").back().at("assignment"),
+                                            "Recovery preserves the exact original assignment");
+                                if (scenario == "resume_build" || scenario == "resume_build_running") {
+                                    ci::require(active.at("state") == (scenario == "resume_build" ? "failed" : "building") && reads == 0,
+                                                "Missed build completion or running build must use the original attempt");
+                                }
+                                if (scenario == "resume_mixed") {
+                                    ci::require(discoveries == 2, "Only unfinished assigned executions are observed");
+                                    for (const std::size_t i : {0U, 3U, 4U}) {
+                                        ci::require(saved.at("executions").at(i) == original.at("executions").at(i),
+                                                    "Unbound and terminal history must remain unchanged");
+                                    }
+                                }
+                                if (rejected || scenario == "resume_again" || scenario == "resume_unbound") {
+                                    ci::require(notifications == 0, "Unresolved commit or unchanged recovery cannot notify SSE");
+                                }
+                                finish("");
+                            } catch (const std::exception& failure) {
+                                finish(failure.what());
+                            }
+                        }
+                    };
+                    controller.resume(recoveredOne);
+                    if (scenario == "resume_race") {
+                        controller.webhook("workflow_run",
+                                           {{"installation", {{"id", 17}}},
+                                            {"repository", {{"full_name", "Fixture/worker"}, {"id", 42}}},
+                                            {"workflow_run", {{"id", 502}, {"display_title", remoteRun.at("display_title")}}}},
+                                           recoveredOne);
+                    }
+                } else if (scenario == "restart") {
                     ci::require(ci::commands(graph).empty() && effects == 0 && notifications == 0, "Restart cannot replay assignments");
                     finish("");
                 } else {
@@ -240,7 +315,21 @@ int main(int argc, char* argv[]) {
                                     ci::Json selection = {{"Fixture/base", fixture::selected("base", ci::Json::array())},
                                                           {"Fixture/client", fixture::selected("client", ci::Json::array({"base"}))}};
                                     ci::selectRequest(graph, selection, "Fixture/base");
-                                    fixture::finishBuild(graph, graph.at("executions").at(0).at("id"));
+                                    if (scenario != "resume_build" && scenario != "resume_build_running") {
+                                        fixture::finishBuild(graph, graph.at("executions").at(0).at("id"));
+                                    }
+                                    if (scenario == "resume_mixed") {
+                                        for (const std::string state : {"publishing", "published", "failed"}) {
+                                            auto other = graph.at("executions").at(0);
+                                            other["id"] = ci::hash(state);
+                                            auto& active = other["attempts"].back();
+                                            active["id"] = state + ":1";
+                                            active["state"] = state;
+                                            active["assignment"]["label"] = "Unbound " + state;
+                                            graph["executions"].push_back(other);
+                                        }
+                                        std::swap(graph["executions"][0], graph["executions"][2]);
+                                    }
                                     return ci::Json::array();
                                 },
                                 [&](const std::string& error) {

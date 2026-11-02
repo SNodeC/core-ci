@@ -324,6 +324,21 @@ namespace ci {
         }));
     }
 
+    void Controller::resume(const Done& done) {
+        store.read(checked(
+            [done](const Json&, const std::string& error) {
+                done(error);
+            },
+            [this, done](const Json& snapshot) {
+                for (const auto& work : snapshot.at("graph").at("executions")) {
+                    const auto& active = work.at("attempts").back();
+                    if (active.contains("assignment") && (active.at("state") == "building" || active.at("state") == "publishing")) {
+                        observe(work.at("id"), done, 0, active.at("id"));
+                    }
+                }
+            }));
+    }
+
     void Controller::reconcile(const std::string& execution, const Done& done) {
         observe(execution, done);
     }

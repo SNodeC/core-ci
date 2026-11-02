@@ -478,3 +478,27 @@ pin, restarting locally and running one new core-triggered full chain. Receipt
 confirmation observes one HTTPS client/edge; it is not a guarantee of simultaneous
 package availability at every CDN edge. No package-download retry or logging
 change is part of this correction.
+
+
+## Startup observation of existing assignments (2026-11-02)
+
+After the management listener successfully starts, the controller reads one
+MariaDB snapshot and observes the latest assigned Building/Publishing attempts.
+Each observation binds to that snapshot's immutable attempt identity and uses
+exactly the existing explicit-reconciliation/webhook observation path. No new
+GitHub authentication, callback, assignment or result contract is introduced.
+
+Finished remote work can supply the same validated results/confirmation receipts
+as a delivered webhook. Normal state-machine commits record those facts and any
+newly authorized next stage or exact dependent together before dispatch. Terminal
+and unassigned work is skipped; running, unbound and uncertain assignments remain
+intact, without automatic dispatch replay/replacement/retry. An error in observing
+one execution does not suppress independent observations. The pass is once per
+startup, not polling, and adds no durable state or graph readiness authority.
+
+This recovers missed execution notifications for already selected work. A source
+tag created while the controller was unavailable, with no selection persisted,
+is not discovered by this pass. All durable unfinished assignments are eligible;
+there is no age filter or new policy for abandoning history. Startup recovery is
+source-tested independently of historical sandbox acceptance; replacing/restarting
+the running controller and any resulting live continuation require authorization.

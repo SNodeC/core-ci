@@ -1015,3 +1015,73 @@ Pagination, production resources, commits, pushes and deployments were untouched
 - Attach the replacement commit directly to main's existing history, push the
   existing task branch and open/merge one PR. No controller deployment, GitHub
   workflow activation, live tag/build, data migration/reset or key change.
+
+
+## Implement one-time startup reconciliation (2026-11-02)
+
+- Owner authorized implementation against the estimated +20–30 production C++
+  lines after merging the accepted baseline. Existing task branch remains
+  feat/graph-controller at 87061ab; origin/main merge 3fce12d has the identical
+  baseline tree. Tracked work was clean; eight unrelated pasted images preserved.
+- Invariant: startup observes original assigned attempts, never resends them.
+  Only newly verified evidence and a successful authoritative graph commit can
+  authorize a next stage or exact dependent. Errors must not block independence.
+- Traced listener/DB ownership -> graph snapshot -> immutable-attempt observation
+  -> GitHub validation -> applyEvidence/commands -> Store.change -> dispatch/SSE.
+  Existing reconcile delegates to the same observation path. Reduction/change
+  alone cannot add the missing startup invocation/selection; approved addition
+  reuses that path, adds no parallel validation or state machine.
+- Controller::resume reads once, scans latest assigned Building/Publishing work,
+  and observes each exact attempt ID. main invokes it after successful management
+  listen, with ordinary error reporting. No timer/thread/cache/flag/ready queue,
+  retry/replay or source-tag discovery. Actual production +17 lines: header +1,
+  Execution.cpp +15, main.cpp +1; total 2348, below estimate and hard 2500 bound.
+- Extended existing publication test's public GitHub-boundary doubles with real
+  observation/Store/Graph and isolated MariaDB. Covers missed publication release,
+  running/unbound work, terminal/unassigned skips, independent error/success,
+  concurrent webhook (one dispatch), missed definite build failure, running build,
+  separate-process repeated restart, rejected and lost-ack commits with no replay.
+- First focused run exposed test-only build workflow hash and reused proxy socket
+  defects; corrected those fixtures without weakening assertions. Extended
+  publication-confirmation-contract then passed in 3.32s. Other relevant checks
+  pending. UI/runtime fixtures now populate after empty startup, preventing fake
+  assignments from querying real GitHub; populated/changing assertions retained.
+- Build isolated under /tmp/codex/build/core-ci/startup-recovery-20261102 (GCC
+  16.2.0 Debug, installed SNode.C); original live binary/configuration untouched.
+  No restart/reconciliation/live build, workflow/deployment change, commit/push or
+  additional checkout authorized/performed for this new source change.
+
+
+## Startup recovery final verification (2026-11-02)
+
+- Final strengthened publication-confirmation-contract passed (3.52s): 29 primary
+  cases plus prepared and separate-process restart phases. Actual webhook race
+  reads twice/dispatches once; an error before independent success does not block.
+  Rejected/unknown commit emits zero dispatch/SSE, and restart never replays.
+- Native startup/HTTP/real-browser UI passed 104.99s; native SSE backpressure
+  18.43s; MariaDB commit/restart 1.11s; graph/receipt 0.06s. Canonical format-check,
+  changed Python syntax, 160-column production check and git whitespace check pass.
+- Final production 2348 C++ lines (+17). Tests +97 net, no production hooks or
+  test framework. No CMake/UI/external worker/workflow changes. Full per-file
+  counts, checks and limits in docs/startup-recovery.md.
+- Final manifest 443789c8bd53fb3b5f50203092dbb23480c73335556e8406510771070b2d515c; binary 185c18b622e7db3c6c2535fc2ba44ff9131f21e08a7da38ff58b36f2af260777.
+  Uncommitted source on feat/graph-controller at base 87061ab; separate temporary
+  GCC 16.2.0 Debug build. No live binary replacement/restart, execution observation,
+  new build/tag, deployment, DB migration/reset, commit or push for this change.
+
+
+## Authorized live restart-recovery acceptance (2026-11-02)
+
+- Owner explicitly authorized committing the recovery source, going live locally,
+  one fresh core-triggered chain, a deliberate outage during active builds, then
+  restart after GitHub finishes those builds. No redelivery/manual reconciliation
+  or completion retrigger: startup alone must recover and resume the full chain.
+- Pre-upgrade graph: 150 executions, 124 Published, 4 Publishing, 2 Building,
+  16 Waiting, 4 Failed. PID 412713 runs the previous binary. No data reset,
+  migration, feed lock, key/pin/workflow change or historical assignment replacement.
+- The normal startup pass observes every unfinished assignment, including existing
+  ones; acceptance tracks the fresh v2.1.20 tree separately. Confirmed v2.1.19
+  highest existing tag and v2.1.20 absent, using approved source fc3acdb94779dafb879c183143c20e19b435e766.
+- Evidence under /tmp/codex/build/core-ci/restart-chain-20261102; reuse the separately
+  built/tested 2348-line controller. Existing sandbox credentials are passed only
+  by approved paths; no credential contents inspected or printed.

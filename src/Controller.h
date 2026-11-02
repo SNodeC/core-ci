@@ -80,6 +80,7 @@ namespace ci {
         void publicationReceipt(const std::string& token, const Json& work, const Value& done);
         void webhook(const std::string& event, const Json& payload, const Done& done);
         void reconcile(const std::string& execution, const Done& done);
+        void resume(const Done& done);
         const Json deployment;
 
     private:
