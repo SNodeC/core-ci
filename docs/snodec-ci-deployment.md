@@ -30,7 +30,7 @@ list into MQTTSuite. The normal SDK graph builds the application afterward.
 - Worker: SNodeC/DistributionPackages, tooling commit
   f59e9ea15428d7667613d2388b1109ca7f5fa2f5.
 - Source workflow blob: fa19575e80db08d4ae003efcdbd80d5fb9bee829.
-- Publisher workflow blob: b139fe41b31934f6ebf2235a336e2d926058d211.
+- Publisher workflow blob: fa1f347232902d53ca35aa8509b68e6c342784b4.
 - Feed: SNodeC/Packages, main; https://snodec.github.io/Packages/.
 
 Three enrolled definitions retain 178 targets in total: 76 core, 76 MQTTSuite,
@@ -64,4 +64,14 @@ These checks do not validate all 178 target builds. No package chain has run.
 The owner must authorize the next build trigger and any exact release tags.
 Existing immutable tags predate the converted definitions; do not move them,
 change product versions, or invent new release versions to bypass that decision.
-The App webhook credential form must also be completed before activation.
+The App webhook is configured; signed ping and real workflow events were accepted.
+
+## Pre-activation CI review corrections
+
+OpenWrt recipes receive numeric rebuild revisions; the SDK supplies the `r`
+prefix. MQTTSuite reads core receipt source tag/revision/format through the
+existing encoder, without assuming a manifest-only `package_version` field.
+The assigned Publish job checks its original native/OpenWrt/retention predicate
+in its first step, making rejected inputs visible as a skipped feed-push step.
+Failed or completed push without confirmed publication retains uncertainty.
+These fixes change CI only; product versions, build files and recipes stay intact.
