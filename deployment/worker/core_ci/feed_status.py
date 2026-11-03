@@ -128,7 +128,9 @@ def render(feed, templates=None):
         )
         status_path = "status/" + ("README/" if name == "README" else "") + name + ".md"
         targets = []
-        coordinates = {row["target"]: row["coordinates"] for row in publications}
+        coordinates = {"/".join(target[key] for key in ("distribution", "suite", "arch", "format")): target
+                       for target in selected.get("targets", [])}
+        coordinates.update({row["target"]: row["coordinates"] for row in publications})
         for item in work:
             coordinates["/".join(item["coordinates"][key] for key in ("distribution", "suite", "arch", "format"))] = item["coordinates"]
         for identity in sorted(coordinates):

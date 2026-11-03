@@ -3,6 +3,8 @@
 import json
 import os
 from pathlib import Path
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -99,8 +101,27 @@ def build(arguments):
             package_format,
             "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
             "build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync swig "
-            "unzip zlib1g-dev file wget curl zstd ca-certificates",
+            "unzip zlib1g-dev file wget curl zstd ca-certificates cmake qemu-user",
         )
+        if family == "native":
+            if selected["target"]["distribution"] == "rocky":
+                tools = ("dnf install -y dnf-plugins-core epel-release && "
+                         "dnf config-manager --set-enabled crb && " + tools)
+            dependencies = document.get("build_dependencies", {}).get(package_format, [])
+            target_dependencies = selected["target"]["build"].get("dependencies", [])
+            require(isinstance(dependencies, list) and isinstance(target_dependencies, list),
+                    "build dependencies must be arrays")
+            dependencies = dependencies + target_dependencies
+            require(
+                isinstance(dependencies, list)
+                and all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.:-]*", name)
+                        for name in dependencies),
+                "invalid source-declared build dependencies",
+            )
+            if dependencies:
+                installer = ("apt-get install -y --no-install-recommends" if package_format == "deb"
+                             else "dnf install -y --setopt=install_weak_deps=False")
+                tools += " && " + installer + " " + " ".join(shlex.quote(name) for name in dependencies)
         mounts = [
             "--mount",
             "type=bind,source=" + str(tooling / "core_ci") + ",target=/tool,readonly",

@@ -18,6 +18,7 @@ on:
 permissions:
   contents: read
   actions: read
+  packages: read
 jobs:
   build:
     uses: @WORKER@/.github/workflows/core-ci-build.yml@@TOOLING_SHA@

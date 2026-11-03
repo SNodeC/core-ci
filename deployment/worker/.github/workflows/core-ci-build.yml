@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   actions: read
+  packages: read
 jobs:
   package:
     name: Build ${{ fromJSON(inputs.assignment).label }}
@@ -39,6 +40,14 @@ jobs:
       - name: Install SDK inspection prerequisites
         if: ${{ fromJSON(inputs.assignment).target.family == 'openwrt' }}
         run: sudo apt-get update && sudo apt-get install -y zstd make
+      - name: Authenticate pinned Raspberry Pi OS environment reader
+        if: ${{ fromJSON(inputs.assignment).target.distribution == 'raspberrypios' }}
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Enable foreign-architecture execution
+        if: ${{ fromJSON(inputs.assignment).target.build.platform == 'linux/arm/v7' || fromJSON(inputs.assignment).target.build.platform == 'linux/riscv64' }}
+        run: sudo apt-get update && sudo apt-get install -y qemu-user-static binfmt-support
       - name: Resolve build environment on GitHub
         env:
           ASSIGNMENT: ${{ inputs.assignment }}

@@ -50,10 +50,20 @@ jobs:
           ref: ${{ env.CORE_CI_TOOLING_SHA }}
           path: tooling
           persist-credentials: false
+      - name: Mint read-only source artifact access
+        id: reader
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ vars.BUILD_READER_APP_ID }}
+          private-key: ${{ secrets.PACKAGE_CAPTURE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.BUILD_READER_REPOSITORIES }}
+          permission-actions: read
+          permission-contents: read
       - name: Validate provenance, archive and actual package metadata
         id: validation
         env:
-          SOURCE_ARTIFACT_TOKEN: ${{ secrets.PACKAGES_OBSERVER_TOKEN }}
+          SOURCE_ARTIFACT_TOKEN: ${{ steps.reader.outputs.token }}
         run: |
           set -euo pipefail
           umask 077

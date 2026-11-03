@@ -177,7 +177,7 @@ def main():
                     "prerequisite SDK identities disagree",
                 )
         else:
-            resolved = sdk(selected["target"])
+            resolved = sdk(selected["target"], selected["target"]["build"].get("release"))
     if selected["target"]["family"] == "openwrt":
         from sdk import prepare
 
