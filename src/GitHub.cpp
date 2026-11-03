@@ -146,92 +146,80 @@ namespace ci {
                 api(token,
                     "/repos/" + repository + "/commits/" + encode("refs/tags/" + chosen),
                     checked(failed, [this, token, enrollment, repository, chosen, selection, failed](const Json& commit) {
-                        contents(
-                            token,
-                            repository,
-                            "ci/packages.json",
-                            commit.at("sha"),
-                            checked(failed, [this, token, enrollment, repository, chosen, commit, selection, failed](const Json& file) {
-                                const Json definition = Json::parse(file.at("bytes").get<std::string>());
-                                require(definition.at("schema") == 1 && definition.at("matrix").is_array() &&
-                                            !definition.at("matrix").empty(),
-                                        "Invalid source definition");
-                                require(
-                                    std::regex_match(definition.at("package").get<std::string>(), std::regex("[a-z0-9][a-z0-9+.-]{0,127}")),
-                                    "Invalid package namespace");
-                                std::set<std::string> unique;
-                                for (const auto& dependency : definition.at("depends_on")) {
-                                    require(dependency.is_string() && unique.insert(dependency.get<std::string>()).second,
-                                            "Invalid duplicate dependency");
-                                }
-                                unique.clear();
-                                for (const auto& target : definition.at("matrix")) {
-                                    coordinates(target);
-                                    require(unique.insert(target.at("id").get<std::string>()).second, "Duplicate target ID");
-                                    require(definition.at("build").contains(target.at("family").get<std::string>()), "Missing build hook");
-                                }
-                                Json source = definition;
-                                source.erase("matrix");
-                                source.erase("schema");
-                                Json pins;
-                                for (const auto& key :
-                                     {"controller_app_bot_id", "worker", "source_workflow", "publication_workflow", "feed", "signing"}) {
-                                    pins[key] = deployment.at(key);
-                                }
-                                source.update({{"repository", repository},
-                                               {"repository_id", deployment.at("repositories").at(repository)},
-                                               {"tag", chosen},
-                                               {"commit", commit.at("sha")},
-                                               {"definition_revision", commit.at("sha")},
-                                               {"definition_blob_sha", file.at("sha")},
-                                               {"deployment", pins}});
-                                const std::string ref = enrollment.at(repository).at("ref");
-                                api(token,
-                                    "/repos/" + repository + "/commits/" + encode(ref),
-                                    checked(failed,
-                                            [this, token, enrollment, repository, ref, source, definition, selection, failed](
-                                                const Json& commit) {
-                                                contents(
-                                                    token,
-                                                    repository,
-                                                    deployment.at("source_workflow").at("path"),
-                                                    commit.at("sha"),
-                                                    checked(
-                                                        failed,
-                                                        [this, token, enrollment, repository, ref, source, definition, commit, selection](
-                                                            const Json& file) {
-                                                            require(file.at("sha") == deployment.at("source_workflow").at("blob_sha"),
-                                                                    "Unapproved source workflow");
-                                                            selection->sources[repository] = {
-                                                                {"source", source},
-                                                                {"definition", definition},
-                                                                {"workflows",
-                                                                 {{"build",
-                                                                   {{"repository", repository},
-                                                                    {"repository_id", source.at("repository_id")},
-                                                                    {"ref", ref},
-                                                                    {"commit", commit.at("sha")},
-                                                                    {"path", deployment.at("source_workflow").at("path")},
-                                                                    {"blob_sha", file.at("sha")}}}}}};
-                                                            for (const auto& dependency : definition.at("depends_on")) {
-                                                                std::string match;
-                                                                for (const auto& [name, value] : enrollment.items()) {
-                                                                    if (value.at("definition").at("package") == dependency) {
-                                                                        require(match.empty(), "Ambiguous enrolled package");
-                                                                        match = name;
-                                                                    }
-                                                                }
-                                                                require(!match.empty(), "Dependency repository is not enrolled");
-                                                                resolve(token, enrollment, match, "", selection);
-                                                            }
-                                                            --selection->pending;
-                                                            if (selection->pending == 0 && selection->done) {
-                                                                auto finish = std::exchange(selection->done, {});
-                                                                finish(selection->sources, "");
-                                                            }
-                                                        }));
-                                            }));
-                            }));
+                        const Json definition = enrollment.at(repository).at("definition");
+                        require(definition.at("schema") == 1 && definition.at("matrix").is_array() && !definition.at("matrix").empty(),
+                                "Invalid source definition");
+                        require(std::regex_match(definition.at("package").get<std::string>(), std::regex("[a-z0-9][a-z0-9+.-]{0,127}")),
+                                "Invalid package namespace");
+                        std::set<std::string> unique;
+                        for (const auto& dependency : definition.at("depends_on")) {
+                            require(dependency.is_string() && unique.insert(dependency.get<std::string>()).second,
+                                    "Invalid duplicate dependency");
+                        }
+                        unique.clear();
+                        for (const auto& target : definition.at("matrix")) {
+                            coordinates(target);
+                            require(unique.insert(target.at("id").get<std::string>()).second, "Duplicate target ID");
+                            require(definition.at("build").contains(target.at("family").get<std::string>()), "Missing build hook");
+                        }
+                        Json source = definition;
+                        source.erase("matrix");
+                        source.erase("schema");
+                        Json pins;
+                        for (const auto& key :
+                             {"controller_app_bot_id", "worker", "source_workflow", "publication_workflow", "feed", "signing"}) {
+                            pins[key] = deployment.at(key);
+                        }
+                        source.update({{"repository", repository},
+                                       {"repository_id", deployment.at("repositories").at(repository)},
+                                       {"tag", chosen},
+                                       {"commit", commit.at("sha")},
+                                       {"definition_revision", enrollment.at(repository).at("commit")},
+                                       {"definition_blob_sha", enrollment.at(repository).at("blob")},
+                                       {"deployment", pins}});
+                        const std::string ref = enrollment.at(repository).at("ref");
+                        api(token,
+                            "/repos/" + repository + "/commits/" + encode(ref),
+                            checked(failed,
+                                    [this, token, enrollment, repository, ref, source, definition, selection, failed](const Json& commit) {
+                                        contents(token,
+                                                 repository,
+                                                 deployment.at("source_workflow").at("path"),
+                                                 commit.at("sha"),
+                                                 checked(failed,
+                                                         [this, token, enrollment, repository, ref, source, definition, commit, selection](
+                                                             const Json& file) {
+                                                             require(file.at("sha") == deployment.at("source_workflow").at("blob_sha"),
+                                                                     "Unapproved source workflow");
+                                                             selection->sources[repository] = {
+                                                                 {"source", source},
+                                                                 {"definition", definition},
+                                                                 {"workflows",
+                                                                  {{"build",
+                                                                    {{"repository", repository},
+                                                                     {"repository_id", source.at("repository_id")},
+                                                                     {"ref", ref},
+                                                                     {"commit", commit.at("sha")},
+                                                                     {"path", deployment.at("source_workflow").at("path")},
+                                                                     {"blob_sha", file.at("sha")}}}}}};
+                                                             for (const auto& dependency : definition.at("depends_on")) {
+                                                                 std::string match;
+                                                                 for (const auto& [name, value] : enrollment.items()) {
+                                                                     if (value.at("definition").at("package") == dependency) {
+                                                                         require(match.empty(), "Ambiguous enrolled package");
+                                                                         match = name;
+                                                                     }
+                                                                 }
+                                                                 require(!match.empty(), "Dependency repository is not enrolled");
+                                                                 resolve(token, enrollment, match, "", selection);
+                                                             }
+                                                             --selection->pending;
+                                                             if (selection->pending == 0 && selection->done) {
+                                                                 auto finish = std::exchange(selection->done, {});
+                                                                 finish(selection->sources, "");
+                                                             }
+                                                         }));
+                                    }));
                     }));
             };
             api(token, "/repos/" + repository, checked(failed, [this, token, repository, tag, failed, selectedTag](const Json& metadata) {

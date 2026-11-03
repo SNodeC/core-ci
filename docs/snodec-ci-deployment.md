@@ -1,7 +1,7 @@
 # SNodeC package CI deployment
 
-The SNodeC instance uses the unchanged controller executable from 17eb93b on
-vchrist. Its existing dashboard is http://core.vchrist.at:8081/ and its signed
+The additional SNodeC controller instance runs independently on vchrist.
+Its existing dashboard is http://core.vchrist.at:8081/ and its signed
 webhook listener is https://core.vchrist.at:8444/github/webhook. VOC remains
 independent on port 8080. No additional SSE page or controller endpoint exists.
 
@@ -28,9 +28,9 @@ list into MQTTSuite. The normal SDK graph builds the application afterward.
 - Source artifact reader App: 5453119; installation: 174760616.
 - Status notifier App: 5453314; installation: 174770512.
 - Worker: SNodeC/DistributionPackages, tooling commit
-  f59e9ea15428d7667613d2388b1109ca7f5fa2f5.
-- Source workflow blob: fa19575e80db08d4ae003efcdbd80d5fb9bee829.
-- Publisher workflow blob: fa1f347232902d53ca35aa8509b68e6c342784b4.
+  8b2c2fe63b4094ecfea286fca95ed6c02bcd077c.
+- Source workflow blob: 7ca413158acb144b480c0141c4a3878473110e0d.
+- Publisher workflow blob: 41359032ccb96c378b735b232a74760530042188.
 - Feed: SNodeC/Packages, main; https://snodec.github.io/Packages/.
 
 Three enrolled definitions retain 178 targets in total: 76 core, 76 MQTTSuite,
@@ -62,8 +62,11 @@ Signed TLS ping succeeds and unsigned requests are rejected.
 
 These checks do not validate all 178 target builds. No package chain has run.
 The owner must authorize the next build trigger and any exact release tags.
-Existing immutable tags predate the converted definitions; do not move them,
-change product versions, or invent new release versions to bypass that decision.
+Existing immutable tags can use separately frozen, enrolled CI definitions and
+hooks. The application tag/commit stays unchanged; CI_DIR holds the verified CI
+checkout and SOURCE_DIR holds the tagged product. Refresh enrollment before new
+selections when CI changes. Duplicate authenticated tag events remain idempotent.
+Do not move tags, change product versions or invent release versions for CI.
 The App webhook is configured; signed ping and real workflow events were accepted.
 
 ## Pre-activation CI review corrections
