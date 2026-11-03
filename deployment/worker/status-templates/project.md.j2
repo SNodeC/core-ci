@@ -1,3 +1,6 @@
+{% if output_path.endswith('.md') and site.parameters.get('style') == 'snodec' -%}
+{% include 'project-snodec.md.j2' %}
+{% else %}
 {% set html = output_path.endswith('.html') %}
 {% set root = '../' * (project.status_path.count('/') - 1) %}
 {% if html %}<!doctype html><html lang="en"><meta charset="utf-8">
@@ -54,3 +57,4 @@ Failed: explicit retry required. Superseded: retained waiting work replaced by a
 —: no recorded value. Publication times are the controller's first successful verification in UTC.</p>
 
 {% if html %}</body></html>{% endif %}
+{% endif %}

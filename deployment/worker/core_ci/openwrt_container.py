@@ -4,8 +4,29 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
-from contract import assignment, compatibility, package_metadata, read_json, require, versions
+from contract import assignment, compatibility, package_metadata, read_json, require, versions, write_json
+
+
+def outputs():
+    target = read_json(os.environ["TARGET_JSON"])
+    package_format = target["build"]["format"]
+    namespace = os.environ["PACKAGE_NAMESPACE"]
+    destination = Path(os.environ["OUTPUT_DIR"])
+    packages = []
+    for path in sorted((Path(os.environ["SDK_DIR"]) / "bin/packages").rglob(namespace + "*." + package_format)):
+        if "core-ci-prerequisites" not in path.parts:
+            metadata = package_metadata(path, package_format)
+            if metadata["name"] == namespace or metadata["name"].startswith(namespace + "-"):
+                require(not (destination / path.name).exists(), "duplicate OpenWrt package output")
+                shutil.copyfile(path, destination / path.name)
+                packages.append({"file": path.name, "component": metadata["name"]})
+    require(bool(packages), "OpenWrt produced no assigned packages")
+    declared = {"packages": packages}
+    if (destination / "development.tar.gz").exists():
+        declared["development_export"] = "development.tar.gz"
+    write_json(destination / "outputs.json", declared)
 
 
 def main():
@@ -58,6 +79,7 @@ def main():
         "SDK_STAGING_DIR": str(staging),
         "TARGET_JSON": "/target.json",
         "SOURCE_VERSION": selected["source"]["tag"],
+        "SOURCE_COMMIT": selected["source"]["commit"],
         "PACKAGE_REVISION": str(selected["revision"]),
         "PACKAGE_VERSION": encoded["full"],
         "PACKAGE_UPSTREAM_VERSION": encoded["version"],
@@ -66,8 +88,13 @@ def main():
         "PREREQUISITES_DIR": "/prerequisites",
         "OUTPUT_DIR": "/output",
     }
+    if "CORE_CI_APK" in os.environ:
+        values["CORE_CI_APK"] = os.environ["CORE_CI_APK"]
     subprocess.run(["/bin/sh", str(hook)], cwd=source, env=values, check=True, timeout=3600)
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--outputs"]:
+        outputs()
+    else:
+        main()
