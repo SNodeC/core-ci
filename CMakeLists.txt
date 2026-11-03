@@ -110,6 +110,13 @@ if(BUILD_TESTING)
     set_tests_properties(
         native-sse-backpressure-contract PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE
     )
+    add_executable(rows-contract-test tests/rows.cpp)
+    target_link_libraries(rows-contract-test PRIVATE controller-code)
+    add_test(
+        NAME lossless-row-persistence-contract
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/lossless.py
+                ${PROJECT_BINARY_DIR}
+    )
     add_executable(store-contract-test tests/store.cpp)
     target_link_libraries(store-contract-test PRIVATE controller-code)
     add_test(

@@ -15,6 +15,7 @@ import tempfile
 import time
 
 from persistence import run
+from row_fixture import seed as seed_rows, fingerprint
 from sse import check_delivery, read_snapshot
 
 
@@ -123,16 +124,14 @@ def main():
             failure_text = failed_schema.stderr + failed_schema.stdout
             if (root / "controller.log").exists():
                 failure_text += (root / "controller.log").read_text()
-            assert "Column count" in failure_text or "Unknown column" in failure_text, failure_text
+            assert "Legacy or partial controller schema" in failure_text, failure_text
             with socket.socket() as probe:
                 assert probe.connect_ex(("127.0.0.1", web_port)) != 0, "Schema failure cannot open a listener"
             print("Initial schema failure releases the client without listening or changing the external server")
-            sql("CREATE DATABASE runtime; CREATE TABLE runtime.ci_graph(id INT PRIMARY KEY, revision BIGINT UNSIGNED NOT NULL, "
-                "body LONGTEXT NOT NULL CHECK(JSON_VALID(body))) ENGINE=InnoDB;")
+            sql("CREATE DATABASE runtime; CREATE TABLE runtime.unrelated (id INT)")
 
             def seed(value=graph):
-                body = json.dumps(value).encode().hex()
-                sql(f"REPLACE INTO runtime.ci_graph VALUES (1,0,CONVERT(0x{body} USING utf8mb4))")
+                seed_rows(build, root, backend, 'runtime', value)
 
             seed({"repositories": {}, "executions": []})
             output = (root / "controller-output.log").open("w")
@@ -163,7 +162,7 @@ def main():
             locker = subprocess.Popen(["mariadb", "--no-defaults", f"--socket={backend}", "-uroot", "-N", "-B", "--max-allowed-packet=134217728", "--unbuffered"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
-                locker.stdin.write("LOCK TABLES runtime.ci_graph WRITE; SELECT 'locked';\n")
+                locker.stdin.write("LOCK TABLES runtime.repository WRITE; SELECT 'locked';\n")
                 locker.stdin.flush()
                 assert select.select([locker.stdout], [], [], 5)[0] and locker.stdout.readline().strip() == "locked"
                 abandoned = socket.create_connection(("127.0.0.1", web_port), timeout=5)
@@ -172,7 +171,7 @@ def main():
                 pending = False
                 while not pending and time.monotonic() < deadline:
                     pending = sql("SELECT COUNT(*) FROM information_schema.PROCESSLIST "
-                        "WHERE STATE LIKE 'Waiting for table%' AND INFO LIKE 'SELECT body,revision%'").strip() != "0"
+                        "WHERE STATE LIKE 'Waiting for table%' AND INFO LIKE 'SELECT JSON_QUOTE%'").strip() != "0"
                     if not pending:
                         time.sleep(0.02)
                 assert pending, "SSE read must actually be delayed behind the MariaDB lock"
@@ -200,6 +199,7 @@ def main():
                     assert entry["definition"] == graph["repositories"][name]["definition"]
                 assert all("attempts" not in work and "definition" not in work for work in snapshot["executions"].values())
                 print(f"Individual compact SSE startup: {len(sizes)} events, {sum(sizes)} bytes")
+                before_heartbeat = fingerprint(backend, "runtime")
                 started = time.monotonic()
                 for count in range(3):
                     heartbeat = events.readline()
@@ -211,11 +211,11 @@ def main():
                     assert 25 * (count + 1) <= elapsed <= 35 * (count + 1), elapsed
                 assert elapsed > 60, "The same idle SSE connection must survive beyond the transport idle timeout"
                 stream.close()
-                assert sql("SELECT revision FROM runtime.ci_graph WHERE id=1").strip() == "0", "Heartbeat cannot mutate graph facts"
+                assert fingerprint(backend, "runtime") == before_heartbeat, "Heartbeat cannot mutate graph facts"
                 print(f"Single idle SSE connection survived {elapsed:.1f}s with three 30-second comments and no graph mutation")
                 if os.getenv("CI_BROWSER_MODULES"):
                     command = ["node", str(Path(__file__).with_name("ui.cjs")), str(graph_file), str(backend), str(web_port)]
-                    print(run(command, env=dict(os.environ, CI_UI_SCREENSHOT=str(parent / "populated-ui.png"))).strip())
+                    print(run(command, env=dict(os.environ, CI_UI_SCREENSHOT=str(parent / "populated-ui.png"), CI_ROWS_BUILD=str(build), CI_ROWS_ROOT=str(root))).strip())
             controller.send_signal(signal.SIGTERM)
             controller.wait(timeout=10)
             controller = None
@@ -233,7 +233,7 @@ def main():
             managed_failure = list(base) + ["--managed-datadir", str(datadir)]
             managed_failure[managed_failure.index("--database") + 1] = "broken"
             failed_schema = subprocess.run(managed_failure, text=True, capture_output=True, timeout=15)
-            assert "Column count" in failed_schema.stdout or "Unknown column" in failed_schema.stdout, failed_schema.stdout
+            assert "Legacy or partial controller schema" in failed_schema.stdout, failed_schema.stdout
             assert not (datadir / "core-ci.pid").exists(), "Failed managed startup releases its database process"
             for port in [web_port, hook_port]:
                 with socket.socket() as probe:

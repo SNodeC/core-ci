@@ -1,4 +1,4 @@
-#include "fixtures.h"
+#include "sql.h"
 
 #include <core/EventReceiver.h>
 #include <core/SNodeC.h>
@@ -22,6 +22,7 @@ int main(int argc, char* argv[]) {
     unsigned int completions = 0;
     unsigned int connections = 0;
     unsigned int notifications = 0;
+    std::size_t firstWrites = 0;
     ci::Json displayed = {{"repositories", ci::Json::object()}, {"executions", ci::Json::object()}};
     bool started = false;
     const std::string mode = std::getenv("CI_TEST_MODE");
@@ -43,9 +44,7 @@ int main(int argc, char* argv[]) {
     };
     store.dispatch = [&](const ci::Json& actions) {
         boundary([&](MYSQL* reader) {
-            ci::require(mysql_query(reader, "SELECT body FROM ci_graph WHERE id=1") == 0, "Read committed graph");
-            std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(reader), mysql_free_result);
-            ci::Json persisted = ci::Json::parse(mysql_fetch_row(rows.get())[0]);
+            auto persisted = fixture::sqlGraph(fixture::sqlRows(reader));
             for (const auto& action : actions) {
                 const auto& active = ci::current(fixture::work(persisted, action.at("execution")));
                 ci::require(active.at("id") == action.at("attempt") && active.at("assignment") == action.at("assignment") &&
@@ -74,11 +73,8 @@ int main(int argc, char* argv[]) {
             displayed = displayed.patch(updates);
             ++notifications;
             boundary([&](MYSQL* reader) {
-                ci::require(mysql_query(reader, "SELECT revision,body FROM ci_graph WHERE id=1") == 0, "Read before notification");
-                std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(reader), mysql_free_result);
-                const auto row = mysql_fetch_row(rows.get());
-                ci::require(std::stoul(row[0]) == notifications && projectGraph(ci::Json::parse(row[1])) == displayed,
-                            "Updates reconstruct independently visible committed state, without redundant revisions");
+                ci::require(projectGraph(fixture::sqlGraph(fixture::sqlRows(reader))) == displayed,
+                            "Updates reconstruct independently visible committed state");
             });
         }
     };
@@ -103,6 +99,7 @@ int main(int argc, char* argv[]) {
                     store.initialize([&](const std::string& error) {
                         try {
                             ci::require(error.empty(), "Initialize: " + error);
+                            boundary(fixture::audit);
                             if (mode == "restart") {
                                 store.read(ci::checked(
                                     [&](const ci::Json&, const std::string& message) {
@@ -120,7 +117,7 @@ int main(int argc, char* argv[]) {
                                     boundary([](MYSQL* reader) {
                                         const int status =
                                             mysql_query(reader,
-                                                        "CREATE TRIGGER reject_write BEFORE UPDATE ON ci_graph FOR EACH ROW "
+                                                        "CREATE TRIGGER reject_write BEFORE INSERT ON attempt FOR EACH ROW "
                                                         "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='isolated test rejection'");
                                         ci::require(status == 0, "Install isolated rejection: " + std::string(mysql_error(reader)));
                                     });
@@ -145,11 +142,7 @@ int main(int argc, char* argv[]) {
                                             ci::require(!message.empty() && effects == 0 && notifications == 0,
                                                         "Failed/unknown commit cannot dispatch or notify");
                                             boundary([&](MYSQL* reader) {
-                                                ci::require(mysql_query(reader, "SELECT body FROM ci_graph WHERE id=1") == 0,
-                                                            "Read after unknown commit");
-                                                std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(reader),
-                                                                                                              mysql_free_result);
-                                                const auto graph = ci::Json::parse(mysql_fetch_row(rows.get())[0]);
+                                                const auto graph = fixture::sqlGraph(fixture::sqlRows(reader));
                                                 ci::require(graph.at("executions").size() == (mode.starts_with("unknown") ? 3 : 0),
                                                             "Actual commit outcome retained");
                                             });
@@ -160,6 +153,11 @@ int main(int argc, char* argv[]) {
                                             finish("");
                                         } else {
                                             ci::require(message.empty(), message);
+                                            boundary([&](MYSQL* reader) {
+                                                const auto count = fixture::writes(reader);
+                                                ci::require(firstWrites == 0 || count == firstWrites, "Duplicate operation writes no rows");
+                                                firstWrites = count;
+                                            });
                                             ++completions;
                                             if (completions == (mode == "internal" ? 1U : 20U)) {
                                                 ci::require(effects == 2,
@@ -170,24 +168,21 @@ int main(int argc, char* argv[]) {
                                                         ci::current(graph["executions"][0])["facts"]["internal_only"] = "durable";
                                                         return ci::Json::array();
                                                     };
-                                                    const auto verify = [&]() {
+                                                    auto committedWrites = std::make_shared<std::size_t>(0);
+                                                    const auto verify = [&, committedWrites]() {
                                                         boundary([&](MYSQL* reader) {
-                                                            ci::require(
-                                                                mysql_query(reader, "SELECT revision,body FROM ci_graph WHERE id=1") == 0,
-                                                                "Read silent committed facts");
-                                                            std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(
-                                                                mysql_store_result(reader), mysql_free_result);
-                                                            const auto row = mysql_fetch_row(rows.get());
-                                                            const auto raw = ci::Json::parse(row[1]);
-                                                            ci::require(std::stoul(row[0]) == 2 && notifications == 1 && effects == 2 &&
+                                                            const auto raw = fixture::sqlGraph(fixture::sqlRows(reader));
+                                                            const auto count = fixture::writes(reader);
+                                                            ci::require((*committedWrites == 0 || *committedWrites == count) &&
+                                                                            notifications == 1 && effects == 2 &&
                                                                             raw.at("executions")
                                                                                     .at(0)
                                                                                     .at("attempts")
                                                                                     .back()
                                                                                     .at("facts")
                                                                                     .at("internal_only") == "durable",
-                                                                        "Internal facts commit silently; repeating them cannot write, "
-                                                                        "notify or dispatch");
+                                                                        "Internal facts commit silently; repeating them cannot write");
+                                                            *committedWrites = count;
                                                         });
                                                     };
                                                     store.change(hidden, [&, hidden, verify](const std::string& error) {

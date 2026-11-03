@@ -18,7 +18,7 @@ def run(command, **kwargs):
 
 
 def drop_commit_reply(front, backend):
-    """Forward the real MariaDB protocol, discard only UPDATE's server response."""
+    """Forward the real MariaDB protocol, discard only a mutation COMMIT's server response."""
     listener = socket.socket(socket.AF_UNIX)
     listener.bind(str(front))
     listener.listen(1)
@@ -31,7 +31,8 @@ def drop_commit_reply(front, backend):
         selector = selectors.DefaultSelector()
         selector.register(client, selectors.EVENT_READ)
         selector.register(server, selectors.EVENT_READ)
-        updating = False
+        mutating = False
+        committing = False
         running = True
         while running:
             for key, _ in selector.select(20):
@@ -47,9 +48,11 @@ def drop_commit_reply(front, backend):
                         complete = len(pending[source]) >= length
                         if complete:
                             packet, pending[source] = pending[source][:length], pending[source][length:]
-                            if source is client and packet[4:5] == b"\x03" and packet[5:].startswith(b"UPDATE ci_graph"):
-                                updating = True
-                            if source is server and updating:
+                            if source is client and packet[4:5] == b"\x03":
+                                if packet[5:].startswith((b"INSERT INTO execution ", b"INSERT INTO attempt ")):
+                                    mutating = True
+                                committing = mutating and packet[5:] == b"COMMIT"
+                            if source is server and committing:
                                 assert packet[4:5] == b"\x00", "Only an actual committed OK acknowledgement may be discarded"
                                 running = False
                                 dropped = True

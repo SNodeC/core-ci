@@ -37,6 +37,12 @@ async function readProjection(port) {
   return snapshot;
 }
 
+function seedGraph(value) {
+  execFileSync('python3', [require('node:path').join(__dirname, 'row_fixture.py'),
+    process.env.CI_ROWS_BUILD, process.env.CI_ROWS_ROOT, process.argv[3], 'runtime'],
+    {input: JSON.stringify(value)});
+}
+
 async function main() {
   const graph = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
   const bundle = graph.executions.at(-2);
@@ -125,9 +131,7 @@ async function main() {
     await page.locator('#work-tab').click();
     bundle.attempts.at(-1).facts.build_run.jobs[0].steps[0].name = 'Package fixture with a deliberately long GitHub description '.repeat(4);
     receipt.packages.push({...receipt.packages[0], file: 'second.deb', path: receipt.packages[0].path.replace(/[^/]+$/, 'second.deb')});
-    const body = Buffer.from(JSON.stringify(graph)).toString('hex');
-    execFileSync('mariadb', ['--no-defaults', `--socket=${process.argv[3]}`, '-uroot'],
-      {input: `UPDATE runtime.ci_graph SET body=CONVERT(0x${body} USING utf8mb4),revision=revision+1 WHERE id=1;`});
+    seedGraph(graph);
     await page.reload();
     await page.locator('#connection').filter({hasText: 'Live'}).waitFor();
     for (const work of [bundle, independent, foundation]) {
@@ -163,6 +167,7 @@ async function main() {
     const history = Array.from({length: 3}, (_, index) => {
       const work = structuredClone(foundation);
       work.id = `historical-${index}`;
+      work.attempts[0].id = `historical-${index}:1`;
       work.source.package = `historical-${index}`;
       work.prerequisites = index ? [`historical-${index - 1}`] : [];
       work.attempts[0].created = '2026-10-30T09:00:00Z';
@@ -171,9 +176,7 @@ async function main() {
     });
     for (const work of graph.executions) { work.selection = 3; }
     graph.executions.unshift(...history);
-    const historyBody = Buffer.from(JSON.stringify(graph)).toString('hex');
-    execFileSync('mariadb', ['--no-defaults', `--socket=${process.argv[3]}`, '-uroot'],
-      {input: `UPDATE runtime.ci_graph SET body=CONVERT(0x${historyBody} USING utf8mb4),revision=revision+1 WHERE id=1;`});
+    seedGraph(graph);
     const local = await browser.newContext({locale: 'en-GB', timezoneId: 'America/New_York'});
     const localPage = await local.newPage();
     await localPage.goto(`http://127.0.0.1:${process.argv[4]}/`);
@@ -191,9 +194,7 @@ async function main() {
       new Set([...row.cells].slice(1).map(cell => cell.getBoundingClientRect().top)).size === 1)));
     await local.close();
     graph.executions.splice(0, history.length);
-    const restored = Buffer.from(JSON.stringify(graph)).toString('hex');
-    execFileSync('mariadb', ['--no-defaults', `--socket=${process.argv[3]}`, '-uroot'],
-      {input: `UPDATE runtime.ci_graph SET body=CONVERT(0x${restored} USING utf8mb4),revision=revision+1 WHERE id=1;`});
+    seedGraph(graph);
     await context.close();
     let stream, reconnect;
     const fixture = await readProjection(process.argv[4]);

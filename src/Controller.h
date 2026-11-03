@@ -61,7 +61,7 @@ namespace ci {
         std::function<void(const Json&)> changed;
         std::function<void(const Json&)> dispatch;
         void initialize(const Done& done);
-        database::mariadb::MariaDBCommandSequence& read(const Value& done);
+        database::mariadb::MariaDBCommandSequence* read(const Value& done);
         void change(const std::function<Json(Json&)>& operation, const Done& done);
     };
 
@@ -86,7 +86,8 @@ namespace ci {
                      const std::string& tag,
                      const std::shared_ptr<Selection>& selection);
         void send(const Json& authorized);
-        void observe(const std::string& execution, const Done& done, std::uint64_t candidate = 0, const std::string& attempt = "");
+        void observe(const std::string& execution, const Done& done, std::uint64_t candidate = 0, const std::string& identity = "");
+        void observeWork(const Json& selected, const Done& done, std::uint64_t candidate = 0);
         void run(const std::string& token, const Json& work, const std::string& stage, const Value& done, std::uint64_t candidate = 0);
         void buildResult(const std::string& token, const Json& work, const Json& run, const Value& done);
         void publicationReceipt(const std::string& token, const Json& work, const Value& done);

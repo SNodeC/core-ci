@@ -1463,3 +1463,94 @@ row/title, pointer cursor, retained expanded diagnostics, fixed row height and
 ellipsis. node --check for app/test and git diff --check pass.
 Production: C++ unchanged2493, app.js359(-2), style.css88(net0). Test changes +5
 lines; policy documentation +1. No full suite or C++ rebuild was needed.
+
+
+## 2026-11-03 — Phase 1 lossless rows, stopped at measured performance gate
+
+- Owner approved singleton graph_root and Store438/header109/Execution400 under
+  2750, then explicitly approved490 formatted Store lines. Latest per-file
+  arithmetic ceiling2802; actual Store489/header108/Execution394,total2794
+  (+301 from2493),146 maximum columns. No other production language changed.
+- Replaced ci_graph rewriting with changed rows and exact-value immutable content;
+  one codec/materializer, fixed positional body/refs, guarded ordinal identities,
+  explicit success-chained START/writes/COMMIT and rollback/abort/reset. Reused
+  routed/resume selections in the same observation algorithm. Domain logic,
+  bootstrap/main, UI, native framework and external worker contracts unchanged.
+- Original8311566-byte corpus dump-equal;823 document hashes equal; logical
+  storage4648164 bytes (-44.08%); actual fixture pages7700480 vs8929280.
+  Independent SQL audit proves one changed attempt and no writes on repeats.
+- Final affected CTest selection7/7 passes (182.01s), including actual Chromium,
+  slow-reader SSE isolation, commit/restart, publication and lossless rows.
+  Separate HTTP packet-pressure fixture confirms rollback/no SSE, null-handle
+  unavailability and responsive HTTP. Format-check passes; analyze completes
+  with warnings. Earlier failures/corrections retained, not concealed.
+- Controlled same-server alternating read benchmark:613.487→643.2215ms median,
+  +29.7345ms/+4.8468%. Owner prompt §12 mandates stop for measured hydration
+  regression. STOPPED production edits at that result; no acceptance of the
+  tradeoff inferred from improved browser mutation median818.98ms vs1498.34ms.
+  A concrete owner decision is required before continuing Phase1.
+- Full report: docs/row-persistence.md. Raw evidence, source/build identity,
+  protected-test original/diff and measurements:
+  /tmp/codex/build/core-ci/db-phase1-20261103. Existing dirty tests/ui.cjs was
+  necessarily adapted for row-fixture loading; all54 preexisting added lines
+  remain unchanged/in order; task delta+2. Protected UI/docs/AGENTS/PNGs untouched.
+- No staging/commit/push/merge, migration, live setting/resource/GitHub action,
+  deployment, controller restart or full-chain acceptance. Pending callbacks
+  cancelled by abort are not promised immediate HTTP503; native fault limits,
+  full O(history) hydration and growing facts remain explicitly documented.
+
+- Final preservation check:22 protected files verified; WORK_LOG original prefix
+  intact, dirty test exception separately diffed;45 deployment assets byte-equal
+  to HEAD, nothing staged. Final touched clang-tidy exits0 with no Store warning
+  and only an existing declaration-name/config warning set. Temporary fixture
+  servers/controllers stopped; task-generated secret files removed. Build and
+  evidence artifacts retained for the pending performance decision.
+
+
+## 2026-11-03 — Owner accepted hydration tradeoff; Phase 1 complete
+
+- Owner explicitly approved retaining the measured613.487→643.2215ms full-read
+  tradeoff (+29.7345ms/+4.8468%) and instructed completion. The performance stop
+  is resolved; historical stop entries above remain unchanged.
+- Phase1 source implementation and isolated validation are complete to the
+  documented fault-simulation limits. Production source and Debug binary are
+  unchanged from the tested identity; no redundant test rerun was needed.
+  Existing affected suites7/7, format-check and final diff whitespace check pass;
+  clang-tidy exits0 with the documented preexisting warnings.
+- Actual Store489/490,header108/109,Execution394/400,total2794,max146 columns.
+  Lossless logical bytes8311566→4648164; all823 document hashes preserved.
+  UI/raw contracts and single-authority/commit-before-dispatch remain unchanged.
+- Updated docs/row-persistence.md and docs/contracts.md to record the accepted
+  tradeoff and completed source phase. No further production or test edits.
+- No staging/commit/push/merge,migration,live DB setting change,GitHub action,
+  deployment,restart or end-to-end sandbox acceptance. Future import/cutover
+  remains separately authorized work. Protected state rechecked; task build and
+  evidence retained for review and future migration planning.
+
+## 2026-11-03 — Authorized row-store publication and vchrist cutover
+
+Owner explicitly requested commit,push,merge,deployment and restart on vchrist.
+This supersedes the source phase's no-live-actions limit for this cutover only.
+No new source tag,package build,retry,manual reconcile or webhook redelivery is
+requested. Existing selections and history must survive the schema conversion.
+
+Read-only target inspection: core-ci.service active as core_ci,PID328489,
+core_ci_acceptance.ci_graph revision3501,210 executions,8311566 canonical bytes.
+Existing private runtime lacks native abort(). Building unchanged native revision
+6808d2c7c444ee54df3a133b2b17cc4830815bc3 into a separate private prefix; no native
+source change or system library replacement. Existing service/configuration and
+credential contents are not inspected. Public listener remains0.0.0.0:8080.
+
+Owner approved temporary src/Import.cpp +75 and CMake +2,raising temporary C++
+total2794→2869. This caller reuses Store,requires an empty destination,checks raw
+roundtrip,installs no dispatch callback and never contacts GitHub. Owner also
+requires immediate removal of its source,target and binary after this one
+cutover. Final controller returns2794 lines. Future deployments start with a
+fresh database; no permanent importer,legacy fallback or migration service.
+
+Commit scope excludes protected AGENTS/untracked investigation documents/PNGs,
+preexisting phase-cell UI/docs hunks and prior WORK_LOG entries. Stage only the
+row-store task's additions. tests/ui.cjs receives a task-only fixture adaptation;
+its protected phase-cell checks remain in the working copy. Prospective committed
+UI was separately exercised in isolated Chromium with the row schema. Existing
+live phase-cell assets will remain byte-identical during deployment.
