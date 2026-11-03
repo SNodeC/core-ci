@@ -575,3 +575,61 @@ repository, never in execution records. Payloads exclude assignments, deployment
 settings, workflow/source/tool pin objects, raw receipts/artifacts/manifests, raw
 jobs/steps/facts and source SHAs without display purpose. The public raw graph
 endpoint retains those durable facts and is not fetched by the UI.
+
+
+## Lossless row persistence (owner-approved Phase 1, 2026-11-03)
+
+MariaDB alone owns repositories, immutable executions, ordered attempts, immutable
+content and singleton graph_root metadata. Execution/attempt IDs, foreign keys and
+creation ordinals are authoritative columns; revision remains literal attempt JSON
+with existing package/SemVer/coordinate semantics. The root row stores only extra
+root fields. The raw API and compact SSE projection/ordering remain unchanged.
+
+Encoded nodes contain body plus out-of-band refs for direct container children.
+Body placeholders are null; object keys are literal and array slots are decimal
+indices. Content identity is SHA256 of expanded nlohmann canonical JSON, never an
+encoded payload, Git identity or prepared-receipt digest. Only fixed immutable
+positions are shared by exact value. Mutable facts/proofs/timestamps stay literal;
+current repository definitions deliberately stay literal. Unknown data, absence,
+null, arrays, historical receipt shapes and separate verification times survive.
+
+One operation-local decoder reconstructs each content fragment once, without
+cross-operation caching or read-time hash rescans. Every consumer uses that same
+materializer. The single writer/connection and serialized native sequence exclude
+writes between snapshot SELECTs. Routed/startup observations reuse their immutable
+selection, but applyEvidence still reads freshly committed state.
+
+Writes plan changed rows only, reject moved/deleted identities or altered immutable
+execution fields, roundtrip changed encodings and check authorized assignment roots.
+Native START TRANSACTION and each row write are success-chained; COMMIT is enqueued
+only after all writes succeed. Errors explicitly roll back. Unresolved rollback
+aborts/releases the native client; null Store handles reject subsequent requests.
+Only acknowledged COMMIT permits dispatch, then SSE. Unknown COMMIT may have saved
+the full atomic mutation; it never authorizes replay, retry, dispatch or SSE.
+
+Bootstrap refuses legacy ci_graph or partial/mixed owned schemas, ignores unrelated
+tables and creates tables only on a fresh database. There is no migration, fallback,
+mirror, retention or GC path. DDL commits implicitly. Future offline import/cutover
+requires separate authorization and must reuse this codec with independent raw/API,
+canonical-hash, SQL and projection equality checks. No stale-binary rollback may
+discard new authorizations after cutover. Missing source selections are not replayed.
+
+Full hydration remains O(history), facts can grow beyond corpus row maxima, and SSE
+initial buffering/live64KiB limits remain unchanged. After the initial2750-line
+allocation, the owner approved490 formatted Store lines; unchanged header109 and
+Execution400 allowances give an arithmetic ceiling2802. See row-persistence.md
+for actual counts and the owner-accepted measured hydration tradeoff. Phase 1
+source work and isolated validation are complete; no live action is authorized
+by this source-work approval.
+
+
+## One-time cutover and fresh-database deployment (2026-11-03)
+
+The owner authorized the current vchrist deployment and restart, including a
+one-time conversion of the existing graph into a fresh destination database.
+The temporary caller uses this Store codec only, accepts an empty destination,
+verifies the canonical roundtrip and installs no dispatch callback. It must be
+removed, with its binary and build target, immediately after this cutover.
+Future deployments start with a fresh database. There is no permanent importer,
+automatic migration, legacy reader or second durable authority. Existing history
+is preserved for this cutover; deployment alone never replays a missing source tag.

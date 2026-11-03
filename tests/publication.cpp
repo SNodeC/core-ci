@@ -1,4 +1,4 @@
-#include "fixtures.h"
+#include "sql.h"
 
 #include <core/EventReceiver.h>
 #include <core/SNodeC.h>
@@ -203,10 +203,10 @@ namespace {
                                     const auto& active = snapshot.at("graph").at("executions").at(0).at("attempts").back();
                                     const auto phase = stages.at(index);
                                     if (phase == "L") {
-                                        ci::require(notifications == 0 && snapshot.at("revision") == 2 &&
+                                        ci::require(notifications == 0 && snapshot.at("graph") == persisted() &&
                                                         active.at("uncertainty") == ci::Json{{"at", "2026-01-01T00:00:00Z"},
                                                                                              {"reason", "Receipt evidence unavailable"}},
-                                                    "Identical normalized legacy failure performs no UPDATE, revision change or SSE");
+                                                    "Identical normalized legacy failure preserves committed state and emits no SSE");
                                     }
                                     if (phase == "C") {
                                         ci::require(active.at("state") == "published" && !active.contains("uncertainty") &&
@@ -294,9 +294,7 @@ int main(int argc, char* argv[]) {
         ci::require(mysql_real_connect(connection.get(), "localhost", "root", "", database.c_str(), 0, std::getenv("CI_TEST_BACKEND"), 0) !=
                         nullptr,
                     "Independent DB connection");
-        ci::require(mysql_query(connection.get(), "SELECT body FROM ci_graph WHERE id=1") == 0, "Independent committed read");
-        std::unique_ptr<MYSQL_RES, decltype(&mysql_free_result)> rows(mysql_store_result(connection.get()), mysql_free_result);
-        return ci::Json::parse(mysql_fetch_row(rows.get())[0]);
+        return fixture::sqlGraph(fixture::sqlRows(connection.get()));
     };
     const ci::Done finish = [&](const std::string& error) {
         if (!error.empty()) {

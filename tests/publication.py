@@ -58,7 +58,7 @@ def main():
                             env.update(CI_PUBLICATION_CASE=case, CI_PUBLICATION_PREPARED='1')
                             if case.endswith('reject'):
                                 run(['mariadb', '--no-defaults', f'--socket={backend}', '-uroot', database, '-e',
-                                     "CREATE TRIGGER reject_update BEFORE UPDATE ON ci_graph FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='isolated rejection'"])
+                                     "CREATE TRIGGER reject_update BEFORE UPDATE ON attempt FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='isolated rejection'"])
                             else:
                                 front = root / f'{case}-proxy.sock'
                                 proxy = threading.Thread(target=drop_commit_reply, args=(front, backend), daemon=True)
