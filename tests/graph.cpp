@@ -15,6 +15,38 @@ namespace {
         ci::require(rejected, message);
     }
 
+    void publicationGuardFailure() {
+        using namespace fixture;
+        Json selected = fixture::graph();
+        ci::selectRequest(selected, {{"Fixture/base", fixture::selected("base", Json::array())}}, "Fixture/base");
+        const std::string id = selected.at("executions").at(0).at("id");
+        finishBuild(selected, id);
+        for (const std::string push : {"absent", "skipped", "failure", "success"}) {
+            Json graph = selected;
+            const Json original = work(graph, id);
+            Json observed = observation(original, "publish", "completed", "failure");
+            if (push != "absent") {
+                observed["jobs"][0]["steps"] =
+                    Json::array({{{"number", 1},
+                                  {"name", "Require validated publication inputs"},
+                                  {"status", "completed"},
+                                  {"conclusion", push == "skipped" ? "failure" : "skipped"}},
+                                 {{"number", 2}, {"name", "Publish checked feed update"}, {"status", "completed"}, {"conclusion", push}}});
+            }
+            ci::require(ci::applyEvidence(graph, original, "publish", observed, {}, "").empty(),
+                        "Publication failures authorize no dependents");
+            const auto& active = ci::current(work(graph, id));
+            if (push == "skipped") {
+                ci::require(active.at("state") == "failed" && active.at("failure_kind") == "definite",
+                            "Input guard failure with skipped push is definite and retryable");
+                ci::retry(graph, id);
+                ci::require(work(graph, id).at("attempts").size() == 2, "Explicit retry preserves the failed publication attempt");
+            } else {
+                ci::require(active.at("state") == "publishing", "Absent, failed or successful push preserves publication uncertainty");
+            }
+        }
+    }
+
     void observationUncertainty() {
         using namespace fixture;
         Json graph = fixture::graph();
@@ -192,6 +224,7 @@ namespace {
 int main(int argc, char* argv[]) {
     int result = 0;
     try {
+        publicationGuardFailure();
         using namespace fixture;
         observationUncertainty();
         compactProjection();
