@@ -20,7 +20,7 @@ def main():
     source = Path(os.environ["SOURCE_DIR"])
     output = Path(os.environ["OUTPUT_DIR"])
     target = json.loads(Path(os.environ["TARGET_JSON"]).read_text())
-    definition = json.loads((source / "ci/packages.json").read_text())
+    definition = json.loads((Path(os.environ["CI_DIR"]) / "ci/packages.json").read_text())
     name = definition["package"]
     family = sys.argv[1]
     package_format = target["build"]["format"]

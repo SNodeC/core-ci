@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-python3 "$SOURCE_DIR/ci/build.py" native
+python3 "$CI_DIR/ci/build.py" native

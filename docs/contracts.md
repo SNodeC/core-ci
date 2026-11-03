@@ -104,7 +104,18 @@ Top-level assignment fields consumed by the workers:
 Source fields consumed include `repository`, `repository_id`, `title`, `package`,
 `tag`, `commit`, `definition_revision`, `definition_blob_sha`, `depends_on`,
 `build`, `deployment`. Source commit, definition revision and definition blob
-are 40 lowercase hex characters. `deployment` contains:
+are 40 lowercase hex characters. Application and CI revisions are independent:
+`commit` is the selected release tag's immutable application commit;
+`definition_revision` and `definition_blob_sha` come from the operation's committed
+enrollment snapshot. Selection does not read CI from the release tag. Refreshing
+enrollment affects new selections only; existing assignments remain frozen.
+The worker checks out both revisions, verifies both commits and the definition
+blob, and executes hooks from the read-only CI checkout (`CI_DIR`). `SOURCE_DIR`
+remains the selected application tree copied to the disposable build workspace.
+CI helpers must use `CI_DIR`; application recipes and product inputs continue to
+use `SOURCE_DIR`. Neither checkout overlays or changes the other. No fallback to
+tag-owned CI is provided, and no assignment or receipt fields are added.
+`deployment` contains:
 
 - `controller_app_bot_id` (numeric).
 - `worker`: repository, repository_id, tooling_sha (full 40-character commit).
