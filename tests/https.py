@@ -31,11 +31,11 @@ def main():
         config.touch()
         failures = []
 
-        def case(name, mode, expected, connects, method='GET', host='localhost', second=False, trust=True):
+        def case(name, mode, expected, connects, method='GET', host='localhost', second=False, trust=True, clients=None):
             listener = socket.socket()
             listener.bind(('127.0.0.1', 0))
             port = listener.getsockname()[1]
-            listener.listen()
+            listener.listen(128)
             listener.settimeout(.2)
             stop = threading.Event()
             accepted = []
@@ -92,9 +92,10 @@ def main():
             else:
                 thread.start()
             log = root / f'{name}.log'
-            env = dict(os.environ, SSL_CERT_DIR=str(authority if trust else root / 'empty-ca'), SSL_CERT_FILE=str(root / 'absent.pem'),
+            count = clients if clients is not None else (2 if second else 1)
+            env = dict(os.environ, CI_TEST_COUNT=str(count), SSL_CERT_DIR=str(authority if trust else root / 'empty-ca'), SSL_CERT_FILE=str(root / 'absent.pem'),
                        CI_TEST_URL=f'https://{host}:{port}/signed-private-path?sentinel-secret-query',
-                       CI_TEST_STATUS=str(expected), CI_TEST_METHOD=method)
+                       CI_TEST_STATUS=str(expected), CI_TEST_METHOD=method, CI_TEST_NUMERIC_PEERS='1')
             if second:
                 env['CI_TEST_SECOND_URL'] = f'https://{host}:{port}/another-private-path?sentinel-secret-query'
             try:
@@ -110,7 +111,7 @@ def main():
                     Path(os.environ['CI_HTTPS_MEMCHECK'], name + '.memcheck').write_text(report)
                 logged = log.read_text() if log.exists() else ''
                 results = [line for line in output.splitlines() if line.startswith('RESULT ')]
-                assert len(results) == (2 if second else 1), output
+                assert len(results) == count, output
                 for forbidden in ['signed-private-path', 'another-private-path', 'sentinel-secret-query',
                                   'fixture-token', 'sentinel-private-body', 'Authorization', 'HTTP 0']:
                     assert forbidden not in output + logged, (forbidden, output, logged)
@@ -121,7 +122,7 @@ def main():
                 transport_logs = [line for line in logged.splitlines() if 'GET https://localhost ' in line
                                   or 'POST https://localhost ' in line or 'GET https://127.0.0.1 ' in line]
                 if mode in ['refused', 'tls', 'close', 'malformed', 'partial', 'recover'] or not trust or host == '127.0.0.1':
-                    expected_logs = connects - (2 if second else 1) if mode == 'recover' else connects
+                    expected_logs = connects - count if mode == 'recover' else connects
                     assert len(transport_logs) == expected_logs, (name, transport_logs, output)
                 if mode == 'tls' or not trust or host == '127.0.0.1':
                     assert all('tls: connection ended before HTTP request' in line for line in results), results
@@ -143,6 +144,8 @@ def main():
                  ('mid-body-cut', 'partial', 0, 3), ('wrong-host', '200', 0, 3, 'GET', '127.0.0.1'),
                  ('untrusted-ca', '200', 0, 3, 'GET', 'localhost', False, False)]
         cases += [(f'final-{status}', str(status), status, 1) for status in [200, 226, 302, 403, 427, 429, 503]]
+        cases += [('parallel-76-get', '200', 200, 76, 'GET', 'localhost', False, True, 76),
+                  ('parallel-76-post', '200', 200, 76, 'POST', 'localhost', False, True, 76)]
         # Native parser rejects 600 before reporting a response: terminal parse failure, no reissue.
         cases.append(('out-of-range-parser-rejection', '600', 0, 1))
         for args in cases:

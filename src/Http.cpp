@@ -124,6 +124,8 @@ namespace ci {
                 client->getConfig()->setRetryOnFatal(false);
                 client->getConfig()->setReconnect(false);
                 client->getConfig()->setSni(host);
+                client->getConfig()->Local::setNumericReverse(true);
+                client->getConfig()->Remote::setNumericReverse(true);
                 client->getConfig()->setCaCertDirUseDefault(true);
                 client->getConfig()->setCaCertAcceptUnknown(false);
                 client->getConfig()

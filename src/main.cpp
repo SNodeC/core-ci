@@ -71,8 +71,10 @@ int main(int argc, char* argv[]) {
     express::tls::in::WebApp webhook("webhook");
     web.getConfig()->setReuseAddress();
     webhook.getConfig()->setReuseAddress();
-    web.getConfig()->Local::setHost("127.0.0.1")->setPort(8080);
-    webhook.getConfig()->Local::setHost("127.0.0.1")->setPort(8443);
+    web.getConfig()->Local::setHost("127.0.0.1")->setPort(8080)->setNumericReverse(true);
+    web.getConfig()->Remote::setNumericReverse(true);
+    webhook.getConfig()->Local::setHost("127.0.0.1")->setPort(8443)->setNumericReverse(true);
+    webhook.getConfig()->Remote::setNumericReverse(true);
     webhook.getConfig()->Instance::setDisabled(true);
 
     ci::Store store;
