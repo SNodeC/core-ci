@@ -56,7 +56,7 @@ the owning graph's lifetime. No reverse dependency collection is stored.
 
 ```mermaid
 flowchart TB
-    graph["graph : BuildGraph"]
+    buildGraph["graph : BuildGraph"]
     coreRepo["example/core : Repository"]
     appRepo["example/app : Repository"]
     sideRepo["example/side : Repository"]
@@ -65,10 +65,10 @@ flowchart TB
     app["linux-amd64 : Build — app"]
     side["linux-amd64 : Build — side"]
     join["linux-amd64 : Build — join"]
-    graph -->|owns| coreRepo
-    graph -->|owns| appRepo
-    graph -->|owns| sideRepo
-    graph -->|owns| joinRepo
+    buildGraph -->|owns| coreRepo
+    buildGraph -->|owns| appRepo
+    buildGraph -->|owns| sideRepo
+    buildGraph -->|owns| joinRepo
     coreRepo -->|owns| core
     appRepo -->|owns| app
     sideRepo -->|owns| side
