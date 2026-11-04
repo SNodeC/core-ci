@@ -18,7 +18,7 @@ Read this entire document before writing any code. It is the complete specificat
 4. **Only core-ci chains builds.** No workflow may trigger another repository's build: no `repository_dispatch` chaining, no `workflow_run` triggers, no pushes that trigger downstream builds. Existing direct chaining in DistributionPackages (e.g. SNode.C target push → MQTTSuite build) must be removed in phase 4.
 5. **Feed publication is serialized by core-ci**, not by GitHub `concurrency:` groups. (GitHub concurrency groups keep at most one pending run and cancel older pending runs — that silently drops publications.)
 6. **Single-threaded.** No `std::thread`, no mutexes, no blocking sleeps, no polling loops. Everything runs in the SNode.C event loop; timers use SNode.C's timer facility.
-7. **The engine is pure.** The scheduling engine (section 4) performs no I/O, reads no clock, generates no randomness. Time arrives only as the `at` timestamp carried by every event (section 4.3) and as the `now` argument of `resume()`. Same event sequence ⇒ same state and same commands, always.
+7. **The engine is pure.** The scheduling engine (section 4) performs no I/O, reads no clock, generates no randomness. Time arrives only as the `at` timestamp carried by every event (section 4.3). Same event sequence ⇒ same state and same commands, always.
 8. **Never pin to commits.** Workflows are dispatched on each repository's configured default branch (do not assume `main` — some repositories use `master`, and default branch names are never renamed). GitHub Actions are referenced by tag (e.g. `@v4`), never by commit SHA.
 9. Build flags: `-Wall -Wextra -Wpedantic -Werror`. Every phase ends with a clean build and all tests passing.
 10. **All development happens in the local repository `/home/voc/projects/snodec/core-ci`.** It already contains an earlier implementation. That code is discarded: Phase 0 (section 9) removes it, and nothing from it may be copied, adapted, consulted or reintroduced later. Development starts on a green field.
@@ -99,7 +99,7 @@ Per package:
 
 Per unit `(P,T)`:
 - `published`: optional `{version, revision, inputs}` where `inputs` is a sorted map `prerequisite → {version, revision}` — exactly what is in the feed.
-- `inflight`: optional `{buildId, version, tag, revision, inputs, phase, attempt, deadline, runId, artifact}` with `phase ∈ {Dispatching, Building, AwaitingPublish, PublishDispatching, Publishing}`.
+- `inflight`: optional `{buildId, version, tag, revision, inputs, phase, attempt, retryAt, deadline, runId, artifact}` with `phase ∈ {Dispatching, Building, AwaitingPublish, PublishDispatching, Publishing}`; `attempt` counts dispatch attempts of the current phase; `retryAt` is set only while waiting to retry a dispatch.
 - `failure`: optional `{version, inputs, reason}`.
 - `lastRevision[version]`: highest revision ever allocated for this version.
 
@@ -107,7 +107,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 
 ### 4.2 Derived predicates (recomputed after every event, per target in topological order)
 
-- `desiredInputs(P,T)` = for each prerequisite Q: `published(Q,T).{version,revision}`.
+- `desiredInputs(P,T)` = for each prerequisite Q: `published(Q,T).{version,revision}`; **undefined** unless every prerequisite `(Q,T)` has `published` (no prerequisites → empty map). If undefined, `satisfied` is false.
 - `satisfied(P,T)` ⇔ `published` exists ∧ `published.version == released(P).version` ∧ `published.inputs == desiredInputs(P,T)`.
 - `settled(P,T)` ⇔ `satisfied(P,T)` ∧ no `inflight` ∧ every prerequisite `(Q,T)` is `settled`.
 - `ready(P,T)` ⇔ `released(P)` exists ∧ ¬`satisfied` ∧ no `inflight` ∧ ¬(`failure` exists ∧ `failure.version == released.version` ∧ `failure.inputs == desiredInputs`) ∧ every prerequisite `(Q,T)` is `settled`.
@@ -118,13 +118,13 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 
 **Every event carries `at`** (UTC seconds, `int64`), stamped by `app/` when the event enters the event queue (section 5.3) — never by `core/`. The table lists the additional fields.
 
-**Engine time:** the engine keeps `engineTime`, initially unset. Before handling an event it sets `engineTime = max(engineTime, event.at)` (the first event sets it; time never goes backwards, so clock adjustments on the host cannot move deadlines into the past). All deadlines and backoff times are computed from `engineTime`. `resume(now)` applies the same rule with `now`. Because `at` is persisted with the event, replay reproduces exactly the same deadlines.
+**Engine time:** the engine keeps `engineTime`, initially unset. Before handling an **accepted** event (section 4.7) it sets `engineTime = max(engineTime, event.at)` (the first event sets it; time never goes backwards, so clock adjustments on the host cannot move deadlines into the past). All deadlines and backoff times are computed from `engineTime`. Ignored events change nothing, including `engineTime`. Because `at` is persisted with the event, replay reproduces exactly the same deadlines.
 
 | Event | Fields (in addition to `at`) |
 |---|---|
 | `TagObserved` | package, tag, sourceSha, origin (`webhook`/`reconcile`) |
-| `DispatchAccepted` | buildId, kind (`build`/`publish`) |
-| `DispatchRejected` | buildId, kind, httpStatus, message |
+| `DispatchAccepted` | buildId, kind (`build`/`publish`), attempt |
+| `DispatchRejected` | buildId, kind, attempt, httpStatus, message |
 | `BuildStarted` | buildId, runId, runAttempt |
 | `BuildSucceeded` | buildId, runId, artifact |
 | `BuildFailed` | buildId, runId, reason |
@@ -132,29 +132,46 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 | `PublishFailed` | buildId, runId, reason |
 | `RetryRequested` | package, target |
 | `Tick` | — (only `at`) |
+| `Resumed` | — (only `at`; rule 12) |
 
 ### 4.4 Commands (engine output; not persisted — they are reproduced by replay)
 
-- `DispatchBuild{buildId, package, sourceRepo, tag, version, revision, target, inputs, workflow}`
-- `DispatchPublish{buildId, package, version, revision, target, feed, buildRepo, runId, artifact, workflow}`
+- `DispatchBuild{buildId, attempt, package, sourceRepo, tag, version, revision, target, inputs, workflow}`
+- `DispatchPublish{buildId, attempt, package, version, revision, target, feed, buildRepo, runId, artifact, workflow}`
 
 ### 4.5 Rules
 
 1. **TagObserved:** parse the tag as specified in section 3.4; ignore if not a version, if prerelease and not accepted, or if `≤ released`. Otherwise set `released`.
-2. **After every event**, evaluate all targets in topological order; for every `ready` unit (deterministic order: target id, then topo order) allocate `revision = ++lastRevision[released.version]`, set `buildId = "<package>.<target>.<version>.r<revision>"`, set `inflight{phase=Dispatching, attempt=1}`, emit `DispatchBuild`. Then, for every feed with no publication in progress, pop the queue head, set its phase to `PublishDispatching`, emit `DispatchPublish`.
+2. **After every accepted event**, in this order: (a) every unit in `AwaitingPublish` whose `inflight.version ≠ released.version` or `inflight.inputs ≠ desiredInputs` is superseded: remove it from the feed queue, clear `inflight`; (b) evaluate all targets in topological order; for every `ready` unit (deterministic order: target id, then topo order) allocate `revision = ++lastRevision[released.version]`, set `buildId = "<package>.<target>.<version>.r<revision>"`, set `inflight{phase=Dispatching, attempt=1}`, emit `DispatchBuild`; (c) for every feed with no publication in progress, pop the queue head, set its phase to `PublishDispatching` with `attempt=1`, emit `DispatchPublish`.
 3. **DispatchAccepted:** `Dispatching → Building` (deadline = `engineTime` + buildTimeout) / `PublishDispatching → Publishing` (deadline = `engineTime` + publishTimeout).
-4. **DispatchRejected:** retry with exponential backoff (30 s, 1 min, 2 min, … capped at 30 min, measured from the rejection's `engineTime`) on the first `Tick` whose `engineTime` ≥ the backoff time; after `maxDispatchAttempts` (default 8) treat as failure (rule 7). HTTP 401/403/404/422 are permanent: fail immediately.
+4. **DispatchRejected:** HTTP 401/403/404/422 → failure (rule 7) immediately. Otherwise, if `attempt == maxDispatchAttempts` (default 8) → failure. Otherwise `retryAt = engineTime + min(30 s · 2^(attempt−1), 30 min)`. On the first accepted `Tick` with `engineTime ≥ retryAt`: `attempt += 1`, clear `retryAt`, emit the same command again (same `buildId`, new `attempt`). `httpStatus = 0` (transport error) is not permanent.
 5. **BuildSucceeded:** if `inflight.version == released.version` ∧ `inflight.inputs == desiredInputs` → phase `AwaitingPublish`, append to the feed queue. Otherwise the build is **superseded**: clear `inflight` (the unit becomes ready again in step 2). Superseded artifacts are never published.
 6. **PublishSucceeded:** `published = {inflight.version, inflight.revision, inflight.inputs}`, clear `inflight`, clear `failure`. (Even if superseded meanwhile, record the truth of what is in the feed; the unit then becomes unsatisfied and is rebuilt.)
 7. **BuildFailed / PublishFailed / deadline exceeded on Tick:** `failure = {inflight.version, inflight.inputs, reason}`, clear `inflight`, remove from feed queue/slot. Dependents stay blocked (the unit is not settled). A new tag or new prerequisite publication changes the desired inputs and therefore automatically allows a retry; otherwise only `RetryRequested` clears `failure`.
-8. **Callbacks for unknown buildIds, for a buildId that is not the unit's current inflight, or in the wrong phase are ignored** (not persisted, not an error). Duplicate callbacks are therefore idempotent. The engine exposes a pure, `const` method `classify(event) → Accept | Ignore(reason)` that decides this without changing state (needed by section 5).
-9. `BuildStarted` only records `runId` (for status display). It is optional.
-10. Optional global `maxConcurrentBuilds` (default unlimited); when reached, ready units wait.
+8. **Acceptance** is defined only by the table in section 4.7. Ignored events are not persisted and change nothing, so duplicates are idempotent. The engine exposes a pure, `const` `classify(event) → Accept | Ignore(reason)` implementing that table (needed by section 5).
+9. `BuildStarted` and `BuildSucceeded` record `runId`; `BuildSucceeded` also records `artifact` (both used by `DispatchPublish`). A build callback accepted in `Dispatching` (or a publish callback in `PublishDispatching`) proves the run exists: first clear `retryAt` and enter `Building` (`Publishing`) with deadline = `engineTime` + timeout, then apply the event.
+10. Optional global `maxConcurrentBuilds` (default unlimited); a unit occupies a slot while its phase is `Dispatching` (also while waiting for `retryAt`) or `Building`; when no slot is free, ready units wait.
 11. The engine exposes `nextDeadline()` (earliest pending timeout or retry-backoff time, or none). `app/` only enqueues a `Tick` when the current UTC time ≥ `nextDeadline()`, so every `Tick` changes state. Before the first deadline exists no `Tick` is needed: every deadline is created by an event that itself carries `at`.
+12. **Resumed** (enqueued once by `app/` after replay, section 5.4): re-emit the command, with unchanged `buildId` and `attempt`, for every unit in `Dispatching`/`PublishDispatching` without `retryAt` (its dispatch result was lost); units waiting for `retryAt` keep their backoff.
 
 ### 4.6 Status (core/Status.h)
 
 Per unit, derive one of: `NoRelease`, `Settled`, `Waiting(on <unit>)`, `Ready`, `Dispatching`, `Building(run <id>)`, `AwaitingPublish(position n on <feed>)`, `Publishing`, `Failed(<reason>)`, `Blocked(by <failed unit>)`. Render as a plain-text table and as Graphviz DOT (nodes coloured by status).
+
+### 4.7 Event acceptance (classify)
+
+| Event | Accepted only if (otherwise ignored) |
+|---|---|
+| `TagObserved` | package known; tag is a version (3.4); not a rejected prerelease; version > `released` |
+| `DispatchAccepted`, `DispatchRejected` | `buildId` = a unit's `inflight.buildId`; phase `Dispatching` (kind `build`) or `PublishDispatching` (kind `publish`); `attempt` = `inflight.attempt`; no `retryAt` |
+| `BuildStarted` | `buildId` matches; phase `Dispatching` or `Building`; no `runId` recorded |
+| `BuildSucceeded`, `BuildFailed` | `buildId` matches; phase `Dispatching` or `Building`; no `runId` recorded or the same `runId` |
+| `PublishSucceeded`, `PublishFailed` | `buildId` matches; phase `PublishDispatching` or `Publishing` |
+| `RetryRequested` | unit exists; `failure` set; no `inflight` |
+| `Tick` | `nextDeadline()` exists and `max(engineTime, at) ≥ nextDeadline()` |
+| `Resumed` | always |
+
+A workflow re-run started in the GitHub UI is not a retry; once the unit has left the phase its callbacks are ignored. Use `RetryRequested`.
 
 ---
 
@@ -190,6 +207,7 @@ CREATE TABLE IF NOT EXISTS coreci_events (
   message      TEXT         NULL,
   run_id       BIGINT UNSIGNED NULL,
   run_attempt  INT          NULL,
+  attempt      INT          NULL,       -- dispatch attempt
   artifact     VARCHAR(255) NULL,
   feed_commit  CHAR(40)     NULL,
   reason       TEXT         NULL,
@@ -211,13 +229,13 @@ All inbound events (webhook, workflow callback, dispatch result, tick, admin req
 1. `engine.classify(event)`; if `Ignore` → answer the HTTP request (`200 ignored: <reason>`), done.
 2. `INSERT` the event row. **Wait for the commit callback.** No other event is processed meanwhile.
 3. Only after a successful commit: `engine.handle(event)` → execute the returned commands → answer the originating HTTP request (`200 accepted`).
-4. If the `INSERT` fails: do not apply the event; answer `503`; the sender retries (the report action uses `curl --retry`; tags are covered by reconciliation; dispatch results are re-created by `resume()` after restart).
+4. If the `INSERT` fails: do not apply the event; answer `503`; the sender retries (the report action uses `curl --retry`; tags are covered by reconciliation; lost dispatch results are re-created by `Resumed` after restart).
 
 Consequence: the in-memory state only ever contains committed events, so a crash at any point loses nothing that was acknowledged.
 
 ### 5.4 Startup and outages
 
-- **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine, discarding commands → `engine.resume(now)` with the current UTC time (re-emits `DispatchBuild`/`DispatchPublish` for units still in `Dispatching`/`PublishDispatching`, and evaluates ready units) → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished.
+- **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine, discarding commands → enqueue one `Resumed` event through the normal write-ahead queue (rule 12) → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished.
 - Rows referencing packages/targets no longer in the C++ pipeline are skipped with a warning.
 - **Connection loss at runtime:** stop accepting events (`503`), suspend tick generation, reconnect with exponential backoff using SNode.C's facilities. Do **not** replay again after reconnecting — the in-memory state is still exactly the committed state.
 - Replaying the stored events must reproduce byte-identical status output (tested).
@@ -259,7 +277,7 @@ Use SNode.C's express API and TLS server. **Do not guess SNode.C APIs**: find th
 
 ### 6.2 Outbound GitHub REST (adapters/github/)
 
-- Dispatch: `POST /repos/{owner}/{repo}/actions/workflows/{workflowFile}/dispatches` with body `{"ref": "<branch>", "inputs": {...}}` (all values strings), headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer <token>`. `204` → `DispatchAccepted`; anything else → `DispatchRejected`.
+- Dispatch: `POST /repos/{owner}/{repo}/actions/workflows/{workflowFile}/dispatches` with body `{"ref": "<branch>", "inputs": {...}}` (all values strings), headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer <token>`. `204` → `DispatchAccepted`; other status → `DispatchRejected`; transport error → `DispatchRejected` with `httpStatus = 0`. Both carry the command's `buildId`, `kind` and `attempt`.
 - Token: fine-grained PAT from an environment variable, behind an interface `TokenProvider` so a GitHub App provider can be added later (do not implement the App now).
 - **Tag reconciliation** (webhooks do not deliver tag events reliably, e.g. when several tags are pushed at once): on startup, every `reconcileInterval` (default 15 min) and on `/api/v1/reconcile`, list tags of every `sourceRepo` (`GET /repos/{owner}/{repo}/tags`, follow `Link` pagination) and emit `TagObserved{origin=reconcile}` for the highest accepted version. The engine ignores it if it is not newer.
 - An SNode.C timer fires every 30 s; it enqueues a `Tick` only if `now ≥ engine.nextDeadline()` (see 4.5 rule 11).
@@ -314,22 +332,22 @@ Composite action: builds the form body, computes `timestamp` and `HMAC-SHA256(se
 - The randomized test uses a fixed default seed, prints the seed it uses, and accepts a seed and run count through environment variables (`CORECI_TEST_SEED`, `CORECI_TEST_RUNS`) so a failure is reproducible.
 - `core` and `persistence` tests must build and pass without SNode.C installed (configure option `-DCORECI_WITH_SNODEC=OFF` builds only those).
 
-Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (diamond), `e → d`. Targets `t1` (feed `f1`), `t2` (feed `f2`); `e` only on `t1`. Tests assert the **exact** command list returned for each event.
+Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (diamond), `e → d`. Targets `t1` (feed `f1`), `t2` (feed `f2`); `e` only on `t1`. Tests assert the **exact** command list returned for each event. Every event has an explicit `at`. **Setup**, unless a scenario says otherwise: observe tag `v1.0.0` for `b`, `c`, `d`, `e` (no commands), then the scenario's events.
 
 - **S1 Diamond:** tag `a v1.0.0` → exactly `DispatchBuild(a,t1)`, `DispatchBuild(a,t2)`. Build+publish `a@t1` → `DispatchBuild(b,t1)`, `DispatchBuild(c,t1)`, nothing for `d`. Publish `b@t1` → no command. Publish `c@t1` → exactly one `DispatchBuild(d,t1)` whose inputs contain the new `b` and `c`. `t2` progresses independently.
 - **S2 Publish serialization:** `b@t1` and `c@t1` succeed back to back → one `DispatchPublish` on `f1`; the second only after `PublishSucceeded` of the first.
-- **S3 Superseding:** `a@t1` building `1.0.0`; tag `1.1.0` arrives → no command; `BuildSucceeded` of `1.0.0` → no publish, `DispatchBuild(a,t1,1.1.0)`.
+- **S3 Superseding:** `a@t1` building `1.0.0`; tag `1.1.0` arrives → no command; `BuildSucceeded` of `1.0.0` → no publish, `DispatchBuild(a,t1,1.1.0)`. `b@t1` waiting in `AwaitingPublish` behind `c@t1`; tag `b v1.1.0` → `b@t1` leaves the queue, is never published, `DispatchBuild(b,t1,1.1.0)`.
 - **S4 Failure & retry:** `BuildFailed(b,t1)` → `c@t1` continues and publishes; `d@t1`, `e@t1` show `Blocked(by b@t1)`; `RetryRequested(b,t1)` → `DispatchBuild(b,t1)` with a new revision; `d@t1` is then built exactly once.
-- **S5 Idempotency:** duplicate callbacks and callbacks with unknown/stale buildIds produce no commands and no state change.
+- **S5 Idempotency:** duplicate callbacks and callbacks with unknown/stale buildIds produce no commands and no state change (including `engineTime`); `BuildSucceeded` with a different `runId` and `DispatchRejected` for an old `attempt` are ignored.
 - **S6 Tags:** older tag, equal tag, non-semver tag, prerelease (default policy) → ignored. `Version` unit cases: every example in section 3.4; the Semantic Versioning 2.0.0 precedence chain `1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0`; `v1.0.0` == `1.0.0` == `1.0.0+build`; leading zeros rejected.
 - **S7 Rebuild on dependency change:** with everything settled, tag `a v1.0.1` → `b` is rebuilt with the **same** version and revision + 1.
 - **S8 Tag on a waiting unit:** tag `d v2.0.0` while `b@t1` is building → `d` dispatched once, after `b` and `c` are settled, with version `2.0.0`.
 - **S9 Validation:** cycle (message shows the path), prerequisite missing a target, unknown references, duplicate names → `build()` fails.
-- **S10 Timeouts and dispatch retries:** all events with explicit `at` values. Deadline = `at` of `DispatchAccepted` + timeout; a `Tick` one second before the deadline changes nothing, one at the deadline → `Failed`. `DispatchRejected` 5xx → backoff schedule exactly as in 4.5, measured from the rejection's `at`; 404 → immediate failure. An event whose `at` is earlier than `engineTime` does not move time backwards (deadlines unchanged).
-- **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `resume()` re-emits only units in `Dispatching`/`PublishDispatching`.
+- **S10 Timeouts and dispatch retries:** all events with explicit `at` values. Deadline = `at` of `DispatchAccepted` + timeout; a `Tick` one second before the deadline changes nothing, one at the deadline → `Failed`. `DispatchRejected` 5xx → backoff schedule exactly as in 4.5, measured from the rejection's `at`; 404 → immediate failure. An event whose `at` is earlier than `engineTime` does not move time backwards (deadlines unchanged). Eighth rejection → `Failed`. `Resumed` during backoff emits nothing for that unit.
+- **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `Resumed` re-emits only units in `Dispatching`/`PublishDispatching` without `retryAt`.
 - **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored events are never appended.
 - **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8).
-- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from environment variables): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `resume()` commands. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
+- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from environment variables): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `Resumed` commands. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
 - **Randomized invariant test** (seeded, ≥ 10 000 runs over random event interleavings on the test pipeline): (I1) a unit is never dispatched while any prerequisite is unsettled; (I2) at most one inflight per unit; (I3) at most one publication per feed; (I4) when all builds succeed, the system quiesces with every unit settled against the latest tags; (I5) replay equivalence.
 - Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint).
 
