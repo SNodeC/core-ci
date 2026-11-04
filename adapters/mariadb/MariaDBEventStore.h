@@ -13,6 +13,7 @@ namespace coreci::mariadb {
     public:
         explicit MariaDBEventStore(const database::mariadb::MariaDBConnectionDetails& details);
         ~MariaDBEventStore() override;
+        void setConnectionLost(std::function<void(const std::string&)> callback);
         // The event queue serializes operations. Keep this store alive through its callbacks.
         void open(std::function<void()> onReady, std::function<void(const StoreError&)> onError) override;
         void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) override;
@@ -24,10 +25,12 @@ namespace coreci::mariadb {
         void fail(const StoreError& error);
         void execute(const std::string& sql, std::function<void()> done);
         void createSchema(std::size_t index, std::function<void()> done);
+        void lockWriter(std::function<void()> done);
         void checkSchema(std::function<void()> done);
         database::mariadb::MariaDBClient client;
         std::function<void(const StoreError&)> onFailure;
         // A lost session must pass through open(), never lazy-reconnect straight into an INSERT.
         bool ready = false;
+        std::function<void(const std::string&)> onLost;
     };
 } // namespace coreci::mariadb

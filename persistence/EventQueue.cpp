@@ -25,37 +25,50 @@ namespace coreci::persistence {
     }
     void EventQueue::rebuild() {
         mode = Mode::Loading;
+        ++generation;
         current.reset();
+        const auto epoch = generation;
         store.open(
-            [this] {
-                current = std::make_unique<Engine>(makeEngine());
-                store.loadAll(
-                    [this](std::uint64_t seq, const Event& event) {
-                        const auto classification = current->classify(event);
-                        if (std::holds_alternative<Ignore>(classification)) {
-                            warning(seq, std::get<Ignore>(classification).reason);
-                        } else {
-                            current->handle(event);
-                        }
-                    },
-                    [this] {
-                        mode = Mode::Resuming;
-                        pending.push_back({resumed(), [this](Result result) {
-                                               if (std::holds_alternative<Accepted>(result)) {
-                                                   mode = Mode::Ready;
-                                                   onReady();
-                                               }
-                                           }});
-                        pump();
-                    },
-                    [this](const EventStore::StoreError& error) {
-                        fatal(error);
-                    });
+            [this, epoch] {
+                if (epoch == generation) {
+                    current = std::make_unique<Engine>(makeEngine());
+                    store.loadAll(
+                        [this, epoch](std::uint64_t seq, const Event& event) {
+                            if (epoch == generation) {
+                                const auto classification = current->classify(event);
+                                if (std::holds_alternative<Ignore>(classification)) {
+                                    warning(seq, std::get<Ignore>(classification).reason);
+                                } else {
+                                    current->handle(event);
+                                }
+                            }
+                        },
+                        [this, epoch] {
+                            if (epoch == generation) {
+                                mode = Mode::Resuming;
+                                pending.push_back({resumed(), [this, epoch](Result result) {
+                                                       if (epoch == generation && std::holds_alternative<Accepted>(result)) {
+                                                           mode = Mode::Ready;
+                                                           onReady();
+                                                       }
+                                                   }});
+                                pump();
+                            }
+                        },
+                        [this, epoch](const EventStore::StoreError& error) {
+                            if (epoch == generation) {
+                                fatal(error);
+                            }
+                        });
+                }
             },
-            [this](const EventStore::StoreError& error) {
-                fatal(error);
+            [this, epoch](const EventStore::StoreError& error) {
+                if (epoch == generation) {
+                    fatal(error);
+                }
             });
     }
+
     void EventQueue::enqueue(Event event, Reply reply) {
         if (mode != Mode::Ready) {
             reply(Unavailable{"engine unavailable during startup/recovery"});
@@ -87,30 +100,42 @@ namespace coreci::persistence {
                         item.reply(Ignored{std::get<Ignore>(classification).reason});
                     } else {
                         writing = true;
+                        activeReply = std::move(item.reply);
                         store.append(
                             event,
-                            [this, event, reply = item.reply] {
-                                const auto emitted = current->handle(event);
-                                if (!emitted.empty()) {
-                                    commands(emitted);
+                            [this, event, epoch = generation] {
+                                if (epoch == generation) {
+                                    auto reply = std::move(activeReply);
+                                    const auto emitted = current->handle(event);
+                                    if (!emitted.empty()) {
+                                        commands(emitted);
+                                    }
+                                    reply(Accepted{});
+                                    writing = false;
+                                    pump();
                                 }
-                                reply(Accepted{});
-                                writing = false;
-                                pump();
                             },
-                            [this, reply = item.reply](const std::string& error) {
-                                mode = Mode::Loading;
-                                current.reset();
-                                writing = false;
-                                reply(Unavailable{error});
-                                rejectPending(error);
-                                rebuild();
+                            [this, epoch = generation](const std::string& error) {
+                                if (epoch == generation) {
+                                    recover(error);
+                                }
                             });
                     }
                 }
             }
             draining = false;
         }
+    }
+    void EventQueue::recover(const std::string& reason) {
+        mode = Mode::Loading;
+        current.reset();
+        writing = false;
+        auto reply = std::move(activeReply);
+        if (reply) {
+            reply(Unavailable{reason});
+        }
+        rejectPending(reason);
+        rebuild();
     }
     const Engine* EventQueue::engine() const {
         return mode == Mode::Ready ? current.get() : nullptr;

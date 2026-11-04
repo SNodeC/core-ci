@@ -100,12 +100,15 @@ namespace coreci::mariadb {
         client.abort();
     }
     void MariaDBEventStore::fail(const StoreError& error) {
+        const bool wasReady = ready;
         ready = false;
         // Cancel remaining callbacks before a recovery callback may issue new commands.
         client.abort();
         auto failed = std::exchange(onFailure, {});
         if (failed) {
             failed(error);
+        } else if (wasReady && onLost) {
+            onLost(error.message);
         }
     }
     void MariaDBEventStore::execute(const std::string& sql, std::function<void()> done) {
@@ -119,15 +122,36 @@ namespace coreci::mariadb {
         client.connect();
         execute("SET NAMES utf8mb4", [this, onReady] {
             execute("SET autocommit = 1", [this, onReady] {
-                createSchema(0, [this, onReady] {
-                    checkSchema([this, onReady] {
-                        ready = true;
-                        onFailure = {};
-                        onReady();
+                lockWriter([this, onReady] {
+                    createSchema(0, [this, onReady] {
+                        checkSchema([this, onReady] {
+                            ready = true;
+                            onFailure = {};
+                            onReady();
+                        });
                     });
                 });
             });
         });
+    }
+    void MariaDBEventStore::setConnectionLost(std::function<void(const std::string&)> callback) {
+        onLost = std::move(callback);
+    }
+    void MariaDBEventStore::lockWriter(std::function<void()> done) {
+        client.query(
+            "SELECT GET_LOCK(CONCAT('coreci:', DATABASE()), 0)",
+            [this, done](const MYSQL_ROW row) {
+                if (row != nullptr) {
+                    if (row[0] == nullptr || std::string(row[0]) != "1") {
+                        fail({StoreError::Kind::Unavailable, "MariaDB writer lock unavailable"});
+                    }
+                } else {
+                    done();
+                }
+            },
+            [this](const std::string& error, unsigned int) {
+                fail({StoreError::Kind::Unavailable, error});
+            });
     }
     void MariaDBEventStore::createSchema(std::size_t index, std::function<void()> done) {
         // Schema.sql is embedded by CMake; its two CREATE statements contain no string literals.
