@@ -26,9 +26,14 @@ function view(work) {
                 : send === 'accepted' ? 'Awaiting GitHub evidence' : 'Dispatch unconfirmed');
     return {active, build, publish, buildJob, publishJob, activity};
 }
+function displayState(work) {
+    const status = work.build?.job?.status || work.build?.status;
+    return work.active.state === 'building' && work.build?.conclusion === 'cancelled' ? 'cancelled'
+        : work.active.state === 'building' && ['requested', 'queued', 'pending', 'waiting'].includes(status) ? 'queued' : work.active.state;
+}
 function state(work) {
     const {active, activity} = view(work), result = node('span', '', 'execution-state');
-    result.append(node('span', active.state === 'building' && work.build?.conclusion === 'cancelled' ? 'cancelled' : active.state, 'state ' + active.state));
+    result.append(node('span', displayState(work), 'state ' + active.state));
     if (!['published', 'failed'].includes(active.state)) {
         result.append(Object.assign(node('span', activity, 'secondary activity'), {title: activity}));
     }
@@ -266,8 +271,8 @@ function renderWork() {
         }
     }
     element('visible-count').textContent = `${visible.length} of ${items.length} executions`;
-    element('counts').textContent = ['building', 'publishing', 'waiting', 'failed', 'published'].map(value =>
-        `${items.filter(work => work.active.state === value).length} ${value === 'building' ? 'build phase' : value}`).join(' · ');
+    element('counts').textContent = ['building', 'queued', 'publishing', 'waiting', 'failed', 'published', 'cancelled'].map(value =>
+        `${items.filter(work => displayState(work) === value).length} ${value}`).join(' · ');
 }
 function selectRepository(name = null, entry = graph.repositories[name]) {
     selected = name;

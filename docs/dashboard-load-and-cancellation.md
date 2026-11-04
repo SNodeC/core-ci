@@ -46,3 +46,16 @@ Both delivered 59 completions and zero dispatch effects. These are local fixture
 measurements, not GitHub latency or a full-chain throughput guarantee. Existing
 publication/restart/uncertainty, graph and JSON diagnostic tests pass. Full
 hydration and serialized Store writes remain O(history).
+
+The dashboard must distinguish committed build authorization from a running
+GitHub job. A Building assignment whose observed job/run is queued is displayed
+as Queued; the summary uses the same presentation function as the badge. The
+active assignment, readiness rules, management actions and dispatch are unchanged.
+Cancelled assignments retain the existing presentation distinction and now have
+an explicit summary count. Started cells already suppress GitHub timestamps on
+queued jobs. Job/run webhook observations do not provide continuous step telemetry;
+a step name is the last observed detail, not a stream of every step transition.
+
+Validated the178-record scenario:20in_progress,56queued,102prerequisites waiting.
+Cancellation and queued/running tests pass; production delta app.js+5, index.html0.
+This UI-only change is deployed without a controller restart or build interruption.
