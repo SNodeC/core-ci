@@ -28,7 +28,7 @@ function view(work) {
 }
 function state(work) {
     const {active, activity} = view(work), result = node('span', '', 'execution-state');
-    result.append(node('span', active.state, 'state ' + active.state));
+    result.append(node('span', active.state === 'building' && work.build?.conclusion === 'cancelled' ? 'cancelled' : active.state, 'state ' + active.state));
     if (!['published', 'failed'].includes(active.state)) {
         result.append(Object.assign(node('span', activity, 'secondary activity'), {title: activity}));
     }
@@ -267,7 +267,7 @@ function renderWork() {
     }
     element('visible-count').textContent = `${visible.length} of ${items.length} executions`;
     element('counts').textContent = ['building', 'publishing', 'waiting', 'failed', 'published'].map(value =>
-        `${items.filter(work => work.active.state === value).length} ${value}`).join(' · ');
+        `${items.filter(work => work.active.state === value).length} ${value === 'building' ? 'build phase' : value}`).join(' · ');
 }
 function selectRepository(name = null, entry = graph.repositories[name]) {
     selected = name;
