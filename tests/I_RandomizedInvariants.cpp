@@ -1,10 +1,12 @@
 #include "Check.h"
 #include "core/Status.h"
+#include "persistence/InMemoryEventStore.h"
 
 #include <cstdlib>
 #include <random>
 #include <set>
 using namespace coreci;
+using namespace coreci::persistence;
 
 Pipeline testPipeline() {
     Pipeline::Builder b;
@@ -26,13 +28,27 @@ Pipeline testPipeline() {
     }
     return b.build();
 }
-int checkEvent(Engine& e, const Event& event, std::set<std::string>& allocations) {
+int checkEvent(Engine& e, const Event& event, std::set<std::string>& allocations, InMemoryEventStore& store) {
     const auto previousUnits = e.units();
     const auto previousFeeds = e.feeds();
     const auto previousReleases = e.releases();
     const auto previousTime = e.time();
     const auto classification = e.classify(event);
-    const auto commands = e.handle(event);
+    std::vector<Command> commands;
+    const auto normalized = normalize(event);
+    REQUIRE(std::holds_alternative<Event>(normalized));
+    if (std::holds_alternative<Accept>(classification)) {
+        store.append(
+            std::get<Event>(normalized),
+            [&] {
+                commands = e.handle(std::get<Event>(normalized));
+            },
+            [](const auto&) {
+                CHECK(false);
+            });
+    } else {
+        commands = e.handle(std::get<Event>(normalized));
+    }
     if (std::holds_alternative<Ignore>(classification)) {
         CHECK(commands.empty());
         CHECK(e.units() == previousUnits);
@@ -122,19 +138,48 @@ int checkEvent(Engine& e, const Event& event, std::set<std::string>& allocations
     }
     return checkResult();
 }
+int verifyReplay(const Engine& live, InMemoryEventStore& store, Options options) {
+    Engine replay(live.pipeline(), options);
+    bool done = false;
+    store.loadAll(
+        [&](std::uint64_t seq, const Event& event) {
+            const auto row = encode(event, seq);
+            REQUIRE(std::holds_alternative<EventRow>(row));
+            const auto restored = decode(std::get<EventRow>(row));
+            REQUIRE(std::holds_alternative<Event>(restored));
+            replay.handle(std::get<Event>(restored));
+            return checkResult();
+        },
+        [&] {
+            done = true;
+        },
+        [](const auto&) {
+            CHECK(false);
+        });
+    CHECK(done);
+    CHECK_EQ(statusText(replay), statusText(live));
+    CHECK(replay.units() == live.units());
+    CHECK(replay.feeds() == live.feeds());
+    CHECK(replay.releases() == live.releases());
+    CHECK(replay.time() == live.time());
+    CHECK(replay.nextDeadline() == live.nextDeadline());
+    return checkResult();
+}
 int main() {
     const auto seed = std::getenv("CORECI_TEST_SEED") ? std::stoull(std::getenv("CORECI_TEST_SEED")) : 0xC0DEC1ULL;
     const auto runs = std::getenv("CORECI_TEST_RUNS") ? std::stoull(std::getenv("CORECI_TEST_RUNS")) : 10000ULL;
     std::cout << "seed=" << seed << " runs=" << runs << '\n';
     std::mt19937_64 random(seed);
     for (std::uint64_t run = 0; run < runs && checkFailures == 0; ++run) {
-        Engine e(testPipeline(), {100, 50, 8, run % 2 == 0 ? std::optional<std::size_t>{2} : std::nullopt});
+        const Options options{100, 50, 8, run % 2 == 0 ? std::optional<std::size_t>{2} : std::nullopt};
+        Engine e(testPipeline(), options);
+        InMemoryEventStore store;
         std::set<std::string> allocations;
         std::map<std::string, unsigned> versions;
         std::int64_t now = 100;
         for (const auto& p : {"b", "c", "d", "e", "a"}) {
             versions[p] = 0;
-            checkEvent(e, TagObserved{now++, p, "v1.0.0", "sha", Origin::Webhook}, allocations);
+            checkEvent(e, TagObserved{now++, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook}, allocations, store);
         }
         for (unsigned step = 0; step < 60 && checkFailures == 0; ++step) {
             const auto choice = random() % 10;
@@ -147,7 +192,7 @@ int main() {
             Event event = Resumed{now};
             if (choice < 2) {
                 const auto n = ++versions[u.package];
-                event = TagObserved{now, u.package, "v1.0." + std::to_string(n), "sha", Origin::Reconcile};
+                event = TagObserved{now, u.package, "v1.0." + std::to_string(n), std::string(40, 'a'), Origin::Reconcile};
             } else if (choice == 2) {
                 event = Tick{e.nextDeadline().value_or(now)};
             } else if (choice == 3) {
@@ -169,14 +214,15 @@ int main() {
                     }
                 } else if (f.phase == Phase::Publishing) {
                     event = choice == 4 ? Event{PublishFailed{now, f.buildId, 201, "failure"}}
-                                        : Event{PublishSucceeded{now, f.buildId, 201, "commit"}};
+                                        : Event{PublishSucceeded{now, f.buildId, 201, std::string(40, 'c')}};
                 }
             } else if (state.failure) {
                 event = RetryRequested{now, u.package, u.target};
             }
-            checkEvent(e, event, allocations);
+            checkEvent(e, event, allocations, store);
             now = e.time().value_or(now) + 1;
         }
+        verifyReplay(e, store, options); // I5 in changing/inflight states, before successful drain.
         // I4: cease tag changes/failures, clear blocked failures and finish all work.
         bool quiescent = false;
         for (unsigned step = 0; step < 400 && !quiescent && checkFailures == 0; ++step) {
@@ -189,14 +235,14 @@ int main() {
                     } else if (f.phase == Phase::Dispatching || f.phase == Phase::Building) {
                         event = BuildSucceeded{now, f.buildId, f.runId.value_or(101), "artifact"};
                     } else if (f.phase == Phase::PublishDispatching || f.phase == Phase::Publishing) {
-                        event = PublishSucceeded{now, f.buildId, 201, "commit"};
+                        event = PublishSucceeded{now, f.buildId, 201, std::string(40, 'c')};
                     }
                 } else if (!event && state.failure && !state.inflight) {
                     event = RetryRequested{now, u.package, u.target};
                 }
             }
             if (event) {
-                checkEvent(e, *event, allocations);
+                checkEvent(e, *event, allocations, store);
                 now = e.time().value_or(now) + 1;
             } else {
                 quiescent = true;
@@ -217,6 +263,7 @@ int main() {
             }
             CHECK_EQ(statuses(e).at(u), "Settled");
         }
+        verifyReplay(e, store, options); // I5 again at quiescence.
         if (checkFailures != 0) {
             std::cerr << "failed run=" << run << " seed=" << seed << '\n';
         }

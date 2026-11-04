@@ -10,6 +10,12 @@ add_library(
 )
 target_include_directories(coreci_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(coreci_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
+add_library(
+    coreci_persistence
+    persistence/EventRow.cpp persistence/InMemoryEventStore.cpp
+    persistence/EventQueue.cpp
+)
+target_link_libraries(coreci_persistence PUBLIC coreci_core)
 enable_testing()
 foreach(
     scenario
@@ -30,14 +36,25 @@ foreach(
     add_test(NAME ${scenario} COMMAND ${scenario})
     set_tests_properties(${scenario} PROPERTIES LABELS core)
 endforeach()
-# The canonical modules assume src/. This layout uses the same committed styles
-# with explicit discovery limited to core/ and tests/.
+target_link_libraries(I_RandomizedInvariants PRIVATE coreci_persistence)
+set_tests_properties(
+    I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
+)
+foreach(scenario S11_Replay S12_WriteAhead S13_EventRow)
+    add_executable(${scenario} tests/${scenario}.cpp)
+    target_link_libraries(${scenario} PRIVATE coreci_persistence)
+    add_test(NAME ${scenario} COMMAND ${scenario})
+    set_tests_properties(${scenario} PROPERTIES LABELS persistence)
+endforeach()
+# Explicit discovery stays within owned source directories.
 file(
     GLOB_RECURSE
     CORECI_FORMAT_SOURCES
     CONFIGURE_DEPENDS
     core/*.h
     core/*.cpp
+    persistence/*.h
+    persistence/*.cpp
     tests/*.h
     tests/*.cpp
 )
@@ -66,5 +83,8 @@ if(CLANG_TIDY)
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Graph.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Engine.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Status.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventRow.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/persistence/InMemoryEventStore.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventQueue.cpp
     )
 endif()
