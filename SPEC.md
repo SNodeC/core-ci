@@ -183,7 +183,7 @@ Persistence is **event sourcing in MariaDB**: an append-only event table is the 
 
 Use the MariaDB client that SNode.C already provides. **Do not use libmariadb/libmysqlclient directly, do not add an ORM or another database library, and do not guess the API**: find SNode.C's MariaDB client in the SNode.C repository (master HEAD) and its examples/apps, and cite the source files you based your code on in the PR description. The client is asynchronous and runs in the SNode.C event loop; use it that way (callbacks), never block.
 
-Values must never be concatenated into SQL unescaped. Use parameterized/prepared statements if SNode.C's client offers them; otherwise use the client's escaping function for every value. If neither exists, **stop and ask**.
+Verified facts (SNode.C master, `src/database/mariadb/MariaDBClientASyncAPI.h`, `MariaDBClient.h`, `commands/async/MariaDBFetchRowCommand.cpp`): the client offers asynchronous `exec`, `query`, `startTransactions`/`commit`/`rollback`, but **no prepared statements and no escaping function**. Therefore every string value is written as a hexadecimal literal with charset introducer, `_utf8mb4 X'…'` (the bytes of the normalized UTF-8 value; the empty string as `''`), every integer as a decimal literal and every absent value as `NULL` — no other form, so SQL injection is impossible by construction. The SQL text is produced by the pure `persistence/EventSql.h/.cpp` (S14). After every (re)connect, `open` executes `SET NAMES utf8mb4` and `SET autocommit = 1` before any other statement. An `INSERT` runs via `exec` in autocommit mode; its success callback is `onCommitted`. `query` delivers rows through `onQuery(MYSQL_ROW)` and ends with a final `nullptr` row. SNode.C reconnects lazily on the next command after a lost connection and reports state through `onStateChanged`.
 
 ### 5.2 Schema (adapters/mariadb/Schema.sql, created by core-ci at startup with `CREATE TABLE IF NOT EXISTS`, InnoDB, utf8mb4)
 
@@ -239,7 +239,7 @@ Consequence: the in-memory state only ever contains committed events, so a crash
 
 - **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine, discarding commands → enqueue one `Resumed` event through the normal write-ahead queue (rule 12) → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished.
 - During replay, a stored event that the engine classifies as `Ignore` (possible only after the C++ pipeline changed, e.g. a removed package or target) is skipped with a warning naming its `seq`.
-- **Connection loss at runtime:** stop accepting events (`503`), suspend tick generation, reconnect with exponential backoff using SNode.C's facilities. After reconnecting, rebuild by replay exactly as in 5.3 step 4 (the in-memory state is discarded).
+- **Store errors** from `open`/`loadAll` have a kind (5.5): `Corrupt` (a row fails decoding per 5.2, or an unknown schema version) → log it and exit with a non-zero status, at startup and at runtime. `Unavailable` (any database or connection error) → stay in recovery (every event `503`, no ticks); `app/` retries the rebuild with an SNode.C timer, backoff 1 s doubling to at most 60 s, at startup and at runtime. A successful rebuild always starts from a fresh engine and replay (5.3 step 4).
 - Replaying the stored events must reproduce byte-identical status output (tested).
 - Compaction/snapshots are **out of scope**.
 
@@ -249,10 +249,11 @@ Consequence: the in-memory state only ever contains committed events, so a crash
 class EventStore {
 public:
     virtual ~EventStore() = default;
-    virtual void open(std::function<void()> onReady, std::function<void(const std::string&)> onError) = 0;  // connect + ensure schema
+    struct StoreError { enum class Kind { Unavailable, Corrupt } kind; std::string message; };
+    virtual void open(std::function<void()> onReady, std::function<void(const StoreError&)> onError) = 0;  // connect + ensure schema
     virtual void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) = 0;  // onError: commit outcome unknown (5.3 step 4)
     virtual void loadAll(std::function<void(std::uint64_t seq, const Event&)> onEvent, std::function<void()> onDone,
-                         std::function<void(const std::string&)> onError) = 0;
+                         std::function<void(const StoreError&)> onError) = 0;
 };
 ```
 
@@ -280,13 +281,14 @@ Use SNode.C's express API and TLS server. **Do not guess SNode.C APIs**: find th
 ### 6.2 Outbound GitHub REST (adapters/github/)
 
 - Dispatch: `POST /repos/{owner}/{repo}/actions/workflows/{workflowFile}/dispatches` with body `{"ref": "<branch>", "inputs": {...}}` (all values strings), headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer <token>`. `204` → `DispatchAccepted`; other status → `DispatchRejected`; transport error → `DispatchRejected` with `httpStatus = 0`. Both carry the command's `buildId`, `kind` and `attempt`.
+- TLS: outbound connections use SNode.C's TLS HTTP client (`src/web/http/tls/in/Client.h`), set SNI to the host, and verify the server certificate against the system CA store (`setCaCertDirUseDefault`) or, if configured, the `githubCaCert` file. `setCaCertAcceptUnknown` is forbidden. The API base URL is `githubApiUrl` (default `https://api.github.com`). HMAC-SHA256 and its constant-time comparison use OpenSSL (`CRYPTO_memcmp`), already an SNode.C dependency.
 - Token: fine-grained PAT from an environment variable, behind an interface `TokenProvider` so a GitHub App provider can be added later (do not implement the App now).
 - **Tag reconciliation** (webhooks do not deliver tag events reliably, e.g. when several tags are pushed at once): on startup, every `reconcileInterval` (default 15 min) and on `/api/v1/reconcile`, list tags of every `sourceRepo` (`GET /repos/{owner}/{repo}/tags`, follow `Link` pagination) and emit `TagObserved{origin=reconcile}` for the highest accepted version. The engine ignores it if it is not newer.
 - An SNode.C timer fires every 30 s; it enqueues a `Tick` only if `now ≥ engine.nextDeadline()` (see 4.5 rule 11).
 
 ### 6.3 Configuration
 
-Command-line/environment only (SNode.C's CLI11-based configuration is fine): listen address/port, TLS cert/key, `callbackBaseUrl`, MariaDB host/port/socket/user/database, timeouts, `maxDispatchAttempts`, `maxConcurrentBuilds`, `reconcileInterval`. Secrets only via environment: `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN`, `CORECI_DB_PASSWORD`. Never log secrets.
+Command-line/environment only (SNode.C's CLI11-based configuration is fine): listen address/port, TLS cert/key, `callbackBaseUrl`, MariaDB host/port/socket/user/database, `githubApiUrl`, `githubCaCert` (optional CA file, used by the smoke test with a self-signed fake GitHub), timeouts, `maxDispatchAttempts`, `maxConcurrentBuilds`, `reconcileInterval`. Secrets only via environment: `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN`, `CORECI_DB_PASSWORD`. Never log secrets.
 
 ---
 
@@ -349,9 +351,10 @@ Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (di
 - **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `Resumed` re-emits only units in `Dispatching`/`PublishDispatching` without `retryAt`.
 - **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored and invalid events are never appended. Recovery: `append` failing before storing and `append` failing after storing (ambiguous outcome) both lead to rebuild; afterwards the engine state equals a fresh replay of the store, events during recovery get `503`, a retried duplicate gets `200 ignored`, and `Resumed` re-emits the lost commands.
 - **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8); `normalize` cases for every field rule of 5.2 (character vs. byte counting, invalid UTF-8, NUL, 4096-byte truncation at a character boundary, 40-hex SHAs); every fatal decoding case of 5.2 reports the row's `seq`.
-- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from environment variables): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `Resumed` commands. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
+- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from `CORECI_TEST_DB_HOST`, `CORECI_TEST_DB_PORT`, `CORECI_TEST_DB_USER`, `CORECI_TEST_DB_PASSWORD`, `CORECI_TEST_DB_NAME`; the test drops and recreates the two tables in that database only): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `Resumed` commands. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
 - **Randomized invariant test** (seeded, ≥ 10 000 runs over random event interleavings on the test pipeline): (I1) a new `buildId` is never allocated while any prerequisite of the unit is unsettled (re-emissions by rules 4 and 12 resend an existing `buildId` and are exempt); (I2) at most one inflight per unit; (I3) at most one publication per feed; (I4) when all builds succeed, the system quiesces with every unit settled against the latest tags; (I5) replay equivalence.
-- Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint).
+- Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint); the callback route accepts a `buildId` containing `.` and `+` (tag with build metadata).
+- **S14 EventSql:** for every event type the `INSERT` contains string values only as `_utf8mb4 X'…'`, numbers only as decimal literals, absent values only as `NULL`; values containing `'`, `\`, `"`, `;`, `--`, `/*` and multi-byte UTF-8 appear only hex-encoded; the `SELECT` lists all columns in a fixed order `ORDER BY seq`.
 
 ---
 
@@ -368,7 +371,8 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
    From now on, the code at `pre-greenfield` is history only: it is never checked out, diffed against, copied from, or used as a reference.
 1. **Phase 1:** `core/` + its tests (S1–S10, randomized test). No SNode.C, no I/O.
 2. **Phase 2:** `persistence/` (EventRow, EventStore, InMemoryEventStore, the write-ahead event queue of 5.3) + S11–S13 + replay in the invariant test. Still no SNode.C, no database.
-3. **Phase 3:** `adapters/mariadb/` + `adapters/github/` + `app/` on SNode.C + adapter tests + MariaDB integration test + `pipeline/Pipeline.cpp`. Provide a local smoke test script: run core-ci against a fake GitHub HTTP server (a tiny SNode.C app in `tests/`) and drive the S1 diamond via `curl` callbacks.
+3. **Phase 3a:** `persistence/EventSql` + S14, `adapters/mariadb/` (`MariaDBEventStore`), the `StoreError` interface change, and the MariaDB integration test. Stop and report.
+3. **Phase 3b:** `adapters/github/` + `app/` on SNode.C + adapter tests + `pipeline/Pipeline.cpp`. Provide a local smoke test script: run core-ci against a fake GitHub HTTP server (a tiny SNode.C app in `tests/`) and drive the S1 diamond via `curl` callbacks.
 4. **Phase 4:** `workflows/` templates; then, in DistributionPackages and the publisher repository, split the existing pipeline into `coreci-build.yml` / `coreci-publish.yml` per section 7 and remove all direct chaining between SNode.C and MQTTSuite builds.
 
 ### Report format for every phase
@@ -389,5 +393,5 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 - Pinning repositories to commits or Actions to SHAs; assuming `main` as default branch.
 - Stubs, TODOs or placeholder implementations reported as done.
 - Changing engine semantics in later phases without asking.
-- Working in any directory other than `/home/voc/projects/snodec/core-ci` (except reading the SNode.C sources and, in phase 4, the DistributionPackages/publisher repositories).
+- Working in any directory other than `/home/voc/projects/snodec/core-ci` (except reading the SNode.C sources, reading DistributionPackages in phases 3b and 4, and changing the DistributionPackages/publisher repositories in phase 4).
 - Reusing, copying or consulting code from the pre-greenfield implementation; deleting history, force-pushing, discarding uncommitted work, or renaming the default branch.
