@@ -277,16 +277,16 @@ namespace ci {
         }));
     }
 
-    void Controller::observeWork(const Json& selected, const Done& done, std::uint64_t candidate) {
-        const auto& active = selected.at("attempts").back();
-        require(active.contains("assignment"), "Work has no assigned remote execution");
-        const std::string stage = active.contains("publish_assignment") ? "publish" : "build";
+    void Controller::observeWork(const Json& work, const Done& done, std::uint64_t candidate) {
+        const auto selected = std::make_shared<const Json>(work);
+        require(work.at("attempts").back().contains("assignment"), "Work has no assigned remote execution");
+        const std::string stage = work.at("attempts").back().contains("publish_assignment") ? "publish" : "build";
         const auto record = [this, selected, stage, done](const Json& observed, const Json& evidence, const std::string& error) {
             store.change(
                 [selected, stage, observed, evidence, error](Json& graph) {
-                    return applyEvidence(graph, selected, stage, observed, evidence, error);
+                    return applyEvidence(graph, *selected, stage, observed, evidence, error);
                 },
-                [done, error, execution = selected.at("attempts").back().at("id").get<std::string>()](const std::string& failure) {
+                [done, error, execution = selected->at("attempts").back().at("id").get<std::string>()](const std::string& failure) {
                     done(failure.empty() && error.empty() ? "" : "Observation " + execution + ": " + (failure.empty() ? error : failure));
                 });
         };
@@ -296,17 +296,17 @@ namespace ci {
         token([this, selected, stage, candidate, record, unread](const std::string& access, const std::string& error) {
             checked(unread, [this, selected, stage, candidate, access, record, unread](const Json&) {
                 run(access,
-                    selected,
+                    *selected,
                     stage,
                     checked(unread,
                             [this, selected, stage, access, record](const Json& observed) {
                                 const Value apply = [record, observed](const Json& evidence, const std::string& error) {
                                     record(observed, evidence, error);
                                 };
-                                const auto& active = selected.at("attempts").back();
+                                const auto& active = selected->at("attempts").back();
                                 if (stage == "build" && active.at("state") == "building" && observed.at("status") == "completed" &&
                                     observed.at("conclusion") == "success") {
-                                    buildResult(access, selected, observed, apply);
+                                    buildResult(access, *selected, observed, apply);
                                 } else if (stage == "publish" && active.at("state") == "publishing" &&
                                            std::count_if(observed.at("jobs").begin(),
                                                          observed.at("jobs").end(),
@@ -318,7 +318,7 @@ namespace ci {
                                                        job.at("name") == "Confirm public receipt") &&
                                                       job.at("status") == "completed" && job.at("conclusion") == "success";
                                            }) == 2) {
-                                    publicationReceipt(access, selected, apply);
+                                    publicationReceipt(access, *selected, apply);
                                 } else {
                                     apply({}, "");
                                 }
