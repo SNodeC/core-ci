@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Repository build graph description",
+  "type": "object",
+  "required": [
+    "repository",
+    "builds"
+  ],
+  "properties": {
+    "repository": {
+      "type": "string"
+    },
+    "builds": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/build"
+      }
+    }
+  },
+  "$defs": {
+    "build": {
+      "type": "object",
+      "required": [
+        "version",
+        "target",
+        "prerequisites"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildReference"
+          }
+        }
+      }
+    },
+    "buildReference": {
+      "type": "object",
+      "required": [
+        "repository",
+        "build"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "build": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

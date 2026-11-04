@@ -1,0 +1,19 @@
+{
+  "repository": "example/join",
+  "builds": {
+    "linux-amd64": {
+      "version": "v1.0.0",
+      "target": "linux-amd64",
+      "prerequisites": [
+        {
+          "repository": "example/app",
+          "build": "linux-amd64"
+        },
+        {
+          "repository": "example/side",
+          "build": "linux-amd64"
+        }
+      ]
+    }
+  }
+}
