@@ -69,8 +69,7 @@ Rows include only package files still present in the retained feed tree. The fie
 `development_export_available` distinguishes retained installation packages from build inputs
 whose development export has expired. Public controller executions cover retained/live work
 and referenced prerequisites; the highest selected source version remains available to the
-presentation even if it has no retained publication. Cleanup progress is shown in the local
-controller view rather than emitted as package publication status.
+presentation even if it has no retained publication. The controller does not schedule cleanup.
 
 New receipts retain compact selected-prerequisite references: execution/attempt and assignment
 identities, source, revision, compatibility, packages, development export and feed. They do not

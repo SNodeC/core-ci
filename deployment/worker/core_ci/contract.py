@@ -144,18 +144,15 @@ def assignment(path, expected_hash=None):
     require(expected_hash is None or digest(selected) == expected_hash, "assignment digest mismatch")
     source = selected["source"]
     require(SHA1.fullmatch(source["deployment"]["worker"]["tooling_sha"]), "tooling must select an exact commit")
-    if "kind" in selected:
-        require(selected["kind"] == "retention" and isinstance(selected["objects"], list), "invalid retention command")
-    else:
-        require(
-            SHA1.fullmatch(source["commit"]) and SHA1.fullmatch(source["definition_revision"]),
-            "source must select exact commits",
-        )
-        require(
-            SHA1.fullmatch(source["definition_blob_sha"]) and NAME.fullmatch(source["package"]),
-            "invalid source definition identity",
-        )
-        versions(source["tag"], selected["revision"], selected["target"]["build"]["format"])
+    require(
+        SHA1.fullmatch(source["commit"]) and SHA1.fullmatch(source["definition_revision"]),
+        "source must select exact commits",
+    )
+    require(
+        SHA1.fullmatch(source["definition_blob_sha"]) and NAME.fullmatch(source["package"]),
+        "invalid source definition identity",
+    )
+    versions(source["tag"], selected["revision"], selected["target"]["build"]["format"])
     return selected
 
 

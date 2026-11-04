@@ -2064,6 +2064,514 @@ proposed. Commit/push/merge remain separate authorization stages.
   receipt/export Git blobs before any new publication. Results are ongoing; full-session
   acceptance is not yet claimed. No package-client installation proof is implied.
 
+## 2026-10-27 — continuous GitHub/UI/Pages monitoring found uncertain feed push
+
+- Owner requested continuous observation of GitHub CI, public status pages and local
+  port8080 UI. Kept existing read-only SSE/public-JSON observer running; sampled actual
+  Chrome UI without reload/control actions, GitHub assigned runs/jobs and all four HTML
+  pages. Diagnostic traffic is separate from controller traffic. No source/test edit,
+  new work request, retry, manual advance or configuration mutation during monitoring.
+- Local UI remained Live and its active counts followed the graph through SSE. Its17
+  failures belong to retained history, not this new session. Joins correctly waited for
+  all prerequisites: Fedora core+app publication did not release join while side was
+  unpublished; arm64 core+side publication did not release join while app was unpublished.
+- Public snapshots lagged graph facts by roughly2–3minutes in sampled entries. Captured
+  generations, state/activity differences and HTML text under ui-origin/live/. One
+  derived negative age occurs because a newer graph fact postdates the sampled page;
+  it is not negative processing latency. Status workflows were pending/cancelled as
+  obsolete refreshes were replaced behind the shared feed writer.
+- Presentation findings, not changed: root rows can show an empty Waiting-for label;
+  building/publishing rows can list prerequisites already satisfied as Waiting-for;
+  new feed bytes can become Available before controller verification supplies Published
+  UTC. The latter is a transient difference between actual feed contents and verified
+  graph publication, not proof of a failed signature or missing package.
+- Publication40465675752 (demo-app OpenWrt APK, revision113) failed at07:13:54UTC
+  inside Publish checked feed update. Authenticated attempt-one evidence records failed
+  job, failed run and failed push step. Trusted job122060732110 log states:
+  remote Permission to VOC-Experiments/packages.git denied to
+  voc-experiments-ci-coordinator[bot]; Git returned HTTP403 and exit128. The intermittent
+  authorization denial's root cause is not established. Other publications with the
+  same tooling/App succeeded earlier in this session. No credential/scope changes made.
+- Controller retains publishing uncertainty and the per-feed writer; missing public
+  receipt (HTTP404) is not permission to retry. Existing policy treats started push-step
+  failures as uncertain. No replacement publication was dispatched. UI and Pages show
+  publication complete; verifying results despite recorded GitHub failure: this wording
+  hides failure/uncertainty and is a separate presentation finding.
+- At07:18:53UTC graph865 had6 published,1 publishing/uncertain,6 build-stage nodes
+  and7 waiting. Latest assigned-job reads found no active GitHub source/publication/
+  status/Pages run; build-stage nodes are built and waiting for the retained writer.
+  Public status caught up to865 with zero state/activity/revision/tag differences.
+  At07:20UTC all four Pages HTML table texts matched GitHub main status/*.md tables.
+- All387 baseline immutable package/key/receipt/export Git blobs remain unchanged.
+  Controller log counts334 GitHub connections so far in this partial session, including
+  status work. This is not exact per-endpoint HTTP accounting or completed acceptance.
+  Evidence: github-observations.jsonl, graph-observations.jsonl, feed-observations.jsonl,
+  html-observations.jsonl, page-git-parity.jsonl, diamond-observations.jsonl and
+  retained-check.json under /tmp/codex/build/core-ci/ui-origin/live/.
+- Full graph session remains blocked; no automatic retry/recovery policy was invented.
+
+## 2026-10-27 08:55UTC — full live health recheck
+
+- Owner requested CI and everything else be checked again. GitHub source, publication,
+  status and Pages listings have no active run. Last publication40465675752 remains
+  failure (07:13:55UTC); last status refresh40466001160 succeeded. No retry/advance made.
+- Actual local graph remains865:6 published,1 uncertain publication,6 build-stage,
+  7 waiting. Database health query reports available and mutations_allowed is true.
+  Chrome UI remains Live with matching counts; its17 failed count is retained history.
+- Public JSON remains865 with zero state/activity/revision/tag mismatches. All four
+  Pages HTML table texts equal corresponding GitHub main Markdown table texts. All387
+  pre-session immutable package/key/receipt/export Git blobs remain unchanged.
+- New network limitation: gw-home.vchrist.at resolves212.241.96.69, but connection
+  to8443 failed from this machine (No route to host/timeout). Direct192.168.1.239:8443
+  TCP also timed out. ss shows the controller still listening on192.168.1.239:8443;
+  ip address inspection shows eno1 DOWN without IPv4 and Wi-Fi UP at10.20.99.86.
+  The configured webhook listener address is no longer assigned to this machine.
+  No firewall, listener, DNS, TLS credential or forwarding setting was changed.
+  External reachability from GitHub itself was not probed by generating a new event.
+- Loopback8080 and live database remain healthy. Controller PID1553769 and read-only
+  observer1554586 are alive; observer is sleeping normally and recorded a fresh matching
+  public snapshot at08:55:07UTC. It retains the existing bounded observation window.
+- One read-only health check's automatic approval review timed out; its permitted single
+  retry succeeded. No protected configuration/secret contents were inspected. Working
+  source remains main4257cb0 with uncommitted monitoring records in WORK_LOG.md.
+
+## 2026-10-27 — diagnose feed Git HTTP403 without replaying publication
+
+- Owner asked where the403 originates and how to fix it. Traced publisher writer_token,
+  shared checked_push, status_update caller, protected workflow environment, controller
+  publicationResult/FeedProof, and existing worker boundary tests. Failure is GitHub HTTPS
+  Git receive authorization, not OpenWrt compilation/signing or local webhook networking.
+- Read-only GitHub checks: App5424800/voc-experiments-ci-coordinator and installation
+  174142534 have contents:write/actions:write/metadata:read; installation not suspended.
+  Environment FEED_WRITER_APP_ID/INSTALLATION_ID match. Feed repository ID1429576922,
+  branch main, configured correctly. No ruleset and main has no branch protection.
+  Browser installation page confirms packages is explicitly selected (six selected repos).
+  No App permissions, repository selections, secrets or protection settings were changed.
+- CLI installation-repositories query lacked read:user; did not expand OAuth scopes.
+  Used browser read-only installation inspection instead. Located existing VOC-Experiments
+  writer PEM filename under ci-test; no .local-credentials or SNodeC key was inspected.
+- One read-only credential probe at09:12:37UTC used the existing sandbox writer key via
+  openssl signing without displaying key contents. Minted a token restricted to1429576922
+  and contents:write; returned201. Same-token repository REST read200; Git receive-pack
+  advertisement GET200. Diagnostic token revoked204. No git push/update request sent.
+  REST quota remaining4999 at this current probe; this does not establish quota at the
+  earlier failed push. Repository role booleans were false for the installation token;
+  they are not evidence overriding granted token permissions or successful Git discovery.
+- Only allowlisted response status/timing/request-ID/quota fields were recorded in
+  ui-origin/live/authorization-probe.json. No token/header/key values logged. This probe
+  is not a successful publication or proof of write-phase success on the failed runner.
+- Exact cause of the intermittent failed push remains unverified. The old job did not
+  retain HTTP response/request-ID details. Do not claim a permanent permission/key fault,
+  rate-limit cause, token-propagation race or a proven code fix from this evidence.
+- Official references:
+  https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
+  (Contents permission, scoped installation tokens and Git HTTP password authentication).
+  https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api
+  (403/rate-limit diagnostic headers and permission troubleshooting).
+- No production/test change, mutation replay or new recovery policy. A bounded change
+  to shared checked_push could retain only sanitized Git HTTP status/request ID and
+  granted token scope for future failures, preserving the existing uncertainty rule.
+  Such diagnostics require a concrete design/growth approval before implementation;
+  they are diagnostic work, not a claimed root-cause fix or recovery of the current attempt.
+
+
+## 2026-10-27 — Deploy sandbox controller on core.vchrist.at
+
+Owner requested deployment after the laptop left its former LAN and authorized
+`root@core.vchrist.at` SSH. No application production or test source changed.
+Canonical checkout remains `/home/voc/projects/snodec/core-ci`; deployment records are on
+`deploy/core-vchrist`, based on local main `4257cb0`. Existing uncommitted monitoring
+records were preserved. No commit, push or merge performed in this deployment task.
+
+Installed the previously focused-tested binary containing changes through `47737f7`
+and its 20 matching installed SNode.C runtime libraries under `/srv/core-ci`.
+The server's existing framework lacks MariaDBClient::connect(); the private runtime
+avoids changing framework packages used by its existing services. Manifest and SHA-256
+checks passed; `ldd -r` has no unresolved symbols. No extra source checkout was created.
+Installed MariaDB server/client (13 new packages, zero upgrades), created dedicated
+`core_ci` UNIX/database accounts with socket authentication and application DML grants.
+Application database mode is unmanaged; systemd owns MariaDB. Controller App/HMAC
+credentials only were transferred privately; no feed-writer or signing keys transferred.
+
+Invariant: exactly one active controller owns graph mutations. Saved consistent logical
+backup, verified source graph unchanged at generation 865, stopped laptop PID 1553769,
+restored database and enabled/started `core-ci.service` as core_ci (PID 203617 at check).
+All 120 execution records and graph JSON matched exactly before/after cutover and after
+real GitHub deliveries: 74 published, 17 failed, 22 waiting, 6 building, 1 publishing.
+The uncertain APK publication remains assigned; no retry or replacement dispatched.
+Backup retained privately on server `/var/backups/core-ci/cutover-generation-865.sql`.
+Local backup/evidence/runtime artifacts remain under
+`/tmp/codex/build/core-ci/deploy-core-vchrist`; remove after a verified operational backup.
+Temporary database client password file was removed.
+
+UI binds 127.0.0.1:8080; TLS binds IPv4 0.0.0.0:8443. Existing certificate SAN covers
+core.vchrist.at, passed public HTTPS verification, expires 2027-01-16. systemd LoadCredential
+supplies certificate/key without widening original permissions; restart after renewal.
+App webhook URL and worker CORE_CI_STATUS_URL now use core.vchrist.at:8443.
+Real GitHub redelivery 3850644243670376448 returned 202 in 1.08 s; fresh workflow_run
+3850644256886652928 returned 202 in 0.91 s and workflow_job 3850644258371403776 in 1.01 s.
+Invalid authentication returned 401; public /api/graph returned 404. Public status generation
+865 matched durable state. Service enabled/active; MariaDB and both existing IdP services
+active. Their original PIDs 96899/165328 unchanged, as were ports 80/443.
+No production SNodeC GitHub resources, tags, feed bytes or trusted keys were changed.
+.qtcreator and .local-credentials preserved. Management access uses an SSH tunnel.
+
+Verification: runtime hashes/linking; database exact-state comparison; live TLS and GitHub
+reports; service/socket checks; git diff --check. No unrelated test suite run and no
+new package build session requested. Existing feed push 403 remains unresolved; deployment
+does not establish successful publication or complete current v2.1.1 graph acceptance.
+
+
+## 2026-10-27 — Owner-authorized public management test listener
+
+Owner explicitly requested wildcard management binding on core.vchrist.at for initial tests,
+with management TLS/authorization deferred. Changed only installed core-ci.service CLI
+`web local --host 127.0.0.1 --port 8080` to `--host 0.0.0.0`, reloaded systemd and restarted.
+Verified active service, 0.0.0.0:8080 listening, public HTTP 200 at
+http://core.vchrist.at:8080/ and byte-identical graph before/after restart. No application
+source or test changes. Existing webhook TLS on 8443 unchanged. Updated sandbox instructions.
+
+## 2026-10-27 — Post-deployment CI inspection
+
+Read-only GitHub checks across demo-core/app/side/join, ci-coordinator and packages found
+zero queued or in-progress runs. Remote core-ci PID 203772 is active; graph remains generation
+865 with all 120 records. Six building-state executions already have successful completed
+build evidence and await publication; the uncertain demo-app APK r113 publisher
+40465675752 remains assigned. Startup reconciliation explicitly preserved it because the
+feed receipt commit is inaccessible. Latest status refresh 40487164424 succeeded against
+the new host. No retries, manual advances or new selections performed. The current graph
+session is blocked, not actively building; remote migration did not resolve the feed 403.
+
+## 2026-10-27 — Explicit owner recovery and fresh-session preparation
+
+Owner requested collecting shortcomings, performing recovery and starting a fresh full graph
+from core, with detailed monitoring for the intermittent feed HTTP 403. Added
+`docs/improvements/README.md` with verified gaps, proposals, accepted limits and deployment
+gates; it grants no production-code expansion. No application or test source changed.
+
+Recovered r113 after independently reading the completed attempt-one run/jobs and raw job
+log: final git push rejected by GitHub with 403; no publisher remains. Full feed tree was
+untruncated and contained no receipt/export/package path for r113; receipt path had zero
+commits. All three feed commits since the failure touched status projections only. Full
+pre-recovery database backup is /var/backups/core-ci/before-r113-recovery.sql. With service
+stopped, a generation- and assignment-conditional transaction changed only r113 to failed
+with an explicit owner-recovery reason and incremented generation. Assignment, build result,
+GitHub evidence and historical records were preserved. Protected recovery evidence with
+job-log SHA-256 is /var/backups/core-ci/r113-recovery-evidence.json.
+
+The first administrative transaction mistakenly added an operator_recovery evidence phase.
+Startup validation correctly rejected that unknown phase before listeners or dispatch.
+Removed only that added field and incremented generation; audit remains in the protected
+file and failure reason. This was an operator error, not a framework defect. Service then
+restored successfully at generation 867 and automatically assigned existing side APK r118
+publication 40488462573. No direct GitHub rerun or uncertain mutation replay was used.
+
+First source request was rejected because startup advancement changed graph generation
+during selection (no source selection committed). Repeated explicit request for demo-core
+v2.1.1 returned HTTP 200, selected=0, assigned=0: it reuses existing work. Asked owner for
+new sandbox tag choice, recommending v2.1.2 at unchanged commit
+1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57; no new tag or fresh-session claim before answer.
+Existing resumed publication is being monitored; no recurrence/cause resolution claimed.
+
+Resumed side APK publication 40488462573 succeeded: privileged job 122137032372
+prepared at 10:29:56Z and verified feed revision a7eb3f25525eefe172cc616f4bb961824d489d03
+at 10:30:19Z. No Git HTTP403 in its push. Controller marked published and automatically
+assigned app/IPK r112 publication 40489014054. This is resumed work, not a fresh full graph.
+
+Applied owner's explicit APK retry through /api/work/retry after recovery: new rebuild r124,
+app build https://github.com/VOC-Experiments/demo-app/actions/runs/40489115089. Dispatch
+response initially preserved assignment with identity mismatch; subsequent authenticated
+webhook bound the correct attempt-one run and graph reports build running. No dispatch replay.
+Cause of initial response mismatch is unverified and requires separate investigation.
+
+Read-only observation process runs locally from task directory monitor-ci.py for at most
+45 minutes, polling graph every20s and downloading each new completed assigned publisher
+job log once. Results in recovery-session-monitor.jsonl and monitored-publisher-*.log;
+no controller instrumentation, secrets printed, mutation retry, or new application threads.
+Fresh full-session source-tag choice remains pending; v2.1.1 selection returned selected=0.
+
+## 2026-10-27 — Resumed session monitoring completed
+
+Owner requested continued monitoring/reporting. Graph progressed automatically to generation
+1060 with all20 latest session nodes (root/dependent revisions104–123, APK retry124 replacing
+failed113) published. The15 remaining waiting records are all superseded historical work.
+The17 current failed records are historical; no new terminal failure in resumed work.
+
+Read-only monitor captured14 completed publisher logs after recovery, all success and no
+Git push403 diagnostic. App APK retry124: build40489115089 and publication40489521812 both
+success; publisher completed10:37:15Z. Final join/DEB amd64 r119: build40492709653 and
+publication40492796133 success. Final publisher prepared11:01:08Z and verified feed revision
+b730035d72ac981499b5a5b3b886b12da66b0b59 at11:02:21Z; controller reached published1060
+shortly afterwards. Public status refresh40493134880 succeeded11:02:58Z.
+
+Live controller /public/status, Pages status/controller.json and status.json all reached
+1060. Read all20 public receipt JSON documents and matched recorded content, accounting for
+controller-added feed_revision/publication_verified_utc fields. Read all4 project HTML
+pages; no stale build-assigned, publication-running or publication-queued labels remained.
+Service and MariaDB active. No application source changes or unrelated tests run.
+
+This proves completion of the resumed session with explicit APK retry and administrative
+recovery, not an uninterrupted first-pass session, a fresh v2.1.2 graph, or a root-cause fix
+for403. No new tags created; fresh-session tag choice still awaits owner answer. Evidence
+remains in /tmp/codex/build/core-ci/deploy-core-vchrist including monitor JSONL and publisher
+logs. No commit/push/merge in this monitoring task.
+
+## 2026-10-27 — Owner-requested fresh full graph from core v2.1.2
+
+Owner repeated explicit instruction to start a complete fresh chain after prior tag-choice
+proposal. Created only sandbox demo-core refs/tags/v2.1.2 at unchanged source commit
+1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57; existing tags unchanged. Initial gh credentials
+lacked workflow scope (404). A contents-only temporary App token was insufficient (403).
+Confirmed existing controller installation already grants workflows:write, then created
+using a temporary token restricted to demo-core with contents/workflows write (201) and
+revoked it (204). This403 was a tag-creation permission denial, separate from the unresolved
+intermittent publication Git push403; no uncertain publication mutation was replayed.
+
+Real tag webhook selected20 new graph executions (120→140), with five core builds and15
+waiting dependents; no injected event, selection SQL or manual advance. Source build runs:
+DEB amd64 40493669675 (r125), DEB arm64 40493681172 (r126), RPM 40493677166 (r127),
+OpenWrt IPK 40493673401 (r128), APK 40493665208 (r129). At generation1082 amd64/RPM GitHub
+builds succeeded, other three in progress; amd64 publication assigned automatically.
+One separate source-owned tag workflow40493622829 is red; not an assigned graph build.
+Its cause is not yet investigated and must not be confused with one of the five core jobs.
+
+Restarted read-only45-minute monitor in task directory, retaining already-seen publisher IDs
+to avoid re-downloading prior14 logs. Evidence fresh-v2.1.2-graph.json and
+fresh-v2.1.2-monitor.out. No controller/worker source, global credentials, production SNodeC
+resources, existing tags or signing keys changed. No full-session success claim at launch.
+
+
+Fresh session observation11:14:35Z: core APK r129 build11:06:51–11:09:15 (144s),
+publication validation11:11:17–11:13:11 (114s; metadata/provenance step98s), privileged
+publisher starts11:13:15, installs tools20s, prepares/signs11:13:39–11:13:54 (15s),
+push/HTTPS step starts11:13:54. Thus UI's12:06 local timestamp is build start, not
+publisher start. Traced SDK prepare in both validate.py and sign_openwrt.py; each performs
+SDK download/checksum/extraction/preparation. Feed writer exclusion covers the whole
+publication workflow, including validation. Recorded cost in improvement register; no
+optimization or weakening of publisher verification implemented.
+
+Owner requires millisecond controller reaction and asked for analysis-only report of delay.
+Traced Graph::publicationReady and Pipeline::advance: controller withholds every further
+publication for same feed until previous state leaves publishing. GitHub workflow also
+holds same feed concurrency group across validate and publish; status writers share that
+resource. Thus minutes are spent on GitHub, but coarse controller scheduling contributes
+to waiting. Do not misattribute all queue delay solely to GitHub infrastructure.
+Measured server-local full graph GET119–160ms for140 records; not a measurement of local
+eligibility computation/commit latency. Controller CPU117s over3109s wall (3.7%, RSS~82MB),
+not evidence of sustained CPU saturation. Sample APK workflow finished11:14:40Z, next app
+RPM run created11:14:53Z:13s end-to-end gap includes delivery, proof/HTTPS and GitHub dispatch;
+no claim that this is pure CPU time or exact graph commit latency. No production code change.
+Latest observation11:19:07Z fresh chain4published,1publishing,6build-stage,9waiting;
+Pages1171 vs controller1180. No new failure observed.
+
+## 2026-10-27 — Claude read-only controller-parallelism review
+
+Owner requested Claude investigate current core-ci architecture and maximize eligible
+parallel GitHub work. Ran installed Claude CLI in safe plan mode with only Read/Grep/Glob,
+no MCP or command tools, no production changes. Request is
+`docs/proposals/controller-parallelism-review-request.md`; returned report is
+`docs/proposals/controller-parallelism-review.md`. CLI completed successfully, stderr empty.
+
+Confirmed central finding against source: controller reserves the entire publication
+workflow, including independent artifact validation and final HTTPS/controller proof, for
+one feed-wide publishing node; GitHub workflow-wide concurrency repeats the broad lock.
+advance selects one publisher in hash-ID map order. Independent eligible builds do already
+fan out. HttpClient's one-in-flight FIFO and Connection:close are verified secondary
+serialization; per-origin refactor remains deferred, not automatically approved.
+onChanged builds a full graph view and initiates status refresh before execution continuation;
+confirmed this even with no SSE receivers. CAS lost-update/stalled-advancement finding is
+not reproduced; must test before treating every review assertion as verified.
+
+Review recommends removing controller-wide publication exclusion, job-level feed locking,
+unlocked HTTPS confirmation, reduced derivative status work, and focused conflict handling.
+Important explicit decision: allowing independent new writers while an earlier publication's
+outcome remains unknown changes the current conservative feed policy; no blanket approval
+or implementation inferred. The report offers a conservative alternative. A smaller
+critical section must still read current feed within lock, regenerate retained-package
+indexes, sign, commit and checked push; never force/rebase or replay uncertainty.
+
+Do not adopt proposed diagnostic growth/extra signing job by default. Estimates in advisory
+report are not owner approval. No new persisted states, queue, scheduler or threads proposed.
+Verified live packages Pages build_type=workflow, so report's branch-based build-limit
+hypothesis is not an established explanation for this deployment. Report and request remain
+uncommitted on deploy/core-vchrist with prior deployment docs preserved.
+
+## 2026-10-27 — Detailed independent validation of Claude parallelism review
+
+Owner requested all-detail validation and contradictions, then strengthened the objective
+to overlap every independent operation. Full result:
+`docs/proposals/controller-parallelism-review-validation.md`. No production implementation,
+GitHub mutation, deployment change, commit or push during this validation.
+
+Confirmed feed/HTTP gates and status callback ordering against current source. Corrected
+recommendation contradictions: deleting feed exclusion changes uncertainty policy; state-only
+status refresh loses public queued/running/completed facts; third confirm job needs exact
+receipt/revision handoff and secret-free entry flow; CP2 leaves tools/SDK work locked;
+callback reordering cannot guarantee network POST priority across async preflights; hash/order
+still exists after removing one gate. Core IPK wait example was eight completed publications,
+not roughly four five-minute jobs. New publication ref alone fails sandbox main-only
+environment branch policy and does not solve mutable tooling variable/past-assignment pins.
+
+Official concurrency docs confirmed queue:max supports100pending, cancels overflow, and
+FIFO is waiting-group arrival rather than dispatch order:
+https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+Pages custom Actions exception confirmed against official docs and actual build_type=workflow:
+https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits
+These contradict blanket FIFO/no-cancel and branch-based ten-build-limit explanations.
+
+Focused temporary diagnostic compiled current public GraphStore/Database/Graph plus existing
+GraphFixtures using installed snodec::db-mariadb, nlohmann_json and OpenSSL. Isolated real
+MariaDB, synthetic inputs; no live injected records. It reproduced both the definite CAS
+failure leaving an independent eligible node waiting and stale built-Node retry rejected
+for evidence regression with missing build result. Re-derivation from current graph passed.
+This verifies F4's component mechanism, not occurrence or causal importance in live pipeline;
+remote live journal since recovery contained zero matching conditional/evidence/503 errors.
+
+Probe path /tmp/codex/build/core-ci/parallelism-validation; commands and outcomes recorded in
+validation doc; result.json retained, fixture database stopped/removed. Initial diagnostic
+compile missing Graph::select's third argument was corrected before passing execution.
+No existing tests modified/weakened, no unrelated suite run. Production LOC0; repository
+test LOC0. Temporary diagnostic sources and documentation only. Existing uncommitted work,
+.qtcreator and .local-credentials preserved. git diff --check passed.
+
+## 2026-10-27 — Mutual review agreement with Claude
+
+Owner requested sending the independent validation back to Claude and continuing until
+both reviewers agreed. Completed three follow-up exchanges through the installed Claude
+CLI, safe plan mode with Read/Grep/Glob only, no MCP/command/write tools. Every invocation
+exited successfully with empty stderr. Current reviewed source remains 4257cb0 on
+deploy/core-vchrist. No production changes or existing test changes during the discussion.
+
+Joint result: docs/proposals/controller-parallelism-review-agreement.md.
+Exact outgoing requests and returned replies:
+docs/proposals/controller-parallelism-review-discussion.md. Earlier advisory claims marked
+superseded; the original report is preserved. Both reviewers explicitly agree on diagnosis,
+constraints, preferred reduction-first direction and the enumerated open owner/engineering
+gates. This is not an implementation-complete design, owner approval or measured speedup.
+
+Claude accepted C1-C11 with corrected cold/shared approval wording. Additional agreed
+findings: pre-POST generation equality can starve status dispatch; status and publication
+jobs retain independent setup inside their feed locks; repeated enrollment SSE reads are
+unnecessary. Conditional F4 overlap is deterministic when the earlier write advances the
+generation, but live occurrence/frequency remains unmeasured. No timing bounds inferred
+from Pages coalescing, GET response time or absence of live conflict errors.
+
+Preferred F4 direction reshapes the existing Database FIFO into lazy graph derivation,
+replacing eager stale transitions and retries instead of adding a GraphStore queue. Apply
+and generation increment must precede the next derivation; execution continuation must
+precede its derivative onChanged. Callback ordering/reentrancy audit remains an engineering
+gate. Do not rederive/replay after uncertain database mutation. Keep explicit selection
+and enrollment guards: selected definitions also reserve namespace claims, so an enrollment
+epoch alone is insufficient. Claude withdrew that epoch, unbounded HTTP concurrency,
+universal 99 admission claim and unconditional rollout-order/historical-retry assertions.
+
+Agreed HTTPS direction retains normal-time liveness outside the writer lock through a
+separately specified secret-free confirm job. Prepare computes bounded public receipt hash
+and commit SHA; needs:publish success supplies the execution condition, not a duplicate
+pushed flag. SHA is context; controller independently verifies committed receipt and HTTPS.
+Failure/cancellation/lost delivery retains uncertainty and existing recovery. Official
+job-dependency semantics checked:
+https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds
+
+Remaining decisions are explicit: future-admission policy after unknown push, bounded
+capacity, confirmation mechanism, privileged preparation/trust/replay handoff, old/in-flight
+pin compatibility, precise checkpoint/LOC approval. Same-origin concurrency is separate
+from the deferred per-origin refactor. No new timer, controller thread, scheduler, ready
+queue, instrumentation/cache/latch or callback protocol adopted by this review.
+
+No extra suite or live mutation was run for the discussion; prior isolated-MariaDB probe
+evidence remains labelled local. Existing uncommitted deployment docs/private directories
+preserved. Production LOC0; test LOC0. Documentation only, uncommitted/unpushed; no restart,
+installation or deployment. Temporary dialogue inputs/outputs retained under
+/tmp/codex/build/core-ci/parallelism-validation/ for review with the earlier probe.
+
+## 2026-10-27 — Parallelism refinement task prompt
+
+Owner requested a refinement prompt from the joint review conclusions. Created
+docs/proposals/controller-parallelism-refinement-task.md. It requests a concrete design,
+not implementation: lazy graph derivation through the existing Database FIFO, bounded
+same-origin overlap, progress-preserving status/SSE work, explicit writer-admission policy,
+secret-free HTTPS confirmation outside the write lock, and pinned-history rollout design.
+Requires exact callbacks/handoffs, all affected consumers, coherent checkpoint/deletion
+accounting, separate production/test estimates, focused tests and timed sandbox acceptance.
+Withdrawn review suggestions remain excluded. Owner decisions and framework engineering
+questions are separated; no code-growth or policy approval inferred from reviewer agreement.
+
+Verified canonical root, origin SNodeC/core-ci, origin/HEAD main, current deploy/core-vchrist
+at 4257cb0; read-only GitHub PR listing returned no open PRs. Existing dirty documentation
+preserved. Prompt leaves the shared branch and deployment unchanged, requires refinement
+to stop before implementation, and retains existing sandbox authority for later stages.
+No production/test changes, new diagnostics, Claude invocation, deployment, restart,
+commit or push for prompt creation. Documentation whitespace/link checks recorded locally.
+
+## 2026-10-27 — Implementation-ready parallelism refinement
+
+Executed the owner's design-only refinement task. Proposal:
+docs/proposals/controller-parallelism-design.md. Canonical checkout remains
+/home/voc/projects/snodec/core-ci, deploy/core-vchrist at 4257cb0; origin SNodeC/core-ci,
+default main; read-only open-PR listing empty. Existing dirty documentation preserved.
+
+Traced current Graph/GraphStore/Database, all commit/enroll/finish callers, source selection,
+GitHub token/proof coalescing, report/artifact/feed completion, main SSE and startup cleanup,
+worker publish/status/build workflows and signing/SDK consumers. Consulted installed public
+SNode.C headers and relevant framework HTTP/database apps plus MQTTSuite mqttcli/mqttstore
+ownership/configuration patterns. No framework source or application production edits.
+
+Concrete A: lazy SQL/change production through the existing FIFO; applied graph before next
+derivation; execution continuation before derivative notification; bounded-stack synchronous
+no-op drain. Important refinement: read callbacks retain release-before-callback because
+initial schema/restore failure can destroy wrappers; write callbacks use apply/continue/
+notify before release. Preserve guards and distinguish transient preparation rejection from
+SQL failure. No second queue or enrollment epoch. Status uses approved minimum generation;
+SSE avoids receiver-free views and execution-only repository reads.
+
+Concrete B: bounded same-origin overlap in the existing transport deque, actual connection-ID
+correlation from per-flow success/onConnect ordering, callback ownership moved once, closing
+transports keep their slots, origin changes drain first. Final flow termination distinguishes
+multi-address connection establishment from intermediate errors. Framework connector shutdown
+may omit status callbacks; no promise of result delivery across shutdown or destructor calls
+into an already destroyed Pipeline. Assigned work recovers through existing restart reconcile.
+Recommend per-instance max-in-flight 8 (range 1–16), not platform maximum or approved value.
+
+Concrete C: graph-owned publication blockers/batch reservations, recommended P1 admission 8
+per feed (range 1–32), current-head shared-write job, public hash/SHA handoff to a secret-free
+confirm job and independent controller proof. P2 remains an explicit alternative future halt.
+Residual privileged setup serialization and further split/environment options are visible,
+not described as full maximal parallelism. Recommend retaining O/N exact deployed workflow
+paths with separate fixed tooling pins to preserve historical retry; no global pin rewrite
+or generic compatibility layer. Include rollout/rollback table and old restore limitation.
+
+Created only a temporary object compile under
+/tmp/codex/build/core-ci/parallelism-refinement/ against installed exported snodec::http-client
+and snodec::net-in-stream-tls targets. Confirmed independent FlowHandle return, termination
+hook, MasterRequest connection ID and per-instance configuration registration. First build
+failed on ambiguous unqualified configuration members; qualifying ConfigInstance fixed it.
+Final build passed, including the added flow-termination type check. No network, executable
+run, database fixture, production test/suite or live mutation for this compile. Prior isolated
+MariaDB conflict-probe result still available and remains component/synthetic evidence.
+
+Official references verified for capacity, dependencies/outputs, REST concurrency and Pages:
+https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
+https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits
+No platform latency/order/cancellation guarantee inferred beyond those documents.
+
+Planning central estimates: canonical production added 535 / removed 290 / net +245; tests
+added 705 / removed 85 / net +620. Proposed approval bounds A/B/C total +310 production/+790 tests;
+separate sandbox wrapper/script deployment bound +450 net production, with mirrored source
+accounting per repo. These are estimates requiring approval, not actual changes or permission.
+Further privileged setup split outside bounds. Proposed timing targets and focused boundary/
+sandbox acceptance are untested; request accounting distinguishes evidence, token, dispatch,
+status, worker and HTTPS work. Remaining owner choices stated with recommendations.
+
+Actual production LOC 0; existing test LOC 0. Only proposal and this log changed for the task;
+temporary compile evidence retained for review. No commit/push/merge, config change, restart,
+trigger, deployment or SNodeC production resource change. Private directories not inspected.
+Future checkpoint documentation estimate: added275/removed100/net+175, separate from the
+current design artifact. Successful diagnostic commands and cleanup condition are in the
+proposal. Final documentation whitespace/fence/link checks and git diff --check passed.
+
 ## 2026-10-27 — approved controller/workflow parallelism implementation
 
 - Owner approved all four refined choices and implementation bounds: P1 independent publication
@@ -2155,6 +2663,111 @@ proposed. Commit/push/merge remain separate authorization stages.
   Documentation is separately modified and includes preserved pre-existing deployment/review work; untracked proposal/review files are preserved, not counted as production or tests.
 - Owner subsequently authorized committing/pushing this task on its separate branch and sending Claude a detailed agreement-based review request. The staged documentation includes the task review/design evidence; unrelated deployment documentation and private/untracked files remain outside the commit. No merge or installation is authorized by that instruction.
 
+## 2026-10-27 — Claude implementation review returned
+
+- Owner requested waiting for the detailed review of pushed branch `fix/controller-parallelism`, commit `63ab7b2`. Claude completed successfully in read-only plan mode (Read/Grep/Glob; no command/write/MCP tools); stderr was empty. Its report is recorded in `docs/proposals/controller-parallelism-implementation-review.md`.
+- Claude reports no disagreement with the agreed mechanisms and no definite blocking defect in the core concurrency mechanisms. It flags M1 conflicting O/N installation instructions; H1 potentially stranded disabled-client operations (needs probe); T1 missing focused/live coverage; L1 phase-required arguments, L2 moved-function callback clearing, L3 shutdown error wording, and L4 response/uncertainty behavior changes. These remain reviewer findings requiring independent validation, not accepted facts or authorization for broader changes.
+- No fixes, merge, restart or activation were performed while waiting. Review report/log additions remain uncommitted; pushed implementation remains `63ab7b2`.
+
+## 2026-10-27 — independent code validation of Claude findings
+
+- Owner requested investigation/report only, excluding documentation investigation. Kept
+  production, existing tests/workflows and deployment unchanged at `63ab7b2` on
+  `fix/controller-parallelism`. Preserved unrelated changes and private/untracked directories.
+- Confirmed H1 against framework implementation and a local installed-library probe: disabling
+  github-http leaves the operation pending without callback (observed callback count 0).
+  Connector observation does not implicitly terminate a disabled flow. No separate normal-running
+  cancellation defect was demonstrated; shutdown must be treated by its actual lifecycle.
+- Confirmed L1 via mocked phase boundary: missing --feed reaches checked_push with current
+  directory. No network, real token/signing or Git mutation. Argument requirements should
+  follow use: feed for prepare/push, build-result/artifacts for prepare, neither for confirm.
+- L2 is a real std::function move portability weakness, but installed libstdc++16 explicitly
+  empties the moved source, so duplicate delivery is not reproduced here. Standard reference:
+  https://eel.is/c++draft/func.wrap.func.con#6 . L3 is genuinely incorrect shutdown wording;
+  submitted=false and conservative dispatch handling remain intact.
+- L4 response metadata/status differences are source-confirmed; no broken UI consumer or
+  assignment loss found. Repeated duplicates under DB uncertainty can cause unchanged SSE
+  broadcasts, without SQL/evidence HTTP/status dispatch. Corrected Claude's external-503 claim:
+  authenticated delivery already received 202; processing 503 is internal/logged.
+- T1: confirmed missing dedicated origin/shutdown/multi-address/sustained-approval/forced
+  end-to-end built-overlap tests. Existing concurrent report/MariaDB-lock and GraphStore overlap
+  coverage is meaningful. Corrected the broad rollback-gap claim: stale generation and namespace
+  errors exercise successful rollback; START and failed rollback need targeted failure injection.
+  Lost successful COMMIT acknowledgement is already covered by the enrollment DB proxy.
+- Temporary transport probes additionally show capacity 1 => peak 1 with 12 correlated callbacks,
+  capacity 2 => peak 2, and invalid HTTP limits 0/17 rejected. Publication 0/33 are range-rejected;
+  1/8/32 pass range validation before the isolated CLI probe stops for missing required database
+  configuration. These diagnostics are not newly committed tests or live acceptance.
+- I1 read callback ordering is unchanged from base and preserves startup destruction safety;
+  no affected consumer found. Mixed-level GitHub lock exclusion, live status contention and
+  response-to-close occupancy remain unverified measurements. Selection guard rejection and
+  partial signing/setup serialization are known retained boundaries, not new code findings.
+- Full code-only assessment and diagnostic inputs/results are under
+  `/tmp/codex/build/core-ci/parallelism-findings/`. No documentation fixes, production edits,
+  commits, pushes, live mutations, controller restart or broad test suite were performed.
+
+## 2026-10-27 — agreement on every implementation-review correction
+
+- Owner asked for each finding to be compared against proposal/implementation and for continued
+  Claude discussion until fix disagreements were resolved. Completed two detailed read-only
+  rounds and a final acknowledgment. First two Claude invocations used only Read/Grep/Glob;
+  final acknowledgment had no tools. All exited successfully with empty stderr. No source,
+  existing tests, workflows, configuration, deployment, commits or pushes changed in this task.
+- Recorded full requests/responses in
+  `docs/proposals/controller-parallelism-fix-discussion.md` and the concrete current plan in
+  `docs/proposals/controller-parallelism-fix-agreement.md`. Source remains `63ab7b2` on
+  `fix/controller-parallelism`; review records are uncommitted alongside preserved unrelated work.
+- Both reviewers explicitly agree on all fix directions. H1: complete DISABLED requests once as
+  definitely unsubmitted, preserve intermediate address-error handling. I accepted Claude's
+  correction: framework startFlow defers establishment; the real disabled callback is asynchronous,
+  so my earlier post-connect cleanup explanation was wrong. No new cancel/lifecycle mechanism.
+- L1: validate only actual phase inputs before work (feed for prepare/push; artifacts/result for
+  prepare). L2: exchange callback with nullptr. L3: correct unsubmitted shutdown wording. L4(a):
+  retain lazy derivation; use existing PipelineResult as a value-captured preparation-error
+  response, restore actual caller classifications/preservation context and uncertain:false,
+  remove obsolete eager-era catches. No invented no-op identifier guarantee.
+- L4(b): keep conservative rejection of no-op commit paths while DB authority is uncertain,
+  including internal503/reconcile503 and failed-mutation SSE. External webhook ACK stays202.
+  No eager duplicate path/cache/flag. This observable difference is recorded, not a claim of
+  byte-identical behavior or owner waiver. L4(c)/I1 require no changes. M1 retains its already
+  identified minimal O/N wording correction only; no further deployment-documentation audit.
+- Corrected coverage claims: token completion already exercises callback-enqueued HTTP work;
+  successful rollback and pipeline concurrent reports are already covered. Focused reachable
+  gaps have a concrete test plan, including disabled/capacity/range inputs, malformed phases,
+  sustained approval progress, shutdown, and targeted START/failed-rollback proxy failures.
+  START failure is definite/unlatched; failed rollback latches uncertainty and blocks producers.
+  Actual wire interception must be counted; close/restart cleans the deliberately open test
+  transaction and must explicitly verify no revision leaked.
+- Design-listed active origin switch/orphan callbacks are not runtime-tested; recorded source
+  constraints do not count as coverage or owner waivers. Multi-address test cannot rely on
+  dual-stack localhost because tls::in is AF_INET. Namespace fixture/connect stall/failed-rollback
+  wire text/feed-disabled/artifact-overlap/sanitizer feasibility remain verification work.
+- Claude's final reply: "I have no remaining fix-direction disagreement." Live mixed O/N mutex
+  proof, capacity rollout, timing targets, signature/client acceptance and any remaining owner
+  disposition remain separate. No reviewer agreement expands approval or claims deployment.
+
+## 2026-10-27 — Claude-authored correction implementation prompt
+
+- Owner asked to send Claude the agreed correction plan and obtain the prompt to implement all
+  corrections. Sent the complete agreement/final acknowledgment, actual branch/checkpoint,
+  existing approvals and line headroom, private-directory restrictions and all test dispositions.
+- Claude drafted the prompt without tools. I requested one revision to remove conflicting
+  whole-file preservation versus task edits, redundant baseline/micro-step retesting, blanket
+  stops on unrelated uncertainty, equal-length SQL injection as a requirement, shutdown callback
+  guarantees and confusion between local documentation commits and remote tooling/wrapper commits.
+  Both Claude invocations exited successfully with empty stderr; neither had read/write/command
+  tools. No source, existing test, workflow, runtime configuration or deployment changed.
+- Saved the revised prompt in `docs/proposals/controller-parallelism-correction-task.md`.
+  Two editorial clarifications explicitly preserve the already agreed uncertainty-capacity rule
+  and the existing path classification for cumulative line accounting; no fix direction changed.
+  Rechecked the committed figures versus `4257cb0`: production652/452 (net200), tests398/116
+  (net282), leaving110/508 under approved310/790. Documentation is separate.
+- Draft/request/revision artifacts remain under `/tmp/codex/build/core-ci/parallelism-findings/`.
+  The task prompt grants no new authority; generating it did not start implementation or any
+  commit/push/merge/install/restart/activation stage. HEAD remains `63ab7b2` on
+  `fix/controller-parallelism`; new prompt/log records remain uncommitted. Existing unrelated
+  changes and private/untracked directories were preserved without inspection.
+
 
 ### Controller parallelism correction implementation and focused verification (2026-10-27)
 
@@ -2222,6 +2835,75 @@ proposed. Commit/push/merge remain separate authorization stages.
   for these documentation-only additions. Merge authority does not activate deployment.
 - Installation, live restart, sandbox alias rollout and mixed-generation lock proof remain
   separate. No production SNodeC workflow, credential, key, tag, feed or deployed state changes.
+
+
+### Deploy reviewed parallelism controller on core.vchrist.at (2026-10-27)
+
+- Owner authorized deployment and startup after merging main at
+  `7a38f93293666176c3387b8ff119b5c2c0ab6b94`. Installed the verified Debug executable,
+  SHA-256 `5f74221cbb3265670a70177ac5d22980c22ba230c28a41f3db734f624a30ef66`, at
+  `/srv/core-ci/bin/core-ci`. Its 20 installed private SNode.C runtime library hashes
+  match the tested build exactly. Remote `ldd -r` and help checks succeeded; no framework
+  package or existing runtime library was changed.
+- Captured graph state before cutover and stopped the existing service. Saved a consistent
+  database dump, previous executable and runtime manifest under the protected backup path
+  `/var/backups/core-ci/parallelism-7a38f93-20261027T190555Z`. Backup contents were not
+  inspected or transferred. No credentials or private configuration contents were inspected.
+- Kept existing workflow/tooling pins and listener addresses. Installed a service drop-in
+  `/etc/systemd/system/core-ci.service.d/90-parallelism-rollout.conf` preserving the existing
+  command and adding `pipeline --publication-limit 1`, as the approved staged rollout requires
+  before mixed-generation feed-lock proof. HTTP concurrency uses the reviewed implementation.
+  No GitHub workflows, enrollment inputs, historical selections or package bytes were edited.
+- Started `core-ci.service`: PID 210183, active/running, zero restarts at verification.
+  The running executable hash matches the installed artifact. MariaDB is active and the API
+  reports database available and mutations allowed. All 140 executions retain IDs, attempt
+  identities, revisions, sources, state, run assignments and receipts at generation 1394:
+  108 published, 17 failed and 15 waiting. No failed work was retried and no new build requested.
+- Verified externally reachable management health on port 8080, trusted HTTPS public status
+  on port 8443 (schema 1, generation 1394), local SSE graph bootstrap at the same generation,
+  and unsigned webhook rejection with HTTP 401. Existing ports 80/443 were left untouched.
+  These are live service deployment checks, not a new GitHub build or mixed O/N lock acceptance.
+- Local evidence and deployment script are retained under
+  `/tmp/codex/build/core-ci/deploy-parallelism/`. No additional checkout was created.
+  Production/test source changes: zero; only this documentation entry was added locally.
+  Existing unrelated documentation remains preserved. Publication capacity above one, new
+  sandbox aliases and remaining live pipeline acceptance gates are separate follow-up work.
+
+
+### Tag-driven sandbox graph and utilization policy (2026-10-27)
+
+- Owner requested a complete fresh chain from a core tag and continuous monitoring of GitHub CI,
+  public status pages and the core.vchrist.at:8080 UI. Created only demo-core v2.1.3 at the
+  unchanged prior source commit 1cfcfa17de500bb68f389bf6b8c4cbf27ddcbb57 at 19:12:46.936 UTC.
+  Initial CLI tag creation was definitely rejected with HTTP 404. The existing controller App
+  then created it using a temporary token restricted to demo-core contents/workflows write;
+  the token was revoked. No secret value was printed, stored or inspected.
+- Its real webhook selected 20 new executions (140 to 160), reserving revisions 145 through 164.
+  All five core builds were dispatched automatically; dependent work retains the original policy
+  of waiting for verified published prerequisites. No manual selection or advance was injected.
+- Owner clarified that available GitHub runner capacity must not be reserved for task classes;
+  all eligible work should be submitted, with publication priority/reordering allowed. This
+  preserves the original natural prerequisite ordering rather than introducing another queue.
+- Removed the temporary one-publication admission throttle by changing the service override to
+  --publication-limit 20 and restarting the same reviewed binary. Backup and graph snapshot:
+  /var/backups/core-ci/admission20-20261027T192059Z. Existing GitHub assignments were retained;
+  no uncertain mutation was retried or replaced. No controller production/test code changed.
+- The deployed old publisher workflow still holds the feed group around the whole workflow;
+  queue:max preserves pending publications. The merged new workflow narrows that boundary but
+  is not activated by this controller-only deployment. Current selections retain their original
+  immutable workflow/tooling pins. No gate for mixed-generation workflow activation is claimed.
+- Corrected the explanation of Git: normal non-force pushes atomically reject stale history;
+  they do not silently overwrite another publisher. Feed-lock coordination avoids conflict and
+  metadata regeneration, not a failure of Git's branch protection semantics. No force push or
+  automatic push-retry protocol was introduced.
+- Live monitoring records controller, GitHub and Pages observations independently under
+  /tmp/codex/build/core-ci/tag-chain-v2.1.3/. The UI rendered the session in an isolated headless
+  browser initially; repeated DOM snapshots timed out, so continuing UI monitoring uses its
+  actual live SSE stream and health API. This is not claimed as continuous visual verification.
+- GitHub/controller completion comparisons have so far found no stale completed-run evidence.
+  Pages was observed behind the controller (generation 1472 versus 1519, seven state differences),
+  separately recorded as public projection lag. The session is still in progress, not accepted.
+
 
 ## Slim controller fresh implementation — source foundation
 
@@ -2918,6 +3600,7 @@ and screenshot are retained under /tmp/codex/build/core-ci/ui-compact/live-*.
 No GitHub mutations, retries, config/database changes, push or merge. Unrelated
 hunks remain preserved; this append records deployment under existing commit authority.
 
+
 ### Unconfirmed r169 publication investigation — 2026-10-28
 
 Owner requested investigation/proposal only and discussion with Claude until agreement.
@@ -3061,6 +3744,118 @@ unrelated existing documentation hunks remain unstaged. No deployment or live re
 
 Final receiver-change verification: all nine selected graph/store/pipeline checks pass
 (12.81s), including cold/recovery, unchanged-burst coverage and retirement cases.
+
+### Merged recovery fix deployed and r169 retired — 2026-10-28
+
+Owner authorized deployment on core.vchrist.at and resolution of the stalled publication.
+Deployed main merge d88ae51d5d6cfc3466c1143a1123789d7d8f5559 (source bytes identical
+to task commit a568290), binary SHA256
+ec611609081184cbbb431820720261a654ac43c328ddd12e7dcba105a7fe0ae9.
+All20 runtime library hashes matched; none replaced. Release /srv/core-ci/releases/d88ae51.
+Stopped existing service, made protected consistent core_ci_slim dump and previous-binary/
+manifest backup at /var/backups/core-ci/unconfirmed-20261028T113924Z, installed binary
+and manifest, restarted existing service. Active PID223081/NRestarts0. No configuration,
+keys, libraries, ports, production SNodeC resources or package/feed bytes changed.
+Restoration preserved all40 execution assignments, outcomes and evidence, generation2100.
+
+Explicit reconciliation inspected1 unbound publication and disclosed incomplete listing;
+this cannot establish whether GitHub accepted the old dispatch. Under owner recovery
+authority, POST /api/work/retire acknowledged unknown outcome for exact r169 attempt.
+Stored failure: operator abandoned unconfirmed dispatch; remote outcome unknown.
+Independent administrative MariaDB read confirms generation2101, statefailed, oneattempt,
+null publicationrun and retained preflight. No remote cancellation, replay or retry.
+Published replacement r189 v2.1.5 remains intact. All39 other execution views are unchanged,
+including15 pre-existing waiting rows;24 published,1 retiredfailed,0building/0publishing.
+Live served UI includes action and SSE bootstrap reports retired state.
+
+Evidence /tmp/codex/build/core-ci/unconfirmed-deploy/ holds before/restored/final graph,
+reconciliation/retirement responses, manifest and acceptance JSON. Initial acceptance
+script incorrectly asserted no historical waiting rows; corrected check proves all39
+other rows unchanged and no active building/publishing rows. This is verification-only
+correction, not an application failure or reason to advance historical work.
+Original transport cause remains unknown. No new full build requested/triggered.
+Deployment record remains uncommitted with preserved unrelated documentation changes.
+
+### Fresh v2.1.6 full-chain timing acceptance — 2026-10-28
+
+Owner authorized a fresh core tag and detailed monitoring across GitHub workflows, status
+pages and the core.vchrist.at:8080 management UI. Created demo-core v2.1.6 at unchanged
+main378ff698bf66dc1b4d1b46c1b72dc12704fe3cf1; preserved all existing tags. Trigger UTC
+11:46:43.649288; all20publications first observed12:13:26.058382, elapsed1602.409094s.
+All20builds and20publication workflows succeeded on attempt one. No manual retry,
+reconciliation or advancement. All15dependent readiness transitions assigned work in
+the same committed SSE frame that verified the final prerequisite. All20HTML rows
+matched receipt package versions, publication minutes and empty In-build cells. Pages
+reached final2442at12:14:34.926307, approximately68.868s after local completion with
+30-second sampling uncertainty. Live browser recorded20published atgeneration2442.
+
+Detailed current-session report: docs/reports/v2.1.6-live-timing.md. Evidence/observer
+scripts: /tmp/codex/build/core-ci/full-chain-v216/, also server-side for the temporary
+tracer. Scoped64entry/return probes on32functions/callbacks, no captured arguments,
+bodies or secrets; dedicated trace instance and PID filter. Initial append-open tracefs
+setup failed before triggering; corrected to non-truncating write-only file descriptors.
+Final trace has0unmatchedreturns/stackdiscontinuities and0per-CPUbuffer overruns.
+Removed all probes and instance; all observers stopped, temporary Chrome profile removed.
+Optional final screenshot failed after finalDOM/graph capture when CDP closed; earlier
+images and finalDOM evidence retained. No application failure inferred from that artifact.
+
+Measured Debug deployment, not Release or an uninstrumented comparison. Graph selection
+14.475ms; traversal301calls/625.686ms total, median1.740ms/max8.067ms. Fullgraph/SQL
+preparation median114.182ms and application/continuations median185.967ms. FIFO wait
+max1131.970ms. Nonoverlapping traced synchronous wall total123.144s includes observer
+work/descheduling/profiler overhead, not CPU-only or added critical-path latency.
+Thus functional pipeline passes, but negligible aggregate controller overhead is not
+established.23successful statusjobs consumed331jobseconds;163other statusruns cancelled.
+20publisher jobs consumed1082jobseconds without overlapping each other. Controller
+HTTPenqueue and journalconnection counts both826, including derivative work/tokens/proof.
+Observer REST calls are separately recorded (periodic421, completeness80, ad-hoc extra).
+No Pipeline diagnostic errors or403reported in controller logs. No10–20xclaim without
+a comparable baseline. Report separates CPU-code wall spans, async waits, runner work,
+feed serialization, status snapshots, Pages and CDN observations.
+
+Deployed controller remains d88ae51, PID223081/NRestarts0; no code/config/keys/library/
+production SNodeC resource or test change. Production0/test0; report/log documentation
+only, uncommitted with unrelated existing documentation preserved. Historical r169 remains
+operator-retired; no new retry. Next performance work requires its own coherent scope.
+
+### Joint speed correction review with Claude — 2026-10-28
+
+Owner requested analysis and agreement with Claude, setting aside the preceding suggestion
+to combine GitHub steps. No implementation authority inferred. Current branch
+rewrite/slim-graph-controller HEAD a568290; merged/deployed main d88ae51, matching sources.
+Read current graph/store/database/status/worker code, public terminal job logs and exact
+workflow blobs at721537bc; nine worker Python files matched immutable e7b1423 tooling.
+No discarded architecture recovered; screenshot reminders were not analysed.
+
+Three Claude review rounds and final confirmation in session
+3962a698-0c29-4fd0-a2b7-ed7330675520 reached agreement; full prompts/responses and filtered
+public log evidence under /tmp/codex/build/core-ci/speed-review/. Agreement and concrete
+proposal: docs/proposals/controller-speedup-agreement.md. All163 cancelled status runs
+had saved jobs=[] listings. OpenWrt prepare total528s vs26s native; unlogged gaps cannot
+isolate SDK archive download from metadata/API/extraction. Withdrawn hard1%/10–20s
+controller ceiling and any claim331status seconds add directly to the critical path.
+
+Agreed first changes, not implemented: Release baseline; eliminate copy-and-erase hidden
+attempt fields; dump SSE once per broadcast; reserve SQL hex output. Reuse the EXISTING
+validation artifact as packages/ plus official SDK archive sibling, with full independent
+metadata/hash/compiler/staging/format/key/receipt checks. No second artifact/cache/latch.
+Four flushed SDK phase markers allow measured attribution. Native and push/confirm do
+not require the SDK; missing OpenWrt prepare argument fails before network/key handling,
+content checks before extraction/execution. Seven-day retention remains; added SDK payload
+about2.03GiB per comparable full session, with upload/download and temporary disk costs.
+
+Old workflow bytes preserved; new aliases pre-rendered/provisioned and hashes verified
+before config switch. Status remains on existing wrapper/tooling. Exact deployment guard
+requires new core selection before below-core selections; do not relax it or rewriteold
+assignments. No broad history layer. Later GitHub writes/config/restart retain their own
+authority. Potential bounds needing approval: C++aimneutral/maxnet+5 (cap3576 ifallused),
+Pythonnet+15–25, newphysicalYAML300–330, tests+65–110. Existing C++cap3572 remains binding.
+No newstatuspolicy, confirmationcadence, tool-installchange or trustreduction in this first
+checkpoint. No10–20xspeedup promised; net improvement must be measured.
+
+Only proposal/log documentation changed; production0/test0. No builds/tests/GitHubwrites/
+livechanges during this review; only public read-only metadata/log/SDKHEAD reads.
+Unrelated dirty documentation and private directories preserved.
 
 ## 2026-10-28 — Agreed performance correction, local implementation
 
@@ -3219,6 +4014,105 @@ restart, live tag or VOC-Experiments workflow activation is part of this stage.
 - This review record changes documentation only. No deployment, new builds, historical
   cleanup, feed/key/config changes or uncertainty recovery was performed.
 
+
+## Canonical publication live activation check — 2026-10-28
+
+- Owner authorized going live and a new full sandbox graph run after main merge
+  `4f8370b97e1423d40bebc771017ea349f646b78e`. Current checkout remains
+  `rewrite/slim-graph-controller` at review-record commit `8cdbf32`; source tree matches
+  merged main. Unrelated dirty documentation remains preserved.
+- Before activation, captured live graph and public feed tree under
+  `/tmp/codex/build/core-ci/canonical-live/`. Graph generation2442 retains60 executions:
+  44published,15waiting,1failed, with zero building/publishing assignments.
+  `/api/graph` is healthy; `/api/health` is not a registered endpoint (HTTP404).
+- Required read-only activation check found41 top-level APK files already in
+  `openwrt/25.12/x86_64/`. Current public key `core-ci-apk.pem` is EC P-256; separate
+  `apk.pem` is RSA3072. Public keys only were downloaded. No private key/config was read.
+- Downloaded official SDK25.12.6 (285832189bytes), verified its SHA256
+  `1864152619092e781fa36a401960c8e9ae42d6a364c44ee5f0b197ca5f3c0fcc` against both official
+  `sha256sums` and retained SDK evidence. Extracted only its packaged host APK tool/libraries.
+  Tool identifies as apk-tools3.0.5; initial standalone wrapper could not run without its
+  loader/libraries, then verification completed with the official packaged host dependencies.
+- Sample `openwrt/25.12/x86_64/demo-app-1.0.0-r10.apk` fails `apk --keys-dir <current-key>
+  verify` with exit1/UNTRUSTEDsignature. Verification with the separate old public key also
+  fails; signing provenance/validity of those older bytes is not established.
+  Crucially, the actual `mkndx --output <temporary-index> <sample>` operation with the
+  current key exits99: UNTRUSTEDsignature;1errors,notcreatingindex. This is a concrete
+  activation conflict, not a blanket prohibition on existing directories or a live run failure.
+- Current publisher enumerates all top-level APKs in the corrected canonical directory.
+  A new run would therefore encounter this incompatible existing input. Evidence and exact
+  outputs are in `apk-compatibility.json`. Only one sample was verified; no claim that all41
+  files have been independently checked. No signature bypass, re-key or filtering added.
+- Honored owner instruction "No historic clean up!": no deletion, relocation, database reset,
+  workflow/config mutation, deployment, restart or new tag/build was performed. Activation
+  and the new full run remain pending an owner decision for the conflicting sandbox bytes.
+  Application production/test changes0; this work-log append only. Official SDK/evidence
+  retained under the task root for review and cleanup after resolution.
+
+
+## Canonical publication deployed and v2.1.7 fully accepted — 2026-10-28
+
+Owner approved removal of exactly 41 old canonical sandbox APKs and their index, then
+continuation of the authorized deployment/full build run. Feed commit `de0ff952361ec2e42c345dc251128f692b437a2f`
+removed exactly those42files; all1089otherblobs matched. Initial post-update verification
+compared changed directory-tree hashes as though immutable; corrected blob-only comparison
+proved the exact approved mutation. No Git mutation was repeated. Keys/receipts/Git history
+were preserved; no broader cleanup, re-key, reset, signature bypass or migration occurred.
+
+Deployed main4f8370b as validated Release binary `9f19d395ca63ea126d1f686ecc6c2716e019613a523d18d5a934f855d1034203`
+on core.vchrist.at, PID226972/NRestarts0. Existing20runtimehashes unchanged; one
+matching missing framework module added privately. Protected consistent MariaDB/service/binary
+backup `/var/backups/core-ci/canonical-20261028T191742Z`. All60executionrecords restored exactly atgeneration2442.
+Listeners remain wildcard8080/8443; private configuration, credentials, ports80/443 untouched.
+Worker tooling4bbf551, canonical source/publication aliases and corrected status pin verified.
+Old execution wrapper bytes retained. Client scripts updated to reviewed canonical roots.
+
+Created only demo-corev2.1.7 at27932aec43653be5f8dc08a03a7dfd1ea4efb9fb, UTC19:18:24.519544.
+All20fresh targets r225–244 published automatically; all40original build/publication runs and
+five real APTamd64/arm64, DNF, opkg, APK client workflows succeeded. No retries, replacement
+dispatch, reconciliation or manual advancement. All20package HTTPS hashes match receipts,
+all40rendered Packages anchors resolve (8distinct URLs HTTP200). All60previous assignments/
+evidence and772retained immutable feedblobs unchanged after the approved removal.
+
+SSE first observed all20published at2026-10-28T19:40:07.226737+00:00, elapsed
+1302.707s. Pages reachedgeneration2774 at2026-10-28T19:40:46.630167+00:00. All15dependent
+assignments appeared in the same observed graphframe as final prerequisite publication.
+No function-level tracing or zero-CPU-time claim. Final loopback graph median43.319ms
+(852433bytes), publicstatus15.244ms(117459bytes),10samples each afterwarmup. Publisherjobs
+were mutuallyexclusive, total766jobseconds; remote post-validation feed-job wait median106.5s,
+max260s. These are remote queue/setup intervals, not controller processing time. All8OpenWrt
+publishers emitted4SDKphase markers. Browser unavailable; UI monitored viaAPI/SSE, not visual
+rendering. Full proof/timings/runlinks: docs/reports/canonical-publication-live.md.
+
+Evidence/temporary officialSDK under /tmp/codex/build/core-ci/canonical-live/, observer stopped
+afterPagescaughtup. No application production/test changes; local documentation only, preserved
+unrelated hunks/private directories. No additional checkout, frameworksource edit or production
+SNodeC workflow/credential/tag/feed change. Deployment records remain uncommitted.
+
+
+## Additional live UI review run — 2026-10-28
+
+Owner requested another full run after missing the completed session. Confirmed idle graph
+generation2774 with no building/publishing assignments, then created only demo-corev2.1.8
+at unchanged main27932aec43653be5f8dc08a03a7dfd1ea4efb9fb, UTC19:51:20.675237.
+Existing tags preserved; limited diagnostic controller token revoked after the operation.
+Trigger evidence: /tmp/codex/build/core-ci/webui-review-run/v2.1.8-trigger.json.
+No deployment, configuration, feed cleanup, retry, manual advancement or code change.
+This is a newly started run for live UI review, not completed acceptance.
+
+
+## Timing-pair horizontal spacing — 2026-10-28
+
+Owner screenshot shows unequal Started/Finished spacing between Build and Publisher job.
+The table lets automatic layout independently size the timestamp columns. Set the four
+job timestamp cells to the same7emwidth through their existing work-time class; preserve
+centered two-line local timestamps, group headings and the independent verification column.
+UI CSS only, one existing line reshaped, production +1/-1/net0; no C++ or test changes.
+Static selector check covers all four normal execution timestamp cells; changed line <=160
+and git diff--check pass. Browser unavailable in this session, so rendered layout remains
+unverified. Not committed/deployed; no active run, service or assignment was modified.
+
+
 ## Stable work-table columns during live state updates — 2026-10-28
 
 Owner additionally observed that changing state labels resize the State column and move
@@ -3233,6 +4127,23 @@ Owner authorized commit, push, merge and deployment. Release core-ci build, form
 column-group/width assertions and git diff --check pass. Browser unavailable; rendered layout
 remains unverified. Restart will preserve durable assignments; no workflow or pipeline change.
 
+
+## Work-table layout deployment — 2026-10-28
+
+Task commit a0e6ec503509a87451077baafa045af23032e162 pushed on
+rewrite/slim-graph-controller; PR #4 merged as c06a7f7a37b81a81292f37c09c0bd0f79c164a81.
+Release binary 26caa741b3fee7040c9d446e43ebc4ad7dc32d00e85f2f92508d97e2a6e9a8c4
+deployed to core.vchrist.at, PID227598. Same source tree as merge; runtime21 libraries
+verified unchanged. Service arguments/workflow pins unchanged. Database backup:
+/var/backups/core-ci/ui-columns-20261028T201028Z. Durable generation3100 restored exactly;
+all100 executions, attempts, assignments and existing run IDs preserved, including2 active
+assignments. Fresh v2.1.8 at verification:18 published,1 publishing,1 building. No retry/tag.
+Served HTML/CSS/JS match local assets through loopback and public8080; TLS public status
+responds. Browser unavailable, so rendered visual verification remains outstanding.
+Production UI +4/-4/net0; C++0; tests0; committed documentation+14 lines.
+Deployment record appended locally, preserving unrelated working-tree documentation.
+
+
 ## Restore compact timing pairs — 2026-10-28
 
 Owner rejected the fixed percentage table layout. Governing presentation invariant: State
@@ -3243,6 +4154,20 @@ inner timing-cell padding to both headers and body. Centered local two-line time
 group headings remain. No JS/C++ or controller behavior change. UI+6/-6/net0; tests0.
 Static checks and git diff --check pass, changed lines <=160. Browser reports no available
 apps/browsers, so no rendered visual claim. Continue the previously authorized commit/push/merge/deployment stages for this correction.
+
+
+## Compact timing correction deployment — 2026-10-28
+
+Correction d1b50a3 committed/pushed on rewrite/slim-graph-controller, PR#5 merged as
+0188d73a0fff92f5d411cb0445c82252bba7f7d8. Release build source tree equals merge tree.
+Deployed binary c36cdef521af25406cb95b73e58039fda0a0818e10ef08d2a1026955f2f26cb3
+on core.vchrist.at; service PID227769. Backup
+/var/backups/core-ci/ui-columns-20261028T201657Z. Generation3116 and100 executions
+restored without changes to attempts, assignments or existing run IDs. No active assignments
+at restart; v2.1.8 has20 published targets. All3 served UI assets match local source over
+loopback and public8080; existing TLS public status responds. No config/pin/library changes.
+Browser unavailable; rendered appearance remains for owner review. Deployment record local.
+
 
 ## Explicit compact timing-column layout — 2026-10-28
 
@@ -3257,6 +4182,23 @@ Source assertions cover1224/1400/1712px layouts, colgroup semantics4/2/2/1 and u
 JS/C++ consumers. These are source/calculated checks, not browser-rendered proof. Browser
 reports no enabled apps/browsers. UI+4/-4/net0; tests0; changed lines<=160 and diff check pass.
 Continue existing owner authorization for commit/push/merge/deployment of this UI fix.
+
+
+## Explicit timing layout deployment — 2026-10-28
+
+Task commit ebe63db5245311d88afc9d8fc566e0c36e14ac47 pushed on
+rewrite/slim-graph-controller; PR#6 merged as7dfc6931aa314a203aef4b5130d985014011f8fc.
+Release source tree matches merge tree. Binary
+d53a6c16e85f39caace1aa45f69628119942e25f2cc41c908071ed334ea00d36
+deployed on core.vchrist.at; service PID227971. Backup
+/var/backups/core-ci/ui-columns-20261028T202803Z. Generation3116 and100 executions
+restored unchanged, including attempts, assignments and existing run IDs; no active work
+at restart, v2.1.8 remains20 published. All3 served assets match source over loopback
+and public8080; TLS public status responds; service command and runtime libraries unchanged.
+Source geometry checks and Release build passed; browser unavailable, so no rendered visual
+verification claimed. UI production+4/-4/net0, tests0, committed documentation+14lines.
+This deployment entry remains local alongside preserved unrelated documentation.
+
 
 ## Fresh Work-page presentation design — 2026-10-28
 
@@ -3275,6 +4217,7 @@ passes node --check and contains no remote calls; browser runtime verification i
 No production/test/controller/deployment changes, commit or restart. Existing unrelated
 working-tree changes preserved. Proposed implementation estimate+20–40 net UI lines,
 +15–30 fixture lines, zero C++/SQL/workflow/API; explicit growth approval remains required.
+
 
 ## Implement fresh Work-page presentation — 2026-10-28
 
@@ -3296,6 +4239,38 @@ checks pass. These HTTP/source checks are not browser rendering/interaction cove
 Evidence: /tmp/codex/build/core-ci/work-table-redesign/fixture-proof.json. Browser access
 still reports no enabled apps/browsers; requested enablement while continuing independent
 work. Authorized deployment will be reported with visual verification explicitly pending.
+
+
+## Redesign merge authorization review — 2026-10-28
+
+Commit3ab30cb66b25be2e80fd64eeecf5986a8f349f97 pushed on rewrite/slim-graph-controller;
+PR#7 open and mergeable with only task-owned files. Automatic approval review rejected
+the exact-head REST merge: it judged cpmd insufficient explicit authorization for merging
+the redesign into the default branch. No workaround attempted; merge and deployment not
+performed. Owner must explicitly confirm merge/deployment. Existing vchrist release remains
+unchanged. Local synthetic fixture stopped; Release binary and evidence retained under
+build/codex/speed-release and /tmp/codex/build/core-ci/work-table-redesign.
+
+
+## Redesign deployment after explicit cpmd clarification — 2026-10-28
+
+Owner explicitly clarified cpmd as commit/push/merge/deploy. Merge retry accepted; PR#7
+merged as876139d48a79ad996891677f1ff6952e07d4762a, source commit3ab30cb. Source tree
+equals merged tree. Release binary
+5b7a706e8b50e77fa9884776202e2c41c44d8077637779779abc0e5798f0d757
+deployed on core.vchrist.at, service PID228323. Backup
+/var/backups/core-ci/ui-columns-20261028T205754Z. Generation3116 and100 executions
+restored unchanged, preserving attempts, assignments and run identities. No active work at
+restart; v2.1.8 retains20 published targets. Existing service arguments,21 runtime libraries
+and workflow pins unchanged. HTML/CSS/JS match source over loopback and public8080; TLS
+public status responds. No new tag, build, retry or pipeline mutation. Final UI production
++57/-24/net33 and fixture+16/-0/net16; zero C++/SQL/API/workflow change. Build, format,
+syntax, source semantics and public fixture/SSE checks pass; actual browser rendering,
+interaction, zoom/locales and dark appearance remain unverified because browser access
+is unavailable. Original synthetic fixture required SIGKILL after normal termination
+remained ineffective; its port34591 is verified closed. No production process affected.
+Deployment record remains local, preserving unrelated documentation changes.
+
 
 ## Independent execution expansion and compact columns — 2026-10-28
 
@@ -3322,6 +4297,26 @@ changed production lines<=160 and git diff --check pass. Existing C++ unchanged,
 format-check remains applicable. No live graph mutation/new build/tag/retry. Browser visual
 verification remains unavailable; cpmd stages will verify exact served assets and durable state.
 
+
+## Independent expansion deployment — 2026-10-28
+
+Source49f90ee6cabb64e837cf26e97b2f72c6bab7f2fc pushed on rewrite/slim-graph-controller;
+PR#8 merged asf98a3901b1fb82b4ae86c247e5faa2416ae7f876. Source/merge trees identical.
+Release binary46bc1b313088f054f4cacc0877534592e25d012bcc5664c1edba88ae80ffcf60
+deployed on core.vchrist.at, PID228594; backup
+/var/backups/core-ci/ui-columns-20261028T211305Z. Generation3116 and100 execution
+records restored unchanged, preserving attempt/assignment/run identities; no active work
+at restart. Fresh v2.1.8 remains20 published. Same service command/workflow pins/runtime
+libraries and listener settings. HTML/CSS/JS match source through loopback/public8080;
+TLS public status responds. Synthetic DOM additional checks confirm common heading colour
+and font family as well as12px/700.24 simultaneous disclosures, independent close, SSE
+retention, dependency navigation, filters and removed-ID pruning pass with0 fetch requests.
+Browser visual geometry remains unverified (no enabled browser). UI+19/-19/net0, tests0
+repository lines, C++0. Diagnostics and jsdom dependency remain only under
+/tmp/codex/build/core-ci/multi-expansion for reproducibility; no repository dependency added.
+No new tag/build/retry. Deployment record local alongside preserved unrelated documentation.
+
+
 ## Prerequisite navigation scroll — 2026-10-28
 
 Owner reports that prerequisite navigation opens the execution but does not move the view.
@@ -3341,6 +4336,39 @@ viewport movement remains unverified because browser access is unavailable. Prob
 Node syntax, changed-line<=160 and diff checks pass. Continuing owner cpmd authorization
 for these Work-UI fixes; preserve unrelated working-tree documentation and deployment state.
 
+
+## Prerequisite scroll deployment — 2026-10-28
+
+Sourceea38ff6abcadf93118c1b0d12024a37604f5a3a4 pushed on rewrite/slim-graph-controller;
+PR#9 merged asdd09c702ae5e3d9447af7a3c396aadc7cbbd7f2a. Release source matches merge
+tree; deployed binary68a093f3292ffbe0a3c2f838ec99644cc289e2f8765fe971da2e1e1bca1933af
+on core.vchrist.at, PID228868. Backup
+/var/backups/core-ci/ui-columns-20261028T212021Z. Durable generation3116 and100
+executions unchanged across restart, with attempts/assignments/run identities retained;
+no active work at restart; v2.1.8 remains20 published. Same listener/service arguments,
+workflow pins and runtime libraries. All3 served assets match source over loopback and
+public8080; TLS public status responds. UI+1/-0/net1, repository tests0, C++0. Final Release
+build/syntax/diff and targeted actual-app DOM probe pass; physical viewport motion remains
+unverified with no available browser. No tag/new build/retry. Deployment record local.
+
+
+## Claude current-source architecture review requested — 2026-10-28
+
+Owner explicitly requested a deep Claude review of unnecessary constructs/architecture
+against the small externally triggered graph/state-machine contract. LOC allowance is
+accepted and not a defect by itself. Deployed dd09c70/sourceea38ff6 checkpoint and exact
+service/binary/graph restoration facts supplied. Claude Opus5.5 started with only
+Read/Grep/Glob, safe/restricted modes, no mutation/live-access tools and no delegation.
+Prompt prohibits private directories/configs/logs/keys and discarded source/history;
+current code/AGENTS are factual authority. Coverage includes C++ control/data/lifetimes,
+worker/standard GitHub trust boundaries and UI/presentation as relevant. Require concrete
+file/line evidence, all callers, deletion-first remedies, preserved invariants and clear
+separation of defects, real simplifications, optional preferences and policy decisions.
+Prompt/stream under /tmp/codex/build/core-ci/current-architecture-review/. Review is in
+progress, not yet a result. Concurrent follow-up is one cosmetic chevron CSS-selector
+change, with no C++/worker/JS difference from the supplied architecture checkpoint.
+
+
 ## Chevron hover styling — 2026-10-28
 
 Owner requests no underline on disclosure triangles. Narrow the existing text-link hover
@@ -3349,6 +4377,38 @@ competing override. Icon hover uses ordinary button affordance. CSS+1/-1/net0; C
 Final Release build, changed-line<=160 and diff check pass. No new behavior mechanism.
 Keep this cosmetic source delta separate from Claude's dd09c70 architecture checkpoint;
 controller/worker/application logic is unchanged. Continue existing UI cpmd authorization.
+
+
+## Chevron hover deployment — 2026-10-28
+
+CSS-only sourcee78923e pushed; PR#10 merged asa11d98b7b3c401168e36a1029218631ba01d0f6e.
+Release binary3c0aafd9449fc791b85b26fb67be60bfbed108712021ad7f8b307b79f44e4139
+deployed on core.vchrist.at, PID229265. Backup
+/var/backups/core-ci/ui-columns-20261028T213047Z. Durable generation3116 and100 execution
+records unchanged across restart; existing attempt/assignment/run IDs preserved. Latest
+root-triggered v2.1.8 session remains20 published. Service command, libraries, pins and
+listeners unchanged. All served UI assets match source through loopback/public8080; TLS
+public status responds. CSS+1/-1/net0, C++/JS/tests0. No new build/tag/retry. Browser hover
+remains unverified because no browser is enabled. Claude architecture checkpointdd09c70
+differs only by this selector; exact delta recorded for review follow-up under
+/tmp/codex/build/core-ci/current-architecture-review/current-deployment-update.json.
+
+
+## 2026-10-28 — Claude architecture review and corrected status contract
+
+Actual Claude CLI completed a read-only detailed source review at ea38ff6 / merge dd09c70.
+Full findings and follow-up are recorded in docs/reports/claude-architecture-review-dd09c70.md.
+Final source e78923e and deployed merge a11d98b differ only by the chevron hover CSS selector
+from that review checkpoint; Claude confirmed no findings depend on that cosmetic delta,
+using the supplied diff without a second source audit or live inspection.
+Claude withdrew state-only public refresh: required within-state progress, timing and links
+must remain visible. Suppression of unchanged public facts remains a candidate to validate.
+Overall verdict: problem-aligned, no broad rewrite warranted. Four candidate defects and
+four simplification findings still require independent code validation before changes.
+No production/test changes, performance measurements or live CI actions occurred for this
+review discussion. Report and this log entry remain local; no review fixes are authorized
+or implemented by this record. Existing unrelated changes were preserved.
+
 
 ## 2026-10-28 — Validated Claude review corrections
 
@@ -3389,6 +4449,121 @@ Verified final production diff matches the tested identity; all20affected checks
 formatting passed. Only task source/tests, review records and task log hunks are staged.
 Deployment will use the existing private runtime and unchanged service/listener settings,
 with durable graph backup/restoration and asset checks. No fresh build/tag is requested.
+
+
+## 2026-10-28 — Review corrections merged, deployed and fresh chain triggered
+
+Authorized cpmd completed: source1250f43c57dee10006cffe68083dac21257b09d5, PR11
+https://github.com/SNodeC/core-ci/pull/11, main8f14486e2ac6d4f8af0cbe16442c9f949f88abf7.
+Feature HEAD and main have identical trees. Only task source/tests/review records and
+selected task WORK_LOG hunks were committed; unrelated dirty docs/private dirs preserved.
+Local Release binary deployed to core.vchrist.at; SHA256
+26947775b025fe5a1bc220a7293bac37537332cfdb4c3740158b6221a5464d46.
+Service active PID230625, NRestarts0. All21 existing runtime hashes and service argv hash
+unchanged. Protected consistent backup /var/backups/core-ci/review-corrections-20261028T223752Z.
+All100 executions, attempts, assignments and run identities survived restart; full idle
+graph stayed generation3116, 84published/15waiting/1failed. UI assets verified both locally
+on host and externally, public8443status verified; ports/listeners/TLS unchanged.
+Pagination remains excluded and pending specific approval. No new live correction policy.
+
+Owner then requested a fresh full build from core. Created only VOC-Experiments/demo-core
+refs/tags/v2.1.9 at current main27932aec43653be5f8dc08a03a7dfd1ea4efb9fb, preserving old tags.
+Tag webhook created20new executions (r265–284) automatically, five core builds and15
+dependent targets. GitHub first core workflows created22:40:04Z; allfive observedrunning.
+GitHub status/demo-core.md already showsv2.1.9. No manual advancement/retry was used.
+One external repositories read timed out; direct on-host API returned1.49ms and healthy
+graph/status, so no controller-delay conclusion from that network observation.
+Evidence under /tmp/codex/build/core-ci/review-corrections/deployment; this is launch proof,
+not completed20target publication acceptance. Runtime monitoring snapshot follows.
+{"controller_commit": "8f14486e2ac6d4f8af0cbe16442c9f949f88abf7", "core_commit": "27932aec43653be5f8dc08a03a7dfd1ea4efb9fb", "core_run_states": {"completed": 3, "in_progress": 2}, "core_tag": "v2.1.9", "fresh_states": {"building": 2, "publishing": 3, "waiting": 15}, "fresh_targets": 20, "generation": 3163, "github_status_blob": "a5941235267aea72d5092b33ac0cbf126ed4dfbc", "github_status_v219": true, "observed_utc": "2026-10-28T22:41:50.676096+00:00"}
+
+
+## 2026-10-29 — v2.1.9 full-chain completion checked
+
+Read-only check at06:13Z: all20fresh targets r265–284 are published; no failed or
+unfinished target in this session. Controller generation3458, mutations_allowedtrue,
+service active. Independent GitHub listing of the deployed canonical publication workflow
+ID399803555 confirms20/20fresh publication runs success (no unfinished/unsuccessful runs).
+Final target r283 publication verified2026-10-28T23:09:40Z (Oct29 00:09:40 Europe/Vienna),
+29m36s after first core workflow creation22:40:04Z. This is end-to-end elapsed time, not
+controller processing latency. Final status generation3458 run40785345279 succeeded,
+updated23:10:10Z. Allfour GitHub status pages inspected; root showsv2.1.9 and dependent
+pages retain their own selected source versions with new rebuild revisions. External
+8080UI returns200; TLS publicstatus returns3458 and20/20published fresh rows.
+No mutation, retry, reconciliation, code edit or new package-client test performed.
+
+
+## 2026-10-29 — v2.1.9 timing attribution
+
+Read-only reconstruction recorded in docs/reports/v2.1.9-timing.md; raw evidence under
+/tmp/codex/build/core-ci/review-corrections/timing-v219/. Critical dependency path is
+OpenWrt24.10 core r268 ->side r278 ->join r283. From firstGitHubcorecreation to final
+verification29m36s:29m01s GitHubworkflowwindows,34s handoff/verificationgaps,1s rootfanout.
+34s includeswebhookdelivery, GitHubREST/network, artifact/receiptproof, DB anddispatch,
+not pureC++CPUtime. ThisrunhadnoCPUspantrace; oldv216probe not reused ascurrentproof.
+Largestworkflow-internalgap sideIPK:22:51:34Z validationcomplete to23:02:14Z publisherstart,
+10m40s; timestampsalonecannotseparate feedgroupqueue fromrunnerqueue. No codemutation
+or retries performed. Initial selection before firstGitHubworkflow is outside measuredinterval.
+
+
+## 2026-10-29 — publication wait and target editor investigation
+
+Read-only investigation on rewrite/slim-graph-controller at1250f43 (deployed tree8f14486).
+Report: docs/reports/publication-wait-investigation.md. Reconstructed all640s of sideIPK
+r278 wait:509s blocking sideAPK r279,99s other publishers,12s status,20s handoff gaps.
+APK publisher held feed group605s; download/extraction563s for285845912-byte validated
+artifact including retained SDK. Push2s; signed preparation20s. Digest matched. Ordinary
+log cannot distinguish slow stream/disk from debug-only Action retries; dependency has
+inactivity timeout, not total deadline. Other OpenWrt downloads3–8s. No claim of640s
+controller delay or proven organization-wide runner saturation. Exact whole-job mutex
+confirmed in deployed canonical/status workflows. Independent preparation under this
+mutex is the coupling; a cross-job handoff still needs transfer, so no handwaved prep-job fix.
+Preserve current SDK reuse; recommend bounded tool-dependency/trust refinement before
+implementation. Explained all target dialog fields, actual JSON, Apply draft semantics,
+runner AND-label behavior, SDK inheritance and separate UI/server length/pattern mismatch.
+Evidence /tmp/codex/build/core-ci/publication-wait-investigation/. No code/test/workflow
+changes, tests, build, commit, push, deploy, retry or live mutation. Existing dirty docs preserved.
+
+
+## 2026-10-29 — publication wait correction agreed with Claude; approval checkpoint
+
+Owner requested discussion through agreement, then an implementation prompt and fix.
+Claude session2c479bf5-90fc-4bae-ae99-726bdcdc3958 independently checked source/evidence.
+Four rounds resolved status-sample overclaims, unsupported timing estimates, native empty-job
+overhead, duplicate bulk handoffs, package-parser/executable trust, wrapper/runtime closure,
+job conditions, both supported YAML contracts, helper signature and focused-test scope.
+Agreed design and corrected prompt: docs/proposals/publication-wait-fix.md. Phase0 mandatory
+owner approval is pending for one unprivileged OpenWrt-only tools job and a small verified
+executable handoff, replacing whole-SDK artifact and publisherfullSDKsetup. Estimate+193net;
+proposed productioncap+230net/260added, YAML+120net/Python+110net, tests+180net, C++0.
+New mechanism/netgrowth not implemented under general fix instruction without quantified approval.
+Both public SDKsha256verified; readelf closure2152850bytesIPK/4082672bytesAPK. Local minimal
+IPKephemeralkey sign/verify+mkhash andAPKversion3.0.5 checks pass; not package/client/GitHub
+acceptance. SDKtoolwrappers needhiddenbinaries+loader+runas+libs; not just three commandfiles.
+Pinned Actiondocs/source verified hiddenfiles/modes/singleartifactlayout/jobif and artifact
+runtimecredential; no live or local credentialvalues inspected. No package/source executed
+in tools-design proof, only officialSDKtool commands above; no productionkeys. Tradeoff
+bulktransfers4->3, noneunderfeedlock, extraOpenWrtjobhop andofficialdownloadoutside; no
+speedupclaim. Evidence /tmp/codex/build/core-ci/publication-wait-fix/. No source/test/workflow
+edits, builds, commits, pushes, deploys, tags, retries or live mutations. Unrelated dirtydocs preserved.
+
+
+## 2026-10-29 — Claude review of OpenWrt build-worker proposal
+
+Owner requested review only. Sent proposal to Claude session2c479bf5-90fc-4bae-ae99-726bdcdc3958;
+independently checked findings and discussed smallestchange/counts through agreement. Report:
+docs/reports/openwrt-worker-proposal-review.md. Exactdevelopmentexportreuse alreadyexists;
+no integratedSDKpublishedbybuildjobs, but perjobdownload/imagecopy/privatecopy remain.
+Agreed minimalcandidate removesSDKimagelayer/contexttransfer usingread-only/sdk mount for
+bothcontainers and existingCORE_CI_APK argument; keepshookprivatecopy/pristinevalidator,
+permissions/cleanup/nativebehavior. AllSDKsetup/imageconstruction is NOT eliminated.
+In-memorycandidate ASTparsepasses:15added/15removed/net0production including12movedlines;
+newoperationlinesmax100characters. Claude withdrewformatting-basedgrowthestimate. Tests
+estimate45–60lines; noneeditedorrun. C++/controller/workflows0changes. No Dockeroperation,
+commit/push/deploy/tag/feed/configurationmutation. Runtimeproof/speedupunverified. Pending
+publicationtoolsjob/growthproposal separateandunapproved. Evidence under
+/tmp/codex/build/core-ci/openwrt-worker-review/. Unrelateddirtydocs/privatepaths preserved.
+
 
 ## 2026-10-29 — OpenWrt build preparation and publication tool handoff
 
@@ -3455,6 +4630,105 @@ condition assertion was then scoped to that job; its focused provenance check pa
 Final review records: implementation/claude-review.json and implementation/claude-confirm.json.
 
 Owner subsequently authorized commit, push and merge. Deployment/activation remains separate.
+
+
+## 2026-10-29 — Retention options agreed with Claude
+
+Owner requested discussion through agreement on retention options; no implementation requested.
+Canonical checkout /home/voc/projects/snodec/core-ci, branch rewrite/slim-graph-controller,
+HEAD8461764ff2131ef13e44ce187d1c84b1550f5d27 (merged main3cc14fd). Three read-only Claude rounds,
+session2c479bf5-90fc-4bae-ae99-726bdcdc3958; final response confirms no remaining disagreement.
+Evidence: /tmp/codex/build/core-ci/retention-review/round1.json, round2.json, round3.json.
+Independently traced Graph.cpp assignment/select/blockers/retry, GraphStore.publicView,
+FeedProof.verify, native.prepare_dependencies, environment.previous/main, contract receipts,
+sign_native.retained_receipt, publish capacity check and feed_status receipt enumeration.
+
+Agreed recommendation, not owner approval: configurable N successful source versions per
+project and target, latest-only N1 valid, N3 suggested; keep the highest successful rebuild
+revision per retained version, not two rebuilds and not the last completion timestamp.
+Failed newer work does not displace a successful publication. Count versions independently
+per target; simplest suggested stable/prerelease handling shares numeric SemVer ordering.
+Protect the exact reference closure needed by active/uncertain work and by whatever retry
+policy the owner chooses. This can exceed N and can retain multiple rebuilds. It is a union
+of reachable references, not roots multiplied by graph depth. It is no universal package-count
+bound and does not guarantee arbitrary external runtime dependencies or repair bad declarations.
+No new general dependency resolver is proposed.
+
+Current retries reuse first-attempt exact dependencies; workers fetch current public feed paths.
+Published-only graph eligibility and receipt-based public links do not know package expiry.
+Consequently a worker-only cleanup under the feed lock is insufficient: selection/retry can
+create references after a protected-set snapshot. Before deletion, the controller must atomically
+check protection and withdraw new-reference eligibility in its authoritative graph. Preserve
+historical published outcomes and immutable receipts. Exact representation, availability display,
+worker handoff and uncertain outcomes require refinement and growth/mechanism approval; no new
+flag, schema, protocol, queue, timer or C++ addition is approved by this discussion. Uncertain
+remote deletion is reported, never blindly replayed; withdrawn eligibility is not proof of deletion.
+
+Owner policy options: (1) N including latest-only; (2) finite retry eligibility/explicit expiry,
+or indefinite protected inputs accepting capacity refusals; (3) separately whether total Git
+history storage must be bounded. Indefinite protection plus the existing hard900MiB site check
+can preserve the bound by refusing new publications, at the cost of forward progress.
+Reading exact bytes from immutable Git history is a possible separately designed worker path,
+not an implemented fallback; it could preserve retry inputs while bounding the current feed,
+but not Git storage. Normal deletion leaves old Git objects; compaction or different binary
+storage is a separate owner decision, not authorized migration/history rewriting.
+
+No production/test/configuration/deployment changes, tests, commits, pushes or live mutations.
+Unrelated dirty documents and private directories preserved; this entry is append-only.
+
+
+## 2026-10-29 — Orphan feed snapshots agreed with Claude
+
+Owner requested read-only discussion through agreement after inspecting SNodeC CI. No
+implementation or growth approval follows. Canonical branch rewrite/slim-graph-controller,
+HEAD8461764ff2131ef13e44ce187d1c84b1550f5d27; current production/tests remain unchanged.
+Verified SNodeC/DistributionPackages ci/publish/push.sh creates commit-tree without a parent
+and pushes with an explicit expected-head lease. Status updates in ci/publish/status.sh add
+one parent. Live SNodeC/Packages history sample: HEAD6c1007acd52173a8efb329e573caa8ea5c4bec53
+has parentd496378a4d41adf80617b5a1058275de4dcf223e, which has no parents. Independent cleanup
+there uses30days; that policy/retry loop is not adopted. No SNodeC resource was modified.
+
+Two Claude rounds, session2c479bf5-90fc-4bae-ae99-726bdcdc3958, reached agreement. Evidence:
+/tmp/codex/build/core-ci/retention-review/orphan-round1.json and orphan-round2.json.
+Direction: retain GitHub hosting, package publication creates a parentless current-feed
+snapshot, explicit lease against checkout HEAD captured before root creation, existing shared
+feed lock, no mutation replay. Status commits may append parents until the next publication.
+Root creation only removes ancestry: actual expired files must also leave the current tree;
+other references retaining discarded history need checking. GitHub controls physical GC timing.
+Owner chose3 successful versions/project/target, one highest successful rebuild, retries may
+expire, no payload archive or history-recovery fallback. Active/uncertain inputs remain protected.
+
+Source validation corrected Claude's claim that FeedProof necessarily breaks: Pipeline.complete
+calls it only for active publishing work, coalesces per attempt/stage, and reconciliation excludes
+published outcomes. FeedProof can observe an identical receipt in a newer root for late first
+verification. feed_revision is recorded observation context, not a worker dependency download
+address; confirm validates receipt HTTPS bytes, not commit reachability. No compatibility or
+re-verification bypass is justified. Focused repeated-root/late-proof tests remain required.
+Lease errors retain current push uncertainty; no new definite-failure inference is approved.
+
+Retention candidates must use already-verified successes, never prospective publications.
+Protect unverified receipts and exact active/uncertain inputs, withdraw new-reference eligibility
+atomically before remote deletion. Temporary publication overlap, representation, deletion
+handoff, replay/status rendering, bounds and LOC estimates require design refinement before
+implementation. Suggested bounded feed receipts/status metadata follows retained versions;
+receipt deletion is not yet owner-approved. MariaDB audit retention is separately scoped.
+No production/test edits, tests, commits, pushes, activation, deployment or feed mutation.
+Unrelated dirty documents/private directories preserved. This entry is append-only.
+
+
+## 2026-10-29 — Claude retention task prompt
+
+Owner requested Claude's prompt only. Requested a self-contained task based on the agreed
+three-version/one-rebuild/expiring-retry/no-archive policy and orphan feed snapshots.
+Reviewed the first draft; Claude corrected source wording, protection of superseded history,
+Git lease terminology and the lack of a finite cleanup deadline without a completion trigger.
+Final prompt: docs/proposals/publication-retention-task.md. Original responses under
+/tmp/codex/build/core-ci/retention-review/implementation-prompt.json and
+implementation-prompt-final.json. Same Claude session as the preceding agreement.
+The prompt requires a concrete source-based design, per-file estimates and explicit architecture/
+growth approval before production edits. No implementation, test, commit, push, activation,
+restart, deployment or feed/history mutation performed. Existing dirty files preserved.
+
 
 ## 2026-10-29 — Retention design and line-estimate checkpoint
 
@@ -3652,6 +4926,33 @@ No active build/publisher is running; the one failed demo-corev2.1.4 is historic
 Historical immutable publisher pins remain an explicit activation decision, pending owner
 response; source promotion and release preparation continue independently.
 
+## 2026-10-29 — Retention source merged; concrete activation failure found
+
+Owner cpmd authorized source commit98efef368992ac2668e55bb7f4218a0e1dbedec4, pushed
+feat/publication-retention and merged PR13 https://github.com/SNodeC/core-ci/pull/13 as
+2b4482729dd239b9aef0f17f55e48d8a550577c9. Source and merge trees match exactly.
+Staged only explicit task paths and selected WORK_LOG/deployment-guide hunks; unrelated
+document content remains local. Release build under build/codex/speed-release and canonical
+format-check passed; production/test source unchanged from the locally validated commit.
+
+Read-only live preflight: generation3458,120executions,104published/15waiting/1failed,
+no active assignments. Feed has no rulesets. Inspected only execution/public deployment
+facts and public Git trees, not credential/configuration values.44 verified recorded package
+paths still exist outside the canonical layout, including apt/debian/trixie/pool/... and
+nested openwrt/.../ipk/<sdk>/... paths. Existing failed demo-corev2.1.4 also retains older
+immutable publisher pins. Owner retry-policy clarification remains pending.
+
+A temporary diagnostic links the existing Graph domain library and calls graph::retain on
+an offline snapshot of actual execution facts. It derives20commands/182objects, zero missing
+objects, and all20commands include one or more of the44unsupported historical paths. This
+is offline derivation, not live graph mutation or package deletion. The worker's current
+canonical-directory guard would reject those commands. New activation therefore requires
+a concrete historical-path/index correction; no guard was weakened, no pin rewritten and
+no cleanup error was knowingly dispatched. The running service, feed and tags are unchanged.
+Deployment and requested full chain are NOT performed. Release/probe hashes and exact
+preflight evidence are under /tmp/codex/build/core-ci/retention/promotion/. This post-merge
+record remains local; no live acceptance is claimed.
+
 ## 2026-10-29 — Same-key sandbox signing validity renewal
 
 Owner explicitly approved extending the existing APT/RPM key by one year. Public fingerprint
@@ -3663,6 +4964,310 @@ value was applied to the existing package-publication APT_SIGNING_KEY; no new cr
 permission scope. No signing-key plaintext inspected or placed in source/artifacts/logs.
 Public worker key metadata is updated; no compatibility code, C++/Python/YAML/controller
 logic change. Native maintenance failures remain visible, before push, pending explicit recovery.
+
+### Live publication queue diagnosis — 2026-10-29
+
+Read-only GitHub run/job evidence for fresh core v2.1.10 Debian amd64 r318:
+build finished 20:01:47Z; publication run 40945362987 created 20:01:56Z;
+artifact validation finished 20:02:13Z; skipped OpenWrt tools prerequisite settled
+20:02:14Z; feed-writing job started 20:05:56Z and finished 20:06:23Z;
+the checked push itself ran 20:06:18–20:06:20Z. The 9-second build-end to
+run-creation interval includes webhook delivery, controller evidence/proof/dispatch
+and GitHub creation; it is not a measurement of local C++ processing alone.
+
+The fresh chain was launched before the approved native cleanup recovery backlog
+had drained. Cleanup r314 ran 20:03:32–20:04:09Z, r315 20:04:13–20:04:39Z,
+r316 20:04:44–20:05:06Z and r317 20:05:10–20:05:30Z. Status run 40945247595
+then occupied the feed-writing boundary 20:05:35–20:05:52Z, before r318 started.
+Actual sandbox publication/status workflow blobs both use the same feed concurrency
+group with queue:max and cancel-in-progress:false. Thus this sample's dominant delay
+was the shared feed queue behind maintenance, followed by a status write; it does
+not establish a multi-minute controller dispatch delay. Launching this timing run
+before maintenance finished contaminated the baseline. All 21 maintenance commands
+subsequently reached verified completion. No source, workflow or deployed-state
+mutation was made for this diagnosis.
+
+### Push-to-verification timing defect — 2026-10-29
+
+Additional read-only evidence distinguishes publication queue time from verification:
+APK r322 checked push ended 20:07:48Z; confirmation job ran 20:07:53–20:08:09Z;
+controller verified at 20:08:14Z (26 seconds after push, five seconds after job end).
+IPK r321 checked push ended 20:08:25Z; confirmation ran 20:08:31–20:08:56Z;
+controller verified at 20:09:04Z (39 seconds after push, eight seconds after job end).
+Those five/eight seconds include report delivery and remote proof, not solely local C++.
+
+Native r318/r319/r320 pushed successfully at 20:06:20Z/20:06:49Z/20:07:27Z.
+Their confirmation jobs were all skipped. The live workflow and source template have
+confirm depending on publish with an ordinary kind-only condition, without an explicit
+status-check function; the intentionally skipped native tools ancestor propagates the
+skip down the dependency chain. GitHub's official jobs.needs documentation describes
+this propagation. Publisher itself explicitly handles this case; confirm does not.
+Controller first proof failures are timestamped 20:06:29.176Z/20:06:58.542Z/
+20:07:36.183Z, reporting public HTTPS receipt bytes did not match Git. Completion
+releases its in-flight read but retries only when evidence changed or reconciliation
+occurs. No later confirmation job means no normal later terminal wake-up here.
+At 20:12:46Z all three public receipt bodies matched current Git bytes exactly while
+all three graph states remained publishing. Thus this is a real workflow/controller
+integration defect, not simply continuing Pages propagation. Minimum observed post-push
+pending intervals were 6m26s/5m57s/5m19s. No reconciliation or workflow mutation was
+performed during diagnosis. Proposed correction: explicit !cancelled() status function
+plus needs.publish.result == 'success' and the existing non-retention condition on
+confirm; preserve refusal to run after unsuccessful publication and avoid controller
+polling. Local tests/live activation of that correction have not been performed.
+
+### Native publication confirmation correction — 2026-10-29
+
+Invariant: every successful package push must reach secret-free HTTPS confirmation,
+including native runs whose OpenWrt tools ancestor is intentionally skipped. Both
+workflow source copies now use an explicit !cancelled() status function, require
+needs.publish.result == success, and retain the non-retention condition. No polling,
+new state, replay, signing changes or controller code. Production 2 added/2 removed;
+test 1 added/1 removed. The existing workflow-boundary assertion now requires this
+condition; worker-provenance-boundaries passed (2.41 seconds), format-check passed.
+This local check does not execute GitHub's scheduler; real native confirmation is
+required after rollout. Owner explicitly authorized commit/push/merge/deploy, current
+publication recovery and a fresh core chain. Unrelated dirty documentation preserved.
+
+### Distinguish workflow progress from publisher job progress — 2026-10-29
+
+The graph presentation previously fell back from missing job status to run status,
+so publishing:in_progress could describe artifact validation or a queued writer.
+GraphStore::view now displays the known job status, or explicitly says awaiting job
+status and labels the available workflow observation. This single projection feeds
+UI, SSE and public progress; no new UI authority, persisted state or timestamp was
+introduced. Actual timestamps remain job evidence. Production 1 added/2 removed;
+tests 2 added/2 removed; C++ total 3,808 physical lines, below 3,810. Existing pipeline
+fixtures now assert the workflow/job distinction and the revised unconfirmed text.
+
+Final source passed pipeline-chain (7.96s), pipeline-unconfirmed-dispatch (1.78s),
+pipeline-queued-job (8.24s), build and format-check. Initial fixture runs were blocked
+by full /tmp, then Unix socket paths >107 characters; test-only scratch databases
+created by this attempt were removed and fixture root shortened within the authorized
+retention directory. Failed logs retained. No live database changes for testing.
+
+Source confirmation correction is merged as PR15, main ef0646511a77f18ba645a2795cf4b44ed1ec19d7.
+Sandbox alias .github/workflows/core-ci-publish-confirm.yml was deployed in worker
+commit 0ae931e273495f277a61846d83f1a4d2cbc3da10 with blob
+310fa5cd7ea1477fb0156dbc62ba027d8d7aae68; previous aliases/pins remain immutable.
+Vchrist restarted at 20:16:01Z with 140 existing assignments preserved and unchanged
+listeners/TLS. Fresh core tag v2.1.11 was created at 20:16:29Z. Native Fedora r349
+confirmation ran 20:22:16–20:23:42Z and succeeded; controller verified at 20:23:48Z.
+This is live confirmation-path proof, not a complete fresh-chain acceptance claim.
+
+Activity-label correction merged as PR16, main 326353a4cf046e0322b285555ba99c73420b7a4a.
+Installed binary SHA256 c5adce9b705faf22510f0c1ebe7b3bb51cc13640f900016fe818fd0a269bc487,
+built from e48384f8ad04bb15c150153482c1c447b9e79f5b, matches that merge's source.
+Vchrist activation at 20:25:27Z preserved 160 existing execution assignments; service
+PID255665, listener/TLS unchanged. Live /api/graph contains the corrected workflow/job
+wording. Backup: /var/backups/core-ci/job-status-label-20261029T202524Z.
+All five v2.1.11 core publications subsequently verified; dependents are progressing.
+
+Two dependent native arm64 attempts r353/r358 failed before publication dispatch,
+with the generic approved-workflow-unavailable error around this deployment restart.
+The actual workflow blob still matches approval. The stored generic error does not
+establish the underlying cause; do not label the restart hypothesis as proven.
+Under the owner's current-CI recovery authorization, explicitly retried each once
+via /api/work/retry after checking failed/retryable state and absent publication run.
+Both returned200; original attempts remain in history. No uncertain publication was
+replayed. Fresh chain currently 5 published/4 publishing/6 building/5 waiting; this
+is continuing work, not complete full-chain acceptance. Source production net -1,
+tests net0 for the label correction; unrelated dirty documentation preserved.
+
+### Unusual CI timing observed during continued monitoring — 2026-10-29
+
+Read-only graph and GitHub job evidence at 20:31–20:35Z: new-chain app amd64 r352
+finished artifact validation 20:25:43Z, but its feed-writing job ran only
+20:30:11–20:30:35Z (4m28s queue wait, 24-second job). Confirmation ran
+20:30:39–20:31:04Z; controller verified at 20:31:10Z. Six retention writer jobs
+wholly inside that queue interval occupied 116 seconds, excluding other writers,
+status work and startup gaps. This is not a local C++ CPU-time measurement.
+
+The live graph contained nineteen retention assignments issued since revision347,
+including three with empty objects arrays: r368, r378 and r380. r368 and r378 still
+ran feed-writing jobs for26 and25 seconds respectively; r380 was queued at first
+observation. Graph::retain creates a remote retention command when either deletion
+objects or eligibility withdrawals exist; worker retention.update regenerates/signs
+indexes even when there are no objects. This is observed avoidable remote work,
+not a claim that retention policy/protection can simply be removed. No source or
+policy changes made for this monitoring finding. Maintenance and the preceding
+chain overlap this run, so these totals are not a clean steady-state benchmark.
+
+OpenWrt sample setup remains material outside the lock: side APK validation took
+99 seconds and tool extraction35 seconds; side IPK validation35 seconds and tool
+extraction94 seconds. These are workflow job durations, not controller processing.
+Native app arm64 retry r385 finished validation20:27:42Z, its skipped tools
+prerequisite settled20:27:43Z, and publisher started20:34:09Z (6m26s later).
+At20:34:54Z current chain9 published/8 publishing/3 waiting, maintenance47
+published/4 publishing; no new failed attempt. Both controller public projection
+and GitHub Pages project/status pages respond200. No current multi-minute post-job
+verification stall was found in these samples; the old skipped-confirmation defect
+is corrected in the new native runs. Detailed JSON snapshots and request-boundary
+job evidence remain under retention/confirmation-fix in the authorized temp root.
+
+### Full-chain monitoring result — 2026-10-29
+
+Fresh v2.1.11 chain: all20 current target executions reached verified publication.
+Tag creation20:16:29.478Z; last verification20:47:42Z (31m12.522s elapsed).
+This includes one controller restart, two explicit arm64 retries, the preceding
+chain's unfinished work, and automatic retention; it is not a clean steady-state
+performance benchmark. Original failed preflight attempts remain in history.
+
+Final join APK validation/tools completed20:40:15Z; publisher became pending
+20:40:16Z and started20:45:51Z (5m35s). Job ended20:46:06Z; confirmation ran
+20:46:09–20:47:13Z; controller verified20:47:19Z. Final IPK became pending
+20:41:11Z and started20:46:42Z (5m31s); job ended20:47:05Z; confirmation ran
+20:47:08–20:47:36Z; controller verified20:47:42Z. Both final post-confirmation
+intervals were6 seconds, including GitHub delivery and independent remote proof;
+local C++ CPU/database durations were not separately measured. No new minute-scale
+post-confirmation graph stall was observed. New native confirmations succeeded.
+
+At20:48:11Z all four GitHub Pages project pages returned200 and contained every
+one of the20 current package metadata versions (none missing). Pages Last-Modified
+20:47:52Z. Controller generation4820. Seven automatic retention assignments were
+still active/queued; package chain completion does not mean all CI maintenance is
+idle. Result and per-target timing JSON are saved under
+/tmp/codex/build/core-ci/retention/confirmation-fix/package-chain-completed.json.
+
+Priority timing findings: unnecessary remote cleanup for empty objects; export-only
+cleanup still regenerating/signing package indexes; numerous small maintenance jobs
+competing with package publishers in the same feed-write boundary. Final worker
+inspection confirms retention.update regenerates indexes unconditionally after its
+removal loop. These are implementation-generated remote-work costs, not just an
+unexplained GitHub queue. No retention policy, production code, workflow or deployed
+configuration was changed during this monitoring-only stage. Client installation,
+physical GitHub garbage collection and a clean timing run remain separate proof.
+
+### Claude timing investigation requested — 2026-10-30
+
+Owner requested Claude independently investigate confirmed timing problems. Resumed
+retention review session2c479bf5-90fc-4bae-ae99-726bdcdc3958 with current source/main
+326353a4cf046e0322b285555ba99c73420b7a4a and explicit measured run evidence.
+Requested independent validation and source tracing of empty cleanup workflows,
+export/receipt-only index/SDK/signing overhead, small retention jobs competing with
+publishers, derivative status work, and backlog versus steady-state costs. Requested
+reduction-first corrections/estimates/tests while preserving policy, exact inputs,
+expiry/history, uncertainty, signing, orphan roots and within-state public progress.
+Claude is limited to Read/Grep/Glob in plan mode, with no command execution, file
+edits, live operations or subagent delegation. Prompt saved under
+/tmp/codex/build/core-ci/retention/timing-review/request.md; report destination
+claude-investigation.json in that directory. Investigation started; no conclusion
+or implementation approval claimed before its result.
+
+Claude timing investigation completed successfully (read-only session20 turns,
+226.464s). Verbatim result saved as retention/timing-review/claude-investigation.md
+beside its JSON. It confirms empty remote commands, unconditional index/signing
+work for metadata-only deletions and recurring cleanup waves competing with package
+publication. It additionally flags failed retention attempts remaining busy/claimed
+without normal retry/retirement support. Proposed fixes include graph-only expiry,
+bundling metadata deletion with package removal, and feed-idle cleanup admission;
+estimates C++3820–3824 for the full proposal. These remain reviewer proposals,
+not owner approval or independently validated fixes. In particular metadata deferral
+has no wall-clock bound if no future package removal occurs, and ignoring failed
+commands could automatically redispatch on the next state change; those implications
+must be resolved before adopting the recommendations. No implementation or live
+mutation was performed for this review request.
+
+### Agreed reduction prompt after independent validation — 2026-10-30
+
+Validated Claude's timing findings against current Graph::retain/eligible/select/
+retry, Pipeline::change/fail/dispatch/complete, GraphStore views and worker/workflow
+callers. Confirmed unnecessary empty remote cleanup, metadata-only full index/signing/
+SDK preparation, and failed cleanup's missing ordinary operator recovery.
+Disagreed with and obtained Claude's explicit withdrawal of metadata deferral until
+future package removal (potentially indefinite), excluding failed cleanup from busy/
+claims (would immediately redispatch through fail -> change -> retain), the whole-feed
+idle gate (unapproved scheduling/starvation policy), and unverified FIFO/steady-state
+claims. Discussion rounds2/3 and final prompt/corrections are saved in
+/tmp/codex/build/core-ci/retention/timing-review/.
+
+Agreed scope: move existing expiry loop so empty physical deletion is graph-only;
+retain current nonempty independent deletion; derive actual package presence within
+existing worker path validation; skip SDK/native apt/index/sign work only for
+metadata-only deletion, using workflow path hints with independent worker enforcement.
+No new scheduler, admission policy, automatic retry, schema/assignment field, route,
+controller flag or persisted state. Existing secret acquisition and actual package
+signing/tool proof remain. Failed-cleanup recovery remains separately scoped.
+Official GitHub expression and skipped-ancestor semantics checked; local syntax/
+contract checks cannot prove live job scheduling. Source-proven status workflow
+already builds its template venv without native package tooling on ubuntu24.04.
+
+Claude explicitly agreed and produced implementation-prompt.md, including corrected
+authority wording preserving actual VOC sandbox authorizations. Estimated production
++15 net maximum proposed, tests+85 maximum proposed, C++neutral3808/3810. These new
+bounds are proposals requiring owner approval; no production edits have been made.
+Existing unrelated dirty documentation/private directories preserved. Final prompt
+is to be presented to owner; no implementation, commit, push, merge or activation
+performed during this review-and-prompt task.
+
+### Pre-edit checkpoint for retention work reduction — 2026-10-30
+
+Verified owned feat/publication-retention HEAD and remote main both326353a4cf046e0322b285555ba99c73420b7a4a;
+no open PR returned. Four known dirty documentation files preserved; no production edit.
+Re-read AGENTS.md/current affected source. C++3808, cap3810; workflow copies identical.
+Constructed the concrete planned transformations in memory only, including clang-format
+for the C++ candidate and readable YAML <=160 columns. Planned production counts:
+Graph.cpp4+/4- (0); retention.py12+/9- (+3); workflow template10+/4- (+6);
+worker workflow copy10+/4- (+6). Total36+/21-, net+15; C++remains3808.
+No publish.py change or new controller mechanism is needed. Test estimate net+70,
+proposed bound+85; docs minimal. Source plan accounting saved to
+/tmp/codex/build/core-ci/retention-reduction/pre-edit-plan.json. Explicit user prompt
+requires stopping before positive production growth until bounds are approved.
+
+### Expanded retention reduction review checkpoint — 2026-10-30
+
+Verified feat/publication-retention at326353a4cf046e0322b285555ba99c73420b7a4a;
+C++3808/3810; production/test sources unchanged. Owner required all earlier
+findings considered, so the prior +15-only proposal is insufficient. Claude and
+Codex agreed after three expanded review rounds: graph-only empty expiry; exact
+metadata deletion without SDK/native tooling/index/signing; no duplicate IPK
+validator SDK preparation; explicit failed-retention retry through the existing
+API, dispatched only after its committed transition. Original pins, objects,
+claims, history and unknown assignments remain; no automatic replacement.
+Carrier cleanup, indefinite deferral, directory regrouping, new persisted fields
+and shorter confirmation polling were rejected. A/B/E defects and the IPK
+duplication have proposed fixes; necessary protected-input release waves, actual
+serialized feed mutations, progress refresh and Pages/receipt proof remain.
+The measured116seconds across six cleanup jobs is mixed/unclassified occupancy,
+not a measured irreducible package-removal cost. Six seconds after confirmation
+is aggregate delivery/proof elapsed, not a measured controller CPU time or bound.
+
+Claude supplied the agreed implementation prompt under
+/tmp/codex/build/core-ci/retention/timing-review/all-findings-implementation-prompt.md.
+Review evidence: all-findings-review, all-findings-round2, all-findings-round3
+JSON/Markdown in that directory. Preliminary production growth+29..33, tests
+about+127; proposed ceilings+35 production/+150 tests/C++3830 are UNAPPROVED.
+Exact formatted per-file accounting is still required before requesting approval
+and editing production. Recovery is API-only; the existing UI does not show
+retention rows. Existing assignments/retries retain their old workflow/tooling
+pins. No new runtime, scheduling or live performance proof was produced.
+No production/test edit, commit, push, merge, deployment, activation or live
+mutation was performed. Existing unrelated dirty work/private directories preserved.
+
+### Exact draft checkpoint: retention work reduction — 2026-10-30
+
+Verified feat/publication-retention HEAD326353a4cf046e0322b285555ba99c73420b7a4a;
+C++3808/3810, publication workflow copies identical, existing dirty work preserved.
+Production/test candidates exist only as temporary draft data; no source was changed.
+A/B/E: graph-only expiry, metadata-only removal without setup/index/signing, and
+explicit failed-cleanup retry are proposed fixes. F removes duplicate IPK SDK
+preparation, keeping APK parser and independent tool verification. C/D retain
+necessary protection-release waves and actual shared writes; G retains Pages and
+receipt proof; H preserves within-state progress while removing empty-job churn.
+The116seconds measured across six cleanup jobs is mixed occupancy, not a measured
+irreducible package cost. Six seconds after confirmation is aggregate delivery/proof.
+No new fields, scheduler, automatic retries, batching or confirmation polling.
+API-only recovery preserves pins, claims and history; unknown attempts stay assigned.
+Exact formatted draft accounting is in retention-reduction/checkpoint/accounting.json.
+Exact accounting is recorded separately; C++3829 and revised growth require approval.
+Claude confirmed that retry labels must include revision to prevent old-run binding.
+Local YAML/contract checks cannot prove scheduling; sandbox predicate outcomes and
+clean/continuous chain timing, signing/clients and request counts remain acceptance gates.
+No commit, push, merge, deployment, activation or live mutation was performed.
+The agreed unchanged-label clause is unsafe in accept()/inspect() while a dispatch
+response is pending or lost. Proposed exception: only retry label gains its revision;
+no new assignment field. Claude agreed in checkpoint/label-review.json. Tests draft
+held/lost responses and delayed old reports; these tests have not run. Owner must
+approve this exception, explicit retention retry, and the revised quantified bounds.
 
 ### Retention work reduction implemented and locally verified — 2026-10-30
 
@@ -3690,6 +5295,106 @@ Exact source/build hashes, reviews and fixture evidence: /tmp/codex/build/core-c
 No live scheduling, timing, clients or publication acceptance claimed by these local checks.
 Unrelated dirty hunks/private directories preserved; promotion and activation follow.
 
+### Retention reduction promoted and fresh graph launched — 2026-10-30
+
+Owner-authorized CPMD completed: source8339fefa38ecd38cfe24bd7456b1489ddd4c0f62,
+PR17 https://github.com/SNodeC/core-ci/pull/17, main902d7a7efb654204349bb4fb036501f466d680aa.
+Canonical checkout remains on owned feat/publication-retention with identical source tree;
+no switch/reset/rebase/stash, unrelated hunks excluded from commit.
+Sandbox toolingc850cf3bf37eab9a8e034a88c68d22a2f72b47d2; new publisher alias
+core-ci-publish-reduction.yml commitb9f08f09296098724868602837b8d998369c2641,
+blob6c1dc8f7edb6c5b3d0adb26a062f3c39aa9fae21. Source reduction aliases added
+to all four sandbox repositories; all pre-existing blobs/aliases retained unchanged.
+Vchrist deployed at10:35:58Z, PID266230, binary
+1f6ee18f6fa2e70b81f3be06e5c312cbcd5f8ff7a0eb9af4ecf60218190d9160.
+All21 installed SNode.C libraries matched local build. Protected backup
+/var/backups/core-ci/retention-reduction-20261030T103555Z. All160 executions and
+72 retention records/attempts/assignments/run identities survived; generation4859
+unchanged. Listener/port/TLS settings unchanged; UI/public-status HTTP200 and SSE work.
+Fresh demo-corev2.1.12 tag created10:37:23Z atfc3acdb94779dafb879c183143c20e19b435e766;
+old tags unchanged. Webhook automatically created20 new executions; five core runs
+created10:37:36Z. By10:39:05Z allfive builds completed successfully and entered
+publication, with15 dependent executions waiting and no fresh failure. New publisher
+runs41042205480/41042206689/41042207359/41042277581/41042294411 created.
+Pages status/demo-core.html showsv2.1.12; 8080 graph/SSE current.
+Claude received source/deployment/test handover after its detailed pre-apply review.
+No full graph completion, live predicate matrix, client-install proof, request totals
+or local CPU/DB latency/speedup is claimed yet. Actual serialized writes and Pages
+propagation remain; no failed/uncertain historical mutation was replayed.
+Evidence/reviews/build identity and live snapshots under
+/tmp/codex/build/core-ci/retention-reduction/. Promotion record remains local alongside
+the preserved pre-existing dirty documentation; source changes are committed/merged/deployed.
+
+### Read-only root-cause investigation of publication start delay — 2026-10-30
+
+Owner requested deep investigation only and permitted independent Claude review.
+Source remains8339fefa/main902d7a7; deployed identity/pins verified from prior activation
+and actual GitHub workflow blobs. No source, workflow, settings, assignments, tags,
+service or feed mutations were made during this investigation.
+Dashboard/GitHub/receipt agree for demo-app Debianarm64r417: buildcompleted10:41:01Z;
+publicationworkflow41042549697created10:41:07; validationcompleted10:41:28;
+publishjob124018766778created10:41:29, actuallystarted10:45:21, finished10:45:41;
+publicationverified10:46:03. The4m20 start gap is real; the workflow was already
+running6seconds afterbuildcompletion. No inference of exact C++CPU/DB latency.
+Confirmed cause: job-level core-ci-feed-VOC-Experiments/packages-main exclusivity
+covers checkout/artifacttransfer/apt/pip/setup and preparation/push/teardown across
+package publishers, physical cleanup and status. Eight earlier same-group jobs ran
+one at a time during validation-end-to-publisher-start233seconds: five package
+publishers132s, two cleanupjobs50s, one statusjob12s; between reported jobintervals39s.
+The194s job intervals include apt67s and venv/pip32s versus32s feedprepare/push.
+Other setup/checkouts/download/poststeps39s;24s withinjobtime not covered by named
+steps. No attribution of all39s handoff gaps to idle time, runner shortage or CPU.
+Jobcreation order matches observed start order, but historical group-entry times
+were not sampled. Current GitHub concurrency API directly confirms same group
+activeowner/pendingwriters and ahead-of-job blockers. Actual deployed YAML and
+public FEED_REPOSITORY/FEED_BRANCH match; environment has branch policy only.
+Inspected60 canceledstatusruns in criticalinterval: zero jobs, zero write occupancy.
+Read-only stored cleanup authorities prove r431/432/433 remove actual corev2.1.9
+packages plus metadata using newtoolingc850 and workflow6c1; they are not empty or
+metadata-only commands. Thus prior reductions do not remove these queued jobs.
+Independent Claude review agrees on primarycause and measurement limits. Raw
+API snapshots and computedintervals: retention-reduction/live/deep-delay/ in/tmp.
+Separate confirmed finding: metadata-onlyr436 run41043079306 failed checkedpush
+10:48:26Z with HTTP403. This occurred after r417 started and did not cause its
+4m20 wait. Controller retains its uncertain publishing assignment; no retry/replay
+was attempted. Cause of HTTP403 itself is not established by this investigation.
+
+### Publication delay: reviewed candidate and measurement checkpoint (2026-10-30)
+
+Read-only discussion with Claude confirms whole feed-job exclusion as the queue cause;
+necessary writes, setup and handoff remain distinct costs. No complete speedup is proven.
+Candidate: one dependency-only image pinned by digest for all feed writers, with application
+code still owned by the selected tooling checkout. No backward compatibility code, adapters,
+fallbacks, floating tags or automatic image upgrades. This is an unapproved new mechanism.
+Claude agrees to staged cold-probe rejection, local bare-Git lease checks, explicit prototype
+and growth approval before edits/build/push, and conservative APT timing attribution.
+Reject the candidate if provisioning erases its savings; no four-minute or speedup promise.
+Prompt: /tmp/codex/build/core-ci/retention-reduction/live/deep-delay/publication-delay-fix-prompt.txt.
+Source: feat/publication-retention at 8339fefa38ecd38cfe24bd7456b1489ddd4c0f62.
+Only this log entry and temporary review evidence were written; production and tests unchanged.
+Remaining gates: exact design/accounting, owner approval of mechanism/bounds/prototype,
+cold provisioning measurements, production-stage authority and real acceptance. The separate
+HTTP 403 uncertainty remains unresolved and was neither retried nor reclassified.
+
+### Publication dependency image prototype (2026-10-30)
+
+Owner approved prototype source/build/push and measurement, with no production feed activation.
+Worker prototype commit f328f5f303755f84b97c43ea0b113754e1c6f5bb; image build run 41055283027 passed.
+Image digest: sha256:eed7eb9fd4cc3f79d98aa73bb66fbde4d68409653ab04b8ee7a9359f0f858041.
+GitHub created the image private; visibility and organization policy were not changed. Cold probe not dispatched.
+Prototype source net +42, temporary probe draft 19 lines; C++ unchanged at 3,829. Existing worker-provenance passed (1.93 s).
+Image pull timing and signing/container acceptance remain unverified; no compatibility path or mutation replay was added.
+
+### Publication image measurement decision (2026-10-30)
+
+Owner approved private-image probe with its job token and packages:read; visibility and organization policy stayed unchanged.
+Probe run 41057946885 (worker 4f81e3925df2bb128dfe3f37add94b33b6c02280) passed both smoke jobs.
+Image initialization 8 s versus baseline setup/render 4 s; total jobs 11 s versus 7 s, one cold sample.
+Pull/extraction alone took about 6.78 s, excluding about 0.43 s registry login. Candidate rejected; no broader matrix or activation.
+Temporary probe removed after measurement; source prototype retained uncommitted for review, production net +38 after cleanup (peak +62).
+C++ remains 3,829/3,830; tests unchanged; this task appended 18 documentation lines total. Evidence: /tmp/codex/build/core-ci/publication-image/.
+Publication delay remains unresolved; no signing/client acceptance or new live throughput claimed, and r436 uncertainty was not replayed.
+
 ### Live-code review and setup reduction — 2026-10-30
 
 Owner requested correction under the global principles and a review of actual live code with Claude.
@@ -3715,3 +5420,77 @@ plus r436's public error strongly locate that command's403 at ref discovery befo
 provenance limits. This does not explain the authorization denial or authorize a general parser, state change or replay.
 Bound uncertain cleanup recovery remains an explicit policy/authority issue; r436 and its claims were left unchanged.
 Evidence and all three reviews: /tmp/codex/build/core-ci/publication-boundary/.
+
+### Lean publication setup rollout and measured chain — 2026-10-30
+
+Owner authorized commit, push, merge, deployment and one fresh monitored sandbox rebuild.
+Committed the exact reviewed patch as e2c0045f22827563a729ca24955cd9532f1631db; PR18 merged as
+f98669b71f2313371ebd27f0bd2127183fed5a41. Only task code/test paths and the preceding task log entry were staged.
+VOC worker commit226151893442ed47a718ad6b67c1b80ce074bdfc adds immutable lean-setup publisher/status aliases.
+Application tooling remains c850cf3bf37eab9a8e034a88c68d22a2f72b47d2; existing workflow aliases and assigned pins unchanged.
+Vchrist restarted at18:20:47UTC with only publication/status workflow pin arguments changed; PID268419.
+Binary SHA256 remains1f6ee18f6fa2e70b81f3be06e5c312cbcd5f8ff7a0eb9af4ecf60218190d9160; no C++ rebuild/replacement.
+Restart preserved existing assignments and generation5414, including uncertain retentionr436; no replay or replacement.
+Hosted status preflight41106146433 passed, including host pip populating the isolated pip-less venv and a checked status push.
+Fresh demo-core tagv2.1.13 created at18:21:40UTC, commitfc3acdb94779dafb879c183143c20e19b435e766; existing tags preserved.
+Twenty selected executions are revisions455–474. Read-only observer captures SSE, graph, jobs/logs, feed queue and Pages.
+Early results confirm remaining serial queue delays; setup reduction is not complete-delay acceptance.
+Evidence: /tmp/codex/build/core-ci/publication-boundary/live/. Final timing and run outcomes follow below.
+
+### Trigger-driven controller replacement — 2026-10-30
+
+Owner authorized a fresh controller implementation, maximum 2,500 physical C++ source/header lines including bootstrap.
+Canonical checkout /home/voc/projects/snodec/core-ci, owned branch feat/publication-retention, HEAD e2c0045f22827563a729ca24955cd9532f1631db.
+Current main f98669b71f2313371ebd27f0bd2127183fed5a41 contains the reviewed setup reduction. No open PR.
+Starting C++ count: 3,829, excluding the 11-line UiAssets.h.in template; the physical C++ limit is a reduction of 1,329 lines.
+Invariant: authenticated event -> one committed graph transition -> GitHub dispatch; verified publication alone releases exact dependents.
+No new engine, scheduler, controller package processing or compatibility implementation. Preserve keys, configuration, unrelated dirty docs and UI.
+The running sandbox graph and its assigned uncertainty are independent of local replacement work; no replay or reset authorized or performed.
+Production replacement and end-to-end acceptance are not yet complete. Temporary checks: /tmp/codex/build/core-ci/trigger-graph-controller/.
+Source review confirmed advance already traverses ready executions in revision order and commits them before dispatch; the measured minute waits are worker/Pages boundaries.
+Claude reviewed current source read-only: unnecessary full re-derivation on evidence/preflight writes and repeated view calculations are concrete findings;
+its estimate is not a proof that 2,500 lines is impossible. No functional deletion or C++ replacement has been applied.
+Asked owner whether this reset removes controller retention and GitHub definition/workflow editing; preserving existing behavior forbids silently removing them.
+Baseline graph-state-boundaries passed0.10s and pipeline-chain passed9.37s; these validate existing source, not a replacement.
+The monitored v2.1.13 chain settled19 published/1 failed; r473 artifact validation returnedHTTP502 before publication. No retry or replacement performed.
+New retention attempts remain publishing without push-step evidence; existing unknownr436 unchanged. Local observers stopped after terminal execution outcomes.
+
+
+### Owner-authorized feature removal — 2026-10-30
+
+Owner answered "remove" for controller-managed retention and GitHub definition/workflow editing.
+Removed graph cleanup derivation, cleanup retry/completion, worker retention implementation and workflow predicates;
+removed write APIs, editor controls and embedded workflow rendering. GitHub committed definitions remain authoritative;
+read-only enrollment, exact assignments, normal retry/retirement, signing and independent publication proof remain.
+Readiness-producing facts traverse and commit the graph before dispatch; evidence/preflight writes only persist their facts.
+Existing expired-input facts still reject unavailable inputs. Old cleanup records remain in the database document but are
+not exposed, observed or reconciled by this implementation; unknown outcomes remain unresolved and are never replayed.
+No automatic package-storage reclamation remains. Storage management is external to this reduced controller.
+Claude reviewed the applied source/diff and found no remaining production defect; this is not approval of completion.
+C++ physical count 3,494: +73/-408/net -335 against e2c0045f22827563a729ca24955cd9532f1631db.
+Other production +58/-395/net -337; tests +53/-789/net -736. Combined production net -672.
+Per-file accounting: /tmp/codex/build/core-ci/trigger-graph-controller/removal-accounting.json.
+The 2,500-line replacement objective is NOT achieved: 994 C++ lines remain above the owner limit.
+This removal does not establish an end-to-end delay improvement or a completed fresh implementation.
+Build identity: HEAD e2c0045f22827563a729ca24955cd9532f1631db, source/test dirty diff SHA256
+4b4eef0f2cb48204b8bbfa37405dcdeaa7b7dd40be2ce88c66813d3553dfc120.
+Built with cmake --build build/codex/speed-release --target core-ci graph-test graph-store-test -j4.
+Final build/format command: cmake --build build/codex/speed-release --target core-ci format-check -j4.
+Ran each independently: ctest --test-dir build/codex/speed-release -R '^<name>$' --output-on-failure.
+Passing names: graph-state-boundaries (0.07s), pipeline-chain (9.24s), pipeline-overlap (8.65s),
+pipeline-cold (9.13s), persistence-graph (1.84s), enrollment-boundaries (1.85s),
+worker-provenance-boundaries (1.99s), worker-package-boundaries (2.07s), openwrt-archive-boundaries (0.99s).
+These are isolated real-MariaDB/local synthetic-GitHub checks, not live acceptance or throughput measurements.
+Earlier fixture startup failures were /tmp ENOSPC and MariaDB path permissions; cold proof application failed with
+"graph_state is full" before space was reclaimed. The affected checks subsequently passed independently.
+Removed-feature tests were deleted; remaining build/publication and safety tests were retained.
+Browser check against the synthetic UI fixture verified read-only definition rendering and only a refresh POST;
+no GitHub editing controls or console errors. Fixture and browser tab stopped/closed after checking.
+YAML parsing, identical publication copies, Python/JavaScript syntax, changed production line lengths <=160,
+canonical format-check and git diff --check passed. No unrelated/full suite was run.
+Preserved unrelated dirty documentation, review records and private directories. Only targeted current-feature docs
+were changed; whole dirty-document numstats include previous work and are not charged to this task.
+Freed inactive generated test database directories after their processes stopped; preserved logs and evidence.
+Also removed 33 inactive temporary object files (215,043,568 bytes) from the old controller-parallelism build;
+sources, linked binaries and probe evidence remain. No additional checkout was created.
+Changes remain local on feat/publication-retention, uncommitted and undeployed. Running sandbox state is unchanged.

@@ -213,32 +213,12 @@ int main(int argc, char* argv[]) {
                                 res->type("application/json").send(enrollment->list().dump());
                             });
 
-                            app.post("/api/repositories/save", [&] APPLICATION(req, res) {
-                                try {
-                                    const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
-                                    enrollment->save(body, onEnrolled(res));
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid enrollment JSON"})");
-                                }
-                            });
-
                             app.post("/api/repositories/refresh", [&] APPLICATION(req, res) {
                                 try {
                                     const auto body = nlohmann::json::parse(req->body.begin(), req->body.end());
                                     enrollment->refresh(body, onEnrolled(res));
                                 } catch (const std::exception&) {
                                     res->status(422).type("application/json").send(R"({"error":"invalid enrollment JSON"})");
-                                }
-                            });
-
-                            app.post("/api/repositories/workflow", [&] APPLICATION(req, res) {
-                                try {
-                                    enrollment->workflow(nlohmann::json::parse(req->body.begin(), req->body.end()),
-                                                         [res](const coreci::EnrollmentResult& result) {
-                                                             res->status(result.status).type("application/json").send(result.body.dump());
-                                                         });
-                                } catch (const std::exception&) {
-                                    res->status(422).type("application/json").send(R"({"error":"invalid workflow request JSON"})");
                                 }
                             });
 
@@ -321,7 +301,7 @@ int main(int argc, char* argv[]) {
 
         store = std::make_unique<coreci::Database>(*database);
         graphStore = std::make_unique<coreci::GraphStore>(*store);
-        enrollment = std::make_unique<coreci::Enrollment>(github, *graphStore, sources, *pipelineConfig);
+        enrollment = std::make_unique<coreci::Enrollment>(github, *graphStore, sources);
         pipeline = std::make_unique<coreci::Pipeline>(*pipelineConfig, *githubConfig, github, sources, *graphStore, feeds);
 
         if (databaseConfig->mode == "managed") {

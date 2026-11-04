@@ -36,6 +36,7 @@ namespace coreci {
 
     private:
         void change(const std::function<Json(Json&)>& derive, const Callback& callback);
+        void advance(const std::function<Json(Json&)>& derive, const Callback& callback);
         void dispatch(const Json& executions);
         void fail(const std::string& id, const std::string& attempt, const std::string& reason);
         void accept(const std::string& repository, const Json& report, bool job, const Json& packageJob = nullptr);

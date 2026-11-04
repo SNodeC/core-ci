@@ -527,12 +527,12 @@ def main():
     assert "contents: read" in tools_job and "include-hidden-files: true" in tools_job
     assert "needs.validate.outputs.environment" in tools_job
     assert "needs: [validate, tools]" in bundle
-    assert "needs.validate.result == 'success'" in bundle and "needs.validate.result == 'skipped'" in bundle
-    assert "needs.tools.result == 'skipped'" in bundle and "objects.*.path" in tools_job
+    assert "needs.validate.result == 'success'" in bundle and "needs.validate.result == 'skipped'" not in bundle
+    assert "needs.tools.result == 'skipped'" in bundle and "objects.*.path" not in tools_job
     assert "needs.tools.result == 'success'" in bundle.split("  publish:\n")[1].split("  confirm:\n")[0]
     assert "if: needs.tools.result == 'success'" in bundle
     assert "fromJSON(inputs.assignment).target.family == 'native' && needs.tools.result == 'skipped'" in bundle
-    assert "if: ${{ !cancelled() && needs.publish.result == 'success' && fromJSON(inputs.assignment).kind != 'retention' }}" in bundle.split("  confirm:\n")[1]
+    assert "if: ${{ !cancelled() && needs.publish.result == 'success' }}" in bundle.split("  confirm:\n")[1]
     assert "CORE_CI_TOOLS_SHA256: ${{ needs.tools.outputs.tools-sha256 }}" in bundle
     assert "path: ${{ runner.temp }}/validated/\n          compression-level: 0" in bundle
     assert "retention-days: 7" in bundle and bundle.count('--artifacts "$RUNNER_TEMP/validated/packages"') == 2

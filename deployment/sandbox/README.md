@@ -10,10 +10,10 @@ settings; they are not controller policy or authorization for production SNodeC 
 | Role | Current setting |
 | --- | --- |
 | Controller checkout | `/home/voc/projects/snodec/core-ci`, branch `main` |
-| Local administration UI | `http://127.0.0.1:8080/` |
-| Public signed webhook | `https://gw-home.vchrist.at:8443/github/webhook` |
-| Controller LAN endpoint | `192.168.1.239:8443`, router TCP forwarding |
-| Database | Private managed MariaDB, application schema `core_ci` |
+| Test administration UI | `http://core.vchrist.at:8080/` |
+| Public signed webhook | `https://core.vchrist.at:8443/github/webhook` |
+| Controller host / service | `core.vchrist.at`, `core-ci.service` |
+| Database | System MariaDB, application unmanaged mode, socket-authenticated `core_ci` account |
 | Controller App / installation | `5467318` / `175134675` |
 | Trusted worker | `VOC-Experiments/ci-coordinator` |
 | Source repositories | `demo-core`, `demo-app`, `demo-side`, `demo-join` under `VOC-Experiments` |
@@ -22,28 +22,40 @@ settings; they are not controller policy or authorization for production SNodeC 
 | Feed-writer App / installation | `5424800` / `174142534` |
 | Signing environment | Worker `package-publication`, restricted to `main` |
 
-The controller runs a development build under `/tmp/codex/build/core-ci/public-status-projection`; it is
-not installed as a system service. Runtime command/PID and local acceptance artifacts are
-under `/tmp/codex/build/core-ci/live-sandbox` and
-`/tmp/codex/build/core-ci/public-status-projection/live`. No extra source checkout
-is required. GitHub jobs perform all package compilation, signing and publication.
+The controller is installed at `/srv/core-ci/bin/core-ci`, with matching private runtime
+libraries in `/srv/core-ci/lib`. The executable contains the controller changes through
+`47737f7`; subsequent commits through `4257cb0` are records. Runtime artifact hashes are in
+`/srv/core-ci/runtime-manifest.json`. The service runs as the dedicated `core_ci` UNIX user.
+MariaDB contains the restored graph and history; it is administered by `mariadb.service`.
 
-The UI stays on loopback. Public TLS serves the webhook and read-only `/public/status` facts,
-with SSL verification enabled in GitHub and raw-body HMAC validation in core-ci. Subscribed App events are Push, Workflow
-job and Workflow run. Port 443 remains untouched. The configured TLS files are
-`/home/voc/ci-test/core-ci-tls/fullchain.pem` and `private-key.pem`; the HMAC file is
-`/home/voc/ci-test/core-ci-webhook.secret`. These paths contain private material and are not
-files to commit or include in screenshots.
+For the initial tests, the owner authorized the management listener on `0.0.0.0:8080`.
+Open <http://core.vchrist.at:8080/> directly. Management TLS and authorization are not
+configured in this test deployment. Public TLS on 8443 serves only the authenticated webhook
+and read-only `/public/status` facts. GitHub SSL verification and raw-body HMAC validation
+remain enabled. Subscribed App events are Push, Workflow job and Workflow run.
+Ports 80 and 443 and the existing services are unchanged.
+
+Configuration is `/etc/core-ci/controller.conf`. Controller App and HMAC files are
+`/etc/core-ci/controller.pem` and `/etc/core-ci/webhook.secret`, owned by `core_ci` with
+mode 0600. Signing and feed-writer private keys remain in GitHub publication secrets.
+The existing certificate covering `core.vchrist.at` is read from
+`/etc/letsencrypt/live/snodec-idp/fullchain.pem` and `privkey.pem` using systemd
+`LoadCredential`; the service receives private copies under `/run/credentials/core-ci.service/`.
+Restart `core-ci.service` after certificate renewal to load the renewed copies.
+
+Use `systemctl status core-ci` and `journalctl -u core-ci` for operations. Back up the
+`core_ci` database with a consistent logical dump and protect it as deployment data.
+Never start a second controller against a copied graph while this service is active.
+The current uncertain publication remains assigned; migration does not authorize its retry.
 
 ## Trusted deployment pins
 
 | Identity | Current value |
 | --- | --- |
-| Worker tooling commit | `96f34e0079d2adbd93a266ddfdeddc9064db37b1` |
-| Thin source workflow Git blob | `498dafaf2509aad33832e11bd86c539b4b9ea199` |
+| Worker tooling commit | `60ff1107f7192c42c2e3e5243984b8049bd864d8` |
+| Thin source workflow Git blob | `1c846209d3a10bf01ffe9eddf65858dcb8b78192` |
 | Publication workflow Git blob | `c7aeed28b4388ef33563b6ab5e4b815b1698ad00` |
 | Public status workflow Git blob | `1e15779200a5ed7462c19ad167b320b7c98d0def` |
-| Source workflow main commits | core `23bd1950102db031cfd476940a32cd64faf2bb54`; app `8795f8c0036126358a9d55e2f4faa3b49f037540`; side `40a8a36657f2c91e9379072160268cfaa427295d`; join `16d354cefe0021dc27107ba31ce217b81b389baf` |
 
 New GitHub run/job names and core-ci labels show repository, source tag, distribution/suite,
 architecture, package format and rebuild revision. Full cryptographic evidence remains in
@@ -129,7 +141,7 @@ five trusted key files, signed indexes, receipts and exports stayed unchanged.
 [Identical refresh 40369085122](https://github.com/VOC-Experiments/ci-coordinator/actions/runs/40369085122)
 also succeeded and left that feed commit unchanged, with no additional signatures.
 
-The status workflow uses `CORE_CI_STATUS_URL=https://gw-home.vchrist.at:8443/public/status`,
+The status workflow uses `CORE_CI_STATUS_URL=https://core.vchrist.at:8443/public/status`,
 the reviewed tooling SHA above and the existing feed-writer App. It receives no signing keys.
 Runtime command-line pins are recorded with the running controller command; they override
 older values in its protected configuration file. No system-service installation is claimed.

@@ -1,7 +1,5 @@
 #include "PipelineConfig.h"
 
-#include "UiAssets.h"
-
 #include <regex>
 
 namespace coreci {
@@ -30,18 +28,6 @@ namespace coreci {
             addOptionVariable("--feed-id", feedId, "Feed repository ID", "id", std::uint64_t{0}, CLI::TypeValidator<std::uint64_t>()),
             true);
     }
-    std::string PipelineConfig::sourceContent() const {
-        auto result = std::string(ui::sourceWorkflow);
-        for (const auto& [marker, value] :
-             std::map<std::string, std::string>{{"@WORKER@", workerRepository}, {"@TOOLING_SHA@", toolingSha}}) {
-            std::size_t position = 0;
-            while ((position = result.find(marker, position)) != std::string::npos) {
-                result.replace(position, marker.size(), value);
-                position += value.size();
-            }
-        }
-        return result;
-    }
     Json PipelineConfig::deployment(const GitHubConfig& app, const GitHub& github, const std::string& branch) const {
         static const std::regex sha("^[a-f0-9]{40}$"), fingerprint("^[A-F0-9]{40}$"), sha256("^[a-f0-9]{64}$");
         require(GitHub::validRepository(workerRepository) && GitHub::validRepository(feedRepository) && feedId && app.botId &&
@@ -50,7 +36,6 @@ namespace coreci {
                     std::regex_match(usignKeySha256, sha256) && std::regex_match(apkKeySha256, sha256) && !branch.empty() &&
                     !publicationRef.empty() && !feedBranch.empty() && feedBaseUrl.starts_with("https://"),
                 "configure immutable worker, workflow, feed and signing identities");
-        require(SourceReader::blobSha(sourceContent()) == sourceWorkflowBlob, "rendered source workflow differs from approval");
         return {{"controller_app_bot_id", app.botId},
                 {"worker",
                  {{"repository", workerRepository}, {"repository_id", github.repositoryId(workerRepository)}, {"tooling_sha", toolingSha}}},

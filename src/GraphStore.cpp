@@ -57,7 +57,7 @@ namespace coreci {
     }
 
     Json GraphStore::view() const {
-        auto executions = Json::array(), retention = Json::array();
+        auto executions = Json::array();
         for (const auto& id : graph::workIds(state)) {
             const auto& node = graph::work(state, id);
             const auto& attempt = node.at("attempts").back();
@@ -71,45 +71,37 @@ namespace coreci {
             row["id"] = id;
             row["attempt"] = attempt.at("id");
             row["label"] = attempt.at("assignment").is_null() ? source.at("title") : attempt.at("assignment").at("label");
-            if (state.at("executions").contains(id)) {
-                row["target"] = node.at("target_row").at("id");
-                for (const auto* key : {"target_row", "prerequisites", "automatic", "superseded_by"}) {
-                    row[key] = node.at(key);
-                }
-                for (const auto* key : {"repository", "tag", "definition_revision", "package", "title"}) {
-                    row[key] = source.at(key);
-                }
-                row["source_commit"] = source.at("commit");
-                row["retryable"] = attempt.at("state") == "failed" && graph::eligible(state, node, false);
-                row["retirable"] = graph::retirable(node);
-                row["blockers"] = graph::blockers(state, node);
-                row["build_job"] = attempt.at("evidence").value("build", Json::object());
-                row["publication_job"] = attempt.at("evidence").value("publication", Json::object());
-                for (const auto* key : {"build_job", "publication_job"}) {
-                    if (row.at(key).contains("job_status")) {
-                        row[key]["status"] = row.at(key).at("job_status");
-                    }
-                }
-                row["activity"] = attempt.at("state");
-                const auto stage = attempt.at("state").get<std::string>();
-                if (stage == "building" || stage == "publishing") {
-                    const auto& facts = row.at(stage == "building" ? "build_job" : "publication_job");
-                    row["activity"] =
-                        stage + ": " + facts.value("job_status", "awaiting job status; workflow " + facts.value("status", "unconfirmed"));
-                    if (stage == "building" && !attempt.at("build_result").is_null()) {
-                        row["activity"] = "build complete; waiting for publication";
-                    }
-                }
-                executions.push_back(std::move(row));
-            } else {
-                row["retryable"] = attempt.at("state") == "failed";
-                retention.push_back(std::move(row));
+            row["target"] = node.at("target_row").at("id");
+            for (const auto* key : {"target_row", "prerequisites", "automatic", "superseded_by"}) {
+                row[key] = node.at(key);
             }
+            for (const auto* key : {"repository", "tag", "definition_revision", "package", "title"}) {
+                row[key] = source.at(key);
+            }
+            row["source_commit"] = source.at("commit");
+            row["retryable"] = attempt.at("state") == "failed" && graph::eligible(state, node, false);
+            row["retirable"] = graph::retirable(node);
+            row["blockers"] = graph::blockers(state, node);
+            row["build_job"] = attempt.at("evidence").value("build", Json::object());
+            row["publication_job"] = attempt.at("evidence").value("publication", Json::object());
+            for (const auto* key : {"build_job", "publication_job"}) {
+                if (row.at(key).contains("job_status")) {
+                    row[key]["status"] = row.at(key).at("job_status");
+                }
+            }
+            row["activity"] = attempt.at("state");
+            const auto stage = attempt.at("state").get<std::string>();
+            if (stage == "building" || stage == "publishing") {
+                const auto& facts = row.at(stage == "building" ? "build_job" : "publication_job");
+                row["activity"] =
+                    stage + ": " + facts.value("job_status", "awaiting job status; workflow " + facts.value("status", "unconfirmed"));
+                if (stage == "building" && !attempt.at("build_result").is_null()) {
+                    row["activity"] = "build complete; waiting for publication";
+                }
+            }
+            executions.push_back(std::move(row));
         }
-        return {{"generation", state.at("generation")},
-                {"mutations_allowed", database.mutationsAllowed()},
-                {"executions", executions},
-                {"retention", retention}};
+        return {{"generation", state.at("generation")}, {"mutations_allowed", database.mutationsAllowed()}, {"executions", executions}};
     }
 
     Json GraphStore::publicView() const {
@@ -137,7 +129,7 @@ namespace coreci {
                 projects[repository] = {{"repository", repository}, {"title", row.at("title")}, {"versions", {row.at("tag")}}};
             }
             auto& versions = projects.at(repository).at("versions");
-            // Preserve the highest selection even if expired; collect history only from visible work.
+            // Keep the highest selection and the versions represented by visible work.
             versions.front() = Version(row.at("tag")).compare(Version(versions.front())) > 0 ? row.at("tag") : versions.front();
             if (visible.contains(row.at("id"))) {
                 versions.push_back(row.at("tag"));

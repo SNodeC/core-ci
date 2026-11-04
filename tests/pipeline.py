@@ -105,7 +105,7 @@ def exercise(arguments):
         dependencies = [] if name == "core" else ["core"] + (["app", "side"] if name == "join" else [])
         definition = {"schema": 1, "title": name, "package": name, "depends_on": dependencies,
                       "build": {"native": "ci/build.sh", "openwrt": "ci/openwrt.sh"},
-                      "matrix": matrices[:1] if arguments.case.startswith("preflight-") or unconfirmed or arguments.case == "retention" else matrices}
+                      "matrix": matrices[:1] if arguments.case.startswith("preflight-") or unconfirmed else matrices}
         content = canonical(definition).encode()
         revision = sha((name + "-source").encode())
         definitions[name] = revision
@@ -212,12 +212,11 @@ def exercise(arguments):
                     selected = json.loads(body["inputs"]["assignment"])
                     identity = selected["execution"]
                     stage = "publication" if "publish.yml" in self.path else "build"
-                    state = json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip()))["retention" if selected.get("kind") else "executions"][identity]["attempts"][-1]["state"]
+                    state = json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip()))["executions"][identity]["attempts"][-1]["state"]
                     assert state == ("publishing" if stage == "publication" else "building"), "dispatch preceded committed authority"
                     assert body["inputs"]["assignment_sha256"] == hashlib.sha256(canonical(selected).encode()).hexdigest()
-                    if not selected.get("kind"):
-                        assert len(selected["dependencies"]) == len(selected["source"]["depends_on"])
-                    for prerequisite in selected.get("dependencies", []):
+                    assert len(selected["dependencies"]) == len(selected["source"]["depends_on"])
+                    for prerequisite in selected["dependencies"]:
                         assert prerequisite["receipt"]["feed_revision"]
                     with lock:
                         run_id = 1000 + len(dispatches)
@@ -346,8 +345,6 @@ def exercise(arguments):
         snapshot = json.loads(canonical(enrolled))
         if arguments.case == "sources":
             snapshot["join"]["definition"]["depends_on"] = ["core"]
-        if arguments.case == "retention":
-            snapshot = {name: value for name, value in snapshot.items() if name in ("core", "app")}
         state = {"generation": 1, "next_revision": 1, "repositories": snapshot, "executions": {}}
         lifecycle.query(socket, "UPDATE boundary.graph_state SET document=CONVERT(X'" + canonical(state).encode().hex() + "' USING utf8mb4)")
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHub)
@@ -371,7 +368,7 @@ def exercise(arguments):
                    "pipeline.usign-key-sha256": "b" * 64, "pipeline.apk-key-sha256": "c" * 64}
         config.write_text("\n".join(name + "=" + json.dumps(value) for name, value in options.items()) + "\n")
         controller_socket = socket
-        if arguments.case in ("status-uncertain", "retention"):
+        if arguments.case == "status-uncertain":
             proxy = enrollment.DatabaseProxy(root / "p.sock", socket)
             proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
             proxy_thread.start()
@@ -436,156 +433,9 @@ def exercise(arguments):
 
         application = subprocess.Popen(command, stdout=(root / "stdout.log").open("w"), stderr=subprocess.STDOUT)
         lifecycle.wait_http(port, application)
-        review_cases = ("enrollment-progress", "save-progress", "same-row-put-race", "exact-post-put-sha",
+        review_cases = ("enrollment-progress",
                         "status-delayed-approval", "unchanged-private-commits", "status-uncertain", "status-approval-recovery")
-        if arguments.case == "retention":
-            failed, publications = [], []
-            for number in range(4):
-                tag = "v1." + str(number) + ".0"
-                release("core", tag)
-                assert api("/api/work/request", {"repository": "Owner/core", "tag": tag})[0] == 200
-                wait(lambda: len([w for w in dispatches if w["stage"] == "build" and w["selected"]["source"]["name"] == "core"]) == number + 1, "core not assigned")
-                work = next(w for w in dispatches if w["stage"] == "build" and w["selected"]["source"].get("tag") == tag and w["repository"] == "core")
-                assert report(work)[0] == 202 and report(work, job=True)[0] == 202
-                wait(lambda: any(w["stage"] == "publication" and w["selected"]["execution"] == work["selected"]["execution"] for w in dispatches), "publication not assigned")
-                publication = next(w for w in dispatches if w["stage"] == "publication" and w["selected"]["execution"] == work["selected"]["execution"])
-                selected = publication["selected"]
-                identity = {"id": publication["id"], "run_attempt": 1, "repository_id": 9, "actor_id": 42,
-                            "workflow_commit": definitions["worker-main"], "workflow_blob_sha": blob_id(publisher),
-                            "html_url": "https://github.com/Owner/worker/actions/runs/" + str(publication["id"])}
-                receipt = {"schema": 1, "execution": selected["execution"], "attempt": selected["attempt"],
-                           "assignment_sha256": publication["inputs"]["assignment_sha256"], "source_commit": selected["source"]["commit"],
-                           "run": identity, "build_result": json.loads(publication["inputs"]["build_result"]),
-                           "feed": selected["source"]["deployment"]["feed"], "environment": {"fixture": "synthetic"},
-                           "packages": [{"path": "debian/pool/trixie/core_1.0-" + str(selected["revision"]) + "_amd64.deb", "size": 100, "sha256": "a" * 64}],
-                           "development_export": None}
-                path = "receipts/" + selected["execution"] + "/" + str(selected["revision"]) + ".json"
-                content = canonical(receipt).encode() + b"\n"
-                public_files[path] = content
-                # Synthetic GitHub represents two successive parentless snapshots, retaining identical receipt bytes.
-                for snapshot_number in (1, 2):
-                    commit = sha((path + str(snapshot_number)).encode())
-                    tree_files("feed", commit, public_files)
-                    definitions[path] = commit
-                if number == 3:
-                    assert api("/api/work/retry", {"execution": failed[0]["selected"]["execution"]})[0] == 200
-                    wait(lambda: len([w for w in dispatches if w["selected"]["execution"] == failed[0]["selected"]["execution"]]) == 2, "retry did not reserve inputs")
-                if number == 0:
-                    public_files[path] = b"Pages lag"
-                assert report(publication, job=True)[0] == 202 and report(publication)[0] == 202
-                if number == 0:
-                    wait(lambda: any(x[2] == "/" + path for x in trace), "late proof did not check HTTPS")
-                    assert next(x for x in api("/api/graph")[1]["executions"] if x["id"] == selected["execution"])["state"] == "publishing"
-                    public_files[path] = content
-                    assert api("/api/work/reconcile", {})[0] == 200
-                wait(lambda: any(x["id"] == selected["execution"] and x["state"] == "published" for x in api("/api/graph")[1]["executions"]), "late first proof not accepted")
-                publications.append(selected)
-                wait(lambda: any(w["repository"] == "app" and w["selected"]["dependencies"][0]["execution"] == selected["execution"] for w in dispatches), "dependent not assigned")
-                dependent = next(w for w in dispatches if w["repository"] == "app" and w["selected"]["dependencies"][0]["execution"] == selected["execution"])
-                if number == 3:
-                    retried = next(w for w in reversed(dispatches) if w["selected"]["execution"] == failed[0]["selected"]["execution"])
-                    assert "expired_by" not in next(x for x in api("/api/graph")[1]["executions"] if x["id"] == publications[0]["execution"]) and report(retried, conclusion="failure")[0] == 202
-                assert report(dependent, conclusion="failure")[0] == 202
-                failed.append(dependent)
-                wait(lambda: any(x["id"] == dependent["selected"]["execution"] and x["state"] == "failed" for x in api("/api/graph")[1]["executions"]), "failure not retained")
-            wait(lambda: any(w["selected"].get("kind") == "retention" for w in dispatches), "last publication did not trigger cleanup")
-            cleanup = next(w for w in dispatches if w["selected"].get("kind") == "retention")
-            graph = api("/api/graph")[1]
-            removal = next(item for item in cleanup["selected"]["objects"] if item["path"].startswith("receipts/"))
-            assert removal["sha256"] == hashlib.sha256(public_files[removal["path"]]).hexdigest() and removal["size"] == len(public_files[removal["path"]])
-            assert next(x for x in graph["executions"] if x["id"] == publications[0]["execution"])["expired_by"] == cleanup["selected"]["execution"]
-            assert api("/api/work/retry", {"execution": failed[0]["selected"]["execution"]})[0] == 409
-            cleanup_id = cleanup["selected"]["execution"]
-            for retry_number in range(2):
-                assert report(cleanup, job=True, conclusion="failure", wrong={
-                    "steps": [{"name": "Publish checked feed update", "conclusion": "skipped"}]
-                })[0] == 202
-                wait(lambda: next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)["state"] == "failed",
-                     "definite cleanup failure not applied")
-                row = next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)
-                assert row["retryable"] is True
-                count = len(dispatches)
-                assert api("/api/work/reconcile", {})[0] == 200 and len(dispatches) == count
-                if retry_number == 0:
-                    proxy.drop_commit, proxy.drop_query = True, b"UPDATE GRAPH_STATE"
-                    status, outcome = api("/api/work/retry", {"execution": cleanup_id})
-                    assert status == 503 and outcome["uncertain"] is True and proxy.dropped == 1
-                    assert len(dispatches) == count and api("/api/graph")[1]["mutations_allowed"] is False
-                    lifecycle.stop(application)
-                    application = subprocess.Popen(command, stdout=(root / "retry-lost-ack.log").open("w"), stderr=subprocess.STDOUT)
-                    lifecycle.wait_http(port, application)
-                    wait(lambda: next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)["state"] == "failed",
-                         "unsubmitted restored retry not classified definitely")
-                    assert len(dispatches) == count
-                publication_started.clear()
-                publication_release.clear()
-                holds["publication"] = True if retry_number == 0 else "drop"
-                assert api("/api/work/retry", {"execution": cleanup_id}) == (200, {"execution": cleanup_id})
-                assert publication_started.wait(5), "retry dispatch did not reach held response"
-                wait(lambda: len(dispatches) == count + 1, "explicit cleanup retry not dispatched once")
-                previous, cleanup = cleanup, dispatches[-1]
-                expected = {**previous["selected"], "attempt": cleanup["selected"]["attempt"], "revision": cleanup["selected"]["revision"],
-                            "label": "retention " + cleanup_id + " | r" + str(cleanup["selected"]["revision"])}
-                assert report(previous, conclusion="failure")[0] == 202
-                assert report(previous, job=True, conclusion="skipped", wrong={
-                    "name": "Publish ${{ fromJSON(inputs.assignment).label }}",
-                    "steps": [{"name": "Publish checked feed update", "conclusion": "skipped"}]
-                })[0] == 202
-                current = next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)
-                assert current["state"] == "publishing" and current["publication_run"] is None
-                publication_release.set()
-                if retry_number == 1:
-                    wait(lambda: "dispatch outcome is uncertain" in (root / "retry-lost-ack.log").read_text(), "lost response not reported")
-                    hidden = runs.pop(cleanup["id"])
-                    assert api("/api/work/reconcile", {})[0] == 200
-                    assert next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)["publication_run"] is None
-                    runs[cleanup["id"]] = hidden
-                holds["publication"] = False
-                assert cleanup["selected"] == expected and cleanup["selected"]["attempt"] != previous["selected"]["attempt"]
-                assert api("/api/work/retry", {"execution": cleanup_id})[0] == 409
-                assert api("/api/work/reconcile", {})[0] == 200 and len(dispatches) == count + 1
-                current = next(x for x in api("/api/graph")[1]["retention"] if x["id"] == cleanup_id)
-                assert current["retryable"] is False and current["publication_run"]["id"] == cleanup["id"]
-            count = len(dispatches)
-            assert report(cleanup, status="in_progress")[0] == 202
-            lifecycle.stop(application)
-            application = subprocess.Popen(command, stdout=(root / "cleanup-restart.log").open("w"), stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
-            assert api("/api/work/reconcile", {})[0] == 200 and len(dispatches) == count
-            assert report(cleanup, job=True)[0] == 202 and report(cleanup)[0] == 202
-            wait(lambda: api("/api/graph")[1]["retention"][0]["state"] == "published", "cleanup completion not applied")
-            offset = len(trace)
-            assert report(cleanup)[0] == 202 and report(cleanup, job=True)[0] == 202
-            time.sleep(0.15)
-            assert len(trace) == offset and len(dispatches) == count, "cleanup duplicates caused reads or dispatch"
-            # Seed the same isolated fixture without its expiry marker: all exact objects are already claimed.
-            lifecycle.stop(application)
-            stored = json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip()))
-            stored["executions"][publications[0]["execution"]]["attempts"][-1].pop("expired_by")
-            path = '$.executions."' + publications[0]["execution"] + '".attempts[' + str(len(stored["executions"][publications[0]["execution"]]["attempts"]) - 1) + '].expired_by'
-            lifecycle.query(socket, "UPDATE boundary.graph_state SET document=JSON_REMOVE(document, '" + path + "')")
-            assert json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip())) == stored
-            offset = len(trace)
-            application = subprocess.Popen(command, stdout=(root / "graph-only.log").open("w"), stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
-            wait(lambda: next(x for x in api("/api/graph")[1]["executions"] if x["id"] == publications[0]["execution"]).get("expired_by") == "retention policy",
-                 "graph-only expiry not applied")
-            stored_after = json.loads(bytes.fromhex(lifecycle.query(socket, "SELECT HEX(document) FROM boundary.graph_state").strip()))
-            assert stored_after["next_revision"] == stored["next_revision"] and len(dispatches) == count
-            public = api("/public/status")[1]
-            assert all(item["id"] != publications[0]["execution"] for item in public["executions"])
-            cleanup_traffic = [entry for entry in trace[offset:] if "/core-ci-publish.yml/dispatches" in entry[2]]
-            assert not cleanup_traffic, cleanup_traffic
-            print("Graph-only expiry HTTP total/status/token:", len(trace[offset:]),
-                  sum("core-ci-status.yml/dispatches" in item[2] for item in trace[offset:]),
-                  sum(item[2].startswith("/app/installations/") for item in trace[offset:]))
-            lifecycle.stop(application)
-            application = subprocess.Popen(command, stdout=(root / "graph-only-restored.log").open("w"), stderr=subprocess.STDOUT)
-            lifecycle.wait_http(port, application)
-            assert next(x for x in api("/api/graph")[1]["executions"] if x["id"] == publications[0]["execution"])["expired_by"] == "retention policy"
-            assert len(dispatches) == count
-            finish_boundary("graph-only expiry, explicit cleanup retry, late first proof and restart without replay")
-        elif arguments.case in review_cases:
+        if arguments.case in review_cases:
             if arguments.case == "status-approval-recovery":
                 message = "approved public status workflow is unavailable"
                 wait(lambda: message in (root / "stdout.log").read_text(), "failed status preflight not reported")
@@ -625,11 +475,6 @@ def exercise(arguments):
                 def row(name):
                     return next(x for x in api("/api/repositories")[1]["repositories"] if x["name"] == name)
 
-                def save_input():
-                    current = row("app")
-                    return {"repository": "Owner/app", "branch": "main", "revision": current["revision"],
-                            "blob_sha": current["blob_sha"], "definition": current["definition"]}
-
                 if arguments.case == "enrollment-progress":
                     holds["commit"] = definitions["app-main"]
                     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -650,74 +495,6 @@ def exercise(arguments):
                         rejected = a.result(timeout=10)
                     assert rejected[0] == 409 and "enrollment changed" in rejected[1]["error"]
                     assert row("app") == committed
-                elif arguments.case == "save-progress":
-                    holds["commit"], holds["definition"] = definitions["app-main"], True
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        pending = pool.submit(api, "/api/repositories/save", save_input())
-                        assert commit_started.wait(5)
-                        progress()
-                        commit_release.set()
-                        assert definition_started.wait(5)
-                        progress(job=True)
-                        definition_release.set()
-                        saved = pending.result(timeout=10)
-                    assert saved[0] == 200 and saved[1]["github_committed"] is True, saved
-                    assert row("app")["revision"] == definition_writes[-1][2]
-                    # A real enrollment change still invalidates pre-PUT validation.
-                    holds["commit"], holds["definition"] = definitions["app-main"], False
-                    commit_started.clear()
-                    commit_release.clear()
-                    count = len(definition_writes)
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        pending = pool.submit(api, "/api/repositories/save", save_input())
-                        assert commit_started.wait(5)
-                        assert api("/api/repositories/refresh", {"repository": "Owner/side", "branch": "alternate"})[0] == 200
-                        commit_release.set()
-                        rejected = pending.result(timeout=10)
-                    assert rejected[0] == 409 and rejected[1]["github_committed"] is False and len(definition_writes) == count
-                elif arguments.case == "same-row-put-race":
-                    holds["definition"] = True
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        pending = pool.submit(api, "/api/repositories/save", save_input())
-                        assert definition_started.wait(5)
-                        assert api("/api/repositories/refresh", {"repository": "Owner/app", "branch": "alternate"})[0] == 200
-                        concurrent = row("app")
-                        definition_release.set()
-                        rejected = pending.result(timeout=10)
-                    assert rejected[0] == 409 and rejected[1]["github_committed"] is True, rejected
-                    assert row("app") == concurrent
-                    assert api("/api/repositories/refresh", {"repository": "Owner/app", "branch": "main"})[0] == 200
-                    definition_started.clear()
-                    definition_release.clear()
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        pending = pool.submit(api, "/api/repositories/save", save_input())
-                        assert definition_started.wait(5)
-                        assert api("/api/repositories/refresh", {"repository": "Owner/side", "branch": "alternate"})[0] == 200
-                        definition_release.set()
-                        assert pending.result(timeout=10)[0] == 200
-                elif arguments.case == "exact-post-put-sha":
-                    holds["definition"] = True
-                    with ThreadPoolExecutor(max_workers=2) as pool:
-                        pending = pool.submit(api, "/api/repositories/save", save_input())
-                        assert definition_started.wait(5)
-                        holds["commit"] = definitions["app-main"]
-                        preview = pool.submit(api, "/api/repositories/workflow", {"repository": "Owner/app"})
-                        assert commit_started.wait(5)
-                        definition_release.set()
-                        saved = pending.result(timeout=5)  # must finish while the stale branch read is still held
-                        assert saved[0] == 200 and saved[1]["revision"] == definition_writes[-1][2], saved
-                        assert any(x[2] == "/repos/Owner/app/commits/" + saved[1]["revision"] for x in trace)
-                        commit_release.set()
-                        assert preview.result(timeout=10)[0] == 200
-                    holds["definition"], holds["commit"] = False, None
-                    for mode in ("missing", "no-sha", "bad-sha", "short-sha", "wrong-type"):
-                        put_response["mode"] = mode
-                        previous, offset = row("app"), len(trace)
-                        rejected = api("/api/repositories/save", save_input())
-                        assert rejected[0] == 503 and rejected[1]["github_committed"] is True, rejected
-                        put = next(i for i in range(offset, len(trace)) if trace[i][1] == "PUT")
-                        assert not any("/commits/" in x[2] for x in trace[put + 1:]), "missing identity caused a fallback read"
-                        assert row("app") == previous
                 else:
                     if arguments.case == "status-delayed-approval":
                         progress()
@@ -918,23 +695,6 @@ def exercise(arguments):
             assert not api("/api/graph")[1]["executions"]
             finish_boundary("enrollment branch guard preserved")
         else:
-            if arguments.case == "workflow":
-                endpoint = "/api/repositories/workflow"
-                query = {"repository": "Owner/core"}
-                status, preview = api(endpoint, query)
-                assert status == 200 and preview["blob_sha"] == blob_id(workflow) and preview["content"] == workflow.decode()
-                assert api(endpoint, {**query, "write": True, "head": "stale", "blob_sha": preview["blob_sha"]})[0] == 409
-                assert not workflow_writes
-                assert api(endpoint, {**query, "write": True, "head": preview["head"], "blob_sha": preview["blob_sha"]})[1]["github_committed"] is False
-                missing = sha(b"branch without workflow")
-                tree_files("core", missing, {"ci/packages.json": canonical(enrolled["core"]["definition"]).encode()})
-                definitions["core-main"] = missing
-                status, preview = api(endpoint, query)
-                assert status == 200 and preview["blob_sha"] == "" and preview["head"] == missing
-                status, installed = api(endpoint, {**query, "write": True, "head": missing, "blob_sha": ""})
-                assert status == 200 and installed["github_committed"] is True and installed["blob_sha"] == blob_id(workflow)
-                assert len(workflow_writes) == 1 and "sha" not in workflow_writes[0]
-                assert api(endpoint, query)[1]["blob_sha"] == blob_id(workflow)
             if arguments.case == "sources":
                 unreadable.add("side")
                 status, blocked = api("/api/work/request", {"repository": "Owner/core", "tag": "v1.0.0"})
@@ -1198,5 +958,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True)
     parser.add_argument("--directory", required=True)
-    parser.add_argument("--case", choices=("retention", "status-approval-recovery", "enrollment-progress", "save-progress", "same-row-put-race", "exact-post-put-sha", "status-delayed-approval", "unchanged-private-commits", "status-uncertain", "unconfirmed-dispatch", "unconfirmed-run", "retirement", "chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "workflow", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
+    parser.add_argument("--case", choices=("status-approval-recovery", "enrollment-progress", "status-delayed-approval", "unchanged-private-commits", "status-uncertain", "unconfirmed-dispatch", "unconfirmed-run", "retirement", "chain", "recovery", "cold", "skip", "missing", "expired", "sources", "overlap", "changed", "skip-job", "selection-progress", "shared-tags", "backport", "explicit-tag", "non-semver", "enrollment-race", "crossing-selections", "preflight-build-absent", "preflight-build-known", "preflight-publish-absent", "preflight-publish-known", "preflight-live", "queued-job", "large-indexes"), default="chain")
     exercise(parser.parse_args())

@@ -145,9 +145,9 @@ replayed as a connection-recovery strategy.
 ## 4. Configure the controller App
 
 Create/install a GitHub App for the controller. Grant only the enrolled source repositories
-and trusted worker repository. It needs repository metadata read, contents read/write for
-source/configuration reads and approved commits, Actions read/write for dispatch/evidence,
-and workflow-file write access for the explicit thin-workflow installation action.
+and trusted worker repository. It needs repository metadata and contents read access for
+source/configuration evidence, and Actions read/write for dispatch/evidence. It does not need
+contents or workflow-file write access.
 The App does not need the feed writer's credential.
 
 ### App creation and installation, step by step
@@ -155,10 +155,9 @@ The App does not need the feed writer's credential.
 1. Open the owning account or organization's **Settings → Developer settings → GitHub Apps**
    and create a new App with a recognizable controller name. A GitHub App is the controller's
    machine identity; it does not introduce a user-login system into core-ci.
-2. Configure repository permissions: **Contents: Read and write**, **Actions: Read and write**,
-   and **Workflows: Read and write** for the authorized workflow-file editing operation.
-   Metadata read access accompanies the repository grant. The write permissions are needed
-   for explicit configuration/workflow commits and dispatch; build jobs do not inherit them.
+2. Configure repository permissions: **Contents: Read**, **Actions: Read and write**.
+   Metadata read access accompanies the repository grant. Actions write is needed for dispatch;
+   no definition or workflow-file write permission is needed. Build jobs do not inherit App credentials.
 3. After the relevant permissions are selected, subscribe to Push, Workflow run and Workflow
    job. If the webhook endpoint is not ready, keep delivery inactive until section 8 is done.
 4. Create the App, record its App ID, and generate its controller private key. Move the
@@ -376,19 +375,14 @@ source hook's private SDK copy is writable.
 
 Packages, affected indexes, receipt/export and status projections are committed together.
 Checked updates preserve unrelated paths and retained package identities. Package publication
-and retention cleanup create parentless snapshots and push with an explicit lease on the old
+creates parentless snapshots and push with an explicit lease on the old
 checkout head, captured before creating the snapshot. A stale lease is rejected; no retry or
 rebase replaces it. Status updates remain ordinary parented commits with fast-forward pushes.
-Retention activation requires resolving historical retries pinned to the older publisher;
-see [the retention design](../proposals/publication-retention-design.md).
-
-An expiry with no physical objects is recorded only in the graph. Metadata-only cleanup
-removes the exact receipt/export bytes without SDK preparation, signing or index updates.
-To retry definitely failed cleanup, find its `id` and `retryable: true` in the `retention`
-list from `GET /api/graph`, then send `POST /api/work/retry` with `{"execution":"<id>"}`.
-This creates one new attempt with the same objects and tooling/workflow pins, and a
-revision-specific label that prevents old reports from binding to it. Unknown
-outcomes cannot be retried; another definite failure requires another explicit action.
+The controller does not schedule retention or delete packages, receipts or development exports.
+Publication preserves existing feed files; storage use must be managed separately by the owner.
+Previously recorded expiry still prevents use of unavailable inputs. Stored cleanup records remain
+in MariaDB, but are not displayed, observed or reconciled after removing the cleanup feature;
+their unknown outcomes are not resolved or replayed by that removal.
 IPK validation reads metadata without preparing an SDK; independent publication-tool
 verification remains. APK validation retains its SDK parser.
 
@@ -405,7 +399,7 @@ Configuration POSTs require JSON; the controller does not restrict their Origin 
 There is no application user-login protection; agree an access-protection
 arrangement before making the UI public. Do not forward its port as part of webhook setup.
 
-The named `webhook` TLS listener owns only `/github/webhook`. Append:
+The named `webhook` TLS listener serves `/github/webhook` and read-only `/public/status`. Append:
 
 ```sh
 webhook --disabled=false local --host YOUR_STABLE_LAN_ADDRESS --port 8443 \
@@ -416,11 +410,11 @@ These are framework CLI settings, not a custom listener configuration parser. Us
 full chain and matching private key, accessible only as required by the service account.
 An encrypted TLS key needs its registered password setting in protected configuration.
 
-For the sandbox, forward router TCP 8443 to controller TCP 8443 and use
-`https://gw-home.vchrist.at:8443/github/webhook`. Leave occupied port 443, UI 8080 and
-MariaDB untouched. Ensure public DNS points to the router and external GitHub delivery can
-reach the forwarding destination. A successful connection from inside the LAN alone does
-not prove public reachability; verify a delivery from GitHub.
+The current sandbox runs on `core.vchrist.at`: its public endpoint is
+`https://core.vchrist.at:8443/github/webhook`, while administration stays on loopback 8080.
+Port 443 belongs to an existing service. See the [sandbox deployment](../../deployment/sandbox/README.md)
+for installed paths, service management and the SSH tunnel. Verify actual GitHub deliveries;
+a successful local TLS connection alone does not prove GitHub reachability.
 
 ### Obtain a certificate on an OpenWrt router
 
@@ -445,15 +439,11 @@ Keep alias fields empty unless intentionally using delegated challenge DNS. Do n
 credential screenshots. Start/restart the ACME service and inspect its logs. A missing DNS hook
 means the provider scripts are absent; it is not proof of bad credentials.
 
-For the sandbox router, issued files are `/etc/acme/gw-home.vchrist.at/fullchain.cer` and
-`/etc/acme/gw-home.vchrist.at/gw-home.vchrist.at.key`. Transfer them over authenticated SSH
-into restrictive local files; never print or commit the private key. Check hostname, validity,
-chain trust and matching public keys before activating the listener.
-
-Renewal on the router does not reload the controller. The operator must securely deploy
-renewed files and restart the controller; automatic renewal transfer/restart is not currently
-configured in the sandbox. Monitor expiry and establish the desired operational automation
-before relying on unattended long-term service.
+When issuing on a separate router, transfer the full chain and private key over authenticated
+SSH into restrictive files. Check hostname, validity, chain trust and matching public keys.
+Router renewal alone does not reload a controller on another machine; arrange secure transfer
+and restart explicitly. The current sandbox uses its server's existing certificate through
+systemd credentials and requires a controller restart after renewal.
 
 ### Configure and verify the App webhook
 
@@ -477,25 +467,17 @@ notification. This accepted limitation has no durable inbox or automatic retry p
 
 ## 9. Enroll projects and follow a first publication
 
-Commit the source-owned hook files, then use the local UI to create or edit the definition.
-Select enrolled dependencies with checkboxes; the repository itself is excluded. Add, edit,
-duplicate or remove matrix rows through the target form. Enter distribution, suite, architecture,
-runner name/labels and family-specific build parameters without editing JSON. Native rows need
-an image/platform and DEB or RPM; OpenWrt rows need an SDK target and IPK or APK. Distribution
-and runner values are deployment inputs, not a support catalogue. Supply repository-relative
-hook paths for the families used. Review the expandable read-only JSON preview, then commit.
-The original revision/blob guards still apply. Server validation rejects invalid configuration
-before the GitHub write; failures preserve the draft. If an imported document cannot be edited
-by the supported form, its original content remains visible; Start new definition explicitly
-replaces the draft using the retained GitHub write guard. Install the thin workflow. Follow
-the [extension guide](../extensions/README.md) for the exact schema and hook environment.
+Commit the source-owned hooks and `ci/packages.json` directly in GitHub, and install the approved thin workflow
+through the repository's normal reviewed process. The controller UI enrolls a repository by reading its committed
+definition; it does not edit definitions, target rows or workflow files. Use **Read committed definition from GitHub**
+to import an update. Follow the [extension guide](../extensions/README.md) for the schema and hook environment.
 An existing highest SemVer is selected immediately; dependencies must have explicitly selected
 work and compatible rows. New tags and explicit older requests follow the same graph rules.
 
 The controller UI shows active work first, readable repository/version/target/rebuild labels,
 prerequisites, stage, blockers, failure reason and GitHub links. The local SSE stream updates
 the view automatically; there is no Refresh view button. The connection indicator shows Live,
-Reconnecting or Disconnected. Reconnection receives current state and preserves unsaved edits.
+Reconnecting or Disconnected. Reconnection receives current state.
 All work is the default filter. Use each row's chevron for inline details, prerequisites,
 logs and explicit retry. Recorded build start, completion and elapsed time refer to the assigned
 attempt-1 package job, not publication. Times use the browser's local timezone, shown explicitly.
@@ -508,7 +490,7 @@ of accepted graph selections and current work. Enable it by configuring
 `pipeline.status-workflow=".github/workflows/core-ci-status.yml"` and
 `pipeline.status-workflow-blob="<reviewed workflow Git blob SHA>"`. Set the trusted worker's
 public variable `CORE_CI_STATUS_URL` to the HTTPS `/public/status` endpoint, for example
-`https://gw-home.vchrist.at:8443/public/status`. Leave port 443 unchanged. Include the status
+`https://core.vchrist.at:8443/public/status`. Leave port 443 unchanged. Include the status
 workflow in tooling rollout and calculate its approved blob alongside the other workflows.
 
 The status job needs the existing `PACKAGES_APP_PRIVATE_KEY`, `FEED_WRITER_APP_ID` and

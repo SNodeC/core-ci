@@ -1,7 +1,7 @@
 "use strict";
 const element = (id) => document.getElementById(id);
 let repositories = [], graph = {executions: [], mutations_allowed: false};
-let selected = null, executionIds = new Set(), workflowPreview = null, events = null, dirty = false, busy = false, targetIndex = null;
+let selected = null, executionIds = new Set(), events = null, busy = false;
 
 function node(tag, text = "", className = "") {
     const result = document.createElement(tag);
@@ -26,9 +26,7 @@ function state(execution) {
 function feedback(value, failed = false) {
     element("feedback").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     element("feedback").className = failed ? "error" : "";
-    const committed = value && typeof value === "object" ? value.github_committed : undefined;
-    element("feedback-summary").textContent = committed === true ?
-        "GitHub content committed" + (failed ? "; controller/view update failed" : "") : committed === null || value?.uncertain === true ?
+    element("feedback-summary").textContent = value?.uncertain === true ?
         "Operation outcome uncertain — inspect before retrying" : failed ? "Operation failed — technical details" : "Operation details";
     element("feedback-details").open = true;
 }
@@ -268,147 +266,19 @@ function renderWork() {
         }
     }
     element("visible-count").textContent = visible.length + " of " + graph.executions.length + " executions";
-    const cleanup = (graph.retention || []).filter((work) => work.state !== "published");
     const stageLabels = {building: "in build stage", publishing: "in publication stage", waiting: "waiting", failed: "failed"};
     element("counts").textContent = ["building", "publishing", "waiting", "failed"].map((value) =>
         graph.executions.filter((row) => row.state === value && !row.superseded_by).length + " " + stageLabels[value]).join(" · ");
-    element("counts").textContent += cleanup.length ? " · " + cleanup.length + " cleanup pending or failed" : "";
-    element("counts").title = cleanup.length ? JSON.stringify(cleanup, null, 2) : "";
-}
-function preview(definition) {
-    element("definition").value = JSON.stringify(definition, null, 2);
-    dirty = true;
-    workflowPreview = null;
-}
-function dependencyChoices() {
-    const definition = JSON.parse(element("definition").value), self = element("repository").value.split("/").pop();
-    const enrolled = repositories.map((row) => row.repository.split("/").pop());
-    const names = new Set([...definition.depends_on, ...enrolled.filter((name) => name !== self)]);
-    element("dependencies").replaceChildren();
-    for (const name of names) {
-        const label = node("label"), checkbox = node("input");
-        Object.assign(checkbox, {type: "checkbox", value: name, checked: definition.depends_on.includes(name), disabled: busy});
-        label.append(checkbox, node("span", name + (name === self ? " (invalid: self dependency)" : enrolled.includes(name) ? "" : " (not enrolled)")));
-        element("dependencies").append(label);
-    }
-    if (names.size === 0) {
-        element("dependencies").append(node("p", "No other repositories enrolled", "secondary"));
-    }
-}
-function fields() {
-    const definition = JSON.parse(element("definition").value);
-    element("definition-controls").disabled = false;
-    for (const id of ["title", "package"]) {
-        element(id).value = definition[id];
-    }
-    for (const family of ["native", "openwrt"]) {
-        element(family + "-hook").value = definition.build[family] || "";
-        element(family + "-hook").required = definition.matrix.some((row) => row.family === family);
-    }
-    dependencyChoices();
-    element("targets").replaceChildren();
-    definition.matrix.forEach((target, index) => {
-        const row = node("tr"), actions = node("td", "", "row-actions");
-        for (const value of [target.id, target.distribution + " " + target.suite, target.arch, JSON.stringify(target.runner)]) {
-            row.append(node("td", value));
-        }
-        actions.append(button("Edit", () => editTarget(index)), button("Duplicate", () => editTarget(index, true)), button("Remove", () => {
-            definition.matrix.splice(index, 1);
-            preview(definition);
-            fields();
-        }));
-        row.append(actions);
-        element("targets").append(row);
-    });
-    element("matrix-message").textContent = definition.matrix.length ? "" : "Add at least one target before saving.";
-}
-function freshDefinition() {
-    preview({schema: 1, title: "", package: "", depends_on: [], build: {}, matrix: []});
-    fields();
-}
-function targetFamily() {
-    const native = element("target-family").value === "native", previous = element("target-format").value;
-    element("native-fields").disabled = !native;
-    element("native-fields").hidden = !native;
-    element("openwrt-fields").disabled = native;
-    element("openwrt-fields").hidden = native;
-    element("target-format").replaceChildren();
-    for (const format of native ? ["deb", "rpm"] : ["ipk", "apk"]) {
-        const option = node("option", format);
-        option.value = format;
-        element("target-format").append(option);
-    }
-    if (Array.from(element("target-format").options).some((option) => option.value === previous)) {
-        element("target-format").value = previous;
-    }
-}
-function editTarget(index = null, duplicate = false) {
-    const matrix = JSON.parse(element("definition").value).matrix;
-    const target = index === null ? {id: "", family: "native", distribution: "", suite: "", arch: "", runner: "", build: {format: "deb"}} : matrix[index];
-    targetIndex = duplicate ? null : index;
-    element("target-heading").textContent = duplicate ? "Duplicate target" : index === null ? "Add target" : "Edit target";
-    for (const key of ["id", "family", "distribution", "suite", "arch"]) {
-        element("target-" + key).value = key === "id" && duplicate ? "" : target[key];
-    }
-    element("target-runner-kind").value = Array.isArray(target.runner) ? "labels" : "name";
-    element("target-runner").value = Array.isArray(target.runner) ? target.runner.join("\n") : target.runner;
-    for (const key of ["image", "platform", "target"]) {
-        element("build-" + key).value = target.build[key] || "";
-    }
-    targetFamily();
-    element("target-format").value = target.build.format;
-    element("target-error").textContent = "";
-    element("target-editor").showModal();
-}
-function applyTarget(event) {
-    event.preventDefault();
-    const definition = JSON.parse(element("definition").value), target = {};
-    for (const key of ["id", "family", "distribution", "suite", "arch"]) {
-        target[key] = element("target-" + key).value;
-    }
-    target.runner = element("target-runner-kind").value === "labels" ? element("target-runner").value.split("\n") : element("target-runner").value;
-    target.build = {format: element("target-format").value};
-    for (const key of target.family === "native" ? ["image", "platform"] : ["target"]) {
-        target.build[key] = element("build-" + key).value;
-    }
-    const duplicate = definition.matrix.some((row, index) => index !== targetIndex && row.id === target.id);
-    const runners = Array.isArray(target.runner) ? target.runner : [target.runner];
-    if (duplicate || runners.length > 32 || runners.some((label) => !label || label.length > 256) ||
-        (!Array.isArray(target.runner) && target.runner.includes("\n"))) {
-        element("target-error").textContent = duplicate ? "Target ID already exists; choose a unique ID." :
-            "Use one runner name, or up to 32 nonempty labels (one per line, at most 256 characters each).";
-    } else {
-        if (targetIndex === null) {
-            definition.matrix.push(target);
-        } else {
-            definition.matrix[targetIndex] = target;
-        }
-        preview(definition);
-        fields();
-        element("target-editor").close();
-    }
-}
+ }
 function selectRepository(repository = null) {
-    if (!dirty || window.confirm("Discard the unsaved definition edits?")) {
-        selected = repository;
-        dirty = false;
-        workflowPreview = null;
-        element("repository").value = repository?.repository || "";
-        element("branch").value = repository?.branch || "";
-        if (repository) {
-            element("definition").value = JSON.stringify(repository.definition, null, 2);
-            fields();
-        } else {
-            freshDefinition();
-            dirty = false;
-        }
-        element("revision").textContent = repository ? "Committed configuration: " + repository.branch + " · " + repository.revision.slice(0, 12) :
-            "No committed revision selected";
-        for (const id of ["workflow-current", "workflow-proposed", "tag"]) {
-            element(id).value = "";
-        }
-        renderRepositories();
-    }
+    selected = repository;
+    element("repository").value = repository?.repository || "";
+    element("branch").value = repository?.branch || "";
+    element("definition").value = repository ? JSON.stringify(repository.definition, null, 2) : "";
+    element("revision").textContent = repository ? "Committed configuration: " + repository.branch + " · " + repository.revision.slice(0, 12) :
+        "No committed revision selected";
+    element("tag").value = "";
+    renderRepositories();
 }
 function renderRepositories() {
     const owners = new Set(repositories.map((row) => row.repository.split("/")[0]));
@@ -423,7 +293,7 @@ function renderRepositories() {
     }
     const remote = repositories.find((row) => row.repository === selected?.repository);
     element("remote-revision").textContent = remote && remote.revision !== selected.revision ?
-        "A newer committed definition is available. Your draft and its original revision are preserved." : "";
+        "A newer committed definition is available. Read it to update this view." : "";
 }
 function connect() {
     if (events) {
@@ -441,9 +311,6 @@ function connect() {
     events.addEventListener("repositories", (event) => {
         repositories = JSON.parse(event.data).repositories;
         renderRepositories();
-        if (!element("definition-controls").disabled) {
-            dependencyChoices();
-        }
     });
     events.onerror = () => {
         element("connection").textContent = events.readyState === EventSource.CLOSED ? "Disconnected" : "Reconnecting…";
@@ -458,104 +325,21 @@ element("search").addEventListener("input", renderWork);
 element("state-filter").addEventListener("change", renderWork);
 element("enroll").addEventListener("click", () => selectRepository());
 element("reconcile").addEventListener("click", () => operation(async () => { feedback(await api("/api/work/reconcile", {})); }));
-element("editor").addEventListener("input", (event) => {
-    const id = event.target.id;
-    dirty = true;
-    workflowPreview = null;
-    if (id === "repository" || id === "branch") {
-        selected = null;
-        element("revision").textContent = "Read the committed definition before updating this repository/ref";
-    }
-    if (id !== "repository" && id !== "branch") {
-        const definition = JSON.parse(element("definition").value);
-        definition.title = element("title").value;
-        definition.package = element("package").value;
-        definition.depends_on = Array.from(element("dependencies").querySelectorAll("input:checked"), (input) => input.value);
-        for (const family of ["native", "openwrt"]) {
-            if (element(family + "-hook").value) {
-                definition.build[family] = element(family + "-hook").value;
-            } else {
-                delete definition.build[family];
-            }
-        }
-        preview(definition);
-    }
-    if (!element("definition-controls").disabled && (id === "repository" || event.target.type === "checkbox")) {
-        dependencyChoices();
-    }
-});
-element("new-definition").addEventListener("click", () => {
-    if (window.confirm("Replace the definition draft with an empty form? GitHub is unchanged until you commit.")) {
-        freshDefinition();
-    }
-});
-element("add-target").addEventListener("click", () => editTarget());
-element("target-family").addEventListener("change", targetFamily);
-element("target-form").addEventListener("submit", applyTarget);
-element("cancel-target").addEventListener("click", () => element("target-editor").close());
-async function adoptCommitted(result) {
-    feedback(result);
-    try {
+element("editor").addEventListener("submit", (event) => {
+    event.preventDefault();
+    operation(async () => {
+        const result = await api("/api/repositories/refresh", {repository: element("repository").value, branch: element("branch").value});
+        feedback(result);
         const response = await fetch("/api/repositories");
         if (!response.ok) {
             throw new Error("Could not read the committed controller view");
         }
         repositories = (await response.json()).repositories;
-        dirty = false;
         selectRepository(repositories.find((row) => row.repository === result.repository));
-    } catch (error) {
-        feedback({...result, error: error.message}, true);
-    }
-}
-element("import").addEventListener("click", () => operation(async () => {
-    try {
-        const result = await api("/api/repositories/refresh", {repository: element("repository").value, branch: element("branch").value});
-        await adoptCommitted(result);
-    } catch (error) {
-        if (error.result && typeof error.result.content === "string" && error.result.blob_sha) {
-            const effective = repositories.find((row) => row.repository === element("repository").value);
-            selected = {revision: effective?.revision || "", blob_sha: error.result.blob_sha};
-            element("definition").value = error.result.content;
-            element("definition-controls").disabled = true;
-            dirty = true;
-            element("definition-details").open = true;
-            element("revision").textContent = "Read GitHub definition blob: " + error.result.blob_sha +
-                " · use Start new definition to replace the unsupported document";
-        }
-        throw error;
-    }
-}));
-element("editor").addEventListener("submit", (event) => {
-    event.preventDefault();
-    operation(async () => {
-        if (JSON.parse(element("definition").value).matrix.length === 0) {
-            throw new Error("Add at least one target before committing the definition.");
-        }
-        const result = await api("/api/repositories/save", {
-            repository: element("repository").value, branch: element("branch").value,
-            revision: selected?.revision || "", blob_sha: selected?.blob_sha || "", definition: JSON.parse(element("definition").value)
-        });
-        await adoptCommitted(result);
     });
 });
 element("request-build").addEventListener("click", () => operation(async () => {
     feedback(await api("/api/work/request", {repository: element("repository").value, tag: element("tag").value}));
-}));
-element("workflow-preview").addEventListener("click", () => operation(async () => {
-    workflowPreview = await api("/api/repositories/workflow", {repository: element("repository").value});
-    element("workflow-current").value = workflowPreview.content;
-    element("workflow-proposed").value = workflowPreview.proposed;
-    feedback("Workflow preview at " + workflowPreview.head + " · proposed blob " + workflowPreview.proposed_blob_sha);
-}));
-element("workflow-write").addEventListener("click", () => operation(async () => {
-    if (!workflowPreview) {
-        throw new Error("Preview the enrolled repository workflow before committing.");
-    }
-    const result = await api("/api/repositories/workflow", {
-        repository: workflowPreview.repository, head: workflowPreview.head, blob_sha: workflowPreview.blob_sha, write: true
-    });
-    workflowPreview = null;
-    feedback(result);
 }));
 selectRepository();
 connect();

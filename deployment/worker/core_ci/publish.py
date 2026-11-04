@@ -170,7 +170,7 @@ def wait_for_https(selected, expected):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("prepare", "retain", "push", "confirm"), required=True)
+    parser.add_argument("--phase", choices=("prepare", "push", "confirm"), required=True)
     parser.add_argument("--assignment", required=True)
     parser.add_argument("--assignment-sha256", required=True)
     parser.add_argument("--build-result", default="")
@@ -181,7 +181,7 @@ def main():
     parser.add_argument("--feed-revision", default="")
     parser.add_argument("--expected-head", default="")
     arguments = parser.parse_args()
-    require(arguments.phase == "confirm" or bool(arguments.feed), "prepare/retain/push require --feed")
+    require(arguments.phase == "confirm" or bool(arguments.feed), "prepare/push require --feed")
     require(
         arguments.phase != "prepare" or bool(arguments.build_result and arguments.artifacts),
         "prepare requires --build-result and --artifacts",
@@ -189,14 +189,13 @@ def main():
     require(arguments.phase != "push" or re.fullmatch(r"[a-f0-9]{40}", arguments.expected_head), "push requires the prepared feed head")
     os.umask(0o077)
     selected = assignment(arguments.assignment, arguments.assignment_sha256)
-    require(arguments.phase == "push" or (arguments.phase == "retain") == (selected.get("kind") == "retention"), "phase differs from assignment")
     trusted_deployment(selected)
     require(
         selected["execution"] == os.environ["EXECUTION"] and selected["attempt"] == os.environ["ATTEMPT"],
         "publication identity mismatch",
     )
     require(
-        arguments.phase not in ("prepare", "retain") or selected["target"]["build"]["format"] not in ("ipk", "apk") or bool(arguments.tools),
+        arguments.phase != "prepare" or selected["target"]["build"]["format"] not in ("ipk", "apk") or bool(arguments.tools),
         "OpenWrt prepare requires --tools",
     )
     if arguments.phase == "confirm":
@@ -218,7 +217,7 @@ def main():
             root = Path(temporary)
             root.chmod(0o700)
             keys = {}
-            for name in (secret_name,) if arguments.phase in ("prepare", "retain") else ("PACKAGES_APP_PRIVATE_KEY",):
+            for name in (secret_name,) if arguments.phase == "prepare" else ("PACKAGES_APP_PRIVATE_KEY",):
                 value = os.environ.pop(name, "")
                 require(bool(value), "missing protected publication secret: " + name)
                 path = root / name
@@ -227,17 +226,13 @@ def main():
                 keys[name] = path
             passphrase = None
             value = os.environ.pop("PACKAGES_GPG_PASSPHRASE", "")
-            if value and arguments.phase in ("prepare", "retain") and package_format in ("deb", "rpm"):
+            if value and arguments.phase == "prepare" and package_format in ("deb", "rpm"):
                 passphrase = root / "passphrase"
                 passphrase.write_text(value)
                 passphrase.chmod(0o600)
-            if arguments.phase in ("prepare", "retain"):
+            if arguments.phase == "prepare":
                 public_key = Path(__file__).resolve().parents[1] / "keys" / public_name
-                if arguments.phase == "retain":
-                    from retention import update as prune
-
-                    paths, removed = prune(selected, feed, keys[secret_name], passphrase, public_key, root, arguments.tools)
-                elif package_format in ("ipk", "apk"):
+                if package_format in ("ipk", "apk"):
                     from sign_openwrt import update as update_openwrt
 
                     receipt = update_openwrt(
@@ -263,14 +258,13 @@ def main():
                         public_key,
                         root,
                     )
-                if arguments.phase == "prepare":
-                    receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
-                    require(receipt is not None, "publication requires the prepared verified receipt")
-                    paths = [receipt_path(selected), "keys/" + public_name] + [
-                        item["path"] for item in receipt["packages"] + receipt["indexes"]
-                    ]
-                    if receipt.get("development_export"):
-                        paths.append(receipt["development_export"]["path"])
+                receipt = retained_receipt(selected, read_json(arguments.build_result), identity, feed)
+                require(receipt is not None, "publication requires the prepared verified receipt")
+                paths = [receipt_path(selected), "keys/" + public_name] + [
+                    item["path"] for item in receipt["packages"] + receipt["indexes"]
+                ]
+                if receipt.get("development_export"):
+                    paths.append(receipt["development_export"]["path"])
             else:
                 token = writer_token(keys["PACKAGES_APP_PRIVATE_KEY"], selected["source"]["deployment"]["feed"])
                 revision = checked_push(feed, selected["source"]["deployment"]["feed"]["branch"], token, arguments.expected_head)
@@ -278,7 +272,7 @@ def main():
             print("Pushed checked feed revision:", revision)
         else:
             paths += render(feed)
-            # GitHub Pages has a 1 GB site limit. Retain versions and leave headroom.
+            # Leave headroom below the GitHub Pages site limit.
             require(
                 sum(
                     path.stat().st_size
@@ -294,7 +288,7 @@ def main():
                 removed += deleted
                 paths += deleted
             base = prepare_commit(feed, paths, orphan=True, removed=removed)
-            receipt_hash = hashlib.sha256((feed / receipt_path(selected)).read_bytes()).hexdigest() if arguments.phase == "prepare" else ""
+            receipt_hash = hashlib.sha256((feed / receipt_path(selected)).read_bytes()).hexdigest()
             revision = output(["git", "-C", str(feed), "rev-parse", "HEAD"])
             with open(os.environ["GITHUB_OUTPUT"], "a") as outputs:
                 outputs.write("receipt-sha256=" + receipt_hash + "\nfeed-revision=" + revision + "\nexpected-head=" + base + "\n")

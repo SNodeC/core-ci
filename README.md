@@ -20,6 +20,7 @@ work instead of starting replacements.
 | Install and configure the complete system, keys, GitHub Apps, HTTPS and MariaDB | [Deployment and operations](docs/deployment/README.md) |
 | Find the deployable workflow and worker files | [Deployment files](deployment/README.md) |
 | Inspect the configured example graph and current live verification | [VOC-Experiments sandbox](deployment/sandbox/README.md) |
+| Review known operational gaps and deferred improvements | [Improvement register](docs/improvements/README.md) |
 
 The guides describe the current implementation. Engineering instructions are in
 [AGENTS.md](AGENTS.md); implementation decisions and check records are in

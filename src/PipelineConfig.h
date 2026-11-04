@@ -10,7 +10,6 @@ namespace coreci {
         static constexpr std::string_view DESCRIPTION{"Trusted worker and publication deployment"};
         explicit PipelineConfig(utils::SubCommand* parent);
         Json deployment(const GitHubConfig& app, const GitHub& github, const std::string& branch) const;
-        std::string sourceContent() const;
         std::string workerRepository, toolingSha, sourceWorkflow = ".github/workflows/core-ci-build.yml", sourceWorkflowBlob;
         std::string publicationWorkflow = ".github/workflows/core-ci-publish.yml", publicationRef = "main", publicationWorkflowBlob;
         std::string statusWorkflow, statusWorkflowBlob, feedRepository, feedBranch = "main", feedBaseUrl;
