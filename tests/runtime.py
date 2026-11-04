@@ -143,6 +143,14 @@ def main():
             wait_http()
             threads = [task.joinpath("comm").read_text().strip() for task in Path(f"/proc/{controller.pid}/task").iterdir()]
             print(f"Native process has {len(threads)} OS threads; controller runs in the single SNode.C event loop")
+            for route in ("/", "/app.js?v=19bb541d", "/style.css"):
+                asset = http.client.HTTPConnection("127.0.0.1", web_port, timeout=5)
+                asset.request("GET", route)
+                response = asset.getresponse()
+                assert response.status == 200 and response.getheader("Cache-Control") == "no-cache", route
+                assert response.read(), route
+                asset.close()
+            print("Static assets revalidate; script version query reaches the existing asset route")
             context = ssl.create_default_context(cafile=str(certificate))
             for signature, status in [("sha256=" + "0" * 64, 401),
                 ("sha256=" + hmac.new(secret_bytes, b"{}", hashlib.sha256).hexdigest(), 200)]:

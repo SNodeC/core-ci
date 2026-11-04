@@ -22,3 +22,15 @@ than implying that every assignment is currently executing on GitHub.
 This is a presentation correction, not a new durable state or readiness rule.
 No production lines are added. The pre-existing uncommitted phase-cell UI work
 is preserved separately from this patch.
+
+Release validation also exposed browser reuse of the previous app.js. Static
+responses now require revalidation (Cache-Control: no-cache), and the script URL
+changes for this update so already-cached scripts are not reused. Asset paths
+and all API contracts remain unchanged. This adds no C++ or HTML lines.
+
+The Release startup observation burst still delayed two raw HTTP reads by
+16.38 and 10.85 seconds. After it drained, three reads took 0.547–0.592 seconds
+for 3,607,890 bytes. Release improves the idle comparison but does not eliminate
+whole-history read cost or prove responsiveness under arbitrary notification
+bursts. Full hydration remains O(history); no cache or second state authority
+was added.

@@ -248,7 +248,7 @@ int main(int argc, char* argv[]) {
                             for (const auto& [route, file] : std::map<std::string, std::string>{
                                      {"/", "index.html"}, {"/app.js", "app.js"}, {"/style.css", "style.css"}}) {
                                 web.get(route, [&, file](const auto&, const auto& response) {
-                                    response->sendFile(uiRoot + "/" + file, [response](int error) {
+                                    response->set("Cache-Control", "no-cache").sendFile(uiRoot + "/" + file, [response](int error) {
                                         if (error != 0) {
                                             response->sendStatus(404);
                                         }
