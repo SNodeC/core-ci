@@ -1,0 +1,15 @@
+{
+  "repository": "example/side",
+  "builds": {
+    "linux-amd64": {
+      "version": "v1.0.0",
+      "target": "linux-amd64",
+      "prerequisites": [
+        {
+          "repository": "example/core",
+          "build": "linux-amd64"
+        }
+      ]
+    }
+  }
+}
