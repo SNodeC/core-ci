@@ -12,15 +12,15 @@ namespace coreci::persistence {
         , commands(std::move(commands))
         , warning(std::move(warning)) {
     }
-    void EventQueue::start(std::function<void()> ready, std::function<void(const std::string&)> error) {
+    void EventQueue::start(std::function<void()> ready, std::function<void(const EventStore::StoreError&)> error) {
         onReady = std::move(ready);
         onError = std::move(error);
         rebuild();
     }
-    void EventQueue::fatal(const std::string& error) {
+    void EventQueue::fatal(const EventStore::StoreError& error) {
         mode = Mode::Unavailable;
         current.reset();
-        rejectPending(error);
+        rejectPending(error.message);
         onError(error);
     }
     void EventQueue::rebuild() {
@@ -48,11 +48,11 @@ namespace coreci::persistence {
                                            }});
                         pump();
                     },
-                    [this](const std::string& error) {
+                    [this](const EventStore::StoreError& error) {
                         fatal(error);
                     });
             },
-            [this](const std::string& error) {
+            [this](const EventStore::StoreError& error) {
                 fatal(error);
             });
     }

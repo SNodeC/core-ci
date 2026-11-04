@@ -1,0 +1,5 @@
+#pragma once
+#include <string_view>
+namespace coreci::mariadb {
+    inline constexpr std::string_view schema = R"coreci(@CORECI_SCHEMA@)coreci";
+}
