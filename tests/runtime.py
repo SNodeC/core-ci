@@ -21,7 +21,8 @@ from sse import check_delivery, read_snapshot
 
 def main():
     build = Path(sys.argv[1]).resolve()
-    web_port, hook_port = 18080, 18443
+    web_port = int(os.environ.get("CI_RUNTIME_WEB_PORT", "18080"))
+    hook_port = int(os.environ.get("CI_RUNTIME_HOOK_PORT", "18443"))
     parent = Path("/tmp/codex/build/core-ci/runtime")
     parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="case-", dir=parent) as temporary:
