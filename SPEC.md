@@ -46,7 +46,7 @@ Read this entire document before writing any code. It is the complete specificat
   app/                      # SNode.C express server, wiring, timers, main()
   pipeline/
     Pipeline.cpp            # THE real graph definition (C++ code) — see 3.3
-  tests/                    # GoogleTest
+  tests/                    # plain CTest executables (no test framework) — see section 8
   workflows/                # templates copied into recipe/publisher repos in phase 4
     coreci-build.yml
     coreci-publish.yml
@@ -290,7 +290,17 @@ Composite action: builds the form body, computes `timestamp` and `HMAC-SHA256(se
 
 ---
 
-## 8. Tests (GoogleTest) — acceptance criteria
+## 8. Tests (CTest) — acceptance criteria
+
+### 8.0 Test infrastructure
+
+- Tests are run **only with CTest** (`enable_testing()`, `add_test()`, `ctest --output-on-failure`). **No test framework**: no GoogleTest, no Catch2, no doctest, no Boost.Test, nothing fetched with `FetchContent`.
+- Every test is a small, self-contained executable in `tests/` with its own `main()`. It returns `0` on success and a non-zero exit code on failure, after printing `file:line: expected … got …` for each failed check.
+- The only shared helper is `tests/Check.h` (written in this repository, ≤ 60 lines): `CHECK(cond)` (records a failure, continues), `CHECK_EQ(a, b)` (prints both values), `REQUIRE(cond)` (prints and returns non-zero immediately), and a final `return checkResult();`.
+- One CTest test per scenario, named after it (`S01_Diamond`, `S02_PublishSerialization`, …, `I_RandomizedInvariants`, `A_WebhookHmac`, …). Each test gets a CTest `LABELS` property: `core`, `persistence`, `adapters` or `integration`.
+- A test that cannot run in the current environment (e.g. the MariaDB integration test without connection variables) prints the reason and exits with code `77`; it is registered with `set_tests_properties(<name> PROPERTIES SKIP_RETURN_CODE 77)` so CTest reports it as **Skipped**, never as passed.
+- The randomized test uses a fixed default seed, prints the seed it uses, and accepts a seed and run count through environment variables (`CORECI_TEST_SEED`, `CORECI_TEST_RUNS`) so a failure is reproducible.
+- `core` and `persistence` tests must build and pass without SNode.C installed (configure option `-DCORECI_WITH_SNODEC=OFF` builds only those).
 
 Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (diamond), `e → d`. Targets `t1` (feed `f1`), `t2` (feed `f2`); `e` only on `t1`. Tests assert the **exact** command list returned for each event.
 
@@ -307,7 +317,7 @@ Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (di
 - **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `resume()` re-emits only units in `Dispatching`/`PublishDispatching`.
 - **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored events are never appended.
 - **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8).
-- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from environment variables): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `resume()` commands. If the environment variables are not set the test reports **SKIPPED** explicitly — never "passed".
+- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from environment variables): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `resume()` commands. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
 - **Randomized invariant test** (seeded, ≥ 10 000 runs over random event interleavings on the test pipeline): (I1) a unit is never dispatched while any prerequisite is unsettled; (I2) at most one inflight per unit; (I3) at most one publication per feed; (I4) when all builds succeed, the system quiesces with every unit settled against the latest tags; (I5) replay equivalence.
 - Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint).
 
@@ -331,11 +341,12 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 
 ### Report format for every phase
 - Files changed (paths).
-- Exact build command and full test output (pass counts).
+- Exact configure/build commands and the complete `ctest --output-on-failure` output (passed/failed/skipped counts).
 - Any deviation from this specification, with the reason. Unlisted deviations are defects.
 - Open questions.
 
 ### Forbidden (each one is a rejected PR)
+- Any test framework (GoogleTest, Catch2, doctest, Boost.Test, …) or `FetchContent`; tests run only through CTest.
 - JSON anywhere outside `adapters/github/`; any JSON representation of the graph or state; JSON columns or JSON text in the database.
 - File-based persistence of state; any database access other than SNode.C's MariaDB client; SQL built from unescaped values.
 - Applying an event or executing a command before its row is committed.
