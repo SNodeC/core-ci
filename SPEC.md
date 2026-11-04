@@ -251,12 +251,12 @@ public:
     virtual ~EventStore() = default;
     virtual void open(std::function<void()> onReady, std::function<void(const std::string&)> onError) = 0;  // connect + ensure schema
     virtual void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) = 0;  // onError: commit outcome unknown (5.3 step 4)
-    virtual void loadAll(std::function<void(const Event&)> onEvent, std::function<void()> onDone,
+    virtual void loadAll(std::function<void(std::uint64_t seq, const Event&)> onEvent, std::function<void()> onDone,
                          std::function<void(const std::string&)> onError) = 0;
 };
 ```
 
-`InMemoryEventStore` (pure, for tests) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
+`loadAll` delivers events in ascending `seq` order with the row's actual `seq` (gaps are allowed). `InMemoryEventStore` (pure, for tests) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
 
 ---
 
