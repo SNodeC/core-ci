@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -67,13 +68,28 @@ def run():
         app_url = "https://localhost:" + str(app_port)
         config = work / "nonsecret.conf"
         config.write_text('db-user="wrong_user_from_config"\nbuild-timeout="7200"\n')
-        def launch_app(listen_port, name, pipe=False):
+        def app_command(listen_port, parser=()):
             command = [build / "tests/core-ci-smoke", "--config-file", config, "--db-host", os.environ["CORECI_TEST_DB_HOST"],
                        "--db-port", os.environ.get("CORECI_TEST_DB_PORT", "0"), "--db-user", os.environ["CORECI_TEST_DB_USER"],
                        "--db-name", os.environ["CORECI_TEST_DB_NAME"], "--github-api-url", api, "--github-ca-cert", cert,
                        "--callback-base-url", app_url, "--tls-cert", cert, "--tls-key", key,
                        "--listen-address", "127.0.0.1", "--listen-port", str(listen_port), "coreci"]
-            return start(command, name, pipe)
+            if parser:
+                command += ["http", "parser", *parser]
+            return command
+        def launch_app(listen_port, name, pipe=False, parser=()):
+            return start(app_command(listen_port, parser), name, pipe)
+        def raw_status(headers):
+            context = ssl.create_default_context(cafile=str(cert))
+            with socket.create_connection(("127.0.0.1", app_port), timeout=5) as tcp:
+                with context.wrap_socket(tcp, server_hostname="localhost") as connection:
+                    connection.sendall(headers.encode("ascii"))
+                    line = bytearray()
+                    while b"\r\n" not in line and len(line) < 8192:
+                        data = connection.recv(1024)
+                        assert data, "connection closed before HTTP rejection"
+                        line.extend(data)
+            return int(line.split(b"\r\n", 1)[0].split()[1])
         def wait_dispatch(count):
             assert curl(api + "/wait?count=" + str(count))[0] == 200
         def webhook(package, tag="v1.0.0", delivery=None):
@@ -117,8 +133,36 @@ def run():
             print("PASS: wrong-host certificate rejected; no HTTP request reached fake", flush=True)
             # Probe made one valid dispatch before the S1 sequence.
             count = 1
+            for name, maximum in (("body-bytes", 25 * 1024 * 1024), ("header-bytes", 64 * 1024),
+                                  ("header-fields", 100), ("start-line-bytes", 8 * 1024)):
+                for value in (0, maximum + 1):
+                    invalid = subprocess.run(app_command(app_port, ["--maximum-" + name, str(value)]),
+                                             env=env, capture_output=True, text=True, timeout=10)
+                    assert invalid.returncode != 0 and "invalid option: maximum-" + name in invalid.stderr, (invalid.returncode, invalid.stdout, invalid.stderr)
+            lower = launch_app(app_port, "lower-limits", parser=["--maximum-body-bytes", "16384",
+                               "--maximum-header-bytes", "1024", "--maximum-header-fields", "4",
+                               "--maximum-start-line-bytes", "1024"])
+            assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            assert raw_status("POST /api/v1/github/webhook HTTP/1.1\r\nHost: localhost\r\nContent-Length: 16385\r\n\r\n") == 413
+            assert raw_status("GET / HTTP/1.1\r\nHost: localhost\r\nX-Large: " + "x" * 1500 + "\r\n\r\n") == 431
+            assert raw_status("GET / HTTP/1.1\r\nHost: localhost\r\n" + "X-Test: x\r\n" * 4 + "\r\n") == 431
+            assert raw_status("GET /" + "x" * 1500 + " HTTP/1.1\r\nHost: localhost\r\n\r\n") == 431
+            stop(lower)
+            print("PASS: all four parser limits may be lowered; zero and above-cap values refused", flush=True)
             daemon = launch_app(app_port, "daemon")
             assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            declared = 25 * 1024 * 1024 + 1
+            assert raw_status("POST /api/v1/github/webhook HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + str(declared) + "\r\n\r\n") == 413
+            print("PASS: declared body " + str(declared) + " bytes rejected with 413 after headers; body bytes sent = 0", flush=True)
+            assert raw_status("GET / HTTP/1.1\r\nHost: localhost\r\n" + "X-Large: " + "x" * 8000 + "\r\n" +
+                              ("X-More: " + "x" * 8000 + "\r\n") * 8 + "\r\n") == 431
+            assert raw_status("GET / HTTP/1.1\r\nHost: localhost\r\n" + "X-Test: x\r\n" * 100 + "\r\n") == 431
+            assert raw_status("GET /" + "x" * 8192 + " HTTP/1.1\r\nHost: localhost\r\n\r\n") == 431
+            oversized = "x" * (65 * 1024)
+            assert curl(app_url + "/api/v1/builds/unknown/report", oversized,
+                        ["Content-Type: application/x-www-form-urlencoded", "X-CoreCI-Timestamp: " + str(int(time.time())),
+                         "X-CoreCI-Signature-256: invalid"]) == (413, "body too large")
+            print("PASS: 65 KiB callback rejected with 413 before authentication despite invalid signature", flush=True)
             assert curl(app_url + "/unknown")[0] == 404
             assert curl(app_url + "/api/v1/status", "")[0] == 405
             assert curl(app_url + "/api/v1/graph.dot")[1].startswith("digraph coreci")

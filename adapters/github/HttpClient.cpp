@@ -1,6 +1,7 @@
 #include "HttpClient.h"
 
 #include <algorithm>
+#include <charconv>
 #include <core/timer/Timer.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
@@ -47,7 +48,12 @@ namespace coreci::github {
                                 [weak](const auto&, const auto& res) {
                                     if (const auto e = weak.lock()) {
                                         Response response;
-                                        response.status = std::stoi(res->statusCode);
+                                        const auto& status = res->statusCode;
+                                        const auto parsed = std::from_chars(status.data(), status.data() + status.size(), response.status);
+                                        if (status.size() != 3 || status.front() < '0' || status.front() > '9' ||
+                                            parsed.ec != std::errc{} || parsed.ptr != status.data() + status.size()) {
+                                            response.status = 0;
+                                        }
                                         response.body.assign(res->body.begin(), res->body.end());
                                         for (const auto& [key, value] : res->headers) {
                                             std::string name = key;

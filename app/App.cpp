@@ -18,11 +18,17 @@
 #include <openssl/crypto.h>
 #include <regex>
 #include <set>
+#include <tuple>
 #include <utils/Config.h>
+#include <web/http/ConfigHttpParser.h>
 namespace coreci::app {
     namespace {
         namespace gh = github;
         namespace ps = persistence;
+        constexpr web::http::ParserLimits maximumParserLimits{.maximumStartLineBytes = 8U * 1024U,
+                                                              .maximumHeaderBytes = 64U * 1024U,
+                                                              .maximumHeaderFields = 100,
+                                                              .maximumBodyBytes = 25U * 1024U * 1024U};
         using Server = express::tls::in::WebApp;
         using Req = std::shared_ptr<express::Request>;
         using Res = std::shared_ptr<express::Response>;
@@ -92,6 +98,13 @@ namespace coreci::app {
                 for (const auto& [name, value] : defaults) {
                     options[name] = utils::Config::configRoot.addOption("--" + name, name, "value", value, CLI::Validator());
                 }
+                server.getConfig()
+                    ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
+                    ->getParserConfig()
+                    ->setMaximumBodyBytes(maximumParserLimits.maximumBodyBytes)
+                    ->setMaximumHeaderBytes(maximumParserLimits.maximumHeaderBytes)
+                    ->setMaximumHeaderFields(maximumParserLimits.maximumHeaderFields)
+                    ->setMaximumStartLineBytes(maximumParserLimits.maximumStartLineBytes);
                 server.getConfig()->Local::setPort(8443);
                 server.use([this](const Req& req, const Res& res) {
                     route(req, res);
@@ -104,6 +117,18 @@ namespace coreci::app {
                 logger::LogManager::setComponentLevel("web.http.server", logger::LogLevel::Warn);
                 logger::LogManager::setInstanceLevel("coreci", logger::LogLevel::Warn);
                 bool valid = true;
+                const auto limits = server.getConfig()
+                                        ->net::config::ConfigInstance::getSubCommand<web::http::server::ConfigHttpServer>()
+                                        ->getParserLimits();
+                for (const auto& [name, value, maximum] :
+                     {std::tuple{"maximum-body-bytes", limits.maximumBodyBytes, maximumParserLimits.maximumBodyBytes},
+                      std::tuple{"maximum-header-bytes", limits.maximumHeaderBytes, maximumParserLimits.maximumHeaderBytes},
+                      std::tuple{"maximum-header-fields", limits.maximumHeaderFields, maximumParserLimits.maximumHeaderFields},
+                      std::tuple{"maximum-start-line-bytes", limits.maximumStartLineBytes, maximumParserLimits.maximumStartLineBytes}}) {
+                    if (value == 0 || value > maximum) {
+                        invalid(name, valid);
+                    }
+                }
                 for (const auto& key : {"callback-base-url", "db-user", "db-name", "tls-cert", "tls-key"}) {
                     if (get(key).empty()) {
                         invalid(key, valid);
@@ -308,29 +333,32 @@ namespace coreci::app {
                 const bool hook = path == "/api/v1/github/webhook", reconcileRoute = path == "/api/v1/reconcile";
                 const bool status = path == "/api/v1/status", dot = path == "/api/v1/graph.dot";
                 const bool known = hook || report || retryUnit || reconcileRoute || status || dot;
-                const std::string body(req->body.begin(), req->body.end());
+                const bool oversized = !hook && req->body.size() > 64U * 1024U;
+                const std::string body = oversized ? std::string{} : std::string(req->body.begin(), req->body.end());
                 const auto at = now();
                 bool auth = true;
-                if (hook) {
-                    auth = gh::verify(environment("CORECI_WEBHOOK_SECRET"), body, req->get("X-Hub-Signature-256"));
-                } else if (report) {
-                    auth = gh::verifyCallback(environment("CORECI_CALLBACK_SECRET"),
-                                              body,
-                                              req->get("X-CoreCI-Timestamp"),
-                                              req->get("X-CoreCI-Signature-256"),
-                                              at);
-                } else if (retryUnit || reconcileRoute) {
-                    const auto expected = "Bearer " + environment("CORECI_ADMIN_TOKEN"), supplied = req->get("Authorization");
-                    auth = supplied.size() == expected.size() && CRYPTO_memcmp(supplied.data(), expected.data(), expected.size()) == 0;
+                if (!oversized) {
+                    if (hook) {
+                        auth = gh::verify(environment("CORECI_WEBHOOK_SECRET"), body, req->get("X-Hub-Signature-256"));
+                    } else if (report) {
+                        auth = gh::verifyCallback(environment("CORECI_CALLBACK_SECRET"),
+                                                  body,
+                                                  req->get("X-CoreCI-Timestamp"),
+                                                  req->get("X-CoreCI-Signature-256"),
+                                                  at);
+                    } else if (retryUnit || reconcileRoute) {
+                        const auto expected = "Bearer " + environment("CORECI_ADMIN_TOKEN"), supplied = req->get("Authorization");
+                        auth = supplied.size() == expected.size() && CRYPTO_memcmp(supplied.data(), expected.data(), expected.size()) == 0;
+                    }
                 }
-                if (!known) {
+                if (oversized) {
+                    answer(res, 413, "body too large");
+                } else if (!known) {
                     answer(res, 404, "not found");
                 } else if (req->method != ((status || dot) ? "GET" : "POST")) {
                     answer(res, 405, "method not allowed");
                 } else if (!auth) {
                     answer(res, 401, "unauthorized");
-                } else if (body.size() > (hook ? 25U * 1024U * 1024U : 64U * 1024U)) {
-                    answer(res, 413, "body too large");
                 } else if (status || dot) {
                     if (queue->engine()) {
                         res->status(200)
