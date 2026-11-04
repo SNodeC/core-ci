@@ -13,7 +13,7 @@ target_compile_options(coreci_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
 add_library(
     coreci_persistence
     persistence/EventRow.cpp persistence/InMemoryEventStore.cpp
-    persistence/EventQueue.cpp
+    persistence/EventQueue.cpp persistence/EventSql.cpp
 )
 target_link_libraries(coreci_persistence PUBLIC coreci_core)
 enable_testing()
@@ -40,12 +40,39 @@ target_link_libraries(I_RandomizedInvariants PRIVATE coreci_persistence)
 set_tests_properties(
     I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
 )
-foreach(scenario S11_Replay S12_WriteAhead S13_EventRow)
+foreach(scenario S11_Replay S12_WriteAhead S13_EventRow S14_EventSql)
     add_executable(${scenario} tests/${scenario}.cpp)
     target_link_libraries(${scenario} PRIVATE coreci_persistence)
     add_test(NAME ${scenario} COMMAND ${scenario})
     set_tests_properties(${scenario} PROPERTIES LABELS persistence)
 endforeach()
+if(CORECI_WITH_SNODEC)
+    find_package(snodec REQUIRED COMPONENTS db-mariadb)
+    set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY CMAKE_CONFIGURE_DEPENDS adapters/mariadb/Schema.sql
+    )
+    file(READ adapters/mariadb/Schema.sql CORECI_SCHEMA)
+    configure_file(adapters/mariadb/Schema.h.in generated/Schema.h @ONLY)
+    add_library(coreci_mariadb adapters/mariadb/MariaDBEventStore.cpp)
+    target_include_directories(
+        coreci_mariadb PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated
+    )
+    target_link_libraries(
+        coreci_mariadb PUBLIC coreci_persistence snodec::db-mariadb
+    )
+    foreach(scenario A_MariaDBRows M_MariaDBIntegration)
+        add_executable(${scenario} tests/${scenario}.cpp)
+        target_link_libraries(${scenario} PRIVATE coreci_mariadb)
+        add_test(NAME ${scenario} COMMAND ${scenario})
+    endforeach()
+    set_tests_properties(A_MariaDBRows PROPERTIES LABELS adapters)
+    set_tests_properties(
+        M_MariaDBIntegration PROPERTIES LABELS integration SKIP_RETURN_CODE 77
+                                        TIMEOUT 30
+    )
+endif()
 # Explicit discovery stays within owned source directories.
 file(
     GLOB_RECURSE
@@ -55,6 +82,8 @@ file(
     core/*.cpp
     persistence/*.h
     persistence/*.cpp
+    adapters/mariadb/*.h
+    adapters/mariadb/*.cpp
     tests/*.h
     tests/*.cpp
 )
@@ -86,5 +115,6 @@ if(CLANG_TIDY)
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventRow.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/InMemoryEventStore.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventQueue.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventSql.cpp
     )
 endif()

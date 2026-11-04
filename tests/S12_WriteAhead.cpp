@@ -107,6 +107,60 @@ int recovery(InMemoryEventStore::Failure failure) {
     CHECK(queue.engine()->time() == fresh.time());
     return checkResult();
 }
+class UnavailableStore : public InMemoryEventStore {
+public:
+    explicit UnavailableStore(bool failOpen)
+        : failOpen(failOpen) {
+    }
+    void open(std::function<void()> ready, std::function<void(const StoreError&)> error) override {
+        if (failOpen) {
+            error({StoreError::Kind::Unavailable, "open unavailable"});
+        } else {
+            ready();
+        }
+    }
+    void loadAll(std::function<void(std::uint64_t, const Event&)>,
+                 std::function<void()>,
+                 std::function<void(const StoreError&)> error) override {
+        error({StoreError::Kind::Unavailable, "load unavailable"});
+    }
+
+private:
+    bool failOpen;
+};
+void unavailableErrors() {
+    for (const bool failOpen : {false, true}) {
+        UnavailableStore store(failOpen);
+        bool reported = false;
+        EventQueue queue(
+            store,
+            engine,
+            [] {
+                return Resumed{100};
+            },
+            [](const auto&) {
+                CHECK(false);
+            },
+            [](auto, const auto&) {
+                CHECK(false);
+            });
+        queue.start(
+            [] {
+                CHECK(false);
+            },
+            [&](const auto& error) {
+                reported = true;
+                CHECK(error.kind == EventStore::StoreError::Kind::Unavailable);
+                CHECK_EQ(error.message, failOpen ? "open unavailable" : "load unavailable");
+            });
+        CHECK(reported);
+        CHECK(!queue.engine());
+        queue.enqueue(tag("a"), [](Result result) {
+            CHECK(std::holds_alternative<Unavailable>(result));
+        });
+        CHECK(store.rows().empty());
+    }
+}
 int main() {
     InMemoryEventStore store;
     std::vector<Result> replies;
@@ -185,6 +239,7 @@ int main() {
     CHECK_EQ(*store.rows().back().reason, "AB\xef\xbf\xbd");
     CHECK_EQ(queue.engine()->units().at({"a", "t"}).failure->reason, "AB\xef\xbf\xbd");
 
+    unavailableErrors();
     recovery(InMemoryEventStore::Failure::BeforeStore);
     recovery(InMemoryEventStore::Failure::AfterStore);
 
@@ -241,7 +296,8 @@ int main() {
         },
         [&](const auto& error) {
             fatal = true;
-            CHECK(error.find("seq 321") != std::string::npos);
+            CHECK(error.kind == EventStore::StoreError::Kind::Corrupt);
+            CHECK(error.message.find("seq 321") != std::string::npos);
         });
     CHECK(fatal);
     CHECK(!started);

@@ -27,7 +27,8 @@ void fatal(const EventRow& row) {
         },
         [&](const auto& reason) {
             failed = true;
-            CHECK(reason.find("seq " + std::to_string(row.seq) + ":") != std::string::npos);
+            CHECK(reason.kind == EventStore::StoreError::Kind::Corrupt);
+            CHECK(reason.message.find("seq " + std::to_string(row.seq) + ":") != std::string::npos);
         });
     CHECK(failed);
     CHECK(!done);

@@ -10,11 +10,11 @@ namespace coreci::persistence {
     public:
         enum class Failure { None, BeforeStore, AfterStore };
         explicit InMemoryEventStore(std::vector<EventRow> rows = {});
-        void open(std::function<void()> onReady, std::function<void(const std::string&)> onError) override;
+        void open(std::function<void()> onReady, std::function<void(const StoreError&)> onError) override;
         void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) override;
         void loadAll(std::function<void(std::uint64_t, const Event&)> onEvent,
                      std::function<void()> onDone,
-                     std::function<void(const std::string&)> onError) override;
+                     std::function<void(const StoreError&)> onError) override;
         void failNextAppend(Failure failure);
         void defer(bool enabled);
         bool completeOne();

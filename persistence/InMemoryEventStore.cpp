@@ -16,7 +16,7 @@ namespace coreci::persistence {
             operation();
         }
     }
-    void InMemoryEventStore::open(std::function<void()> onReady, std::function<void(const std::string&)>) {
+    void InMemoryEventStore::open(std::function<void()> onReady, std::function<void(const StoreError&)>) {
         perform(std::move(onReady));
     }
     void
@@ -41,7 +41,7 @@ namespace coreci::persistence {
     }
     void InMemoryEventStore::loadAll(std::function<void(std::uint64_t, const Event&)> onEvent,
                                      std::function<void()> onDone,
-                                     std::function<void(const std::string&)> onError) {
+                                     std::function<void(const StoreError&)> onError) {
         perform([this, onEvent = std::move(onEvent), onDone = std::move(onDone), onError = std::move(onError)] {
             auto snapshot = stored;
             std::sort(snapshot.begin(), snapshot.end(), [](const auto& a, const auto& b) {
@@ -54,7 +54,7 @@ namespace coreci::persistence {
                 if (valid) {
                     onEvent(snapshot[i].seq, std::get<Event>(event));
                 } else {
-                    onError(std::get<Invalid>(event).reason);
+                    onError({StoreError::Kind::Corrupt, std::get<Invalid>(event).reason});
                 }
             }
             if (valid) {

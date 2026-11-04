@@ -29,7 +29,7 @@ namespace coreci::persistence {
                    std::function<Resumed()> resumed,
                    std::function<void(const std::vector<Command>&)> commands,
                    std::function<void(std::uint64_t, const std::string&)> warning);
-        void start(std::function<void()> onReady, std::function<void(const std::string&)> onError);
+        void start(std::function<void()> onReady, std::function<void(const EventStore::StoreError&)> onError);
         void enqueue(Event event, Reply reply);
         const Engine* engine() const;
 
@@ -40,7 +40,7 @@ namespace coreci::persistence {
         };
         enum class Mode { Unavailable, Loading, Resuming, Ready };
         void rebuild();
-        void fatal(const std::string& error);
+        void fatal(const EventStore::StoreError& error);
         void pump();
         void rejectPending(const std::string& error);
         EventStore& store;
@@ -49,7 +49,7 @@ namespace coreci::persistence {
         std::function<void(const std::vector<Command>&)> commands;
         std::function<void(std::uint64_t, const std::string&)> warning;
         std::function<void()> onReady;
-        std::function<void(const std::string&)> onError;
+        std::function<void(const EventStore::StoreError&)> onError;
         std::unique_ptr<Engine> current;
         std::deque<Pending> pending;
         Mode mode = Mode::Unavailable;
