@@ -17,7 +17,7 @@ namespace coreci {
         std::string id;
         Workflow workflow;
     };
-    enum class Family { Debian, RaspberryPiOS, Fedora, OpenWrtOpkg, OpenWrtApk };
+    enum class Family { Debian, Ubuntu, RaspberryPiOS, Fedora, RockyLinux, OpenWrtOpkg, OpenWrtApk };
     struct Target {
         std::string id;
         Family family;
