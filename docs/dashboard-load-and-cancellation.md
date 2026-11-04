@@ -34,3 +34,15 @@ for 3,607,890 bytes. Release improves the idle comparison but does not eliminate
 whole-history read cost or prove responsiveness under arbitrary notification
 bursts. Full hydration remains O(history); no cache or second state authority
 was added.
+
+Observation callbacks now share one immutable selected execution per observation,
+rather than repeatedly deep-copying that execution into nested callbacks. This
+value dies with the observation; it is not a graph cache. Fresh committed-state
+guards remain in Store::change/applyEvidence. No production lines are added.
+
+An isolated Release fixture using the same 178-execution, 3,607,087-byte snapshot
+and 59 synthetic failed run reads took 4,032.71 ms before and 2,968.66 ms after.
+Both delivered 59 completions and zero dispatch effects. These are local fixture
+measurements, not GitHub latency or a full-chain throughput guarantee. Existing
+publication/restart/uncertainty, graph and JSON diagnostic tests pass. Full
+hydration and serialized Store writes remain O(history).
