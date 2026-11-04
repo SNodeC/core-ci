@@ -63,7 +63,7 @@ Read this entire document before writing any code. It is the complete specificat
 
 - **Feed** — `id` (e.g. `packages`), publisher workflow: `{owner, repo, workflowFile, branch}`. Publications to one feed are strictly serialized.
 - **Target** — `id` (e.g. `debian-12-amd64`, `raspios-12-arm64`, `fedora-41-x86_64`, `openwrt-24.10-aarch64_cortex-a53`), `family` (enum: `Debian`, `RaspberryPiOS`, `Fedora`, `OpenWrtOpkg`, `OpenWrtApk`), `feed` (exactly one Feed id).
-- **Package** — `name` (e.g. `snode.c`), `sourceRepo {owner, repo}`, `buildWorkflow {owner, repo, workflowFile, branch}` (recipes may live in another repo, e.g. DistributionPackages), `targets` (set of Target ids), `prerequisites` (list of Package names; every edge means "must be built against the published version of"), `tagPattern` (default semver, optional leading `v`), `acceptPrereleases` (default false).
+- **Package** — `name` (e.g. `snode.c`), `sourceRepo {owner, repo}`, `buildWorkflow {owner, repo, workflowFile, branch}` (recipes may live in another repo, e.g. DistributionPackages), `targets` (set of Target ids), `prerequisites` (list of Package names; every edge means "must be built against the published version of"), `acceptPrereleases` (default false). There is no configurable tag pattern: every package uses the tag format of section 3.4.
 - **Unit** — the scheduling unit `(package, target)`. A dependency edge `P → Q` applies per target: unit `(P,T)` depends on `(Q,T)`.
 
 ### 3.2 Builder and validation
@@ -80,6 +80,13 @@ A fluent builder (`Pipeline::Builder`) produces an immutable `Pipeline`. `build(
 ### 3.3 The real pipeline (pipeline/Pipeline.cpp)
 
 Define the actual graph in C++: `snode.c` (no prerequisites) and `mqttsuite` (prerequisite `snode.c`), both built by the DistributionPackages workflow, all published to the `SNodeC/Packages` feed, with the target list taken from the existing DistributionPackages build matrix. Do not invent targets — read them from DistributionPackages and list them explicitly. AISuite is **not** added (it joins only after its first release).
+
+### 3.4 Tag format and version ordering (core/Version.h)
+
+- A tag is accepted as a version only if it matches exactly `v?MAJOR.MINOR.PATCH(-PRERELEASE)?(+BUILD)?`, with every part as defined by Semantic Versioning 2.0.0 (numeric identifiers without leading zeros; pre-release and build identifiers `[0-9A-Za-z-]`, dot-separated, non-empty). An optional single lowercase `v` prefix is allowed and is not part of the version. Anything else (e.g. `V1.0.0`, `1.0`, `release-1.0.0`, `v01.0.0`) is not a version.
+- `version` is the tag without the `v` prefix (e.g. tag `v2.0.1` → version `2.0.1`); `tag` keeps the original string for checkout.
+- Ordering is Semantic Versioning 2.0.0 precedence: MAJOR, MINOR, PATCH numerically; a pre-release sorts before the same version without one; pre-release identifiers compared left to right (numeric < alphanumeric, numeric compared numerically, alphanumeric compared in ASCII order, fewer identifiers < more); build metadata is ignored for precedence.
+- Two tags of equal precedence (e.g. `v1.0.0` and `1.0.0`, or `1.0.0+a` and `1.0.0+b`) are equal: the one observed later is ignored by rule 4.5.1.
 
 ---
 
@@ -133,7 +140,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 
 ### 4.5 Rules
 
-1. **TagObserved:** parse with the package's tag pattern; ignore if not a version, if prerelease and not accepted, or if `≤ released`. Otherwise set `released`.
+1. **TagObserved:** parse the tag as specified in section 3.4; ignore if not a version, if prerelease and not accepted, or if `≤ released`. Otherwise set `released`.
 2. **After every event**, evaluate all targets in topological order; for every `ready` unit (deterministic order: target id, then topo order) allocate `revision = ++lastRevision[released.version]`, set `buildId = "<package>.<target>.<version>.r<revision>"`, set `inflight{phase=Dispatching, attempt=1}`, emit `DispatchBuild`. Then, for every feed with no publication in progress, pop the queue head, set its phase to `PublishDispatching`, emit `DispatchPublish`.
 3. **DispatchAccepted:** `Dispatching → Building` (deadline = `engineTime` + buildTimeout) / `PublishDispatching → Publishing` (deadline = `engineTime` + publishTimeout).
 4. **DispatchRejected:** retry with exponential backoff (30 s, 1 min, 2 min, … capped at 30 min, measured from the rejection's `engineTime`) on the first `Tick` whose `engineTime` ≥ the backoff time; after `maxDispatchAttempts` (default 8) treat as failure (rule 7). HTTP 401/403/404/422 are permanent: fail immediately.
@@ -314,7 +321,7 @@ Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (di
 - **S3 Superseding:** `a@t1` building `1.0.0`; tag `1.1.0` arrives → no command; `BuildSucceeded` of `1.0.0` → no publish, `DispatchBuild(a,t1,1.1.0)`.
 - **S4 Failure & retry:** `BuildFailed(b,t1)` → `c@t1` continues and publishes; `d@t1`, `e@t1` show `Blocked(by b@t1)`; `RetryRequested(b,t1)` → `DispatchBuild(b,t1)` with a new revision; `d@t1` is then built exactly once.
 - **S5 Idempotency:** duplicate callbacks and callbacks with unknown/stale buildIds produce no commands and no state change.
-- **S6 Tags:** older tag, equal tag, non-semver tag, prerelease (default policy) → ignored.
+- **S6 Tags:** older tag, equal tag, non-semver tag, prerelease (default policy) → ignored. `Version` unit cases: every example in section 3.4; the Semantic Versioning 2.0.0 precedence chain `1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0`; `v1.0.0` == `1.0.0` == `1.0.0+build`; leading zeros rejected.
 - **S7 Rebuild on dependency change:** with everything settled, tag `a v1.0.1` → `b` is rebuilt with the **same** version and revision + 1.
 - **S8 Tag on a waiting unit:** tag `d v2.0.0` while `b@t1` is building → `d` dispatched once, after `b` and `c` are settled, with version `2.0.0`.
 - **S9 Validation:** cycle (message shows the path), prerequisite missing a target, unknown references, duplicate names → `build()` fails.
