@@ -221,23 +221,25 @@ CREATE TABLE IF NOT EXISTS coreci_events (
 
 Every event field from 4.3 maps to exactly one typed column; unused columns are `NULL`. The mapping `Event ↔ EventRow` lives in `persistence/EventRow.cpp`, is pure and is round-trip tested for every event type.
 
+**Field rules** (`persistence/EventRow`, pure): `normalize(event) → Event | Invalid(reason)`. Identifier fields (`package`, `target`, `tag`, `build_id`, `artifact`) must be non-empty valid UTF-8 without NUL and fit their column, counted in characters as MariaDB `utf8mb4` does. `source_sha` and `feed_commit` are exactly 40 lowercase hexadecimal characters. Numbers must fit their column (`run_attempt`, `attempt` ≥ 1; `http_status` 0–999). Free text (`message`, `reason`) is never rejected: invalid UTF-8 → U+FFFD, NUL removed, truncated to 4096 bytes at a character boundary. Every field listed for an event in 4.3 is required; `message`/`reason` may be empty. **Decoding** a row with an unknown `event_type`, an invalid `kind`/`origin`, a missing required field, a non-NULL field the event type does not use, or a value violating these rules is fatal: `loadAll` reports it through `onError` naming the row's `seq`, and core-ci refuses to start.
+
 ### 5.3 Write-ahead ordering (critical)
 
 All inbound events (webhook, workflow callback, dispatch result, tick, admin request) go through **one FIFO event queue** and are processed strictly one at a time:
 
-0. Stamp `event.at` with the current UTC time (seconds) when the event enters the queue. This is the only place where core-ci reads the clock for events.
+0. Stamp `event.at` with the current UTC time (seconds) when the event enters the queue. This is the only place where core-ci reads the clock for events. Then `normalize(event)` (5.2); if invalid → answer `400 invalid: <reason>`, done (never retried, never classified, never stored).
 1. `engine.classify(event)`; if `Ignore` → answer the HTTP request (`200 ignored: <reason>`), done.
 2. `INSERT` the event row. **Wait for the commit callback.** No other event is processed meanwhile.
 3. Only after a successful commit: `engine.handle(event)` → execute the returned commands → answer the originating HTTP request (`200 accepted`).
-4. If the `INSERT` fails: do not apply the event; answer `503`; the sender retries (the report action uses `curl --retry`; tags are covered by reconciliation; lost dispatch results are re-created by `Resumed` after restart).
+4. If `append` reports an error, the commit outcome is **unknown** (the row may or may not be stored): do not apply the event, answer `503`, and enter **recovery**: answer every further event `503`, discard the engine, then rebuild exactly as at startup (5.4: `loadAll`, replay, `Resumed`) and resume normal processing. If the row was in fact stored, the sender's retry is a duplicate and is answered `200 ignored`; commands lost with the discarded engine are re-emitted by `Resumed`.
 
 Consequence: the in-memory state only ever contains committed events, so a crash at any point loses nothing that was acknowledged.
 
 ### 5.4 Startup and outages
 
 - **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine, discarding commands → enqueue one `Resumed` event through the normal write-ahead queue (rule 12) → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished.
-- Rows referencing packages/targets no longer in the C++ pipeline are skipped with a warning.
-- **Connection loss at runtime:** stop accepting events (`503`), suspend tick generation, reconnect with exponential backoff using SNode.C's facilities. Do **not** replay again after reconnecting — the in-memory state is still exactly the committed state.
+- During replay, a stored event that the engine classifies as `Ignore` (possible only after the C++ pipeline changed, e.g. a removed package or target) is skipped with a warning naming its `seq`.
+- **Connection loss at runtime:** stop accepting events (`503`), suspend tick generation, reconnect with exponential backoff using SNode.C's facilities. After reconnecting, rebuild by replay exactly as in 5.3 step 4 (the in-memory state is discarded).
 - Replaying the stored events must reproduce byte-identical status output (tested).
 - Compaction/snapshots are **out of scope**.
 
@@ -248,13 +250,13 @@ class EventStore {
 public:
     virtual ~EventStore() = default;
     virtual void open(std::function<void()> onReady, std::function<void(const std::string&)> onError) = 0;  // connect + ensure schema
-    virtual void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) = 0;
-    virtual void loadAll(std::function<void(const Event&)> onEvent, std::function<void()> onDone,
+    virtual void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) = 0;  // onError: commit outcome unknown (5.3 step 4)
+    virtual void loadAll(std::function<void(std::uint64_t seq, const Event&)> onEvent, std::function<void()> onDone,
                          std::function<void(const std::string&)> onError) = 0;
 };
 ```
 
-`InMemoryEventStore` (pure, for tests) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
+`loadAll` delivers events in ascending `seq` order with the row's actual `seq` (gaps are allowed). `InMemoryEventStore` (pure, for tests) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
 
 ---
 
@@ -345,8 +347,8 @@ Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (di
 - **S9 Validation:** cycle (message shows the path), prerequisite missing a target, unknown references, duplicate names → `build()` fails.
 - **S10 Timeouts and dispatch retries:** all events with explicit `at` values. Deadline = `at` of `DispatchAccepted` + timeout; a `Tick` one second before the deadline changes nothing, one at the deadline → `Failed`. `DispatchRejected` 5xx → backoff schedule exactly as in 4.5, measured from the rejection's `at`; 404 → immediate failure. An event whose `at` is earlier than `engineTime` does not move time backwards (deadlines unchanged). Eighth rejection → `Failed`. `Resumed` during backoff emits nothing for that unit. Re-emission without readiness check: `a@t1` published, `DispatchBuild(b,t1)` rejected (5xx), tag `a v1.1.0`, retry `Tick` → `DispatchBuild(b,t1)` re-emitted with the same `buildId`; its `BuildSucceeded` → `AwaitingPublish` (inputs still match the published `a`); once `a 1.1.0` is published, `b@t1` is rebuilt with revision + 1.
 - **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `Resumed` re-emits only units in `Dispatching`/`PublishDispatching` without `retryAt`.
-- **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored events are never appended.
-- **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8).
+- **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored and invalid events are never appended. Recovery: `append` failing before storing and `append` failing after storing (ambiguous outcome) both lead to rebuild; afterwards the engine state equals a fresh replay of the store, events during recovery get `503`, a retried duplicate gets `200 ignored`, and `Resumed` re-emits the lost commands.
+- **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8); `normalize` cases for every field rule of 5.2 (character vs. byte counting, invalid UTF-8, NUL, 4096-byte truncation at a character boundary, 40-hex SHAs); every fatal decoding case of 5.2 reports the row's `seq`.
 - **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from environment variables): create schema, append the S1 event sequence, restart a fresh core-ci instance, verify identical status and correct `Resumed` commands. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
 - **Randomized invariant test** (seeded, ≥ 10 000 runs over random event interleavings on the test pipeline): (I1) a new `buildId` is never allocated while any prerequisite of the unit is unsettled (re-emissions by rules 4 and 12 resend an existing `buildId` and are exempt); (I2) at most one inflight per unit; (I3) at most one publication per feed; (I4) when all builds succeed, the system quiesces with every unit settled against the latest tags; (I5) replay equivalence.
 - Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint).
