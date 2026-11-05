@@ -42,6 +42,40 @@ namespace coreci::persistence {
         }
         return result;
     }
+    std::vector<std::string> graphInsertSql(const GraphRows& rows) {
+        std::vector<std::string> result;
+        const auto workflow = [](const Workflow& w) {
+            return literal(w.owner) + "," + literal(w.repo) + "," + literal(w.workflowFile) + "," + literal(w.branch);
+        };
+        for (const auto& feed : rows.feeds) {
+            result.push_back("INSERT INTO coreci_graph_feeds (event_seq,feed,owner,repo,workflow_file,branch) VALUES (LAST_INSERT_ID()," +
+                             literal(feed.id) + "," + workflow(feed.workflow) + ")");
+        }
+        for (const auto& pkg : rows.packages) {
+            result.push_back(
+                "INSERT INTO coreci_graph_packages (event_seq,package,source_owner,source_repo,source_branch,build_owner,build_repo,"
+                "build_workflow_file,build_branch,accept_prereleases) VALUES (LAST_INSERT_ID()," +
+                literal(pkg.name) + "," + literal(pkg.sourceRepo.owner) + "," + literal(pkg.sourceRepo.repo) + "," +
+                literal(pkg.sourceRepo.branch) + "," + workflow(pkg.buildWorkflow) + "," + (pkg.acceptPrereleases ? "1" : "0") + ")");
+        }
+        for (const auto& t : rows.targets) {
+            result.push_back("INSERT INTO coreci_graph_targets (event_seq,package,target,feed) VALUES (LAST_INSERT_ID()," +
+                             literal(t.package) + "," + literal(t.target) + "," + literal(t.feed) + ")");
+        }
+        for (const auto& q : rows.prerequisites) {
+            result.push_back("INSERT INTO coreci_graph_prerequisites (event_seq,package,prerequisite) VALUES (LAST_INSERT_ID()," +
+                             literal(q.package) + "," + literal(q.prerequisite) + ")");
+        }
+        return result;
+    }
+    std::vector<std::string> graphSelectSql() {
+        return {"SELECT event_seq,HEX(feed),HEX(owner),HEX(repo),HEX(workflow_file),HEX(branch) FROM coreci_graph_feeds ORDER BY "
+                "event_seq,feed",
+                "SELECT event_seq,HEX(package),HEX(source_owner),HEX(source_repo),HEX(source_branch),HEX(build_owner),HEX(build_repo),"
+                "HEX(build_workflow_file),HEX(build_branch),accept_prereleases FROM coreci_graph_packages ORDER BY event_seq,package",
+                "SELECT event_seq,HEX(package),HEX(target),HEX(feed) FROM coreci_graph_targets ORDER BY event_seq,package,target",
+                "SELECT event_seq,HEX(package),HEX(prerequisite) FROM coreci_graph_prerequisites ORDER BY event_seq,package,prerequisite"};
+    }
     std::string selectSql() {
         return "SELECT seq,HEX(event_type) AS event_type,HEX(package) AS package,HEX(target) AS target,HEX(tag) AS tag,"
                "HEX(source_sha) AS source_sha,HEX(origin) AS origin,HEX(build_id) AS build_id,HEX(kind) AS kind,http_status,"

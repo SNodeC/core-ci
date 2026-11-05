@@ -8,23 +8,31 @@ using namespace coreci::persistence;
 Pipeline pipeline() {
     Pipeline::Builder b;
     b.feed({"f", {"o", "publisher", "publish.yml", "stable"}})
-        .target({"t", Family::Debian, "f"})
-        .package({"a", {"o", "a"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {}})
-        .package({"b", {"o", "b"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {"a"}});
+        .target({"t", "f"})
+        .package({"a", {"o", "a", "trunk"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {}})
+        .package({"b", {"o", "b", "trunk"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {"a"}});
     return b.build();
 }
 Engine engine() {
-    return Engine(pipeline(), {100, 50, 8, {}});
+    return Engine({100, 50, 8, {}});
 }
 Event tag(const std::string& package, std::int64_t at = 100) {
     return TagObserved{at, package, "v1.0.0", std::string(40, 'a'), Origin::Webhook};
 }
 Command buildCommand() {
-    return DispatchBuild{
-        "a.t.1.0.0.r1", 1, "a", {"o", "a"}, "v1.0.0", *Version::parse("1.0.0"), 1, "t", {}, {"o", "recipes", "build.yml", "trunk"}};
+    return DispatchBuild{"a~t~1.0.0~r1",
+                         1,
+                         "a",
+                         {"o", "a", "trunk"},
+                         "v1.0.0",
+                         *Version::parse("1.0.0"),
+                         1,
+                         "t",
+                         {},
+                         {"o", "recipes", "build.yml", "trunk"}};
 }
 int recovery(InMemoryEventStore::Failure failure) {
-    InMemoryEventStore store;
+    InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<Result> replies;
     std::vector<Command> emitted;
     int ready = 0;
@@ -86,7 +94,7 @@ int recovery(InMemoryEventStore::Failure failure) {
     } else {
         REQUIRE(store.completeOne());
         CHECK(std::holds_alternative<Accepted>(replies.back()));
-        CHECK_EQ(store.rows()[1].seq, 3U); // failed append consumed seq 2
+        CHECK_EQ(store.rows()[2].seq, 4U); // graph=1, Resumed=2, failed append consumed seq 3
     }
     CHECK((emitted == std::vector<Command>{buildCommand()}));
     store.defer(false);
@@ -162,7 +170,7 @@ void unavailableErrors() {
     }
 }
 int externalRecovery() {
-    InMemoryEventStore store;
+    InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<Command> emitted;
     std::vector<Result> replies;
     int ready = 0;
@@ -214,7 +222,7 @@ int externalRecovery() {
     return checkResult();
 }
 int main() {
-    InMemoryEventStore store;
+    InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<Result> replies;
     std::vector<Command> emitted;
     bool ready = false;
@@ -233,7 +241,7 @@ int main() {
             emitted.insert(emitted.end(), commands.begin(), commands.end());
             if (reenter) {
                 reenter = false;
-                active->enqueue(DispatchAccepted{101, "a.t.1.0.0.r1", Kind::Build, 1}, reply);
+                active->enqueue(DispatchAccepted{101, "a~t~1.0.0~r1", Kind::Build, 1}, reply);
                 CHECK(replies.empty()); // command callback precedes original request reply
             }
         },
@@ -286,7 +294,7 @@ int main() {
 
     // The committed row and engine both receive the normalized free text.
     store.defer(false);
-    queue.enqueue(BuildFailed{103, "a.t.1.0.0.r1", 101, std::string("A\0B\xff", 4)}, reply);
+    queue.enqueue(BuildFailed{103, "a~t~1.0.0~r1", 101, std::string("A\0B\xff", 4)}, reply);
     CHECK(std::holds_alternative<Accepted>(replies.back()));
     CHECK_EQ(*store.rows().back().reason, "AB\xef\xbf\xbd");
     CHECK_EQ(queue.engine()->units().at({"a", "t"}).failure->reason, "AB\xef\xbf\xbd");
@@ -299,7 +307,7 @@ int main() {
     // Replay warnings expose actual seq, even with gaps and out-of-order seed rows.
     auto removed = std::get<EventRow>(encode(tag("removed"), 9));
     auto known = std::get<EventRow>(encode(tag("b"), 27));
-    InMemoryEventStore changed({known, removed});
+    InMemoryEventStore changed({known, removed, std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<std::uint64_t> warnings;
     bool changedReady = false;
     EventQueue changedQueue(

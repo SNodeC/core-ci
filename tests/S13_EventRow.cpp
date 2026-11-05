@@ -1,4 +1,5 @@
 #include "Check.h"
+#include "Fixture.h"
 #include "persistence/InMemoryEventStore.h"
 
 #include <limits>
@@ -75,7 +76,9 @@ int main() {
                                     PublishFailed{7, "id", 8, text},
                                     RetryRequested{8, "p", "t"},
                                     Tick{std::numeric_limits<std::int64_t>::max()},
-                                    Resumed{10}};
+                                    Resumed{10},
+                                    GraphChanged{11, testPipeline()},
+                                    GraphChanged{12, Pipeline{}}};
     const auto fields = std::tuple{&EventRow::package,
                                    &EventRow::target,
                                    &EventRow::tag,

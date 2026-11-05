@@ -28,8 +28,20 @@ def run():
     processes = []
     logs = []
     subprocess.run([str(build / "coreci-reset-store")], env=env, check=True, timeout=10)
+    (build / "tmp").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="smoke-", dir=build / "tmp") as directory:
         work = Path(directory)
+        declarations = work / "declarations"
+        declarations.mkdir()
+        (declarations / "registry.json").write_text(
+            '{"feeds":{"f1":{"publisher":"owner/feeds/.github/workflows/publish.yml"},'
+            '"f2":{"publisher":"owner/feeds/.github/workflows/publish.yml"}},"default_feed":"f1",'
+            '"build":"owner/recipes/.github/workflows/build.yml","repositories":["owner/a","owner/b","owner/c","owner/d","owner/e"]}')
+        for p, prerequisites in (("a", '[]'), ("b", '["a"]'), ("c", '["a"]'), ("d", '["b","c"]'), ("e", '["d"]')):
+            matrix = '{"id":"t1","feed":"f1"}' + ('' if p == "e" else ',{"id":"t2","feed":"f2"}')
+            (declarations / (p + ".json")).write_text(
+                '{"package":"' + p + '","depends_on":' + prerequisites + ',"matrix":[' + matrix + ']}')
+        loads = 0
         def certificate(name, host):
             cert, key = work / (name + ".crt"), work / (name + ".key")
             subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -69,7 +81,7 @@ def run():
         config = work / "nonsecret.conf"
         config.write_text('db-user="wrong_user_from_config"\nbuild-timeout="7200"\n')
         def app_command(listen_port, parser=()):
-            command = [build / "tests/core-ci-smoke", "--config-file", config, "--db-host", os.environ["CORECI_TEST_DB_HOST"],
+            command = [build / "core-ci", "--registry", "owner/registry:ci/registry.json", "--config-file", config, "--db-host", os.environ["CORECI_TEST_DB_HOST"],
                        "--db-port", os.environ.get("CORECI_TEST_DB_PORT", "0"), "--db-user", os.environ["CORECI_TEST_DB_USER"],
                        "--db-name", os.environ["CORECI_TEST_DB_NAME"], "--github-api-url", api, "--github-ca-cert", cert,
                        "--callback-base-url", app_url, "--tls-cert", cert, "--tls-key", key,
@@ -92,6 +104,10 @@ def run():
             return int(line.split(b"\r\n", 1)[0].split()[1])
         def wait_dispatch(count):
             assert curl(api + "/wait?count=" + str(count))[0] == 200
+        def wait_load():
+            nonlocal loads
+            loads += 1
+            assert curl(api + "/wait-load?count=" + str(loads))[0] == 200
         def webhook(package, tag="v1.0.0", delivery=None):
             body = ('{"ref":"refs/tags/' + tag + '","created":true,"deleted":false,"after":"' + "a" * 40 +
                     '","repository":{"full_name":"owner/' + package + '"}}')
@@ -100,7 +116,7 @@ def run():
                         ["Content-Type: application/json", "X-GitHub-Event: push", "X-GitHub-Delivery: " + (delivery or package + tag),
                          "X-Hub-Signature-256: " + signature])
         def report(package, target, phase, status, version="1.0.0", literal_plus=False):
-            build_id = package + "." + target + "." + version + ".r1"
+            build_id = package + "~" + target + "~" + version + "~r1"
             values = {"phase": phase, "status": status, "run_id": "101" if phase == "build" else "201"}
             if status == "started": values["run_attempt"] = "1"
             if status == "succeeded": values["artifact" if phase == "build" else "feed_commit"] = "artifact" if phase == "build" else "b" * 40
@@ -115,12 +131,12 @@ def run():
             return sum(1 for line in trace.read_text().splitlines() if line.startswith("POST ") and kind + ".yml/dispatches" in line
                        and '"build_id":"' + build_id + '"' in line)
         try:
-            start([build / "coreci-fake-github", "--requests", trace, "--certificate", cert, "--private-key", key, "--port", str(api_port), "fake"], "fake")
+            start([build / "coreci-fake-github", "--requests", trace, "--declarations", declarations, "--certificate", cert, "--private-key", key, "--port", str(api_port), "fake"], "fake")
             assert curl(api + "/wait?count=0", retry=True)[0] == 200
             subprocess.run([str(build / "coreci-transport-probe"), api, str(cert), "204"], check=True, timeout=10, env=env)
             assert "BAD HEADERS" not in trace.read_text()
             print("PASS: verified TLS dispatch and GitHub headers/body", flush=True)
-            start([build / "coreci-fake-github", "--requests", wrong_trace, "--certificate", wrong_cert,
+            start([build / "coreci-fake-github", "--requests", wrong_trace, "--declarations", declarations, "--certificate", wrong_cert,
                    "--private-key", wrong_key, "--port", str(bad_port), "fake"], "wrong-fake")
             # curl verifies this fixture using its own CA and hostname; establish readiness through its configuration-free listener.
             ready = subprocess.run(["curl", "-sS", "--retry", "5", "--retry-all-errors", "--retry-connrefused", "--retry-delay", "1",
@@ -143,6 +159,7 @@ def run():
                                "--maximum-header-bytes", "1024", "--maximum-header-fields", "4",
                                "--maximum-start-line-bytes", "1024"])
             assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            wait_load()
             assert raw_status("POST /api/v1/github/webhook HTTP/1.1\r\nHost: localhost\r\nContent-Length: 16385\r\n\r\n") == 413
             assert raw_status("GET / HTTP/1.1\r\nHost: localhost\r\nX-Large: " + "x" * 1500 + "\r\n\r\n") == 431
             assert raw_status("GET / HTTP/1.1\r\nHost: localhost\r\n" + "X-Test: x\r\n" * 4 + "\r\n") == 431
@@ -151,6 +168,7 @@ def run():
             print("PASS: all four parser limits may be lowered; zero and above-cap values refused", flush=True)
             daemon = launch_app(app_port, "daemon")
             assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            wait_load()
             declared = 25 * 1024 * 1024 + 1
             assert raw_status("POST /api/v1/github/webhook HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + str(declared) + "\r\n\r\n") == 413
             print("PASS: declared body " + str(declared) + " bytes rejected with 413 after headers; body bytes sent = 0", flush=True)
@@ -182,24 +200,25 @@ def run():
             print("PASS: config-file/CLI precedence; HTTP auth, validation, limits, methods and DOT", flush=True)
             for package in ("b", "c", "d", "e"):
                 assert webhook(package)[0] == 200
-            assert curl(api + "/hold?id=a.t2.1.0.0.r1&kind=build")[0] == 200
+            assert curl(api + "/hold?id=a~t2~1.0.0~r1&kind=build")[0] == 200
             assert webhook("a")[0] == 200
             count += 2; wait_dispatch(count)
             report("a", "t1", "build", "started")
             report("a", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("a", "t1", "publish", "succeeded"); count += 2; wait_dispatch(count)
-            assert request_count("d.t1.1.0.0.r1", "build") == 0
+            assert request_count("d~t1~1.0.0~r1", "build") == 0
             report("b", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("b", "t1", "publish", "succeeded")
-            assert request_count("d.t1.1.0.0.r1", "build") == 0
-            assert curl(api + "/hold?id=c.t1.1.0.0.r1&kind=publish")[0] == 200
+            assert request_count("d~t1~1.0.0~r1", "build") == 0
+            assert curl(api + "/hold?id=c~t1~1.0.0~r1&kind=publish")[0] == 200
             report("c", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             stop(daemon)
             daemon = launch_app(app_port, "restarted")
             assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            wait_load()
             count += 2; wait_dispatch(count)
-            assert request_count("a.t2.1.0.0.r1", "build") == 2
-            assert request_count("c.t1.1.0.0.r1", "publish") == 2
+            assert request_count("a~t2~1.0.0~r1", "build") == 2
+            assert request_count("c~t1~1.0.0~r1", "publish") == 2
             print("PASS: restart re-emitted the same build and publish dispatches", flush=True)
             second = launch_app(second_port, "second", pipe=True)
             observed = False
@@ -215,25 +234,82 @@ def run():
             assert curl(app_url + "/api/v1/status")[0] == 200
             print("PASS: second instance refused by writer lock; first remains usable", flush=True)
             report("c", "t1", "publish", "succeeded"); count += 1; wait_dispatch(count)
-            assert request_count("d.t1.1.0.0.r1", "build") == 1
-            d = next(line for line in trace.read_text().splitlines() if '"build_id":"d.t1.1.0.0.r1"' in line)
+            assert request_count("d~t1~1.0.0~r1", "build") == 1
+            d = next(line for line in trace.read_text().splitlines() if '"build_id":"d~t1~1.0.0~r1"' in line)
             assert '"prerequisites":"b=1.0.0-1,c=1.0.0-1"' in d
             report("a", "t2", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("a", "t2", "publish", "succeeded"); count += 2; wait_dispatch(count)
             print("PASS: S1 diamond joins once with both published inputs; t2 progresses independently", flush=True)
+            report("d", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
+            report("d", "t1", "publish", "succeeded"); count += 1; wait_dispatch(count)
+            report("e", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
+            report("e", "t1", "publish", "succeeded")
+            changed = '{"package":"e","depends_on":["b","d"],"matrix":[{"id":"t1","feed":"f1"}]}'
+            (declarations / "e.json").write_text(changed)
+            def branch_push(delivery):
+                body = '{"ref":"refs/heads/trunk","deleted":false,"repository":{"full_name":"owner/e","default_branch":"trunk"}}'
+                signature = "sha256=" + hmac.new(b"smoke-webhook", body.encode(), hashlib.sha256).hexdigest()
+                return curl(app_url + "/api/v1/github/webhook", body, ["Content-Type: application/json", "X-GitHub-Event: push",
+                    "X-GitHub-Delivery: " + delivery, "X-Hub-Signature-256: " + signature])
+            assert branch_push("new-prerequisite") == (202, "reload scheduled")
+            assert branch_push("new-prerequisite") == (200, "ignored: delivery")
+            wait_load(); count += 1; wait_dispatch(count)
+            assert request_count("e~t1~1.0.0~r2", "build") == 1
+            posts = [line for line in trace.read_text().splitlines() if line.startswith("POST ")]
+            assert '\"build_id\":\"e~t1~1.0.0~r2\"' in posts[-1]
+            assert '\"prerequisites\":\"b=1.0.0-1,d=1.0.0-1\"' in posts[-1]
+            print("PASS: signed default-branch push records GraphChanged; only e is rebuilt with new inputs", flush=True)
+            (declarations / "e.json").write_text(changed.replace('["b","d"]', '["e"]'))
+            assert branch_push("cycle") == (202, "reload scheduled")
+            wait_load()
+            cyclic = curl(app_url + "/api/v1/status")[1]
+            assert "cycle: e -> e" in cyclic.splitlines()[0], cyclic
+            assert "e\tt1\t1.0.0\t1.0.0-1\t" in cyclic, cyclic
+            assert request_count("e~t1~1.0.0~r2", "build") == 1
+            (declarations / "e.json").write_text(changed)
+            assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "started")
+            wait_load()
+            assert curl(app_url + "/api/v1/status")[1].startswith("PACKAGE\tTARGET")
+            print("PASS: cyclic declaration preserves graph and appears on status; successful reload clears error", flush=True)
+            assert curl(api + "/hold-file")[0] == 200
+            before_loads = sum("/contents/ci%2Fregistry.json" in line for line in trace.read_text().splitlines())
+            assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "started")
+            assert curl(api + "/wait-file")[0] == 200
+            for _ in range(3):
+                assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "already running")
+            assert curl(api + "/release-file")[0] == 200
+            wait_load(); wait_load()
+            after_loads = sum("/contents/ci%2Fregistry.json" in line for line in trace.read_text().splitlines())
+            assert after_loads - before_loads == 2, (before_loads, after_loads)
+            print("PASS: reload triggers during a load coalesce into exactly one further load", flush=True)
+            assert curl(api + "/hold-tag")[0] == 200
+            assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "started")
+            assert curl(api + "/wait-tag")[0] == 200
+            wait_load()
+            assert curl(app_url + "/api/v1/reconcile", "", ["Authorization: Bearer smoke-admin"]) == (202, "already running")
+            assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "started")
+            wait_load()
+            assert curl(api + "/release-tag")[0] == 200
+            print("PASS: a completed declaration load reconciles even while an older tag round is pending", flush=True)
+            stop(daemon)
+            daemon = launch_app(app_port, "graph-restarted")
+            assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            wait_load()
+            assert "e\tt1\t1.0.0\t1.0.0-1\tBuilding" in curl(app_url + "/api/v1/status")[1]
+            assert request_count("e~t1~1.0.0~r2", "build") == 1
+            print("PASS: changed graph and execution state survive a fresh process replay", flush=True)
             assert webhook("a", "v1.0.1+meta")[0] == 200
             count += 2; wait_dispatch(count)
-            # The earlier diamond build is still consistent with the published prerequisites.
-            report("d", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             # a@t1 was settled, so its new version dispatch is already allocated.
             report("a", "t1", "build", "started", "1.0.1+meta", literal_plus=True)
-            print("PASS: callback route accepts literal dot and plus in a current buildId", flush=True)
+            print("PASS: callback route accepts literal dot, plus and tilde in a current buildId", flush=True)
             assert "BAD HEADERS" not in trace.read_text()
             stop(daemon)
             subprocess.run([str(build / "coreci-reset-store")], env=env, check=True, timeout=10)
             assert curl(api + "/tag-pages")[0] == 200
             reconciled = launch_app(app_port, "reconciliation")
             assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
+            wait_load()
             count += 2; wait_dispatch(count)
             final_status = curl(app_url + "/api/v1/status")[1]
             assert "a\tt1\t1.0.0\t" in final_status, final_status
@@ -241,7 +317,7 @@ def run():
             assert "c\tt1\t-\t-\tNoRelease" in final_status, final_status
             assert "d\tt1\t2.0.0\t" in final_status, final_status
             assert "e\tt1\t-\t-\tNoRelease" in final_status, final_status
-            a_dispatch = [line for line in trace.read_text().splitlines() if '"build_id":"a.t1.1.0.0.r1"' in line][-1]
+            a_dispatch = [line for line in trace.read_text().splitlines() if '"build_id":"a~t1~1.0.0~r1"' in line][-1]
             assert '"tag":"1.0.0"' in a_dispatch
             assert "/repos/owner/b/tags?page=2" in trace.read_text()
             stop(reconciled)

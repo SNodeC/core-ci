@@ -1,4 +1,5 @@
 #include "Check.h"
+#include "Fixture.h"
 #include "core/Status.h"
 #include "persistence/InMemoryEventStore.h"
 
@@ -8,26 +9,6 @@
 using namespace coreci;
 using namespace coreci::persistence;
 
-Pipeline testPipeline() {
-    Pipeline::Builder b;
-    b.feed({"f1", {"owner", "feeds", "publish.yml", "stable"}})
-        .feed({"f2", {"owner", "feeds", "publish.yml", "stable"}})
-        .target({"t1", Family::Debian, "f1"})
-        .target({"t2", Family::Fedora, "f2"});
-    for (const auto& name : {"a", "b", "c", "d", "e"}) {
-        const std::string p = name;
-        const std::vector<std::string> prerequisites =
-            p == "a" ? std::vector<std::string>{}
-                     : (p == "b" || p == "c" ? std::vector<std::string>{"a"}
-                                             : (p == "d" ? std::vector<std::string>{"b", "c"} : std::vector<std::string>{"d"}));
-        b.package({p,
-                   {"owner", p},
-                   {"owner", "recipes", "build.yml", "trunk"},
-                   p == "e" ? std::set<std::string>{"t1"} : std::set<std::string>{"t1", "t2"},
-                   prerequisites});
-    }
-    return b.build();
-}
 int checkEvent(Engine& e, const Event& event, std::set<std::string>& allocations, InMemoryEventStore& store) {
     const auto previousUnits = e.units();
     const auto previousFeeds = e.feeds();
@@ -139,7 +120,7 @@ int checkEvent(Engine& e, const Event& event, std::set<std::string>& allocations
     return checkResult();
 }
 int verifyReplay(const Engine& live, InMemoryEventStore& store, Options options) {
-    Engine replay(live.pipeline(), options);
+    Engine replay(options);
     bool done = false;
     store.loadAll(
         [&](std::uint64_t seq, const Event& event) {
@@ -172,11 +153,12 @@ int main() {
     std::mt19937_64 random(seed);
     for (std::uint64_t run = 0; run < runs && checkFailures == 0; ++run) {
         const Options options{100, 50, 8, run % 2 == 0 ? std::optional<std::size_t>{2} : std::nullopt};
-        Engine e(testPipeline(), options);
+        Engine e(options);
         InMemoryEventStore store;
         std::set<std::string> allocations;
         std::map<std::string, unsigned> versions;
         std::int64_t now = 100;
+        checkEvent(e, GraphChanged{now, testPipeline()}, allocations, store);
         for (const auto& p : {"b", "c", "d", "e", "a"}) {
             versions[p] = 0;
             checkEvent(e, TagObserved{now++, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook}, allocations, store);
@@ -190,7 +172,24 @@ int main() {
             const auto u = units.at(random() % units.size());
             const auto state = e.units().at(u);
             Event event = Resumed{now};
-            if (choice < 2) {
+            if (choice == 0) {
+                Pipeline::Builder changed;
+                for (const auto& [id, feed] : e.pipeline().feeds()) {
+                    changed.feed(feed);
+                }
+                for (const auto& [id, target] : e.pipeline().targets()) {
+                    changed.target(target);
+                }
+                for (const auto& [name, definition] : e.pipeline().packages()) {
+                    auto pkg = definition;
+                    if (name == "c") {
+                        pkg.prerequisites =
+                            pkg.prerequisites.size() == 1 ? std::vector<std::string>{"a", "b"} : std::vector<std::string>{"a"};
+                    }
+                    changed.package(pkg);
+                }
+                event = GraphChanged{now, changed.build()};
+            } else if (choice < 2) {
                 const auto n = ++versions[u.package];
                 event = TagObserved{now, u.package, "v1.0." + std::to_string(n), std::string(40, 'a'), Origin::Reconcile};
             } else if (choice == 2) {

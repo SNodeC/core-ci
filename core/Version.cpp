@@ -31,7 +31,7 @@ namespace coreci {
                                         R"((\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?)");
         std::smatch m;
         std::optional<Version> result;
-        if (std::regex_match(tag, m, pattern)) {
+        if (tag.size() - (tag.starts_with("v") ? 1U : 0U) <= 100 && std::regex_match(tag, m, pattern)) {
             Version version;
             version.value = tag.substr(tag.starts_with('v') ? 1 : 0);
             version.numbers = {m[1], m[2], m[3]};

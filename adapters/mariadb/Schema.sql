@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS coreci_schema (
   version INT NOT NULL PRIMARY KEY
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+);
 
 CREATE TABLE IF NOT EXISTS coreci_events (
   seq          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -25,3 +25,42 @@ CREATE TABLE IF NOT EXISTS coreci_events (
   INDEX idx_build_id (build_id),
   INDEX idx_unit (package, target)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS coreci_graph_feeds (
+  event_seq     BIGINT UNSIGNED NOT NULL,
+  feed          VARCHAR(64)  NOT NULL,
+  owner         VARCHAR(100) NOT NULL,
+  repo          VARCHAR(100) NOT NULL,
+  workflow_file VARCHAR(255) NOT NULL,
+  branch        VARCHAR(255) NOT NULL,
+  PRIMARY KEY (event_seq, feed)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS coreci_graph_packages (
+  event_seq           BIGINT UNSIGNED NOT NULL,
+  package             VARCHAR(64)  NOT NULL,
+  source_owner        VARCHAR(100) NOT NULL,
+  source_repo         VARCHAR(100) NOT NULL,
+  source_branch       VARCHAR(255) NOT NULL,
+  build_owner         VARCHAR(100) NOT NULL,
+  build_repo          VARCHAR(100) NOT NULL,
+  build_workflow_file VARCHAR(255) NOT NULL,
+  build_branch        VARCHAR(255) NOT NULL,
+  accept_prereleases  TINYINT      NOT NULL,
+  PRIMARY KEY (event_seq, package)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS coreci_graph_targets (
+  event_seq BIGINT UNSIGNED NOT NULL,
+  package   VARCHAR(64) NOT NULL,
+  target    VARCHAR(64) NOT NULL,
+  feed      VARCHAR(64) NOT NULL,
+  PRIMARY KEY (event_seq, package, target)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS coreci_graph_prerequisites (
+  event_seq    BIGINT UNSIGNED NOT NULL,
+  package      VARCHAR(64) NOT NULL,
+  prerequisite VARCHAR(64) NOT NULL,
+  PRIMARY KEY (event_seq, package, prerequisite)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

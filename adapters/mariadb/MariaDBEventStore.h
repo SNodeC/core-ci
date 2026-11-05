@@ -3,6 +3,7 @@
 #include "persistence/EventStore.h"
 
 #include <database/mariadb/MariaDBClient.h>
+#include <memory>
 #include <vector>
 
 namespace coreci::mariadb {
@@ -22,6 +23,9 @@ namespace coreci::mariadb {
                      std::function<void(const StoreError&)> onError) override;
 
     private:
+        using Rows = std::map<std::uint64_t, persistence::EventRow>;
+        void loadGraphs(std::shared_ptr<Rows> rows, std::size_t table, std::function<void()> done);
+        void insertGraph(std::shared_ptr<std::vector<std::string>> statements, std::size_t index, std::function<void()> done);
         void fail(const StoreError& error);
         void execute(const std::string& sql, std::function<void()> done);
         void createSchema(std::size_t index, std::function<void()> done);

@@ -1,4 +1,6 @@
 #pragma once
+#include "Graph.h"
+
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -76,6 +78,11 @@ namespace coreci {
         std::int64_t at;
         bool operator==(const Resumed&) const = default;
     };
+    struct GraphChanged {
+        std::int64_t at;
+        Pipeline pipeline;
+        bool operator==(const GraphChanged&) const = default;
+    };
     using Event = std::variant<TagObserved,
                                DispatchAccepted,
                                DispatchRejected,
@@ -86,5 +93,6 @@ namespace coreci {
                                PublishFailed,
                                RetryRequested,
                                Tick,
-                               Resumed>;
+                               Resumed,
+                               GraphChanged>;
 } // namespace coreci

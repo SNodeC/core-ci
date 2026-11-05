@@ -1,32 +1,21 @@
 #include "Check.h"
+#include "Fixture.h"
 #include "core/Status.h"
 
 #include <algorithm>
 #include <stdexcept>
 using namespace coreci;
-Pipeline testPipeline() {
-    Pipeline::Builder b;
-    b.feed({"f1", {"owner", "feeds", "publish.yml", "stable"}})
-        .feed({"f2", {"owner", "feeds", "publish.yml", "stable"}})
-        .target({"t1", Family::Debian, "f1"})
-        .target({"t2", Family::Fedora, "f2"});
-    b.package({"a", {"owner", "a"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {}})
-        .package({"b", {"owner", "b"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"c", {"owner", "c"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"d", {"owner", "d"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"b", "c"}})
-        .package({"e", {"owner", "e"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1"}, {"d"}});
-    return b.build();
-}
+
 Version version(const std::string& v = "1.0.0") {
     return Version::parse(v).value();
 }
 std::string id(const std::string& p, const std::string& t, const std::string& v = "1.0.0", unsigned r = 1) {
-    return p + "." + t + "." + v + ".r" + std::to_string(r);
+    return p + "~" + t + "~" + v + "~r" + std::to_string(r);
 }
 Command buildCommand(
     const std::string& p, const std::string& t, Inputs inputs = {}, const std::string& v = "1.0.0", unsigned r = 1, unsigned attempt = 1) {
     return DispatchBuild{
-        id(p, t, v, r), attempt, p, {"owner", p}, "v" + v, version(v), r, t, inputs, {"owner", "recipes", "build.yml", "trunk"}};
+        id(p, t, v, r), attempt, p, {"owner", p, "trunk"}, "v" + v, version(v), r, t, inputs, {"owner", "recipes", "build.yml", "trunk"}};
 }
 void apply(Engine& e, Event event, std::vector<Command> expected = {}) {
     CHECK(e.handle(event) == expected);
@@ -45,7 +34,7 @@ void build(
     apply(e, BuildSucceeded{100, buildId, 101, "artifact"}, expected);
 }
 int main() {
-    Engine e(testPipeline(), {100, 50, 8, {}});
+    Engine e = fixtureEngine(testPipeline(), {100, 50, 8, {}});
     setup(e);
     for (const auto& tag : {"V1.0.0",
                             "1.0",
@@ -77,6 +66,8 @@ int main() {
     CHECK(version("1.0.0+a") == version("1.0.0+b"));
     CHECK_EQ(version("v2.0.1").text(), "2.0.1");
     CHECK(Version::parse("1.0.0+001"));
+    CHECK(Version::parse("v1.0.0+" + std::string(94, 'a')));
+    CHECK(!Version::parse("1.0.0+" + std::string(95, 'a')));
     CHECK(version("999999999999999999999999.0.0") > version("99999999999999999999999.0.0"));
     apply(e, TagObserved{100, "a", "v1.0.0", "sha", Origin::Webhook}, {buildCommand("a", "t1"), buildCommand("a", "t2")});
     const auto state = e.units();
@@ -88,11 +79,19 @@ int main() {
     }
     Pipeline::Builder builder;
     builder.feed({"f", {"o", "feed", "pub.yml", "stable"}})
-        .target({"t", Family::Debian, "f"})
-        .package({"p", {"o", "p"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {}, true});
-    Engine pre(builder.build(), {100, 50, 8, {}});
-    const DispatchBuild expected{
-        "p.t.1.0.0-rc.1.r1", 1, "p", {"o", "p"}, "v1.0.0-rc.1", version("1.0.0-rc.1"), 1, "t", {}, {"o", "recipes", "build.yml", "trunk"}};
+        .target({"t", "f"})
+        .package({"p", {"o", "p", "trunk"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {}, true});
+    Engine pre = fixtureEngine(builder.build(), {100, 50, 8, {}});
+    const DispatchBuild expected{"p~t~1.0.0-rc.1~r1",
+                                 1,
+                                 "p",
+                                 {"o", "p", "trunk"},
+                                 "v1.0.0-rc.1",
+                                 version("1.0.0-rc.1"),
+                                 1,
+                                 "t",
+                                 {},
+                                 {"o", "recipes", "build.yml", "trunk"}};
     apply(pre, TagObserved{100, "p", "v1.0.0-rc.1", "sha", Origin::Reconcile}, {expected});
     return checkResult();
 }

@@ -19,7 +19,8 @@ namespace coreci::persistence {
                                                                                  "PublishFailed",
                                                                                  "RetryRequested",
                                                                                  "Tick",
-                                                                                 "Resumed"};
+                                                                                 "Resumed",
+                                                                                 "GraphChanged"};
         struct Character {
             std::size_t bytes;
             bool valid;
@@ -88,6 +89,24 @@ namespace coreci::persistence {
             std::visit(
                 [&](const auto& e) {
                     row.eventAt = e.at;
+                    if constexpr (requires { e.pipeline; }) {
+                        row.graph = GraphRows{};
+                        for (const auto& [id, feed] : e.pipeline.feeds()) {
+                            row.graph->feeds.push_back(feed);
+                        }
+                        for (const auto& [name, pkg] : e.pipeline.packages()) {
+                            auto package = pkg;
+                            package.targets.clear();
+                            package.prerequisites.clear();
+                            row.graph->packages.push_back(package);
+                            for (const auto& target : pkg.targets) {
+                                row.graph->targets.push_back({name, target, e.pipeline.targets().at(target).feed});
+                            }
+                            for (const auto& q : pkg.prerequisites) {
+                                row.graph->prerequisites.push_back({name, q});
+                            }
+                        }
+                    }
                     if constexpr (requires { e.package; }) {
                         row.package = e.package;
                     }
@@ -162,6 +181,15 @@ namespace coreci::persistence {
                         error = identifier(value, limit, name);
                     }
                 };
+                if constexpr (requires { e.pipeline; }) {
+                    for (const auto& [id, feed] : e.pipeline.feeds()) {
+                        check(feed.workflow.branch, 255, "branch");
+                    }
+                    for (const auto& [name, pkg] : e.pipeline.packages()) {
+                        check(pkg.sourceRepo.branch, 255, "source_branch");
+                        check(pkg.buildWorkflow.branch, 255, "build_branch");
+                    }
+                }
                 if constexpr (requires { e.package; }) {
                     check(e.package, 128, "package");
                 }
@@ -267,6 +295,38 @@ namespace coreci::persistence {
                 result = Event{RetryRequested{at, required(row.package, "package"), required(row.target, "target")}};
             } else if (row.eventType == "Tick") {
                 result = Event{Tick{at}};
+            } else if (row.eventType == "GraphChanged") {
+                Pipeline::Builder builder;
+                const auto& graph = required(row.graph, "graph");
+                std::map<std::string, Package> packages;
+                for (const auto& feed : graph.feeds) {
+                    builder.feed(feed);
+                }
+                for (const auto& pkg : graph.packages) {
+                    if (!pkg.targets.empty() || !pkg.prerequisites.empty() || !packages.emplace(pkg.name, pkg).second) {
+                        throw std::invalid_argument("invalid graph package row");
+                    }
+                }
+                for (const auto& target : graph.targets) {
+                    if (!packages.contains(target.package) || !packages.at(target.package).targets.insert(target.target).second) {
+                        throw std::invalid_argument("unknown package or duplicate graph target");
+                    }
+                    builder.target({target.target, target.feed});
+                }
+                for (const auto& q : graph.prerequisites) {
+                    if (!packages.contains(q.package)) {
+                        throw std::invalid_argument("unknown graph package");
+                    }
+                    auto& prerequisites = packages.at(q.package).prerequisites;
+                    if (std::find(prerequisites.begin(), prerequisites.end(), q.prerequisite) != prerequisites.end()) {
+                        throw std::invalid_argument("duplicate graph prerequisite");
+                    }
+                    prerequisites.push_back(q.prerequisite);
+                }
+                for (const auto& [name, pkg] : packages) {
+                    builder.package(pkg);
+                }
+                result = Event{GraphChanged{at, builder.build()}};
             } else if (row.eventType == "Resumed") {
                 result = Event{Resumed{at}};
             }

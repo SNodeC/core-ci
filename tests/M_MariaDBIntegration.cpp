@@ -16,23 +16,23 @@ Pipeline pipeline() {
     Pipeline::Builder b;
     b.feed({"f1", {"owner", "feeds", "publish.yml", "stable"}})
         .feed({"f2", {"owner", "feeds", "publish.yml", "stable"}})
-        .target({"t1", Family::Debian, "f1"})
-        .target({"t2", Family::Fedora, "f2"})
-        .package({"a", {"owner", "a"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {}})
-        .package({"b", {"owner", "b"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"c", {"owner", "c"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"d", {"owner", "d"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"b", "c"}})
-        .package({"e", {"owner", "e"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1"}, {"d"}});
+        .target({"t1", "f1"})
+        .target({"t2", "f2"})
+        .package({"a", {"owner", "a", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {}})
+        .package({"b", {"owner", "b", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
+        .package({"c", {"owner", "c", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
+        .package({"d", {"owner", "d", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"b", "c"}})
+        .package({"e", {"owner", "e", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1"}, {"d"}});
     return b.build();
 }
 Engine engine() {
-    return Engine(pipeline(), {100, 50, 8, {}});
+    return Engine({100, 50, 8, {}});
 }
 Command build(const std::string& package, const std::string& target, Inputs inputs = {}) {
-    return DispatchBuild{package + "." + target + ".1.0.0.r1",
+    return DispatchBuild{package + "~" + target + "~1.0.0~r1",
                          1,
                          package,
-                         {"owner", package},
+                         {"owner", package, "trunk"},
                          "v1.0.0",
                          *Version::parse("1.0.0"),
                          1,
@@ -41,7 +41,7 @@ Command build(const std::string& package, const std::string& target, Inputs inpu
                          {"owner", "recipes", "build.yml", "trunk"}};
 }
 Command publish(const std::string& package, const std::string& target) {
-    return DispatchPublish{package + "." + target + ".1.0.0.r1",
+    return DispatchPublish{package + "~" + target + "~1.0.0~r1",
                            1,
                            package,
                            *Version::parse("1.0.0"),
@@ -68,11 +68,12 @@ public:
             }
         });
         admin->connect();
-        sql("DROP TABLE IF EXISTS coreci_events", [this] {
-            sql("DROP TABLE IF EXISTS coreci_schema", [this] {
-                first();
+        sql("DROP TABLE IF EXISTS coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites",
+            [this] {
+                sql("DROP TABLE IF EXISTS coreci_schema", [this] {
+                    first();
+                });
             });
-        });
     }
     bool finished = false;
 
@@ -124,6 +125,7 @@ private:
     void first() {
         fresh([this] {
             CHECK(emitted.empty());
+            steps.push_back({GraphChanged{100, pipeline()}, {}});
             for (const auto& p : {"b", "c", "d", "e"}) {
                 steps.push_back({TagObserved{100, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook}, {}});
             }
@@ -142,13 +144,13 @@ private:
         });
     }
     void addBuild(const std::string& p, const std::string& t) {
-        const auto id = p + "." + t + ".1.0.0.r1";
+        const auto id = p + "~" + t + "~1.0.0~r1";
         steps.push_back({DispatchAccepted{100, id, Kind::Build, 1}, {}});
         steps.push_back({BuildStarted{100, id, 101, 1}, {}});
         steps.push_back({BuildSucceeded{100, id, 101, "artifact"}, {publish(p, t)}});
     }
     void addPublish(const std::string& p, const std::string& t, std::vector<Command> commands) {
-        const auto id = p + "." + t + ".1.0.0.r1";
+        const auto id = p + "~" + t + "~1.0.0~r1";
         steps.push_back({DispatchAccepted{100, id, Kind::Publish, 1}, {}});
         steps.push_back({PublishSucceeded{100, id, 201, std::string(40, 'b')}, std::move(commands)});
     }
@@ -189,11 +191,107 @@ private:
             },
             [this, count] {
                 CHECK_EQ(*count, steps.size() + 2); // both persisted Resumed events
-                nulRow();
+                graphRows();
             },
             [this](const auto& failure) {
                 error(failure.message);
             });
+    }
+    void graphRows() {
+        Pipeline::Builder b;
+        b.feed({"f", {"o", "publisher", "publish.yml", "master"}})
+            .target({"t", "f"})
+            .package({"a", {"o", "lower", "master"}, {"o", "recipes", "build.yml", "master"}, {"t"}, {}})
+            .package({"A", {"o", "upper", "master"}, {"o", "recipes", "build.yml", "master"}, {"t"}, {"a"}});
+        const auto expected = b.build();
+        store->append(
+            GraphChanged{200, expected},
+            [this, expected] {
+                const auto found = std::make_shared<bool>(false);
+                store->loadAll(
+                    [expected, found](auto, const Event& event) {
+                        if (const auto* changed = std::get_if<GraphChanged>(&event); changed && changed->at == 200) {
+                            CHECK(changed->pipeline == expected);
+                            *found = true;
+                            CHECK_EQ(changed->pipeline.packages().size(), 2U);
+                        }
+                    },
+                    [this, found] {
+                        CHECK(*found);
+                        atomicFailure();
+                    },
+                    [this](const auto& failure) {
+                        error(failure.message);
+                    });
+            },
+            [this](const auto& failure) {
+                error(failure);
+            });
+    }
+    void atomicFailure() {
+        sql("RENAME TABLE coreci_graph_targets TO coreci_graph_targets_unavailable", [this] {
+            const auto restore = [this](bool failed) {
+                CHECK(failed);
+                later([this] {
+                    sql("RENAME TABLE coreci_graph_targets_unavailable TO coreci_graph_targets", [this] {
+                        store->open(
+                            [this] {
+                                const auto graphs = std::make_shared<unsigned>(0);
+                                store->loadAll(
+                                    [graphs](auto, const Event& event) {
+                                        if (std::holds_alternative<GraphChanged>(event)) {
+                                            ++*graphs;
+                                        }
+                                    },
+                                    [this, graphs] {
+                                        CHECK_EQ(*graphs, 2U);
+                                        std::cout << "GraphChanged transaction error: connection aborted; no partial event or graph rows "
+                                                     "persisted\n";
+                                        orphanRow();
+                                    },
+                                    [this](const auto& failure) {
+                                        error(failure.message);
+                                    });
+                            },
+                            [this](const auto& failure) {
+                                error(failure.message);
+                            });
+                    });
+                });
+            };
+            store->append(
+                GraphChanged{201, pipeline()},
+                [restore] {
+                    restore(false);
+                },
+                [restore](const auto&) {
+                    restore(true);
+                });
+        });
+    }
+    void orphanRow() {
+        sql("INSERT INTO coreci_graph_targets (event_seq,package,target,feed) VALUES (9999,'a','t','f')", [this] {
+            store->loadAll(
+                [](auto, const auto&) {
+                    CHECK(false);
+                },
+                [this] {
+                    error("orphan accepted");
+                },
+                [this](const auto& failure) {
+                    CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
+                    CHECK(failure.message.find("seq 9999:") != std::string::npos);
+                    sql("DELETE FROM coreci_graph_targets WHERE event_seq=9999", [this] {
+                        store->open(
+                            [this] {
+                                nulRow();
+                            },
+                            [this](const auto& failure) {
+                                error(failure.message);
+                            });
+                    });
+                });
+        });
     }
     void nulRow() {
         sql("INSERT INTO coreci_events (seq,recorded_at,event_type,package,tag,source_sha,origin,event_at) "
@@ -226,7 +324,7 @@ private:
             },
             [this](const auto& failure) {
                 CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
-                sql("INSERT INTO coreci_schema (version) VALUES (2)", [this] {
+                sql("INSERT INTO coreci_schema (version) VALUES (1)", [this] {
                     unknownSchema();
                 });
             });
@@ -238,7 +336,7 @@ private:
             },
             [this](const auto& failure) {
                 CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
-                sql("INSERT INTO coreci_schema (version) VALUES (1)", [this] {
+                sql("INSERT INTO coreci_schema (version) VALUES (2)", [this] {
                     multipleSchema();
                 });
             });
@@ -250,13 +348,14 @@ private:
             },
             [this](const auto& failure) {
                 CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
-                sql("DROP TABLE coreci_events", [this] {
-                    sql("DROP TABLE coreci_schema", [this] {
-                        finished = true;
-                        std::cout << "S1 replay, fresh-client restart, Resumed and corruption checks completed\n";
-                        cleanup();
+                sql("DROP TABLE coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites",
+                    [this] {
+                        sql("DROP TABLE coreci_schema", [this] {
+                            finished = true;
+                            std::cout << "S1 replay, fresh-client restart, Resumed and corruption checks completed\n";
+                            cleanup();
+                        });
                     });
-                });
             });
     }
     database::mariadb::MariaDBConnectionDetails details;

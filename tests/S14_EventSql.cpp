@@ -1,4 +1,5 @@
 #include "Check.h"
+#include "Fixture.h"
 #include "persistence/EventSql.h"
 
 #include <limits>
@@ -61,5 +62,16 @@ int main() {
              "HEX(message) AS message,run_id,run_attempt,attempt,HEX(artifact) AS artifact,HEX(feed_commit) AS feed_commit,"
              "HEX(reason) AS reason,event_at FROM coreci_events ORDER BY seq");
     CHECK_EQ(hex("'\\\";--/* é😀"), "_utf8mb4 X'275c223b2d2d2f2a20c3a9f09f9880'");
+    const auto graphEvent = GraphChanged{11, testPipeline()};
+    const auto row = std::get<EventRow>(encode(graphEvent));
+    const auto statements = graphInsertSql(*row.graph);
+    CHECK_EQ(statements.size(), 21U);
+    for (const auto& statement : statements) {
+        CHECK(statement.find("VALUES (LAST_INSERT_ID(),_utf8mb4 X'") != std::string::npos);
+        CHECK(statement.find("owner") == std::string::npos || statement.find("(event_seq,feed,owner") != std::string::npos ||
+              statement.find("source_owner") != std::string::npos);
+    }
+    CHECK_EQ(graphSelectSql().size(), 4U);
+    CHECK(std::get<std::string>(insertSql(graphEvent)).find(hex("GraphChanged")) != std::string::npos);
     return checkResult();
 }

@@ -5,23 +5,28 @@
 #include <vector>
 
 namespace coreci {
+    std::string repoKey(const std::string& value);
+    void validateRepository(const std::string& owner, const std::string& repo);
+    void validateWorkflowFile(const std::string& file);
+    bool validBranch(const std::string& value);
     struct Repo {
         std::string owner, repo;
-        bool operator==(const Repo&) const = default;
+        std::string branch = {};
+        bool operator==(const Repo&) const;
     };
     struct Workflow {
         std::string owner, repo, workflowFile, branch;
-        bool operator==(const Workflow&) const = default;
+        bool operator==(const Workflow&) const;
     };
     struct Feed {
         std::string id;
         Workflow workflow;
+        bool operator==(const Feed&) const = default;
     };
-    enum class Family { Debian, Ubuntu, RaspberryPiOS, Fedora, RockyLinux, OpenWrtOpkg, OpenWrtApk };
     struct Target {
         std::string id;
-        Family family;
         std::string feed;
+        bool operator==(const Target&) const = default;
     };
     struct Package {
         std::string name;
@@ -30,6 +35,7 @@ namespace coreci {
         std::set<std::string> targets;
         std::vector<std::string> prerequisites;
         bool acceptPrereleases = false;
+        bool operator==(const Package&) const = default;
     };
     struct Unit {
         std::string package, target;
@@ -38,6 +44,9 @@ namespace coreci {
     class Pipeline {
     public:
         class Builder;
+        Pipeline() = default;
+        bool operator==(const Pipeline&) const = default;
+        std::set<std::pair<std::string, std::string>> repositories() const;
         const std::map<std::string, Feed>& feeds() const;
         const std::map<std::string, Target>& targets() const;
         const std::map<std::string, Package>& packages() const;
@@ -47,7 +56,6 @@ namespace coreci {
         std::vector<std::string> packagesForRepo(const std::string& owner, const std::string& repo) const;
 
     private:
-        Pipeline() = default;
         std::map<std::string, Feed> feedMap;
         std::map<std::string, Target> targetMap;
         std::map<std::string, Package> packageMap;

@@ -28,8 +28,8 @@ namespace coreci {
     std::map<Unit, std::string> statuses(const Engine& engine) {
         std::map<Unit, std::string> result;
         const auto derived = engine.derive();
-        for (const auto& [unit, state] : engine.units()) {
-            const auto& d = derived.at(unit);
+        for (const auto& [unit, d] : derived) {
+            const auto& state = engine.units().at(unit);
             std::string status;
             if (!engine.releases().at(unit.package)) {
                 status = "NoRelease";

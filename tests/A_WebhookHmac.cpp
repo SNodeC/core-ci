@@ -13,11 +13,15 @@ int main() {
     REQUIRE(std::holds_alternative<Push>(event));
     CHECK_EQ(std::get<Push>(event).tag, "v1.0.0");
     CHECK_EQ(std::get<Push>(event).repo, "owner/a");
-    for (const auto& payload : {R"({"ref":"refs/heads/master"})",
-                                R"({"ref":"refs/tags/v1.0.0","created":false})",
-                                R"({"ref":"refs/tags/v1.0.0","created":true,"deleted":true})"}) {
+    for (const auto& payload :
+         {R"({"ref":"refs/tags/v1.0.0","created":false})", R"({"ref":"refs/tags/v1.0.0","created":true,"deleted":true})"}) {
         CHECK(std::holds_alternative<std::monostate>(webhook(payload, "push")));
     }
+    CHECK(std::holds_alternative<Error>(webhook(R"({"ref":"refs/heads/master"})", "push")));
+    const auto head =
+        webhook(R"({"ref":"refs/heads/master","deleted":false,"repository":{"full_name":"owner/a","default_branch":"master"}})", "push");
+    CHECK(std::holds_alternative<Push>(head));
+    CHECK_EQ(std::get<Push>(head).branch, "master");
     CHECK(std::holds_alternative<Error>(webhook("{", "push")));
     CHECK(std::holds_alternative<Error>(webhook("[]", "push")));
     CHECK(std::holds_alternative<std::monostate>(webhook("{}", "issues")));
