@@ -2,7 +2,6 @@
 """CTest smoke harness. All database access is through the SNode.C reset fixture and daemon."""
 import hashlib
 import hmac
-import json
 import os
 from pathlib import Path
 import re
@@ -34,13 +33,14 @@ def run():
         work = Path(directory)
         declarations = work / "declarations"
         declarations.mkdir()
-        (declarations / "registry.json").write_text(json.dumps({
-            "feeds": {"f1": {"publisher": "owner/feeds/.github/workflows/publish.yml"}, "f2": {"publisher": "owner/feeds/.github/workflows/publish.yml"}},
-            "default_feed": "f1", "build": "owner/recipes/.github/workflows/build.yml",
-            "repositories": ["owner/" + p for p in ("a", "b", "c", "d", "e")]}))
-        for p, prerequisites in (("a", []), ("b", ["a"]), ("c", ["a"]), ("d", ["b", "c"]), ("e", ["d"])):
-            (declarations / (p + ".json")).write_text(json.dumps({"package": p, "depends_on": prerequisites,
-                "matrix": [{"id": "t1", "feed": "f1"}] + ([] if p == "e" else [{"id": "t2", "feed": "f2"}])}))
+        (declarations / "registry.json").write_text(
+            '{"feeds":{"f1":{"publisher":"owner/feeds/.github/workflows/publish.yml"},'
+            '"f2":{"publisher":"owner/feeds/.github/workflows/publish.yml"}},"default_feed":"f1",'
+            '"build":"owner/recipes/.github/workflows/build.yml","repositories":["owner/a","owner/b","owner/c","owner/d","owner/e"]}')
+        for p, prerequisites in (("a", '[]'), ("b", '["a"]'), ("c", '["a"]'), ("d", '["b","c"]'), ("e", '["d"]')):
+            matrix = '{"id":"t1","feed":"f1"}' + ('' if p == "e" else ',{"id":"t2","feed":"f2"}')
+            (declarations / (p + ".json")).write_text(
+                '{"package":"' + p + '","depends_on":' + prerequisites + ',"matrix":[' + matrix + ']}')
         loads = 0
         def certificate(name, host):
             cert, key = work / (name + ".crt"), work / (name + ".key")
@@ -244,11 +244,10 @@ def run():
             report("d", "t1", "publish", "succeeded"); count += 1; wait_dispatch(count)
             report("e", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("e", "t1", "publish", "succeeded")
-            changed = json.loads((declarations / "e.json").read_text())
-            changed["depends_on"] = ["b", "d"]
-            (declarations / "e.json").write_text(json.dumps(changed))
+            changed = '{"package":"e","depends_on":["b","d"],"matrix":[{"id":"t1","feed":"f1"}]}'
+            (declarations / "e.json").write_text(changed)
             def branch_push(delivery):
-                body = json.dumps({"ref": "refs/heads/trunk", "deleted": False, "repository": {"full_name": "owner/e", "default_branch": "trunk"}})
+                body = '{"ref":"refs/heads/trunk","deleted":false,"repository":{"full_name":"owner/e","default_branch":"trunk"}}'
                 signature = "sha256=" + hmac.new(b"smoke-webhook", body.encode(), hashlib.sha256).hexdigest()
                 return curl(app_url + "/api/v1/github/webhook", body, ["Content-Type: application/json", "X-GitHub-Event: push",
                     "X-GitHub-Delivery: " + delivery, "X-Hub-Signature-256: " + signature])
@@ -260,16 +259,14 @@ def run():
             assert '\"build_id\":\"e~t1~1.0.0~r2\"' in posts[-1]
             assert '\"prerequisites\":\"b=1.0.0-1,d=1.0.0-1\"' in posts[-1]
             print("PASS: signed default-branch push records GraphChanged; only e is rebuilt with new inputs", flush=True)
-            changed["depends_on"] = ["e"]
-            (declarations / "e.json").write_text(json.dumps(changed))
+            (declarations / "e.json").write_text(changed.replace('["b","d"]', '["e"]'))
             assert branch_push("cycle") == (202, "reload scheduled")
             wait_load()
             cyclic = curl(app_url + "/api/v1/status")[1]
             assert "cycle: e -> e" in cyclic.splitlines()[0], cyclic
             assert "e\tt1\t1.0.0\t1.0.0-1\t" in cyclic, cyclic
             assert request_count("e~t1~1.0.0~r2", "build") == 1
-            changed["depends_on"] = ["b", "d"]
-            (declarations / "e.json").write_text(json.dumps(changed))
+            (declarations / "e.json").write_text(changed)
             assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "started")
             wait_load()
             assert curl(app_url + "/api/v1/status")[1].startswith("PACKAGE\tTARGET")
