@@ -378,6 +378,8 @@ public:
 
 Every inbound request that carries an event goes through the event queue of 5.3 and is answered only after its event row is committed (or with `200 ignored` / `503`).
 
+**Routing uses SNode.C's express router.** One route per endpoint, registered with the router's method functions (`get`, `post`) and `:name` path parameters; path parameters are percent-decoded exactly once (verify whether the router already decodes them). The size limit, webhook HMAC, callback HMAC and admin token are separate middleware chained in front of exactly the routes that need them; a `405` handler per path and a final `404` fallback. Hand-written dispatch on `req->path` or `req->method` (string comparison or regular expression) is forbidden. The order size check → authentication → parsing is unchanged.
+
 Use SNode.C's express API and TLS server. **Do not guess SNode.C APIs**: find the express router, HTTP client and timer facilities in the SNode.C repository (master HEAD) and its examples/apps, and cite the source files you based your code on in the PR description.
 
 ### 6.2 Outbound GitHub REST (adapters/github/)
@@ -500,7 +502,7 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 3. **Phase 3a:** `persistence/EventSql` + S14, `adapters/mariadb/` (`MariaDBEventStore`), the `StoreError` interface change, and the MariaDB integration test. Stop and report.
 3. **Phase 3b:** `adapters/github/` + `app/` on SNode.C + adapter tests + `pipeline/Pipeline.cpp`. Provide a local smoke test script: run core-ci against a fake GitHub HTTP server (a tiny SNode.C app in `tests/`) and drive the S1 diamond via `curl` callbacks.
 3. **Phase 3c:** declarations instead of a compiled graph: remove `pipeline/` and `core::Family`; `GraphChanged` in engine, persistence and MariaDB (schema version 2); `adapters/github/Declarations`; reload triggers and the status error line; tests S9, S14–S16 and the MariaDB integration and smoke test changes. Stop and report.
-3. **Phase 3d:** badges (4.6.1 and the badge route), `revision_base` (declaration, engine, `coreci_graph_packages`, schema version 3), tests S16–S18 and the MariaDB integration and smoke test changes. Stop and report.
+3. **Phase 3d:** express routing (6.1) replacing the hand-written dispatcher in `app/`, with all existing adapter and smoke tests passing unchanged; badges (4.6.1 and the badge route), `revision_base` (declaration, engine, `coreci_graph_packages`, schema version 3), tests S16–S18 and the MariaDB integration and smoke test changes. Stop and report.
 4. **Phase 4:** `workflows/` templates; then, in DistributionPackages and the publisher repository, split the existing pipeline into `coreci-build.yml` / `coreci-publish.yml` per section 7 and remove all direct chaining between SNode.C and MQTTSuite builds.
 
 ### Report format for every phase
@@ -522,5 +524,6 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 - Stubs, TODOs or placeholder implementations reported as done.
 - Changing engine semantics in later phases without asking.
 - Repository-, package-, distribution-, architecture- or release-specific knowledge in core-ci code (test data excepted); a compiled-in graph.
+- Hand-written request routing instead of SNode.C's express router.
 - Working in any directory other than `/home/voc/projects/snodec/core-ci` (except reading the SNode.C sources, reading DistributionPackages in phases 3b and 4, reading the declared repositories' `ci/packages.json` in phase 3c, and changing the DistributionPackages/publisher repositories in phase 4).
 - Reusing, copying or consulting code from the pre-greenfield implementation; deleting history, force-pushing, discarding uncommitted work, or renaming the default branch.
