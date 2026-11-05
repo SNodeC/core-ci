@@ -199,10 +199,10 @@ private:
     }
     void graphRows() {
         Pipeline::Builder b;
-        b.feed({"f", {"o", "publisher", "publish.yml", "master"}})
+        b.feed({"f", {"SNodeC", "publisher", "publish.yml", "master"}})
             .target({"t", "f"})
-            .package({"a", {"o", "lower", "master"}, {"o", "recipes", "build.yml", "master"}, {"t"}, {}})
-            .package({"A", {"o", "upper", "master"}, {"o", "recipes", "build.yml", "master"}, {"t"}, {"a"}});
+            .package({"a", {"SNodeC", "lower", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {}})
+            .package({"A", {"SNodeC", "upper", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {"a"}});
         const auto expected = b.build();
         store->append(
             GraphChanged{200, expected},
@@ -212,6 +212,8 @@ private:
                     [expected, found](auto, const Event& event) {
                         if (const auto* changed = std::get_if<GraphChanged>(&event); changed && changed->at == 200) {
                             CHECK(changed->pipeline == expected);
+                            CHECK_EQ(changed->pipeline.packages().at("a").sourceRepo.owner, "SNodeC");
+                            CHECK_EQ(changed->pipeline.feeds().at("f").workflow.owner, "SNodeC");
                             *found = true;
                             CHECK_EQ(changed->pipeline.packages().size(), 2U);
                         }

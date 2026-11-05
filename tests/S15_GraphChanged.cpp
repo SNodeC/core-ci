@@ -183,6 +183,65 @@ int main() {
     CHECK_EQ(std::get<DispatchBuild>(two[0]).buildId, "a~b.c~1.0.0~r1");
     CHECK_EQ(distinct.handle(BuildSucceeded{102, "a~b.c~1.0.0~r1", 1, "artifact"}).size(), 1U);
     CHECK(distinct.units().at({"a.b", "c"}).inflight->phase == Phase::Dispatching);
+    // Spelling is graph data, but is not a change of repository identity in any phase.
+    for (const auto phase : std::vector<std::optional<Phase>>{
+             std::nullopt, Phase::Dispatching, Phase::Building, Phase::AwaitingPublish, Phase::PublishDispatching, Phase::Publishing}) {
+        Engine spelling = fixtureEngine(graph(), {100, 50, 8, {}});
+        spelling.handle(TagObserved{101, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
+        if (phase == Phase::Building) {
+            spelling.handle(DispatchAccepted{102, "a~t~1.0.0~r1", Kind::Build, 1});
+        }
+        if (phase == Phase::AwaitingPublish) {
+            spelling.handle(TagObserved{101, "b", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
+            spelling.handle(BuildSucceeded{102, "b~t~1.0.0~r1", 1, "artifact"});
+        }
+        if (!phase || *phase == Phase::AwaitingPublish || *phase == Phase::PublishDispatching || *phase == Phase::Publishing) {
+            spelling.handle(BuildSucceeded{102, "a~t~1.0.0~r1", 1, "artifact"});
+        }
+        if (phase == Phase::Publishing) {
+            spelling.handle(DispatchAccepted{103, "a~t~1.0.0~r1", Kind::Publish, 1});
+        }
+        if (!phase) {
+            spelling.handle(PublishSucceeded{103, "a~t~1.0.0~r1", 2, std::string(40, 'b')});
+        }
+        const auto original = spelling.pipeline();
+        Pipeline::Builder renamed;
+        for (const auto& [id, feed] : original.feeds()) {
+            auto value = feed;
+            value.workflow.owner = "O";
+            value.workflow.repo = "Publisher";
+            renamed.feed(value);
+        }
+        for (const auto& [id, target] : original.targets()) {
+            renamed.target(target);
+        }
+        for (const auto& [name, pkg] : original.packages()) {
+            auto value = pkg;
+            value.sourceRepo.owner = "O";
+            value.sourceRepo.repo = name == "a" ? "A" : "B";
+            value.buildWorkflow.owner = "O";
+            value.buildWorkflow.repo = "Recipes";
+            renamed.package(value);
+        }
+        const auto canonical = renamed.build();
+        CHECK(canonical != original);
+        const auto units = spelling.units();
+        const auto releases = spelling.releases();
+        const auto feeds = spelling.feeds();
+        const auto deadline = spelling.nextDeadline();
+        CHECK(std::holds_alternative<Accept>(spelling.classify(GraphChanged{104, canonical})));
+        CHECK(spelling.handle(GraphChanged{104, canonical}).empty());
+        CHECK(spelling.units() == units);
+        CHECK(spelling.releases() == releases);
+        CHECK(spelling.feeds() == feeds);
+        CHECK(spelling.nextDeadline() == deadline);
+        CHECK_EQ(spelling.pipeline().packages().at("a").sourceRepo.owner, "O");
+        CHECK(statusText(spelling).find("O/A") != std::string::npos);
+        CHECK(statusDot(spelling).find("O/A") != std::string::npos);
+        const auto row = std::get<EventRow>(encode(GraphChanged{104, canonical}, 1));
+        CHECK(std::get<GraphChanged>(std::get<Event>(decode(row))).pipeline == canonical);
+        CHECK(std::holds_alternative<Ignore>(spelling.classify(GraphChanged{105, canonical})));
+    }
     Engine limited = fixtureEngine(graph(), {100, 50, 8, 1});
     limited.handle(TagObserved{101, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
     limited.handle(TagObserved{101, "b", "v1.0.0", std::string(40, 'a'), Origin::Webhook});

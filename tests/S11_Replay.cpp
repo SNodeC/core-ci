@@ -137,7 +137,7 @@ int scenario1() {
     const auto dot = statusDot(e);
     CHECK(dot.find("\"b@t1\" -> \"d@t1\"") != std::string::npos);
     CHECK(dot.find("fillcolor=yellow") != std::string::npos);
-    CHECK(statusText(e).starts_with("PACKAGE\tTARGET\tRELEASE\tPUBLISHED\tSTATUS\n"));
+    CHECK(statusText(e).starts_with("PACKAGE\tTARGET\tRELEASE\tPUBLISHED\tSTATUS\tSOURCE\n"));
     return checkResult();
 }
 
