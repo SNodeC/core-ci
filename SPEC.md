@@ -13,7 +13,7 @@ Read this entire document before writing any code. It is the complete specificat
 ## 1. Non-negotiable constraints
 
 1. **The graph is C++.** Packages, targets, feeds and edges are C++ types built by C++ code. The graph is never represented, stored, exported, logged or configured as JSON — not for configuration, not for persistence, not for debugging. Human-readable output is a text table and Graphviz DOT only.
-2. **No JSON for core-ci's own data.** Persistence (MariaDB, section 5), configuration and the callback protocol (section 6) are not JSON — no JSON columns, no JSON SQL functions, no JSON text stored in any column. JSON is used in exactly two places, both inside `adapters/github/`: parsing GitHub webhook payloads and encoding GitHub REST request bodies, because GitHub's API requires it. `#include <nlohmann/json.hpp>` (or any JSON library) outside `adapters/github/` is a defect.
+2. **No JSON for core-ci's own data.** Persistence (MariaDB, section 5), configuration and the callback protocol (section 6) are not JSON — no JSON columns, no JSON SQL functions, no JSON text stored in any column. JSON is used only inside `adapters/github/`: parsing GitHub webhook payloads and REST responses, and encoding REST request bodies, because GitHub's API requires it. Tests of `adapters/github/` and the fake GitHub server in `tests/` may contain GitHub wire-format JSON as test data. `#include <nlohmann/json.hpp>` (or any JSON library) outside `adapters/github/` is a defect.
 3. **Expensive work happens only on GitHub.** `core-ci` never compiles, packages, signs, holds signing keys, downloads artifacts, or touches a feed repository.
 4. **Only core-ci chains builds.** No workflow may trigger another repository's build: no `repository_dispatch` chaining, no `workflow_run` triggers, no pushes that trigger downstream builds. Existing direct chaining in DistributionPackages (e.g. SNode.C target push → MQTTSuite build) must be removed in phase 4.
 5. **Feed publication is serialized by core-ci**, not by GitHub `concurrency:` groups. (GitHub concurrency groups keep at most one pending run and cancel older pending runs — that silently drops publications.)
@@ -62,7 +62,7 @@ Read this entire document before writing any code. It is the complete specificat
 ### 3.1 Types
 
 - **Feed** — `id` (e.g. `packages`), publisher workflow: `{owner, repo, workflowFile, branch}`. Publications to one feed are strictly serialized.
-- **Target** — `id` (e.g. `debian-12-amd64`, `raspios-12-arm64`, `fedora-41-x86_64`, `openwrt-24.10-aarch64_cortex-a53`), `family` (enum: `Debian`, `RaspberryPiOS`, `Fedora`, `OpenWrtOpkg`, `OpenWrtApk`), `feed` (exactly one Feed id).
+- **Target** — `id` (e.g. `debian-12-amd64`, `raspios-12-arm64`, `fedora-41-x86_64`, `openwrt-24.10-aarch64_cortex-a53`), `family` (enum: `Debian`, `Ubuntu`, `RaspberryPiOS`, `Fedora`, `RockyLinux`, `OpenWrtOpkg`, `OpenWrtApk`; an OpenWrt target maps to `OpenWrtOpkg` or `OpenWrtApk` by the package manager of its OpenWrt release as defined in DistributionPackages), `feed` (exactly one Feed id).
 - **Package** — `name` (e.g. `snode.c`), `sourceRepo {owner, repo}`, `buildWorkflow {owner, repo, workflowFile, branch}` (recipes may live in another repo, e.g. DistributionPackages), `targets` (set of Target ids), `prerequisites` (list of Package names; every edge means "must be built against the published version of"), `acceptPrereleases` (default false). There is no configurable tag pattern: every package uses the tag format of section 3.4.
 - **Unit** — the scheduling unit `(package, target)`. A dependency edge `P → Q` applies per target: unit `(P,T)` depends on `(Q,T)`.
 
@@ -79,7 +79,7 @@ A fluent builder (`Pipeline::Builder`) produces an immutable `Pipeline`. `build(
 
 ### 3.3 The real pipeline (pipeline/Pipeline.cpp)
 
-Define the actual graph in C++: `snode.c` (no prerequisites) and `mqttsuite` (prerequisite `snode.c`), both built by the DistributionPackages workflow, all published to the `SNodeC/Packages` feed, with the target list taken from the existing DistributionPackages build matrix. Do not invent targets — read them from DistributionPackages and list them explicitly. AISuite is **not** added (it joins only after its first release).
+Define the actual graph in C++: `snode.c` (no prerequisites) and `mqttsuite` (prerequisite `snode.c`), both built by the DistributionPackages workflow, all published to the `SNodeC/Packages` feed, with each package's targets taken from the `matrix` of `ci/packages.json` in its source repository (`SNodeC/snode.c`, `SNodeC/mqttsuite`), read at the HEAD of that repository's default branch (fetch first; never a feature branch, never a pinned commit). Do not invent targets — list them explicitly in C++ with their `id`s. Family mapping: `distribution` `debian` → `Debian`, `ubuntu` → `Ubuntu`, `raspberrypios` → `RaspberryPiOS`, `fedora` → `Fedora`, `rocky` → `RockyLinux`; `openwrt` with `build.format` `ipk` → `OpenWrtOpkg`, `apk` → `OpenWrtApk`; any other value → stop and report. The dependency graph is defined **only** in `Pipeline.cpp`: `depends_on` and every other field of `ci/packages.json` are ignored by core-ci (Phase 4 removes `depends_on` from the source repositories). The feed publisher workflow (section 7.2) lives in `SNodeC/DistributionPackages` and pushes to `SNodeC/Packages`. AISuite is **not** added (it joins only after its first release).
 
 ### 3.4 Tag format and version ordering (core/Version.h)
 
@@ -288,7 +288,27 @@ Use SNode.C's express API and TLS server. **Do not guess SNode.C APIs**: find th
 
 ### 6.3 Configuration
 
-Command-line/environment only (SNode.C's CLI11-based configuration is fine): listen address/port, TLS cert/key, `callbackBaseUrl`, MariaDB host/port/socket/user/database, `githubApiUrl`, `githubCaCert` (optional CA file, used by the smoke test with a self-signed fake GitHub), timeouts, `maxDispatchAttempts`, `maxConcurrentBuilds`, `reconcileInterval`. Secrets only via environment: `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN`, `CORECI_DB_PASSWORD`. Never log secrets.
+Non-secret settings through SNode.C's configuration (command line and configuration file; the command line wins), secrets only through the environment: listen address/port, TLS cert/key, `callbackBaseUrl`, MariaDB host/port/socket/user/database, `githubApiUrl`, `githubCaCert` (optional CA file, used by the smoke test with a self-signed fake GitHub), timeouts, `maxDispatchAttempts`, `maxConcurrentBuilds`, `reconcileInterval`. Secrets only via environment: `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN`, `CORECI_DB_PASSWORD`. Never log secrets.
+
+### 6.4 Operational contract
+
+**Configuration.** Non-secret options use SNode.C's configuration (command line overrides config file); invalid or missing required settings → log the option name (never a value) and exit non-zero before connecting anywhere. Server: SNode.C TLS express instance `coreci`, default port 8443, certificate and key required. `callbackBaseUrl` required, `https://`. `githubApiUrl` default `https://api.github.com`, `https://` only. `githubCaCert` optional. `dbHost` `localhost`, `dbPort` 0, `dbSocket` empty = the client library's default socket `MYSQL_UNIX_ADDR` (core-ci substitutes it, because SNode.C passes an empty string rather than `nullptr` to `mysql_real_connect`); `dbUser`, `dbName` required. `buildTimeout` 21600 s and `publishTimeout` 3600 s (each 60–86400); `maxDispatchAttempts` 8 (1–20); `maxConcurrentBuilds` 0 = unlimited (0–1000); `reconcileInterval` 900 s (60–86400). `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN` required and non-empty; `CORECI_DB_PASSWORD` optional (empty = passwordless, e.g. unix_socket).
+
+**HTTP responses.** Authenticate first (HMAC over the raw body, or bearer token), then parse. Missing/wrong signature or token, or timestamp skew > 300 s → `401 unauthorized` (no detail). Missing `X-GitHub-Event`/`X-GitHub-Delivery`, wrong content type, malformed JSON or form, duplicate form keys, malformed percent escapes, missing required field → `400 invalid: <reason>`. Size limits are enforced while reading, through SNode.C's server parser limits (`ConfigHttpParser`, whose defaults are unlimited): body ≤ 25 MiB, header block ≤ 64 KiB, ≤ 100 header fields, start line ≤ 8 KiB. Then, **before** authentication, a body over 64 KiB on any route except the webhook → `413`. Unknown route `404`, wrong method `405`. core-ci parses outbound status codes with `std::from_chars` (anything but exactly three digits → transport error, `httpStatus = 0`) and never throws on them. Known upstream defect: SNode.C's `src/web/http/client/ResponseParser.cpp` calls `std::stoi` on the status code before core-ci sees the response, so a non-numeric status line terminates the process; it is reachable only from the hostname-verified GitHub endpoint, must be fixed in SNode.C as a separate change, and is not tested in core-ci. Status and DOT during recovery → `503`.
+
+**Callbacks.** `build`+`started` → `BuildStarted` (needs `run_id`, `run_attempt`); `build`+`succeeded` → `BuildSucceeded` (`run_id`, `artifact`); `build`+`failed` → `BuildFailed` (`run_id`, `reason`); `publish`+`succeeded` → `PublishSucceeded` (`run_id`, `feed_commit`); `publish`+`failed` → `PublishFailed` (`run_id`, `reason`); `publish`+`started` → `200 ignored: no event`; anything else → `400`. Fields an event does not use are ignored; an empty value counts as absent. `buildId` is the percent-decoded path segment.
+
+**Webhook.** `sourceSha` = payload `after` (for an annotated tag the tag object); informational only — workflows always check out `tag`. A delivery that maps to several packages enqueues one `TagObserved` per package in package-name order; the response is `503` if any result is unavailable, otherwise `200` with one line per package (`<package>: accepted` or `<package>: ignored: <reason>`). The delivery id is remembered only if no result was unavailable; in memory, last 1000 ids, oldest evicted, empty after restart.
+
+**Reconciliation.** Per package the highest accepted version over all pages; among equal precedence the lexicographically smallest tag string. A failed, malformed or off-origin page aborts that repository for this round (warning, no event); other repositories continue. Startup reconciliation starts after the listener is up and does not delay it. `POST /api/v1/reconcile` answers `202 started` or `202 already running` immediately.
+
+**Outbound HTTP and TLS.** One request per connection; 30 s from connect to complete response; redirects are not followed (3xx: dispatch → `DispatchRejected` with that status, not permanent; reconciliation → abort that repository). `Link` URLs must have the scheme, host and port of `githubApiUrl`. SNode.C's TLS client sets SNI but does not verify the hostname, so in the client's `onConnected` — called after the handshake and before the HTTP context is attached (`src/core/socket/stream/tls/SocketConnector.hpp`) — require `SSL_get_verify_result(ssl) == X509_V_OK` and `X509_check_host(peerCertificate, host) == 1`; otherwise close before any request byte is sent (transport error, `httpStatus = 0`).
+
+**Recovery integration.** Authorized additions: `EventQueue::recover(reason)` (pending → unavailable, discard engine, rebuild) and a `MariaDBEventStore` connection-lost callback that `app/` wires to it. While the queue is not ready no `Tick` is generated and dispatch results are dropped with a log line; `Resumed` re-emits the dispatch after the rebuild.
+
+**Single writer.** Exactly one core-ci per event database, enforced: `open` runs `SELECT GET_LOCK(CONCAT('coreci:', DATABASE()), 0)` after `SET autocommit = 1`; result `0` → `Unavailable` (another instance holds the writer lock), retried like any outage. The lock is per session and re-acquired on every reconnect.
+
+**App library and smoke test.** `app/` is a library taking a `Pipeline`; the `core-ci` executable links it with `pipeline/Pipeline.cpp`, `tests/core-ci-smoke` with the S1 test pipeline. The smoke script uses `CORECI_TEST_DB_*` (may drop and recreate the two tables there; exit 77 if unset) and shows: verified TLS dispatch to the fake GitHub; a wrong-host certificate rejected with no request reaching the fake; the S1 diamond driven by signed `curl` callbacks; a restart midway with correct `Resumed` dispatches; a second instance on the same database refused by the writer lock.
 
 ---
 
@@ -305,7 +325,7 @@ Jobs:
 
 No signing, no feed access, no downstream triggers.
 
-### 7.2 `coreci-publish.yml` (lives in the feed publisher repository)
+### 7.2 `coreci-publish.yml` (lives in `SNodeC/DistributionPackages`, publishes to `SNodeC/Packages`)
 
 Inputs: `build_id`, `package`, `version`, `revision`, `target`, `build_repo`, `build_run_id`, `artifact`, `callback_url`.
 

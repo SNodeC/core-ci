@@ -161,6 +161,58 @@ void unavailableErrors() {
         CHECK(store.rows().empty());
     }
 }
+int externalRecovery() {
+    InMemoryEventStore store;
+    std::vector<Command> emitted;
+    std::vector<Result> replies;
+    int ready = 0;
+    EventQueue queue(
+        store,
+        engine,
+        [] {
+            return Resumed{110};
+        },
+        [&](const auto& commands) {
+            emitted.insert(emitted.end(), commands.begin(), commands.end());
+        },
+        [](auto, const auto&) {
+            CHECK(false);
+        });
+    queue.start(
+        [&] {
+            ++ready;
+        },
+        [](const auto&) {
+            CHECK(false);
+        });
+    store.defer(true);
+    queue.enqueue(tag("a"), [&](Result r) {
+        replies.push_back(std::move(r));
+    });
+    queue.enqueue(tag("b"), [&](Result r) {
+        replies.push_back(std::move(r));
+    });
+    queue.recover("connection lost");
+    CHECK(!queue.engine());
+    CHECK_EQ(replies.size(), 2U);
+    CHECK(std::holds_alternative<Unavailable>(replies[0]));
+    CHECK(std::holds_alternative<Unavailable>(replies[1]));
+    REQUIRE(store.completeOne()); // old append commits after recovery started
+    CHECK(emitted.empty());
+    CHECK_EQ(replies.size(), 2U);
+    queue.recover("connection lost again"); // earlier open callback is now stale too
+    REQUIRE(store.completeOne());
+    CHECK_EQ(store.pending(), 1U);
+    REQUIRE(store.completeOne()); // current open
+    REQUIRE(store.completeOne()); // current load
+    REQUIRE(store.completeOne()); // Resumed commit
+    REQUIRE(queue.engine());
+    CHECK_EQ(ready, 2);
+    CHECK((emitted == std::vector<Command>{buildCommand()}));
+    CHECK(queue.engine()->releases().at("a").has_value());
+    CHECK(!queue.engine()->releases().at("b"));
+    return checkResult();
+}
 int main() {
     InMemoryEventStore store;
     std::vector<Result> replies;
@@ -239,6 +291,7 @@ int main() {
     CHECK_EQ(*store.rows().back().reason, "AB\xef\xbf\xbd");
     CHECK_EQ(queue.engine()->units().at({"a", "t"}).failure->reason, "AB\xef\xbf\xbd");
 
+    externalRecovery();
     unavailableErrors();
     recovery(InMemoryEventStore::Failure::BeforeStore);
     recovery(InMemoryEventStore::Failure::AfterStore);

@@ -47,7 +47,69 @@ foreach(scenario S11_Replay S12_WriteAhead S13_EventRow S14_EventSql)
     set_tests_properties(${scenario} PROPERTIES LABELS persistence)
 endforeach()
 if(CORECI_WITH_SNODEC)
-    find_package(snodec REQUIRED COMPONENTS db-mariadb)
+    find_package(
+        snodec REQUIRED COMPONENTS db-mariadb http-client net-in-stream-tls
+                                   http-server-express-tls-in
+    )
+    find_package(OpenSSL REQUIRED)
+    add_library(
+        coreci_github adapters/github/Protocol.cpp
+                      adapters/github/HttpClient.cpp
+    )
+    target_link_libraries(
+        coreci_github
+        PUBLIC coreci_persistence snodec::http-client snodec::net-in-stream-tls
+               OpenSSL::SSL OpenSSL::Crypto
+    )
+    add_library(coreci_app app/App.cpp)
+    target_link_libraries(
+        coreci_app PUBLIC coreci_github coreci_mariadb
+                          snodec::http-server-express-tls-in
+    )
+    add_executable(A_Pipeline tests/A_Pipeline.cpp pipeline/Pipeline.cpp)
+    target_link_libraries(A_Pipeline PRIVATE coreci_core)
+    add_test(NAME A_Pipeline COMMAND A_Pipeline)
+    set_tests_properties(A_Pipeline PROPERTIES LABELS adapters)
+    add_executable(core-ci app/main.cpp pipeline/Pipeline.cpp)
+    target_link_libraries(core-ci PRIVATE coreci_app)
+    add_executable(core-ci-smoke tests/core-ci-smoke.cpp)
+    target_link_libraries(core-ci-smoke PRIVATE coreci_app)
+    add_executable(coreci-reset-store tests/ResetStore.cpp)
+    target_link_libraries(coreci-reset-store PRIVATE coreci_mariadb)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(
+        NAME M_LocalSmoke
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.py ${CMAKE_BINARY_DIR}
+    )
+    set_tests_properties(
+        M_LocalSmoke
+        PROPERTIES LABELS
+                   integration
+                   SKIP_RETURN_CODE
+                   77
+                   TIMEOUT
+                   150
+                   RUN_SERIAL
+                   TRUE
+    )
+    add_executable(coreci-transport-probe tests/TransportProbe.cpp)
+    target_link_libraries(coreci-transport-probe PRIVATE coreci_github)
+    add_executable(coreci-fake-github tests/FakeGitHub.cpp)
+    target_link_libraries(
+        coreci-fake-github PRIVATE coreci_core
+                                   snodec::http-server-express-tls-in
+    )
+    foreach(scenario A_WebhookHmac A_CallbackHmac A_DispatchRequest A_TagPages)
+        add_executable(${scenario} tests/${scenario}.cpp)
+        target_link_libraries(${scenario} PRIVATE coreci_github)
+        add_test(NAME ${scenario} COMMAND ${scenario})
+        set_tests_properties(${scenario} PROPERTIES LABELS adapters)
+    endforeach()
+    set_target_properties(
+        core-ci-smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                 ${CMAKE_BINARY_DIR}/tests
+    )
     set_property(
         DIRECTORY
         APPEND
@@ -82,6 +144,12 @@ file(
     core/*.cpp
     persistence/*.h
     persistence/*.cpp
+    adapters/github/*.h
+    adapters/github/*.cpp
+    app/*.h
+    app/*.cpp
+    pipeline/*.h
+    pipeline/*.cpp
     adapters/mariadb/*.h
     adapters/mariadb/*.cpp
     tests/*.h

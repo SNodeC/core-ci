@@ -31,6 +31,7 @@ namespace coreci::persistence {
                    std::function<void(std::uint64_t, const std::string&)> warning);
         void start(std::function<void()> onReady, std::function<void(const EventStore::StoreError&)> onError);
         void enqueue(Event event, Reply reply);
+        void recover(const std::string& reason);
         const Engine* engine() const;
 
     private:
@@ -53,6 +54,8 @@ namespace coreci::persistence {
         std::unique_ptr<Engine> current;
         std::deque<Pending> pending;
         Mode mode = Mode::Unavailable;
+        Reply activeReply;
+        std::uint64_t generation = 0;
         bool writing = false, draining = false;
     };
 } // namespace coreci::persistence
