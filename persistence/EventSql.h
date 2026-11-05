@@ -5,4 +5,6 @@ namespace coreci::persistence {
     // Invalid events never produce SQL. seq is allocated by the database.
     std::variant<std::string, Invalid> insertSql(const Event& event);
     std::string selectSql();
+    std::vector<std::string> graphInsertSql(const GraphRows& rows);
+    std::vector<std::string> graphSelectSql();
 } // namespace coreci::persistence

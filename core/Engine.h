@@ -42,6 +42,7 @@ namespace coreci {
         std::optional<Inflight> inflight;
         std::optional<Failure> failure;
         std::map<Version, std::uint64_t> lastRevision;
+        std::string lastFeed;
         bool operator==(const UnitState&) const = default;
     };
     struct FeedState {
@@ -69,7 +70,7 @@ namespace coreci {
     using Classification = std::variant<Accept, Ignore>;
     class Engine {
     public:
-        Engine(Pipeline pipeline, Options options);
+        explicit Engine(Options options);
         Classification classify(const Event& event) const;
         std::vector<Command> handle(const Event& event);
         std::optional<std::int64_t> nextDeadline() const;
@@ -81,6 +82,8 @@ namespace coreci {
         std::optional<std::int64_t> time() const;
 
     private:
+        void changeGraph(const Pipeline& pipeline);
+        bool active(const Unit& unit) const;
         std::optional<Unit> find(const std::string& buildId) const;
         Command dispatch(const Unit& unit) const;
         void clear(const Unit& unit);
@@ -90,6 +93,7 @@ namespace coreci {
         Options options;
         std::map<std::string, std::optional<Released>> released;
         std::map<Unit, UnitState> unitStates;
+        std::map<std::string, std::pair<Repo, Workflow>> lastIdentity;
         std::map<std::string, FeedState> feedStates;
         std::optional<std::int64_t> engineTime;
     };

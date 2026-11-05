@@ -5,7 +5,91 @@
 #include <stdexcept>
 
 namespace coreci {
+    std::string repoKey(const std::string& value) {
+        std::string result = value;
+        for (auto& c : result) {
+            if (c >= 'A' && c <= 'Z') {
+                c += 'a' - 'A';
+            }
+        }
+        return result;
+    }
+    bool Repo::operator==(const Repo& other) const {
+        return repoKey(owner) == repoKey(other.owner) && repoKey(repo) == repoKey(other.repo) && branch == other.branch;
+    }
+    bool Workflow::operator==(const Workflow& other) const {
+        return repoKey(owner) == repoKey(other.owner) && repoKey(repo) == repoKey(other.repo) && workflowFile == other.workflowFile &&
+               branch == other.branch;
+    }
+    bool validBranch(const std::string& value) {
+        bool valid = !value.empty() &&
+                     std::count_if(value.begin(),
+                                   value.end(),
+                                   [](unsigned char c) {
+                                       return (c & 0xc0) != 0x80;
+                                   }) <= 255 &&
+                     value != "@" && value != "HEAD" && value.front() != '-' && value.front() != '/' && value.back() != '/' &&
+                     value.back() != '.' && value.find("..") == std::string::npos && value.find("@{") == std::string::npos &&
+                     value.find("//") == std::string::npos;
+        std::size_t start = 0;
+        for (std::size_t i = 0; valid && i <= value.size(); ++i) {
+            if (i == value.size() || value[i] == '/') {
+                const auto part = value.substr(start, i - start);
+                valid = !part.empty() && part.front() != '.' && !part.ends_with(".lock");
+                start = i + 1;
+            } else {
+                const unsigned char c = value[i];
+                valid = c > 32 && c != 127 && std::string("~^:?*[\\").find(c) == std::string::npos;
+            }
+        }
+        return valid;
+    }
+    namespace {
+        bool characters(const std::string& value, std::size_t limit, const std::string& extra) {
+            return !value.empty() && value.size() <= limit && std::all_of(value.begin(), value.end(), [&](unsigned char c) {
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || extra.find(c) != std::string::npos;
+            });
+        }
+        void identifier(const std::string& value, const std::string& kind) {
+            if (!characters(value, 64, "._-")) {
+                throw std::invalid_argument("invalid " + kind + ": " + value);
+            }
+        }
+        void repository(const std::string& owner, const std::string& repo, const std::string& branch) {
+            validateRepository(owner, repo);
+            if (!validBranch(branch)) {
+                throw std::invalid_argument("invalid branch: " + branch);
+            }
+        }
+        void workflow(const Workflow& w) {
+            repository(w.owner, w.repo, w.branch);
+            validateWorkflowFile(w.workflowFile);
+        }
+    } // namespace
+    void validateRepository(const std::string& owner, const std::string& repo) {
+        if (!characters(owner, 39, "-")) {
+            throw std::invalid_argument("invalid owner: " + owner);
+        }
+        if (!characters(repo, 100, "._-") || repo == "." || repo == "..") {
+            throw std::invalid_argument("invalid repository: " + repo);
+        }
+    }
+    void validateWorkflowFile(const std::string& file) {
+        if (!characters(file, 255, "._-") || !(file.ends_with(".yml") || file.ends_with(".yaml"))) {
+            throw std::invalid_argument("invalid workflow: " + file);
+        }
+    }
+    std::set<std::pair<std::string, std::string>> Pipeline::repositories() const {
+        std::set<std::pair<std::string, std::string>> result;
+        for (const auto& [name, pkg] : packageMap) {
+            result.emplace(repoKey(pkg.sourceRepo.owner), repoKey(pkg.sourceRepo.repo));
+        }
+        return result;
+    }
+
     Pipeline::Builder& Pipeline::Builder::feed(Feed value) {
+        value.workflow.owner = repoKey(value.workflow.owner);
+        value.workflow.repo = repoKey(value.workflow.repo);
         feedList.push_back(std::move(value));
         return *this;
     }
@@ -14,25 +98,37 @@ namespace coreci {
         return *this;
     }
     Pipeline::Builder& Pipeline::Builder::package(Package value) {
+        value.sourceRepo.owner = repoKey(value.sourceRepo.owner);
+        value.sourceRepo.repo = repoKey(value.sourceRepo.repo);
+        value.buildWorkflow.owner = repoKey(value.buildWorkflow.owner);
+        value.buildWorkflow.repo = repoKey(value.buildWorkflow.repo);
+        std::sort(value.prerequisites.begin(), value.prerequisites.end());
+        value.prerequisites.erase(std::unique(value.prerequisites.begin(), value.prerequisites.end()), value.prerequisites.end());
         packageList.push_back(std::move(value));
         return *this;
     }
     Pipeline Pipeline::Builder::build() const {
         Pipeline p;
         for (const auto& f : feedList) {
+            identifier(f.id, "feed");
+            workflow(f.workflow);
             if (!p.feedMap.emplace(f.id, f).second) {
                 throw std::invalid_argument("duplicate feed: " + f.id);
             }
         }
         for (const auto& t : targetList) {
-            if (!p.targetMap.emplace(t.id, t).second) {
-                throw std::invalid_argument("duplicate target: " + t.id);
+            identifier(t.id, "target");
+            if (!p.targetMap.emplace(t.id, t).second && p.targetMap.at(t.id).feed != t.feed) {
+                throw std::invalid_argument("target has different feeds: " + t.id);
             }
             if (!p.feedMap.contains(t.feed)) {
                 throw std::invalid_argument("unknown feed: " + t.feed + " for target " + t.id);
             }
         }
         for (const auto& pkg : packageList) {
+            identifier(pkg.name, "package");
+            repository(pkg.sourceRepo.owner, pkg.sourceRepo.repo, pkg.sourceRepo.branch);
+            workflow(pkg.buildWorkflow);
             if (!p.packageMap.emplace(pkg.name, pkg).second) {
                 throw std::invalid_argument("duplicate package: " + pkg.name);
             }
@@ -54,12 +150,9 @@ namespace coreci {
                 }
             }
             for (const auto& [other, q] : p.packageMap) {
-                if (name < other && pkg.sourceRepo == q.sourceRepo) {
-                    for (const auto& t : pkg.targets) {
-                        if (q.targets.contains(t)) {
-                            throw std::invalid_argument("sourceRepo overlap: " + name + " and " + other + " on " + t);
-                        }
-                    }
+                if (name < other && repoKey(pkg.sourceRepo.owner) == repoKey(q.sourceRepo.owner) &&
+                    repoKey(pkg.sourceRepo.repo) == repoKey(q.sourceRepo.repo)) {
+                    throw std::invalid_argument("duplicate sourceRepo: " + name + " and " + other);
                 }
             }
         }
@@ -87,6 +180,11 @@ namespace coreci {
         for (const auto& [name, pkg] : p.packageMap) {
             visit(name);
         }
+        std::erase_if(p.targetMap, [&](const auto& entry) {
+            return std::none_of(p.packageMap.begin(), p.packageMap.end(), [&](const auto& pkg) {
+                return pkg.second.targets.contains(entry.first);
+            });
+        });
         for (const auto& [target, definition] : p.targetMap) {
             std::set<std::string> remaining;
             for (const auto& [name, pkg] : p.packageMap) {
@@ -135,7 +233,7 @@ namespace coreci {
     std::vector<std::string> Pipeline::packagesForRepo(const std::string& owner, const std::string& repo) const {
         std::vector<std::string> result;
         for (const auto& [name, pkg] : packageMap) {
-            if (pkg.sourceRepo == Repo{owner, repo}) {
+            if (repoKey(pkg.sourceRepo.owner) == repoKey(owner) && repoKey(pkg.sourceRepo.repo) == repoKey(repo)) {
                 result.push_back(name);
             }
         }

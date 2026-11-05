@@ -4,18 +4,52 @@
 #include <type_traits>
 
 namespace coreci {
-    Engine::Engine(Pipeline pipeline, Options options)
-        : graph(std::move(pipeline))
-        , options(options) {
-        for (const auto& [name, pkg] : graph.packages()) {
-            released.emplace(name, std::nullopt);
-            for (const auto& target : pkg.targets) {
-                unitStates.emplace(Unit{name, target}, UnitState{});
+    Engine::Engine(Options options)
+        : options(options) {
+    }
+    bool Engine::active(const Unit& unit) const {
+        return graph.packages().contains(unit.package) && graph.packages().at(unit.package).targets.contains(unit.target);
+    }
+    void Engine::changeGraph(const Pipeline& next) {
+        for (auto& [unit, state] : unitStates) {
+            const bool remains = next.packages().contains(unit.package) && next.packages().at(unit.package).targets.contains(unit.target);
+            if (!remains) {
+                state.inflight.reset();
+            }
+            if (remains) {
+                const auto& [source, workflow] = lastIdentity.at(unit.package);
+                const auto& newPkg = next.packages().at(unit.package);
+                if (source != newPkg.sourceRepo || workflow != newPkg.buildWorkflow) {
+                    state.inflight.reset();
+                }
+                if (state.lastFeed != next.targets().at(unit.target).feed) {
+                    state.published.reset();
+                    state.failure.reset();
+                }
             }
         }
-        for (const auto& [name, feed] : graph.feeds()) {
-            feedStates.emplace(name, FeedState{});
+        for (const auto& [name, pkg] : next.packages()) {
+            if (lastIdentity.contains(name) && lastIdentity.at(name).first != pkg.sourceRepo) {
+                released[name].reset();
+            }
+            released.try_emplace(name, std::nullopt);
+            lastIdentity.insert_or_assign(name, std::pair{pkg.sourceRepo, pkg.buildWorkflow});
+            for (const auto& target : pkg.targets) {
+                unitStates.try_emplace(Unit{name, target});
+                unitStates.at({name, target}).lastFeed = next.targets().at(target).feed;
+            }
         }
+        for (auto i = feedStates.begin(); i != feedStates.end();) {
+            if (!next.feeds().contains(i->first)) {
+                i = feedStates.erase(i);
+            } else {
+                ++i;
+            }
+        }
+        for (const auto& [name, feed] : next.feeds()) {
+            feedStates.try_emplace(name);
+        }
+        graph = next;
     }
     std::optional<Unit> Engine::find(const std::string& buildId) const {
         std::optional<Unit> result;
@@ -44,6 +78,27 @@ namespace coreci {
                     } else {
                         result = Ignore{"unknown package"};
                     }
+                } else if constexpr (std::is_same_v<E, GraphChanged>) {
+                    bool allowed = graph != e.pipeline;
+                    for (const auto& [unit, state] : unitStates) {
+                        if (active(unit) && state.inflight && state.inflight->phase != Phase::Dispatching &&
+                            state.inflight->phase != Phase::Building) {
+                            const auto& oldPkg = graph.packages().at(unit.package);
+                            const auto next = e.pipeline.packages().find(unit.package);
+                            const auto& feed = graph.targets().at(unit.target).feed;
+                            allowed = allowed && next != e.pipeline.packages().end();
+                            if (next != e.pipeline.packages().end()) {
+                                allowed =
+                                    allowed && next->second.targets.contains(unit.target) && next->second.sourceRepo == oldPkg.sourceRepo &&
+                                    next->second.buildWorkflow == oldPkg.buildWorkflow && e.pipeline.targets().at(unit.target).feed == feed;
+                            }
+                            if (state.inflight->phase != Phase::AwaitingPublish) {
+                                allowed = allowed && e.pipeline.feeds().contains(feed) &&
+                                          e.pipeline.feeds().at(feed).workflow == graph.feeds().at(feed).workflow;
+                            }
+                        }
+                    }
+                    result = allowed ? Classification{Accept{}} : Classification{Ignore{"unchanged graph or publication in progress"}};
                 } else if constexpr (std::is_same_v<E, Resumed>) {
                     result = Accept{};
                 } else if constexpr (std::is_same_v<E, Tick>) {
@@ -55,7 +110,7 @@ namespace coreci {
                     }
                 } else if constexpr (std::is_same_v<E, RetryRequested>) {
                     const auto it = unitStates.find({e.package, e.target});
-                    if (it != unitStates.end() && it->second.failure && !it->second.inflight) {
+                    if (active({e.package, e.target}) && it != unitStates.end() && it->second.failure && !it->second.inflight) {
                         result = Accept{};
                     } else {
                         result = Ignore{"unit has no retryable failure"};
@@ -187,7 +242,7 @@ namespace coreci {
                     auto& state = unitStates.at(unit);
                     const auto& release = *released.at(package);
                     const auto revision = ++state.lastRevision[release.version];
-                    const auto id = package + "." + target + "." + release.version.text() + ".r" + std::to_string(revision);
+                    const auto id = package + "~" + target + "~" + release.version.text() + "~r" + std::to_string(revision);
                     state.inflight = Inflight{
                         id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}, {}};
                     commands.push_back(dispatch(unit));
@@ -214,7 +269,9 @@ namespace coreci {
                 [&](const auto& e) {
                     using E = std::decay_t<decltype(e)>;
                     engineTime = std::max(engineTime.value_or(e.at), e.at);
-                    if constexpr (std::is_same_v<E, TagObserved>) {
+                    if constexpr (std::is_same_v<E, GraphChanged>) {
+                        changeGraph(e.pipeline);
+                    } else if constexpr (std::is_same_v<E, TagObserved>) {
                         released.at(e.package) = Released{*Version::parse(e.tag), e.tag};
                     } else if constexpr (std::is_same_v<E, RetryRequested>) {
                         unitStates.at({e.package, e.target}).failure.reset();

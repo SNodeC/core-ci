@@ -1,27 +1,16 @@
 #include "Check.h"
+#include "Fixture.h"
 #include "core/Status.h"
 
 #include <algorithm>
 #include <stdexcept>
 using namespace coreci;
-Pipeline testPipeline() {
-    Pipeline::Builder b;
-    b.feed({"f1", {"owner", "feeds", "publish.yml", "stable"}})
-        .feed({"f2", {"owner", "feeds", "publish.yml", "stable"}})
-        .target({"t1", Family::Debian, "f1"})
-        .target({"t2", Family::Fedora, "f2"});
-    b.package({"a", {"owner", "a"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {}})
-        .package({"b", {"owner", "b"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"c", {"owner", "c"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"d", {"owner", "d"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"b", "c"}})
-        .package({"e", {"owner", "e"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1"}, {"d"}});
-    return b.build();
-}
+
 Version version(const std::string& v = "1.0.0") {
     return Version::parse(v).value();
 }
 std::string id(const std::string& p, const std::string& t, const std::string& v = "1.0.0", unsigned r = 1) {
-    return p + "." + t + "." + v + ".r" + std::to_string(r);
+    return p + "~" + t + "~" + v + "~r" + std::to_string(r);
 }
 Inputs input(const std::string& p, const std::string& v = "1.0.0", unsigned r = 1) {
     return {{p, {version(v), r}}};
@@ -29,7 +18,7 @@ Inputs input(const std::string& p, const std::string& v = "1.0.0", unsigned r = 
 Command buildCommand(
     const std::string& p, const std::string& t, Inputs inputs = {}, const std::string& v = "1.0.0", unsigned r = 1, unsigned attempt = 1) {
     return DispatchBuild{
-        id(p, t, v, r), attempt, p, {"owner", p}, "v" + v, version(v), r, t, inputs, {"owner", "recipes", "build.yml", "trunk"}};
+        id(p, t, v, r), attempt, p, {"owner", p, "trunk"}, "v" + v, version(v), r, t, inputs, {"owner", "recipes", "build.yml", "trunk"}};
 }
 Command publishCommand(const std::string& p, const std::string& t, const std::string& v = "1.0.0", unsigned r = 1, unsigned attempt = 1) {
     return DispatchPublish{id(p, t, v, r),
@@ -77,7 +66,7 @@ void prime(Engine& e) {
 }
 
 int main() {
-    Engine e(testPipeline(), {100, 50, 8, {}});
+    Engine e = fixtureEngine(testPipeline(), {100, 50, 8, {}});
     prime(e);
     build(e, "b", "t1", {publishCommand("b", "t1")});
     publish(e, "b", "t1");
