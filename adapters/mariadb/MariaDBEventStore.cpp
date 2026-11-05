@@ -168,18 +168,20 @@ namespace coreci::mariadb {
         const auto bootstrap = std::make_shared<bool>(false);
         client.query(
             "SELECT (SELECT COUNT(*) FROM coreci_schema),(SELECT MIN(version) FROM coreci_schema),"
-            "EXISTS(SELECT 1 FROM coreci_events LIMIT 1)",
+            "(EXISTS(SELECT 1 FROM coreci_events LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_feeds LIMIT 1) OR "
+            "EXISTS(SELECT 1 FROM coreci_graph_packages LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_targets LIMIT 1) OR "
+            "EXISTS(SELECT 1 FROM coreci_graph_prerequisites LIMIT 1))",
             [this, done, bootstrap](const MYSQL_ROW row) {
                 if (row != nullptr) {
-                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "1") {
+                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "2") {
                         // Wait for query's final nullptr before starting the next operation.
                     } else if (row[0] != nullptr && std::string(row[0]) == "0" && row[2] != nullptr && std::string(row[2]) == "0") {
                         *bootstrap = true;
                     } else {
-                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 1 row, or empty schema and events"});
+                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 2 row, or empty schema and events"});
                     }
                 } else if (*bootstrap) {
-                    execute("INSERT INTO coreci_schema (version) VALUES (1)", done);
+                    execute("INSERT INTO coreci_schema (version) VALUES (2)", done);
                 } else {
                     done();
                 }
@@ -198,10 +200,104 @@ namespace coreci::mariadb {
             onFailure = [onError](const StoreError& error) {
                 onError(error.message);
             };
-            execute(std::get<std::string>(sql), [this, onCommitted] {
+            const auto committed = [this, onCommitted] {
                 onFailure = {};
                 onCommitted();
+            };
+            if (std::holds_alternative<GraphChanged>(event)) {
+                auto statements = std::make_shared<std::vector<std::string>>();
+                statements->push_back(std::get<std::string>(sql));
+                const auto row = std::get<persistence::EventRow>(persistence::encode(event));
+                const auto graphSql = persistence::graphInsertSql(*row.graph);
+                statements->insert(statements->end(), graphSql.begin(), graphSql.end());
+                client.startTransactions(
+                    [this, statements, committed] {
+                        insertGraph(statements, 0, [this, committed] {
+                            client.commit(
+                                [this, committed] {
+                                    client.endTransactions(committed, [this](const auto& error, auto) {
+                                        fail({StoreError::Kind::Unavailable, error});
+                                    });
+                                },
+                                [this](const auto& error, auto) {
+                                    fail({StoreError::Kind::Unavailable, error});
+                                });
+                        });
+                    },
+                    [this](const auto& error, auto) {
+                        fail({StoreError::Kind::Unavailable, error});
+                    });
+            } else {
+                execute(std::get<std::string>(sql), committed);
+            }
+        }
+    }
+    void
+    MariaDBEventStore::insertGraph(std::shared_ptr<std::vector<std::string>> statements, std::size_t index, std::function<void()> done) {
+        if (index == statements->size()) {
+            done();
+        } else {
+            execute(statements->at(index), [this, statements, index, done] {
+                insertGraph(statements, index + 1, done);
             });
+        }
+    }
+    void MariaDBEventStore::loadGraphs(std::shared_ptr<Rows> rows, std::size_t table, std::function<void()> done) {
+        const auto selects = persistence::graphSelectSql();
+        if (table == selects.size()) {
+            done();
+        } else {
+            client.query(
+                selects[table],
+                [this, rows, table, done](const MYSQL_ROW fields) {
+                    if (fields == nullptr) {
+                        loadGraphs(rows, table + 1, done);
+                    } else {
+                        std::uint64_t seq = 0;
+                        std::string error;
+                        if (fields[0] == nullptr || !number(std::string(fields[0]), seq)) {
+                            error = "invalid graph event_seq";
+                        } else if (!rows->contains(seq) || rows->at(seq).eventType != "GraphChanged") {
+                            error = "orphan graph row";
+                        }
+                        std::vector<std::string> values;
+                        const std::size_t count = table == 0 ? 5 : (table == 1 ? 8 : (table == 2 ? 3 : 2));
+                        for (std::size_t i = 1; i <= count && error.empty(); ++i) {
+                            std::string value;
+                            if (fields[i] == nullptr || !unhex(fields[i], value)) {
+                                error = "invalid graph hex or NULL";
+                            }
+                            values.push_back(value);
+                        }
+                        if (error.empty()) {
+                            auto& graph = *rows->at(seq).graph;
+                            if (table == 0) {
+                                graph.feeds.push_back({values[0], {values[1], values[2], values[3], values[4]}});
+                            } else if (table == 1) {
+                                if (fields[9] == nullptr || (std::string(fields[9]) != "0" && std::string(fields[9]) != "1")) {
+                                    error = "invalid accept_prereleases";
+                                } else {
+                                    graph.packages.push_back({values[0],
+                                                              {values[1], values[2], values[3]},
+                                                              {values[4], values[5], values[6], values[7]},
+                                                              {},
+                                                              {},
+                                                              std::string(fields[9]) == "1"});
+                                }
+                            } else if (table == 2) {
+                                graph.targets.push_back({values[0], values[1], values[2]});
+                            } else {
+                                graph.prerequisites.push_back({values[0], values[1]});
+                            }
+                        }
+                        if (!error.empty()) {
+                            fail({StoreError::Kind::Corrupt, "seq " + std::to_string(seq) + ": " + error});
+                        }
+                    }
+                },
+                [this](const auto& error, auto) {
+                    fail({StoreError::Kind::Unavailable, error});
+                });
         }
     }
     void MariaDBEventStore::loadAll(std::function<void(std::uint64_t, const Event&)> onEvent,
@@ -211,12 +307,27 @@ namespace coreci::mariadb {
             onError({StoreError::Kind::Unavailable, "MariaDB session requires open before loadAll"});
         } else {
             onFailure = std::move(onError);
+            auto rows = std::make_shared<Rows>();
             client.query(
                 persistence::selectSql(),
-                [this, onEvent, onDone](const MYSQL_ROW fields) {
+                [this, rows, onEvent, onDone](const MYSQL_ROW fields) {
                     if (fields == nullptr) {
-                        onFailure = {};
-                        onDone();
+                        loadGraphs(rows, 0, [this, rows, onEvent, onDone] {
+                            bool valid = true;
+                            for (auto i = rows->begin(); valid && i != rows->end(); ++i) {
+                                const auto event = persistence::decode(i->second);
+                                valid = std::holds_alternative<Event>(event);
+                                if (valid) {
+                                    onEvent(i->first, std::get<Event>(event));
+                                } else {
+                                    fail({StoreError::Kind::Corrupt, std::get<persistence::Invalid>(event).reason});
+                                }
+                            }
+                            if (valid) {
+                                onFailure = {};
+                                onDone();
+                            }
+                        });
                     } else {
                         std::vector<std::optional<std::string>> values;
                         for (std::size_t i = 0; i < 18; ++i) {
@@ -226,17 +337,15 @@ namespace coreci::mariadb {
                         if (std::holds_alternative<persistence::Invalid>(decoded)) {
                             fail({StoreError::Kind::Corrupt, std::get<persistence::Invalid>(decoded).reason});
                         } else {
-                            const auto& row = std::get<persistence::EventRow>(decoded);
-                            const auto event = persistence::decode(row);
-                            if (std::holds_alternative<persistence::Invalid>(event)) {
-                                fail({StoreError::Kind::Corrupt, std::get<persistence::Invalid>(event).reason});
-                            } else {
-                                onEvent(row.seq, std::get<Event>(event));
+                            auto row = std::get<persistence::EventRow>(decoded);
+                            if (row.eventType == "GraphChanged") {
+                                row.graph = persistence::GraphRows{};
                             }
+                            rows->emplace(row.seq, std::move(row));
                         }
                     }
                 },
-                [this](const std::string& message, unsigned int) {
+                [this](const auto& message, auto) {
                     fail({StoreError::Kind::Unavailable, message});
                 });
         }
