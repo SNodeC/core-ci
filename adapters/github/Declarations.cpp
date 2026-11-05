@@ -197,6 +197,11 @@ namespace coreci::github {
                                 pkg.prerequisites.push_back(q.get<std::string>());
                             }
                             pkg.acceptPrereleases = value.value("accept_prereleases", false);
+                            const auto base = value.value("revision_base", Json(0));
+                            if (!base.is_number_integer() || base < 0 || base > 1000000) {
+                                throw std::invalid_argument("revision_base must be an integer in 0–1000000");
+                            }
+                            pkg.revisionBase = base.get<unsigned>();
                             const auto& matrix = value.at("matrix");
                             if (!matrix.is_array()) {
                                 throw std::invalid_argument("matrix must be an array");

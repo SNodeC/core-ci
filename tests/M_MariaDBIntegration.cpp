@@ -201,8 +201,8 @@ private:
         Pipeline::Builder b;
         b.feed({"f", {"SNodeC", "publisher", "publish.yml", "master"}})
             .target({"t", "f"})
-            .package({"a", {"SNodeC", "lower", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {}})
-            .package({"A", {"SNodeC", "upper", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {"a"}});
+            .package({"a", {"SNodeC", "lower", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {}, false, 100})
+            .package({"A", {"SNodeC", "upper", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {"a"}, false, 1000000});
         const auto expected = b.build();
         store->append(
             GraphChanged{200, expected},
@@ -214,6 +214,8 @@ private:
                             CHECK(changed->pipeline == expected);
                             CHECK_EQ(changed->pipeline.packages().at("a").sourceRepo.owner, "SNodeC");
                             CHECK_EQ(changed->pipeline.feeds().at("f").workflow.owner, "SNodeC");
+                            CHECK_EQ(changed->pipeline.packages().at("a").revisionBase, 100U);
+                            CHECK_EQ(changed->pipeline.packages().at("A").revisionBase, 1000000U);
                             *found = true;
                             CHECK_EQ(changed->pipeline.packages().size(), 2U);
                         }
@@ -338,8 +340,19 @@ private:
             },
             [this](const auto& failure) {
                 CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
-                sql("INSERT INTO coreci_schema (version) VALUES (2)", [this] {
-                    multipleSchema();
+                sql("DELETE FROM coreci_schema", [this] {
+                    sql("INSERT INTO coreci_schema (version) VALUES (2)", [this] {
+                        store->open(
+                            [this] {
+                                error("version 2 was accepted");
+                            },
+                            [this](const auto& error) {
+                                CHECK(error.kind == EventStore::StoreError::Kind::Corrupt);
+                                sql("INSERT INTO coreci_schema (version) VALUES (3)", [this] {
+                                    multipleSchema();
+                                });
+                            });
+                    });
                 });
             });
     }

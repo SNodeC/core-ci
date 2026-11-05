@@ -241,7 +241,8 @@ namespace coreci {
                 if (derived.at(unit).ready && (!options.maxConcurrentBuilds || running < *options.maxConcurrentBuilds)) {
                     auto& state = unitStates.at(unit);
                     const auto& release = *released.at(package);
-                    const auto revision = ++state.lastRevision[release.version];
+                    auto& revision = state.lastRevision[release.version];
+                    revision = std::max<std::uint64_t>(revision, graph.packages().at(package).revisionBase) + 1;
                     const auto id = package + "~" + target + "~" + release.version.text() + "~r" + std::to_string(revision);
                     state.inflight = Inflight{
                         id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}, {}};

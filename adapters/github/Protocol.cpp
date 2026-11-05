@@ -224,25 +224,24 @@ namespace coreci::github {
             const auto i = values.find(key);
             return i == values.end() ? std::string{} : i->second;
         };
-        const auto id = unescape(buildId, false);
         const auto phase = get("phase"), status = get("status");
         std::uint64_t run = 0;
         unsigned attempt = 0;
         std::variant<Event, Error, std::monostate> output = Error{"invalid callback fields"};
-        if (id && !id->empty()) {
+        if (!buildId.empty()) {
             if (phase == "publish" && status == "started") {
                 output = std::monostate{};
             } else if (number(get("run_id"), run)) {
                 if (phase == "build" && status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
-                    output = Event{BuildStarted{at, *id, run, attempt}};
+                    output = Event{BuildStarted{at, buildId, run, attempt}};
                 } else if (phase == "build" && status == "succeeded" && !get("artifact").empty()) {
-                    output = Event{BuildSucceeded{at, *id, run, get("artifact")}};
+                    output = Event{BuildSucceeded{at, buildId, run, get("artifact")}};
                 } else if (phase == "build" && status == "failed" && !get("reason").empty()) {
-                    output = Event{BuildFailed{at, *id, run, get("reason")}};
+                    output = Event{BuildFailed{at, buildId, run, get("reason")}};
                 } else if (phase == "publish" && status == "succeeded" && !get("feed_commit").empty()) {
-                    output = Event{PublishSucceeded{at, *id, run, get("feed_commit")}};
+                    output = Event{PublishSucceeded{at, buildId, run, get("feed_commit")}};
                 } else if (phase == "publish" && status == "failed" && !get("reason").empty()) {
-                    output = Event{PublishFailed{at, *id, run, get("reason")}};
+                    output = Event{PublishFailed{at, buildId, run, get("reason")}};
                 }
             }
         }

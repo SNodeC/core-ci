@@ -66,6 +66,7 @@ int main() {
     CHECK_EQ(pipeline.packages().at("a").sourceRepo.branch, "master");
     CHECK(pipeline.packagesForRepo("O", "A") == std::vector<std::string>{"a"});
     CHECK(pipeline.prerequisites("b") == std::vector<std::string>{"a"});
+    CHECK_EQ(pipeline.packages().at("a").revisionBase, 0U);
     const auto bad = [&](std::string reg, std::string a, int status = 200) {
         const auto result = load(reg, a, package("b", "a"), status);
         CHECK(std::holds_alternative<Error>(result));
@@ -86,6 +87,18 @@ int main() {
                              R"({"package":"a","depends_on":[],"matrix":[{"id":"t"},{"id":"t"}]})",
                              R"({"package":"a","depends_on":[],"accept_prereleases":1,"matrix":[{"id":"t"}]})"}) {
         bad(registry, file);
+    }
+    for (const auto& base : {"-1", "1000001", "4294967296", "18446744073709551615", "1.0", "null", "true", "\"10\"", "[]", "{}"}) {
+        auto file = package("a");
+        file.insert(file.size() - 1, std::string(",\"revision_base\":") + base);
+        bad(registry, file);
+    }
+    for (const unsigned base : {0U, 100U, 1000000U}) {
+        auto file = package("a");
+        file.insert(file.size() - 1, ",\"revision_base\":" + std::to_string(base));
+        const auto loaded = load(registry, file, package("b", "a"));
+        REQUIRE(std::holds_alternative<LoadedDeclarations>(loaded));
+        CHECK_EQ(std::get<LoadedDeclarations>(loaded).pipeline.packages().at("a").revisionBase, base);
     }
     bad(registry, std::string(1024U * 1024U + 1, ' '));
     bad(registry, package("a"), 404);

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import xml.etree.ElementTree as ET
 
 
 def port():
@@ -127,6 +128,18 @@ def run():
                           ["Content-Type: application/x-www-form-urlencoded", "X-CoreCI-Timestamp: " + stamp,
                            "X-CoreCI-Signature-256: " + signature])
             assert result == (200, "accepted"), result
+        def signed_path(path):
+            body = "phase=build&status=started&run_id=101&run_attempt=1"
+            stamp = str(int(time.time()))
+            signature = "sha256=" + hmac.new(b"smoke-callback", (stamp + "." + body).encode(), hashlib.sha256).hexdigest()
+            return curl(app_url + path, body, ["Content-Type: application/x-www-form-urlencoded",
+                        "X-CoreCI-Timestamp: " + stamp, "X-CoreCI-Signature-256: " + signature])
+        def badge_title(package, message):
+            code, svg = curl(app_url + "/api/v1/badge/" + urllib.parse.quote(package, safe="") + "/t1.svg")
+            assert code == 200, (code, svg)
+            root = ET.fromstring(svg)
+            assert root.attrib["height"] == "20" and root.attrib["role"] == "img"
+            assert root.find("{http://www.w3.org/2000/svg}title").text == package + ": " + message, svg
         def request_count(build_id, kind):
             return sum(1 for line in trace.read_text().splitlines() if line.startswith("POST ") and kind + ".yml/dispatches" in line
                        and '"build_id":"' + build_id + '"' in line)
@@ -183,6 +196,24 @@ def run():
             print("PASS: 65 KiB callback rejected with 413 before authentication despite invalid signature", flush=True)
             assert curl(app_url + "/unknown")[0] == 404
             assert curl(app_url + "/api/v1/status", "")[0] == 405
+            # Explicit HEAD handlers preserve 405 instead of express's automatic HEAD-to-GET fallback.
+            assert raw_status("HEAD /api/v1/status HTTP/1.1\r\nHost: localhost\r\n\r\n") == 405
+            assert raw_status("HEAD /api/v1/badge/d/t1.svg HTTP/1.1\r\nHost: localhost\r\n\r\n") == 405
+            assert curl(app_url + "/api/v1/builds/a%ZZ/report", "")[0] == 400
+            assert curl(app_url + "/api/v1/builds/a%252Bb/report", "")[0] == 401
+            assert signed_path("/api/v1/builds/a%252Bb/report") == (200, "ignored: unknown or stale buildId")
+            assert signed_path("/api/v1/builds/a%25ZZb/report") == (200, "ignored: unknown or stale buildId")
+            # One decode leaves a literal %2B (three characters); a second would make this valid-length id.
+            assert signed_path("/api/v1/builds/" + "a" * 253 + "%252B/report")[0] == 400
+            assert signed_path("/api/v1/builds/" + "a" * 252 + "%252B/report") == (200, "ignored: unknown or stale buildId")
+            print("PASS: express routes, 404/405, framework decode errors before auth; %252B stays %2B after one decode", flush=True)
+            badge_title("d", "no release")
+            badge_title("unknown", "unknown")
+            badge_title("&<>\"'", "unknown")
+            headers = subprocess.run(["curl", "-sS", "--cacert", str(cert), "--max-time", "8", "-D", "-", "-o", os.devnull,
+                                      app_url + "/api/v1/badge/d/t1.svg"], check=True, text=True, capture_output=True).stdout.lower()
+            assert "content-type: image/svg+xml; charset=utf-8" in headers
+            assert "cache-control: no-cache, no-store, must-revalidate" in headers
             assert curl(app_url + "/api/v1/graph.dot")[1].startswith("digraph coreci")
             assert curl(app_url + "/api/v1/reconcile", "")[0] == 401
             assert curl(app_url + "/api/v1/github/webhook", "not json")[0] == 401
@@ -235,6 +266,7 @@ def run():
             print("PASS: second instance refused by writer lock; first remains usable", flush=True)
             report("c", "t1", "publish", "succeeded"); count += 1; wait_dispatch(count)
             assert request_count("d~t1~1.0.0~r1", "build") == 1
+            badge_title("d", "building 1.0.0")
             d = next(line for line in trace.read_text().splitlines() if '"build_id":"d~t1~1.0.0~r1"' in line)
             assert '"prerequisites":"b=1.0.0-1,c=1.0.0-1"' in d
             report("a", "t2", "build", "succeeded"); count += 1; wait_dispatch(count)
@@ -242,6 +274,8 @@ def run():
             print("PASS: S1 diamond joins once with both published inputs; t2 progresses independently", flush=True)
             report("d", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("d", "t1", "publish", "succeeded"); count += 1; wait_dispatch(count)
+            badge_title("d", "1.0.0-1")
+            print("PASS: live badge no-release, unknown, XML escaping, headers, building and published revision", flush=True)
             report("e", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("e", "t1", "publish", "succeeded")
             changed = '{"package":"e","depends_on":["b","d"],"matrix":[{"id":"t1","feed":"f1"}]}'
@@ -302,7 +336,8 @@ def run():
             count += 2; wait_dispatch(count)
             # a@t1 was settled, so its new version dispatch is already allocated.
             report("a", "t1", "build", "started", "1.0.1+meta", literal_plus=True)
-            print("PASS: callback route accepts literal dot, plus and tilde in a current buildId", flush=True)
+            report("a", "t2", "build", "started", "1.0.1+meta")
+            print("PASS: callback route accepts encoded %2B and literal dot, plus and tilde in current buildIds", flush=True)
             assert "BAD HEADERS" not in trace.read_text()
             stop(daemon)
             subprocess.run([str(build / "coreci-reset-store")], env=env, check=True, timeout=10)

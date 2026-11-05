@@ -37,6 +37,7 @@ namespace coreci {
         std::set<std::string> targets;
         std::vector<std::string> prerequisites;
         bool acceptPrereleases = false;
+        unsigned revisionBase = 0;
         bool operator==(const Package&) const = default;
     };
     struct Unit {

@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(
     coreci_core core/Version.cpp core/Graph.cpp core/Engine.cpp core/Status.cpp
+                core/Badge.cpp
 )
 target_include_directories(coreci_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(coreci_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
@@ -30,6 +31,8 @@ foreach(
     S09_Validation
     S10_Timeouts
     S15_GraphChanged
+    S17_Badge
+    S18_RevisionBase
     I_RandomizedInvariants
 )
     add_executable(${scenario} tests/${scenario}.cpp)
@@ -39,6 +42,7 @@ foreach(
 endforeach()
 target_link_libraries(I_RandomizedInvariants PRIVATE coreci_persistence)
 target_link_libraries(S15_GraphChanged PRIVATE coreci_persistence)
+target_link_libraries(S18_RevisionBase PRIVATE coreci_persistence)
 set_tests_properties(
     I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
 )
@@ -177,6 +181,7 @@ if(CLANG_TIDY)
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Graph.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Engine.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Status.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/core/Badge.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventRow.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/InMemoryEventStore.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventQueue.cpp

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS coreci_graph_packages (
   build_workflow_file VARCHAR(255) NOT NULL,
   build_branch        VARCHAR(255) NOT NULL,
   accept_prereleases  TINYINT      NOT NULL,
+  revision_base       INT UNSIGNED NOT NULL,
   PRIMARY KEY (event_seq, package)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
