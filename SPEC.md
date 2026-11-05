@@ -60,12 +60,12 @@ Read this entire document before writing any code. It is the complete specificat
 ### 3.1 Types
 
 - **Feed** — `id`, publisher workflow `{owner, repo, workflowFile, branch}`. Publications to one feed are strictly serialized.
-- **Target** — `id` (an opaque string, e.g. `debian-trixie-amd64`) and `feed` (exactly one Feed id). core-ci attaches no meaning to a target: distribution, release, architecture and build details are read by the workflows from the declaration (section 7).
+- **Target** — `id` (an opaque string, e.g. `debian-trixie-amd64`) and `feed` (exactly one Feed id); a target id denotes the same target, with the same feed, in every package that declares it. core-ci attaches no meaning to a target: distribution, release, architecture and build details are read by the workflows from the declaration (section 7).
 - **Package** — `name`, `sourceRepo {owner, repo, branch}`, `buildWorkflow {owner, repo, workflowFile, branch}`, `targets` (set of Target ids), `prerequisites` (set of Package names; every edge means "must be built against the published version of"), `acceptPrereleases`. There is no configurable tag pattern: every package uses the tag format of section 3.4.
 - **Unit** — the scheduling unit `(package, target)`. A dependency edge `P → Q` applies per target: unit `(P,T)` depends on `(Q,T)`.
 - **Pipeline** — the immutable set of feeds and packages. Two pipelines are equal if all their feeds and packages are equal, compared in canonical order (by id and name).
 
-Every `branch` is the repository's default branch as reported by GitHub when the declarations were loaded — never assumed, never pinned.
+Every `branch` is the repository's default branch as reported by GitHub when the declarations were loaded — never assumed, never pinned. Repository owners and names are compared ASCII case-insensitively everywhere, as GitHub does; package names, feed ids and target ids are case-sensitive.
 
 ### 3.2 Builder and validation
 
@@ -75,7 +75,11 @@ A fluent builder (`Pipeline::Builder`) produces an immutable `Pipeline`. `build(
 - cycles — the message must print the cycle path, e.g. `cycle: a -> b -> c -> a`,
 - a package P with target T whose prerequisite Q does not have target T,
 - two packages with the same `sourceRepo` (each repository declares exactly one package),
-- a package name, feed id or target id that is empty, longer than 64 characters, or contains a character other than `A–Z a–z 0–9 . _ -`.
+- a target id declared with different feeds,
+- a package name, feed id or target id that is empty, longer than 64 characters, or contains a character other than `A–Z a–z 0–9 . _ -`,
+- an owner that is not 1–39 characters of `A–Z a–z 0–9 -`; a repository name that is not 1–100 characters of `A–Z a–z 0–9 . _ -`, or is `.` or `..`,
+- a workflow file name that is not 1–255 characters of `A–Z a–z 0–9 . _ -` ending in `.yml` or `.yaml`,
+- a branch that is empty, longer than 255 characters, or not a valid branch name under the rules of `git check-ref-format --branch` (no control characters, space, `~ ^ : ? * [ \`, `..`, `@{` or `//`; not `@`; no leading `-` or `/`; no trailing `/`, `.` or `.lock`).
 
 `Pipeline` provides: per-target topological order (deterministic: ties broken by package name), direct prerequisites, direct dependents, `packagesForRepo(owner, repo)`, and the set of declaring repositories.
 
@@ -83,7 +87,7 @@ A fluent builder (`Pipeline::Builder`) produces an immutable `Pipeline`. `build(
 
 The graph is declared in JSON files, read through the GitHub REST API at the HEAD of each repository's default branch (never a feature branch, never a pinned commit). core-ci contains no knowledge of the declared repositories; deploying it for other repositories needs only another `registry` setting.
 
-**Registry.** The `registry` setting names one file as `<owner>/<repo>:<path>` (first deployment: `SNodeC/DistributionPackages:ci/registry.json`). core-ci reads only these fields and ignores all others:
+**Registry.** The `registry` setting names one file as `<owner>/<repo>:<path>`, where `<path>` is a relative path of at most 255 characters whose `/`-separated segments are non-empty, consist of `A–Z a–z 0–9 . _ -` and are not `.` or `..` (first deployment: `SNodeC/DistributionPackages:ci/registry.json`). core-ci reads only these fields and ignores all others:
 
 ```json
 {
@@ -109,7 +113,7 @@ All four fields are required. `build` is the build workflow (section 7.1) of eve
 
 `package`, `depends_on` and `matrix` (with `id` in every entry) are required; `accept_prereleases` defaults to `false`; an entry's `feed` defaults to `default_feed`. The package's `sourceRepo` is its repository, its `buildWorkflow` the registry's `build`. A wrong JSON type, a duplicate object key, a file larger than 1 MiB, or malformed JSON is invalid.
 
-**Loading.** A load fetches the registry; the default branch of every listed repository and every workflow repository (`GET /repos/{owner}/{repo}` → `default_branch`); and every `ci/packages.json` (`GET /repos/{owner}/{repo}/contents/{path}?ref=<branch>` with `Accept: application/vnd.github.raw`). It builds the `Pipeline` with 3.2. Any failure — HTTP error, missing file, invalid file, validation error — fails the whole load: the graph stays unchanged, and `app/` shows the failure (repository, file, reason) as the first line of `/api/v1/status` until a later load succeeds (this line is not part of the engine status of 4.6). A successful load enqueues `GraphChanged` (rule 13); the engine ignores it when nothing changed, and a `GraphChanged` answered unavailable is retried by the next trigger.
+**Loading.** A load fetches the registry; the default branch of every listed repository and every workflow repository (`GET /repos/{owner}/{repo}` → `default_branch`); and every `ci/packages.json` (`GET /repos/{owner}/{repo}/contents/{path}?ref=<branch>` with `Accept: application/vnd.github.raw`; path and `ref` are percent-encoded). It builds the `Pipeline` with 3.2. Any failure — HTTP error, missing file, invalid file, validation error — fails the whole load: the graph stays unchanged, and `app/` shows the failure (repository, file, reason) as the first line of `/api/v1/status` until a later load succeeds (this line is not part of the engine status of 4.6). A successful load enqueues `GraphChanged` (rule 13); the engine ignores it when nothing changed, and a `GraphChanged` answered unavailable is retried by the next trigger.
 
 **Triggers.** A load runs after startup (after the listener is up, before the first tag reconciliation); on a webhook `push` to the default branch of the registry repository or of a repository in the current graph; every `reconcileInterval`, before tag reconciliation; and on `POST /api/v1/reload`. At most one load runs at a time; triggers during a load schedule exactly one further load afterwards.
 
@@ -188,7 +192,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 10. Optional global `maxConcurrentBuilds` (default unlimited); a unit occupies a slot while its phase is `Dispatching` (also while waiting for `retryAt`) or `Building`; when no slot is free, ready units wait.
 11. The engine exposes `nextDeadline()` (earliest pending timeout or retry-backoff time, or none). `app/` only enqueues a `Tick` when the current UTC time ≥ `nextDeadline()`, so every `Tick` changes state. Before the first deadline exists no `Tick` is needed: every deadline is created by an event that itself carries `at`.
 12. **Resumed** (enqueued once by `app/` after replay, section 5.4): re-emit the command, with unchanged `buildId` and `attempt`, for every unit in `Dispatching`/`PublishDispatching` without `retryAt` (its dispatch result was lost); units waiting for `retryAt` keep their backoff. Like rule 4, this re-emission does not re-check readiness.
-13. **GraphChanged:** replace the pipeline. State is keyed by package name and by `(package, target)`. Packages and units that remain keep their state. Packages and units no longer in the pipeline become **dormant**: their `inflight` is cleared (later callbacks are ignored, a held build slot is freed); `released`, `published`, `failure` and `lastRevision` are kept but neither evaluated nor shown. If they reappear in a later `GraphChanged` they continue from that state, so revisions are never reused. Changed prerequisites act through the derived predicates: a unit whose `published.inputs` no longer match its new `desiredInputs` is rebuilt, and builds with outdated inputs are superseded by rules 2(a) and 5.
+13. **GraphChanged:** replace the pipeline. State is keyed by package name and by `(package, target)`. Packages and units that remain keep their state. Packages and units no longer in the pipeline become **dormant**: their `inflight` is cleared (later callbacks are ignored, a held build slot is freed); `released`, `published`, `failure` and `lastRevision` are kept but neither evaluated nor shown. If they reappear in a later `GraphChanged` they continue from that state, so revisions are never reused. Changed prerequisites act through the derived predicates: a unit whose `published.inputs` no longer match its new `desiredInputs` is rebuilt, and builds with outdated inputs are superseded by rules 2(a) and 5. A unit whose feed changes loses `published` and `failure` (its packages are not in the new feed), keeps `lastRevision` and is rebuilt into the new feed. If a package's `sourceRepo` changes, its `released` is cleared; the next tag reconciliation re-establishes it from the new repository. If a package's `sourceRepo` or `buildWorkflow` changes, its units in `Dispatching` or `Building` are abandoned like dormant ones and rebuilt through the new workflow with a new revision.
 
 ### 4.6 Status (core/Status.h)
 
@@ -206,7 +210,7 @@ Per unit, derive one of: `NoRelease`, `Settled`, `Waiting(on <unit>)`, `Ready`, 
 | `RetryRequested` | unit exists; `failure` set; no `inflight` |
 | `Tick` | `nextDeadline()` exists and `max(engineTime, at) ≥ nextDeadline()` |
 | `Resumed` | always |
-| `GraphChanged` | the pipeline differs from the current one, and no unit in `AwaitingPublish`, `PublishDispatching` or `Publishing` would be removed or change its feed (the next load retries) |
+| `GraphChanged` | the pipeline differs from the current one, and none of these holds (otherwise the next load retries): a unit in `AwaitingPublish`, `PublishDispatching` or `Publishing` would be removed or change its feed; a package with a unit in one of these phases changes its `sourceRepo` or `buildWorkflow`; a feed with a unit in `PublishDispatching` or `Publishing` changes its publisher workflow |
 
 A workflow re-run started in the GitHub UI is not a retry; once the unit has left the phase its callbacks are ignored. Use `RetryRequested`.
 
@@ -261,7 +265,7 @@ CREATE TABLE IF NOT EXISTS coreci_graph_feeds (
   workflow_file VARCHAR(255) NOT NULL,
   branch        VARCHAR(255) NOT NULL,
   PRIMARY KEY (event_seq, feed)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS coreci_graph_packages (
   event_seq           BIGINT UNSIGNED NOT NULL,
@@ -275,7 +279,7 @@ CREATE TABLE IF NOT EXISTS coreci_graph_packages (
   build_branch        VARCHAR(255) NOT NULL,
   accept_prereleases  TINYINT      NOT NULL,
   PRIMARY KEY (event_seq, package)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS coreci_graph_targets (
   event_seq BIGINT UNSIGNED NOT NULL,
@@ -283,19 +287,19 @@ CREATE TABLE IF NOT EXISTS coreci_graph_targets (
   target    VARCHAR(64) NOT NULL,
   feed      VARCHAR(64) NOT NULL,
   PRIMARY KEY (event_seq, package, target)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS coreci_graph_prerequisites (
   event_seq    BIGINT UNSIGNED NOT NULL,
   package      VARCHAR(64) NOT NULL,
   prerequisite VARCHAR(64) NOT NULL,
   PRIMARY KEY (event_seq, package, prerequisite)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
 `coreci_schema` holds exactly one row, `version = 2`. In `open`: if `coreci_schema` has no row and all `coreci_*` tables are empty, insert `version = 2`; no row while any table has rows, more than one row, or a version other than 2 → `Corrupt` (version-1 databases are not migrated).
 
-**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` set) plus its graph rows, written atomically in one transaction with SNode.C's `startTransactions`/`commit` (`rollback` on any error); the graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is the success of `commit`; any error is an unknown commit outcome (5.3 step 4). If SNode.C's transaction API cannot guarantee that the event row and its graph rows commit atomically on one connection, stop and ask. `normalize` checks a `GraphChanged`'s strings against these columns. `loadAll` reads the four graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail 3.2, are `Corrupt`. Schema migrations are out of scope.
+**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` set) plus its graph rows, written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the four graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail 3.2, are `Corrupt`. Schema migrations are out of scope.
 
 Every event field from 4.3 maps to exactly one typed column; unused columns are `NULL`. The mapping `Event ↔ EventRow` lives in `persistence/EventRow.cpp`, is pure and is round-trip tested for every event type.
 
@@ -450,12 +454,12 @@ Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (di
 - **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `Resumed` re-emits only units in `Dispatching`/`PublishDispatching` without `retryAt`.
 - **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored and invalid events are never appended. Recovery: `append` failing before storing and `append` failing after storing (ambiguous outcome) both lead to rebuild; afterwards the engine state equals a fresh replay of the store, events during recovery get `503`, a retried duplicate gets `200 ignored`, and `Resumed` re-emits the lost commands.
 - **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8); `normalize` cases for every field rule of 5.2 (character vs. byte counting, invalid UTF-8, NUL, 4096-byte truncation at a character boundary, 40-hex SHAs); every fatal decoding case of 5.2 reports the row's `seq`.
-- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from `CORECI_TEST_DB_HOST`, `CORECI_TEST_DB_PORT`, `CORECI_TEST_DB_USER`, `CORECI_TEST_DB_PASSWORD`, `CORECI_TEST_DB_NAME`; the test drops and recreates the `coreci_*` tables in that database only): create schema, append the S1 event sequence, then, in the same test process, destroy queue, engine, store and SNode.C MariaDB client and create fresh ones with a new connection (this is the restart), verify identical status and correct `Resumed` commands; a row with an embedded NUL inserted directly via SQL, and an events table without a schema-version row, are each reported as `Corrupt` (the former naming its `seq`); a `GraphChanged` round-trips with all its graph rows, and graph rows without their `GraphChanged` row are `Corrupt`. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
+- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from `CORECI_TEST_DB_HOST`, `CORECI_TEST_DB_PORT`, `CORECI_TEST_DB_USER`, `CORECI_TEST_DB_PASSWORD`, `CORECI_TEST_DB_NAME`; the test drops and recreates the `coreci_*` tables in that database only): create schema, append the S1 event sequence, then, in the same test process, destroy queue, engine, store and SNode.C MariaDB client and create fresh ones with a new connection (this is the restart), verify identical status and correct `Resumed` commands; a row with an embedded NUL inserted directly via SQL, and an events table without a schema-version row, are each reported as `Corrupt` (the former naming its `seq`); a `GraphChanged` round-trips with all its graph rows, and graph rows without their `GraphChanged` row are `Corrupt`; package names `a` and `A` round-trip as distinct. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
 - **Randomized invariant test** (seeded, ≥ 10 000 runs over random event interleavings on the test pipeline): (I1) a new `buildId` is never allocated while any prerequisite of the unit is unsettled (re-emissions by rules 4 and 12 resend an existing `buildId` and are exempt); (I2) at most one inflight per unit; (I3) at most one publication per feed; (I4) when all builds succeed, the system quiesces with every unit settled against the latest tags; (I5) replay equivalence.
 - Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint); the callback route accepts a `buildId` containing `.` and `+` (tag with build metadata).
-- **S15 GraphChanged:** an unchanged pipeline is ignored; a new prerequisite edge rebuilds the dependent with the same version and revision + 1; a removed package becomes dormant (its callbacks ignored, its build slot freed, not shown) and, when re-added, continues its revisions without reuse; removing a unit in `AwaitingPublish` or `Publishing`, or changing its feed, is ignored; a new target is dispatched; replay of a history with several `GraphChanged` reproduces identical status.
-- **S16 Declarations:** a valid registry and package files load; unknown fields are ignored; every invalid case (missing required field, wrong type, duplicate key, malformed workflow reference, unknown feed, file over 1 MiB, HTTP error) fails the whole load naming repository and file; copies of the real `ci/packages.json` of `SNodeC/snode.c` (76ca647) and `SNodeC/mqttsuite` (35a4f78) in `tests/data/` yield 76 targets each and the edge `mqttsuite → snodec`.
-- **S14 EventSql:** for every event type the `INSERT` contains string values only as `_utf8mb4 X'…'`, numbers only as decimal literals, absent values only as `NULL`; values containing `'`, `\`, `"`, `;`, `--`, `/*` and multi-byte UTF-8 appear only hex-encoded; empty strings appear as `_utf8mb4 X''`; the only non-literal expression in an `INSERT` is `UTC_TIMESTAMP(3)`; the `SELECT` lists every column except `recorded_at` in a fixed order, string columns as `HEX(col) AS col`, `ORDER BY seq`; a `GraphChanged` is written as one transaction whose graph rows use `LAST_INSERT_ID()`.
+- **S15 GraphChanged:** an unchanged pipeline is ignored; a new prerequisite edge rebuilds the dependent with the same version and revision + 1; a removed package becomes dormant (its callbacks ignored, its build slot freed, not shown) and, when re-added, continues its revisions without reuse; removing a unit in `AwaitingPublish` or `Publishing`, or changing its feed, is ignored; a new target is dispatched; a feed change clears `published` and rebuilds into the new feed; a `sourceRepo` change clears `released`; a `buildWorkflow` change abandons a `Building` unit and rebuilds it with a new revision; each of these changes is ignored while an affected unit is in a publish phase; replay of a history with several `GraphChanged` reproduces identical status.
+- **S16 Declarations:** a valid registry and package files load; unknown fields are ignored; every invalid case (missing required field, wrong type, duplicate key, malformed workflow reference, unknown feed, file over 1 MiB, HTTP error, every identifier rule of 3.2, an invalid registry path, one target id with two feeds) fails the whole load naming repository and file; repositories are matched case-insensitively; copies of the real `ci/packages.json` of `SNodeC/snode.c` (76ca647) and `SNodeC/mqttsuite` (35a4f78) in `tests/data/` yield 76 targets each and the edge `mqttsuite → snodec`.
+- **S14 EventSql:** for every event type the `INSERT` contains string values only as `_utf8mb4 X'…'`, numbers only as decimal literals, absent values only as `NULL`; values containing `'`, `\`, `"`, `;`, `--`, `/*` and multi-byte UTF-8 appear only hex-encoded; empty strings appear as `_utf8mb4 X''`; the only non-literal expression in an `INSERT` is `UTC_TIMESTAMP(3)`; the `SELECT` lists every column except `recorded_at` in a fixed order, string columns as `HEX(col) AS col`, `ORDER BY seq`; a `GraphChanged` is written as `startTransactions`, the `INSERT`s (graph rows with `LAST_INSERT_ID()`), `commit`, `endTransactions`.
 
 ---
 
