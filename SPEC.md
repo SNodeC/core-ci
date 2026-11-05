@@ -45,10 +45,6 @@ Read this entire document before writing any code. It is the complete specificat
   adapters/github/          # GitHub REST client, webhooks, HMAC, declaration loading (only place with JSON)
   app/                      # SNode.C express server, wiring, timers, main() — knows no repository
   tests/                    # plain CTest executables (no test framework) — see section 8
-  workflows/                # templates copied into recipe/publisher repos in phase 4
-    coreci-build.yml
-    coreci-publish.yml
-    actions/coreci-report/action.yml
 ```
 
 `core/` and `persistence/` must compile and be tested without SNode.C installed.
@@ -416,35 +412,69 @@ Non-secret settings through SNode.C's configuration (command line and configurat
 
 ---
 
-## 7. GitHub workflow contract (workflows/, used in phase 4)
+## 7. GitHub side (Phase 4)
 
-### 7.1 `coreci-build.yml` (lives in the recipe repository, e.g. DistributionPackages)
+### 7.0 Principles
 
-`on: workflow_dispatch` with exactly these inputs (≤ 10): `build_id`, `package`, `source_repo`, `tag`, `version`, `revision`, `target`, `prerequisites` (format `name=version-revision,name=version-revision`), `callback_url`.
+- The GitHub side is two `workflow_dispatch` workflows and one composite action in the repository that holds the registry (first deployment: `SNodeC/DistributionPackages`): `.github/workflows/coreci-build.yml` (the registry's `build`), `.github/workflows/coreci-publish.yml` (the publisher of every feed) and `.github/actions/coreci-report/action.yml`.
+- Workflows never start other workflows: no `repository_dispatch`, no `workflow_run`, no `workflow_call` into other repositories, no push that starts a build. The only workflow a publication causes is the feed repository's GitHub Pages deployment, which builds nothing. No `concurrency:` groups.
+- Actions are referenced by major version tag (e.g. `actions/checkout@v4`), never by commit SHA. Tooling is used from the checkout of the workflow's own run, never from a pinned revision.
+- **Keep the build internals, replace only the orchestration.** New code lives in a new Python package `coreci/` in DistributionPackages. It may import functions from `core_ci/` but never changes a `core_ci/` file; a function that needs different behaviour is copied into `coreci/`. The old workflows keep working unchanged until 4d. The new workflows do not use JSON assignments, attempt evidence, controller-App identity checks, receipts, or the status and retention writers.
+- **Boundary:** the workflows contain no package-, repository- or target-specific code. Handling of package formats and distributions (package managers, repository setup, container image and SDK bootstrap) is generic tooling and allowed. Everything package-specific comes from the registry, the source repository's `ci/` directory and the selected matrix entry.
 
-Jobs:
-1. `report-start` → `coreci-report` with `phase=build status=started`.
-2. `build` → checks out `source_repo` at `tag`, installs prerequisites **from the feed** at exactly the versions in `prerequisites` (fail if not available), builds **unsigned** packages for `target` with the given `revision` (Debian revision, RPM `Release`, OpenWrt `PKG_RELEASE`), uploads one artifact named `coreci-<build_id>`.
-3. `report-end` (`if: always()`) → `status=succeeded` with `artifact`, or `status=failed` with `reason` (including `cancelled`).
+### 7.1 Registry fields used by the workflows
 
-No signing, no feed access, no downstream triggers.
+core-ci ignores these fields; the workflows require them. Every `feeds.<id>` additionally has `repository` (`<owner>/<repo>` of the feed repository), `url` (its public `https://` base URL, ending in `/`), `environment` (the GitHub environment holding this feed's signing keys and push credential) and `keys`: `gpg` (`file`, `fingerprint`; signs APT `Release` files, RPM packages, `repomd.xml` and the development-export checksums), `usign` (`file`, `key_id`; opkg) and `apk` (`file`, `sha256`). The registry is the trust anchor: a key served by a feed is used only if it matches the registry. The registry additionally has `badges`, the base URL of core-ci's badge route (first deployment: `https://core.vchrist.at/api/v1/badge`).
 
-### 7.2 `coreci-publish.yml` (lives in `SNodeC/DistributionPackages`, publishes to `SNodeC/Packages`)
+### 7.2 Source repository contract
 
-Inputs: `build_id`, `package`, `version`, `revision`, `target`, `build_repo`, `build_run_id`, `artifact`, `callback_url`.
+- `ci/` is read at the recipe ref: the source repository's default-branch HEAD, or the optional build input `recipe_ref` (a branch; for manual staging runs only, core-ci never sends it). Everything else — including recipe directories that hooks copy from the source tree, such as `supplement/openwrt` — comes from the checkout at `tag`.
+- `ci/packages.json` fields used by the workflows, besides those of 3.3: per matrix entry `family` (`native`/`openwrt`), `distribution`, `suite`, `arch`, `runner` and `build` (native: `image`, `platform`, `format` `deb`/`rpm`, optional `dependencies`; openwrt: `target`, `release`, `format` `ipk`/`apk`); top-level `build` (the hook per family), `build_dependencies` (per format) and `development_packages` (`deb`, `rpm`: the binary packages a dependent installs to build against this package).
+- Hooks receive exactly the variables that today's hooks and the existing `native_container.py`/`openwrt_container.py` consume, filled from the new inputs: `SOURCE_DIR`, `CI_DIR`, `TARGET_JSON`, `OUTPUT_DIR`, `SOURCE_VERSION`, `SOURCE_TAG` (replaces `SOURCE_COMMIT`), `PACKAGE_NAMESPACE`, `PACKAGE_UPSTREAM_VERSION`, `PACKAGE_REVISION` (the numeric revision; the tooling computes the encoded release with 7.3), `PREREQUISITES_DIR`, and for OpenWrt `SDK_DIR`, `SDK_STAGING_DIR` and `CORE_CI_APK` (path of the SDK's verified `apk` tool, set by the existing SDK preparation). `PREREQUISITES_DIR/<package>/metadata.json` (`package`, `version`, `revision`, `upstream_version`, `release`, `target`, `sdk`) replaces the old receipts; for OpenWrt that directory also holds the prerequisite's extracted development export (7.4). If a hook or tool consumes any other variable, stop and ask. `outputs.json` remains the existing description of what a build produced.
+- No hook and no build step receives a secret.
 
-Steps: download the artifact from the other repository's run (`actions/download-artifact@v4` with `repository`, `run-id`, `github-token`) → sign packages → check out the feed repository's default branch → replace only this package's files for this target → regenerate and sign the indices for this target's repository → keep the existing README badge update → **validate the feed** in a container of the target distribution (`apt-get update` + `apt-get install --dry-run`, `dnf makecache` + `dnf install --assumeno`, `opkg update`/`apk update` as applicable) → create the commit (keep the existing orphan-root-commit scheme of SNodeC/Packages) → push with `--force-with-lease=<branch>:<sha fetched at checkout>` → report `phase=publish status=succeeded feed_commit=<sha>`; on any failure report `status=failed`.
+### 7.3 Package versions
 
-Feed validity requirements per family:
-- Debian / Raspberry Pi OS: `dists/<suite>/{Release,InRelease,Release.gpg}`, `Packages` + `Packages.gz` per component/architecture, `pool/`; `InRelease` signed with the repository key.
-- Fedora: packages signed with `rpmsign`; `createrepo_c` metadata; `repodata/repomd.xml.asc` detached signature.
-- OpenWrt (opkg): `Packages`, `Packages.gz`, `Packages.sig` (usign). OpenWrt (apk-based releases): signed apk index.
+Versions are encoded by the existing `versions(tag, revision, format)` without change: `MAJOR.MINOR.PATCH`; a prerelease as order-preserving tokens (`~p…` for deb, rpm and ipk, `_pre0_p…` for apk); build metadata dropped; release `N` for deb and rpm, `rN` for ipk and apk. An encoding longer than the tooling's 240-character limit fails the build with that reason.
 
-Signing keys are secrets of a protected GitHub environment in the publisher repository; they never leave GitHub.
+### 7.4 `coreci-build.yml`
 
-### 7.3 `actions/coreci-report/action.yml`
+Inputs exactly as core-ci dispatches them: `build_id`, `package`, `version`, `revision`, `target`, `callback_url`, `source_repo`, `tag`, `prerequisites` (comma-separated `name=version-revision`; the revision is the part after the last `-`), plus the optional `recipe_ref`.
 
-Composite action: builds the form body, computes `timestamp` and `HMAC-SHA256(secret, timestamp + "." + body)` with `openssl dgst -sha256 -hmac`, sends it with `curl --fail --retry 5 --retry-all-errors`. Secret from `CORECI_CALLBACK_SECRET` (organization secret).
+1. Report `build` / `started`.
+2. On the matrix entry's `runner`: read `ci/packages.json` of `source_repo` at the recipe ref and select the entry whose `id` is `target` (none → fail); its feed is the entry's `feed` or the registry's `default_feed`. Check out the source at `tag`. Prepare the container or the OpenWrt SDK with the existing tooling; install `build_dependencies` and the entry's `build.dependencies`.
+3. Prerequisites, each at exactly `version-revision` from the feed's `url` (a missing one fails the build): **native** — install its `development_packages`, with the repository verified by the registry's `gpg` key; **OpenWrt** — download its development export for this target, verify `SHA256SUMS.asc` with the registry's `gpg` key and the file against `SHA256SUMS`, require that its recorded SDK (file name and SHA-256) equals this build's SDK, extract it into `PREREQUISITES_DIR/<package>/` and stage it into `SDK_STAGING_DIR` as the existing tooling does. Write `metadata.json` for every prerequisite.
+4. Run the hook. Packages stay **unsigned**. Verify every produced package with the existing inspection: its name belongs to `PACKAGE_NAMESPACE` and the components in `outputs.json`, version and release follow 7.3, and the architecture is the entry's or architecture-independent (`all`, `noarch`).
+5. Upload one artifact `coreci-<build_id>` (retention 7 days): the packages, the OpenWrt development export if one was produced, and `manifest.json` (`build_id`, `package`, `version`, `revision`, `target`, `feed`, the matrix entry, for OpenWrt the SDK file name and SHA-256, and every file with its SHA-256).
+6. Report (`if: always()`): `succeeded` with `artifact`, otherwise `failed` with a reason (also for `cancelled`).
+
+Only the report steps receive `CORECI_CALLBACK_SECRET`; apart from `github.token` no other step receives a secret.
+
+### 7.5 `coreci-publish.yml`
+
+Inputs exactly as core-ci dispatches them: `build_id`, `package`, `version`, `revision`, `target`, `callback_url`, `build_repo`, `build_run_id`, `artifact`.
+
+1. **Resolve and check provenance.** `GET /repos/{build_repo}/actions/runs/{build_run_id}` must show: the repository of the registry's `build`, its workflow path, event `workflow_dispatch`, conclusion `success`, and `head_branch` equal to the branch this publisher run uses. Download `artifact` from that run; verify `manifest.json` against the inputs and every file against its SHA-256; take the feed from the manifest and fail unless the registry names this workflow file as that feed's publisher. Output the feed's `environment`.
+2. **Immutability.** The ledger `coreci/published/<target>/<package>_<version>-<revision>.sha256` in the feed lists the manifest's unsigned files with their SHA-256. An identical existing ledger makes the publication a no-op: no commit, report `succeeded` with the current feed commit. A different existing ledger, or an existing target file without a ledger, fails the publication (`immutable`).
+3. **Publish** (in the feed's environment): sign the packages (rpm, apk) and add them in the existing layout, regenerating and signing only the indices of directories that received files:
+   - APT: packages under `<distribution>/pool/<suite>/`; `<distribution>/dists/<suite>/main/binary-<arch>/Packages` and `Packages.gz`; the suite-level `Release`, `InRelease` and `Release.gpg` for the whole suite.
+   - RPM: `<distribution>/<suite>/<arch>/` with `repodata/` and `repomd.xml.asc`.
+   - OpenWrt: `openwrt/<suite>/<arch>/` with `Packages`, `Packages.gz` and `Packages.sig` (opkg) or the APKv3 `packages.adb` (apk).
+   - OpenWrt development exports: `dev/<target>/<package>_<version>-<release>.tar.gz`, with `dev/<target>/SHA256SUMS` and `SHA256SUMS.asc`.
+   Then write the ledger and regenerate the badge block in the feed's `README.md` between `<!-- coreci:badges:begin -->` and `<!-- coreci:badges:end -->`: if both markers are absent the block is appended at the end after a blank line; any other number of markers fails the publication. One row per target (sorted by id), in each row the badge `<badges>/<package>/<target>.svg` of every package that has this target (sorted by name), taken from the registry and every listed `ci/packages.json` at HEAD. Everything else in the feed stays byte-identical.
+4. **Validate before pushing**, against the prepared checkout served locally (not the public URL), in a fresh container of the entry's `build.image`/`build.platform` (QEMU for foreign architectures), with the feed configured as its install documentation describes and the key taken from the registry: APT `apt-get update` without signature warnings and `apt-get install --dry-run` of the new packages at their version; RPM `dnf makecache` and `dnf install --downloadonly` of the new packages (exit code 0); OpenWrt, if an official rootfs image exists for suite and architecture, `opkg update` and `opkg install --noaction`, or `apk update` and `apk add --simulate`; otherwise verify signatures and index consistency with the SDK tools and say so in the job summary.
+5. Commit with the existing orphan-root scheme and push with `--force-with-lease=<branch>:<sha fetched at checkout>`. A lease failure fails the publication: core-ci serializes publications per feed, so it means a foreign writer.
+6. **Availability:** wait until the feed's `url` serves this target's index files with the pushed content (compared by SHA-256), at most 15 minutes. Then report `publish` / `succeeded` with `feed_commit`; on timeout or any earlier error report `failed`.
+
+Signing keys and the feed push credential exist only in the feed's environment. An environment holding production keys allows deployments from the default branch only.
+
+### 7.6 `coreci-report`
+
+Composite action: builds the form body (`phase`, `status`, `run_id`, `run_attempt`, `artifact`, `feed_commit`, `reason` truncated to 1000 bytes), takes `timestamp`, computes `HMAC-SHA256(secret, timestamp + "." + body)` with `openssl dgst -sha256 -hmac`, and sends it with `curl --fail --retry 5 --retry-all-errors` to `callback_url`, used verbatim (core-ci sends it complete and percent-encoded). The secret is the organization secret `CORECI_CALLBACK_SECRET`. An empty `callback_url` makes the action do nothing; core-ci never sends one, manual staging runs do.
+
+### 7.7 Staging
+
+Phases 4b and 4c test only against `SNodeC/Packages-staging` (GitHub Pages enabled), the environment `package-publication-staging` with keys generated for it (never the production keys), and a test registry on a DistributionPackages branch whose feed, keys and fingerprints point to the staging repository; bootstrapping the staging feed may commit its public keys to its `keys/`. Staging runs are dispatched manually with `--ref <test-registry branch>`, core-ci's exact inputs, `recipe_ref` for the source-repository branches, and an empty `callback_url`; the proof is the run results and the staging feed. No run in 4b or 4c writes to the production feed or uses a production environment.
 
 ---
 
@@ -503,7 +533,10 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 3. **Phase 3b:** `adapters/github/` + `app/` on SNode.C + adapter tests + `pipeline/Pipeline.cpp`. Provide a local smoke test script: run core-ci against a fake GitHub HTTP server (a tiny SNode.C app in `tests/`) and drive the S1 diamond via `curl` callbacks.
 3. **Phase 3c:** declarations instead of a compiled graph: remove `pipeline/` and `core::Family`; `GraphChanged` in engine, persistence and MariaDB (schema version 2); `adapters/github/Declarations`; reload triggers and the status error line; tests S9, S14–S16 and the MariaDB integration and smoke test changes. Stop and report.
 3. **Phase 3d:** express routing (6.1) replacing the hand-written dispatcher in `app/`, with all existing adapter and smoke tests passing (only `A_CallbackHmac` changes: the router decodes path parameters, so `report()` receives an already-decoded buildId and no longer decodes it); badges (4.6.1 and the badge route), `revision_base` (declaration, engine, `coreci_graph_packages`, schema version 3), tests S16–S18 and the MariaDB integration and smoke test changes. Stop and report.
-4. **Phase 4:** `workflows/` templates; then, in DistributionPackages and the publisher repository, split the existing pipeline into `coreci-build.yml` / `coreci-publish.yml` per section 7 and remove all direct chaining between SNode.C and MQTTSuite builds.
+4. **Phase 4a:** section 7 (specification only).
+4. **Phase 4b:** in DistributionPackages: the `coreci/` package, the two workflows, the action and the registry fields of 7.1, as a PR that the owner merges before the proof runs — GitHub dispatches a `workflow_dispatch` workflow only if the file exists on the default branch; the workflows stay inert until 4d because nothing dispatches them for the production feed. Also `SNodeC/Packages-staging`, the staging environment with generated keys and a test registry on a branch (7.7). In `snode.c` and `mqttsuite` (branch and PR each, not merged): the native hook environment of 7.2 and `development_packages`. Proof (7.7): `snodec` and then `mqttsuite` on one deb and one rpm target, `mqttsuite` installing `snodec` from the staging feed; repeating a `snodec` publication is a no-op; a conflicting one fails `immutable`; the README badge block is generated. Stop and report.
+4. **Phase 4c:** OpenWrt and production preparation. On the 4b branches of `snode.c` and `mqttsuite`: the OpenWrt hooks on the 7.2 interface (`SOURCE_TAG`, `PREREQUISITES_DIR` instead of receipts), the development export of `snodec`, removal of the old SHA-pinned build wrappers and status-notification workflows (effective only when merged in 4d), and `revision_base` = the highest revision any of the package's files has in the production feed (read read-only). In DistributionPackages (PR, not merged): the production `ci/registry.json` with the production key fingerprints. Proof (7.7): one ipk and one apk target, `mqttsuite` building against the development export of `snodec` from the staging feed. Stop and report.
+4. **Phase 4d:** deployment on `core.vchrist.at` and switch-over, by separate instructions; it also retires the old `core-ci-*.yml` workflows and the old status writer.
 
 ### Report format for every phase
 - Files changed (paths).
@@ -525,5 +558,6 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 - Changing engine semantics in later phases without asking.
 - Repository-, package-, distribution-, architecture- or release-specific knowledge in core-ci code (test data excepted); a compiled-in graph.
 - Hand-written request routing instead of SNode.C's express router.
-- Working in any directory other than `/home/voc/projects/snodec/core-ci` (except reading the SNode.C sources, reading DistributionPackages in phases 3b and 4, reading the declared repositories' `ci/packages.json` in phase 3c, and changing the DistributionPackages/publisher repositories in phase 4).
+- Working in any directory other than `/home/voc/projects/snodec/core-ci` (except reading the SNode.C sources, reading DistributionPackages in phases 3b and 4, reading the declared repositories' `ci/packages.json` in phase 3c, changing DistributionPackages and `SNodeC/Packages-staging` in phases 4b–4c, and changing `snode.c` and `mqttsuite` in phases 4b–4c).
+- Before Phase 4d: any write to `SNodeC/Packages`, any use of a production environment or production signing key, any change to the old `core-ci-*.yml` workflows, merging anything (only the owner merges).
 - Reusing, copying or consulting code from the pre-greenfield implementation; deleting history, force-pushing, discarding uncommitted work, or renaming the default branch.
