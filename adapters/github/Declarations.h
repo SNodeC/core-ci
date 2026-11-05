@@ -8,10 +8,9 @@ namespace coreci::github {
     struct LoadedDeclarations {
         Pipeline pipeline;
     };
-    using Fetch = std::function<void(Request, std::function<void(Response)>)>;
+    using Fetch = std::function<void(std::string path, bool raw, Completion)>;
     void loadDeclarations(const DeclarationFile& registry,
                           const std::string& apiPath,
-                          const std::string& token,
                           Fetch fetch,
                           std::function<void(std::variant<LoadedDeclarations, Error>)> done);
 } // namespace coreci::github

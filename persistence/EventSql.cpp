@@ -54,9 +54,10 @@ namespace coreci::persistence {
         for (const auto& pkg : rows.packages) {
             result.push_back(
                 "INSERT INTO coreci_graph_packages (event_seq,package,source_owner,source_repo,source_branch,build_owner,build_repo,"
-                "build_workflow_file,build_branch,accept_prereleases) VALUES (LAST_INSERT_ID()," +
+                "build_workflow_file,build_branch,accept_prereleases,revision_base) VALUES (LAST_INSERT_ID()," +
                 literal(pkg.name) + "," + literal(pkg.sourceRepo.owner) + "," + literal(pkg.sourceRepo.repo) + "," +
-                literal(pkg.sourceRepo.branch) + "," + workflow(pkg.buildWorkflow) + "," + (pkg.acceptPrereleases ? "1" : "0") + ")");
+                literal(pkg.sourceRepo.branch) + "," + workflow(pkg.buildWorkflow) + "," + (pkg.acceptPrereleases ? "1" : "0") + "," +
+                std::to_string(pkg.revisionBase) + ")");
         }
         for (const auto& t : rows.targets) {
             result.push_back("INSERT INTO coreci_graph_targets (event_seq,package,target,feed) VALUES (LAST_INSERT_ID()," +
@@ -72,7 +73,8 @@ namespace coreci::persistence {
         return {"SELECT event_seq,HEX(feed),HEX(owner),HEX(repo),HEX(workflow_file),HEX(branch) FROM coreci_graph_feeds ORDER BY "
                 "event_seq,feed",
                 "SELECT event_seq,HEX(package),HEX(source_owner),HEX(source_repo),HEX(source_branch),HEX(build_owner),HEX(build_repo),"
-                "HEX(build_workflow_file),HEX(build_branch),accept_prereleases FROM coreci_graph_packages ORDER BY event_seq,package",
+                "HEX(build_workflow_file),HEX(build_branch),accept_prereleases,revision_base FROM coreci_graph_packages ORDER BY "
+                "event_seq,package",
                 "SELECT event_seq,HEX(package),HEX(target),HEX(feed) FROM coreci_graph_targets ORDER BY event_seq,package,target",
                 "SELECT event_seq,HEX(package),HEX(prerequisite) FROM coreci_graph_prerequisites ORDER BY event_seq,package,prerequisite"};
     }

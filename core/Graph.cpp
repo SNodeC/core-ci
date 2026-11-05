@@ -120,6 +120,9 @@ namespace coreci {
         }
         for (const auto& pkg : packageList) {
             identifier(pkg.name, "package");
+            if (pkg.revisionBase > 1000000) {
+                throw std::invalid_argument("revision_base outside 0–1000000: " + pkg.name);
+            }
             repository(pkg.sourceRepo.owner, pkg.sourceRepo.repo, pkg.sourceRepo.branch);
             workflow(pkg.buildWorkflow);
             if (!p.packageMap.emplace(pkg.name, pkg).second) {

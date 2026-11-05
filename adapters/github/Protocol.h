@@ -35,11 +35,8 @@ namespace coreci::github {
         std::string tag, sha;
     };
     std::variant<std::vector<Tag>, Error> tags(const std::string& body);
-    struct Request {
-        std::string method, path, body;
-        std::map<std::string, std::string> headers;
-    };
-    Request dispatch(const Command& command, const std::string& callbackBase, const std::string& token);
+    std::string dispatchBody(const Command& command, const std::string& callbackBase);
+    std::string dispatchPath(const Command& command);
     class TokenProvider {
     public:
         virtual ~TokenProvider() = default;

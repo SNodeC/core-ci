@@ -4,16 +4,12 @@
 #include <functional>
 #include <memory>
 namespace coreci::github {
-    struct Response {
-        int status = 0;
-        std::string body;
-        std::map<std::string, std::string> headers;
-    };
+    using Completion = std::function<void(int status, std::string body, std::string link)>;
     class HttpClient {
     public:
         HttpClient(Url base, std::string ca);
         ~HttpClient();
-        void request(Request request, std::function<void(Response)> done);
+        void request(std::string path, std::string token, Completion done, std::optional<std::string> body = {}, bool raw = false);
 
     private:
         struct Exchange;

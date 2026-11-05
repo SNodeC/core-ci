@@ -3,6 +3,7 @@
 #include "adapters/github/Declarations.h"
 #include "adapters/github/HttpClient.h"
 #include "adapters/mariadb/MariaDBEventStore.h"
+#include "core/Badge.h"
 #include "core/Status.h"
 #include "persistence/EventQueue.h"
 
@@ -17,7 +18,6 @@
 #include <iostream>
 #include <log/SemanticLogger.h>
 #include <openssl/crypto.h>
-#include <regex>
 #include <set>
 #include <tuple>
 #include <utils/Config.h>
@@ -107,9 +107,7 @@ namespace coreci::app {
                     ->setMaximumHeaderFields(maximumParserLimits.maximumHeaderFields)
                     ->setMaximumStartLineBytes(maximumParserLimits.maximumStartLineBytes);
                 server.getConfig()->Local::setPort(8443);
-                server.use([this](const Req& req, const Res& res) {
-                    route(req, res);
-                });
+                routes();
             }
             int start(int argc, char** argv) {
                 core::SNodeC::init(argc, argv);
@@ -302,26 +300,28 @@ namespace coreci::app {
                     },
                     command);
                 if (std::holds_alternative<Accept>(classification)) {
-                    auto request = gh::dispatch(command, get("callback-base-url"), token.token());
-                    request.path = base->path + request.path;
-                    http->request(std::move(request), [this, command](gh::Response response) {
-                        if (queue->engine()) {
-                            std::visit(
-                                [&](const auto& c) {
-                                    constexpr auto kind =
-                                        std::is_same_v<std::decay_t<decltype(c)>, DispatchBuild> ? Kind::Build : Kind::Publish;
-                                    Event event = DispatchAccepted{now(), c.buildId, kind, c.attempt};
-                                    if (response.status != 204) {
-                                        event = DispatchRejected{now(), c.buildId, kind, c.attempt, response.status, response.body};
-                                    }
-                                    queue->enqueue(std::move(event), [](const auto&) {
-                                    });
-                                },
-                                command);
-                        } else {
-                            std::cerr << "dispatch result dropped during recovery\n";
-                        }
-                    });
+                    http->request(
+                        base->path + gh::dispatchPath(command),
+                        token.token(),
+                        [this, command](int status, std::string body, std::string) {
+                            if (queue->engine()) {
+                                std::visit(
+                                    [&](const auto& c) {
+                                        constexpr auto kind =
+                                            std::is_same_v<std::decay_t<decltype(c)>, DispatchBuild> ? Kind::Build : Kind::Publish;
+                                        Event event = DispatchAccepted{now(), c.buildId, kind, c.attempt};
+                                        if (status != 204) {
+                                            event = DispatchRejected{now(), c.buildId, kind, c.attempt, status, body};
+                                        }
+                                        queue->enqueue(std::move(event), [](const auto&) {
+                                        });
+                                    },
+                                    command);
+                            } else {
+                                std::cerr << "dispatch result dropped during recovery\n";
+                            }
+                        },
+                        gh::dispatchBody(command, get("callback-base-url")));
                 } else {
                     std::cerr << "dispatch skipped: stale command or recovery\n";
                 }
@@ -337,86 +337,120 @@ namespace coreci::app {
                     answer(res, code, text);
                 });
             }
-            void route(const Req& req, const Res& res) {
-                const auto& path = req->path;
-                std::smatch match;
-                const bool report = std::regex_match(path, match, std::regex("^/api/v1/builds/([^/]+)/report$"));
-                const std::string buildId = report ? match[1].str() : "";
-                const bool retryUnit = std::regex_match(path, match, std::regex("^/api/v1/units/([^/]+)/([^/]+)/retry$"));
-                const bool hook = path == "/api/v1/github/webhook", reconcileRoute = path == "/api/v1/reconcile";
-                const bool status = path == "/api/v1/status", dot = path == "/api/v1/graph.dot";
-                const bool reloadRoute = path == "/api/v1/reload";
-                const bool known = hook || report || retryUnit || reconcileRoute || reloadRoute || status || dot;
-                const bool oversized = !hook && req->body.size() > 64U * 1024U;
-                const std::string body = oversized ? std::string{} : std::string(req->body.begin(), req->body.end());
-                const auto at = now();
-                bool auth = true;
-                if (!oversized) {
-                    if (hook) {
-                        auth = gh::verify(environment("CORECI_WEBHOOK_SECRET"), body, req->get("X-Hub-Signature-256"));
-                    } else if (report) {
-                        auth = gh::verifyCallback(environment("CORECI_CALLBACK_SECRET"),
-                                                  body,
-                                                  req->get("X-CoreCI-Timestamp"),
-                                                  req->get("X-CoreCI-Signature-256"),
-                                                  at);
-                    } else if (retryUnit || reconcileRoute || reloadRoute) {
-                        const auto expected = "Bearer " + environment("CORECI_ADMIN_TOKEN"), supplied = req->get("Authorization");
-                        auth = supplied.size() == expected.size() && CRYPTO_memcmp(supplied.data(), expected.data(), expected.size()) == 0;
-                    }
-                }
-                if (oversized) {
-                    answer(res, 413, "body too large");
-                } else if (!known) {
-                    answer(res, 404, "not found");
-                } else if (req->method != ((status || dot) ? "GET" : "POST")) {
-                    answer(res, 405, "method not allowed");
-                } else if (!auth) {
-                    answer(res, 401, "unauthorized");
-                } else if (status || dot) {
-                    if (queue->engine()) {
-                        res->status(200)
-                            .set("Content-Type", dot ? "text/vnd.graphviz" : "text/plain")
-                            .send(dot ? statusDot(*queue->engine())
-                                      : (loadError.empty() ? "" : loadError + "\n") + statusText(*queue->engine()));
+            void routes() {
+                server.setStrictRouting().setCaseInsensitiveRouting(false);
+                const auto size = [](const Req& req, const Res& res, express::Next& next) {
+                    if (req->body.size() > 64U * 1024U) {
+                        answer(res, 413, "body too large");
                     } else {
-                        answer(res, 503, "unavailable");
+                        next();
                     }
-                } else if (reloadRoute) {
+                };
+                const auto webhookAuth = [](const Req& req, const Res& res, express::Next& next) {
+                    if (gh::verify(environment("CORECI_WEBHOOK_SECRET"),
+                                   std::string(req->body.begin(), req->body.end()),
+                                   req->get("X-Hub-Signature-256"))) {
+                        next();
+                    } else {
+                        answer(res, 401, "unauthorized");
+                    }
+                };
+                const auto callbackAuth = [](const Req& req, const Res& res, express::Next& next) {
+                    if (gh::verifyCallback(environment("CORECI_CALLBACK_SECRET"),
+                                           std::string(req->body.begin(), req->body.end()),
+                                           req->get("X-CoreCI-Timestamp"),
+                                           req->get("X-CoreCI-Signature-256"),
+                                           now())) {
+                        next();
+                    } else {
+                        answer(res, 401, "unauthorized");
+                    }
+                };
+                const auto adminAuth = [](const Req& req, const Res& res, express::Next& next) {
+                    const auto expected = "Bearer " + environment("CORECI_ADMIN_TOKEN"), supplied = req->get("Authorization");
+                    if (supplied.size() == expected.size() && CRYPTO_memcmp(supplied.data(), expected.data(), expected.size()) == 0) {
+                        next();
+                    } else {
+                        answer(res, 401, "unauthorized");
+                    }
+                };
+                const auto method = [](const Req&, const Res& res) {
+                    answer(res, 405, "method not allowed");
+                };
+                server.post("/api/v1/github/webhook", webhookAuth, [this](const Req& req, const Res& res) {
+                    webhook(req, res, std::string(req->body.begin(), req->body.end()));
+                });
+                server.all("/api/v1/github/webhook", method);
+                server.post("/api/v1/builds/:buildId/report", size, callbackAuth, [this](const Req& req, const Res& res) {
+                    report(req, res);
+                });
+                server.all("/api/v1/builds/:buildId/report", size, method);
+                server.post("/api/v1/units/:package/:target/retry", size, adminAuth, [this](const Req& req, const Res& res) {
+                    submit(RetryRequested{now(), req->param("package"), req->param("target")}, res);
+                });
+                server.all("/api/v1/units/:package/:target/retry", size, method);
+                server.post("/api/v1/reload", size, adminAuth, [this](const Req&, const Res& res) {
                     const bool running = loading;
                     reload();
                     answer(res, 202, running ? "already running" : "started");
-                } else if (reconcileRoute) {
+                });
+                server.all("/api/v1/reload", size, method);
+                server.post("/api/v1/reconcile", size, adminAuth, [this](const Req&, const Res& res) {
                     const bool running = reconciling;
                     reconcile();
                     answer(res, 202, running ? "already running" : "started");
-                } else if (retryUnit) {
-                    const auto package = gh::decodePath(match[1]), target = gh::decodePath(match[2]);
-                    if (package && target) {
-                        submit(RetryRequested{at, *package, *target}, res);
+                });
+                server.all("/api/v1/reconcile", size, method);
+                server.head("/api/v1/status", size, method);
+                server.get("/api/v1/status", size, [this](const Req&, const Res& res) {
+                    showStatus(res, false);
+                });
+                server.all("/api/v1/status", size, method);
+                server.head("/api/v1/graph.dot", size, method);
+                server.get("/api/v1/graph.dot", size, [this](const Req&, const Res& res) {
+                    showStatus(res, true);
+                });
+                server.all("/api/v1/graph.dot", size, method);
+                server.head("/api/v1/badge/:package/:target.svg", size, method);
+                server.get("/api/v1/badge/:package/:target.svg", size, [this](const Req& req, const Res& res) {
+                    const Unit unit{req->param("package"), req->param("target")};
+                    res->status(200)
+                        .set("Content-Type", "image/svg+xml; charset=utf-8")
+                        .set("Cache-Control", "no-cache, no-store, must-revalidate")
+                        .send(queue->engine() ? unitBadge(*queue->engine(), unit) : badge(unit.package, "unavailable", "#6e7781"));
+                });
+                server.all("/api/v1/badge/:package/:target.svg", size, method);
+                server.use(size, [](const Req&, const Res& res) {
+                    answer(res, 404, "not found");
+                });
+            }
+            void showStatus(const Res& res, bool dot) {
+                if (queue->engine()) {
+                    res->status(200)
+                        .set("Content-Type", dot ? "text/vnd.graphviz" : "text/plain")
+                        .send(dot ? statusDot(*queue->engine())
+                                  : (loadError.empty() ? "" : loadError + "\n") + statusText(*queue->engine()));
+                } else {
+                    answer(res, 503, "unavailable");
+                }
+            }
+            void report(const Req& req, const Res& res) {
+                if (!contentType(req, "application/x-www-form-urlencoded")) {
+                    answer(res, 400, "invalid: content type");
+                } else {
+                    const auto decoded = gh::form(std::string(req->body.begin(), req->body.end()));
+                    if (std::holds_alternative<gh::Error>(decoded)) {
+                        answer(res, 400, "invalid: " + std::get<gh::Error>(decoded).reason);
                     } else {
-                        answer(res, 400, "invalid: path encoding");
-                    }
-                } else if (report) {
-                    if (!contentType(req, "application/x-www-form-urlencoded")) {
-                        answer(res, 400, "invalid: content type");
-                    } else {
-                        const auto decoded = gh::form(body);
-                        if (std::holds_alternative<gh::Error>(decoded)) {
-                            answer(res, 400, "invalid: " + std::get<gh::Error>(decoded).reason);
+                        const auto event = gh::report(req->param("buildId"), std::get<gh::Form>(decoded), now());
+                        if (std::holds_alternative<gh::Error>(event)) {
+                            answer(res, 400, "invalid: " + std::get<gh::Error>(event).reason);
+                        } else if (std::holds_alternative<std::monostate>(event)) {
+                            answer(res, 200, "ignored: no event");
                         } else {
-                            const auto event = gh::report(buildId, std::get<gh::Form>(decoded), at);
-                            if (std::holds_alternative<gh::Error>(event)) {
-                                answer(res, 400, "invalid: " + std::get<gh::Error>(event).reason);
-                            } else if (std::holds_alternative<std::monostate>(event)) {
-                                answer(res, 200, "ignored: no event");
-                            } else {
-                                submit(std::get<Event>(event), res);
-                            }
+                            submit(std::get<Event>(event), res);
                         }
                     }
-                } else {
-                    webhook(req, res, body);
                 }
             }
             void rememberDelivery(const std::string& delivery) {
@@ -523,19 +557,13 @@ namespace coreci::app {
                       std::set<std::string> visited,
                       const std::shared_ptr<Round>& round) {
                 visited.insert(path);
-                gh::Request request{"GET",
-                                    path,
-                                    "",
-                                    {{"Accept", "application/vnd.github+json"},
-                                     {"Authorization", "Bearer " + token.token()},
-                                     {"X-GitHub-Api-Version", "2022-11-28"},
-                                     {"User-Agent", "core-ci"}}};
-                http->request(std::move(request),
+                http->request(path,
+                              token.token(),
                               [this, owner, repo, collected = std::move(collected), visited = std::move(visited), round](
-                                  gh::Response response) mutable {
-                                  bool valid = response.status == 200;
+                                  int status, std::string body, std::string linkHeader) mutable {
+                                  bool valid = status == 200;
                                   std::string next;
-                                  const auto parsed = gh::tags(response.body);
+                                  const auto parsed = gh::tags(body);
                                   valid = valid && std::holds_alternative<std::vector<gh::Tag>>(parsed);
                                   if (valid) {
                                       const auto& found = std::get<std::vector<gh::Tag>>(parsed);
@@ -545,19 +573,17 @@ namespace coreci::app {
                                           }
                                       }
                                       collected.insert(collected.end(), found.begin(), found.end());
-                                      for (const auto& [key, value] : response.headers) {
-                                          if (key == "link" || key == "Link") {
-                                              const auto links = gh::nextLink(value, *base);
-                                              valid = valid && !std::holds_alternative<gh::Error>(links);
-                                              if (valid) {
-                                                  const auto& link = std::get<std::optional<std::string>>(links);
-                                                  if (link) {
-                                                      const auto url = gh::httpsUrl(*link);
-                                                      valid = url && url->host == base->host && url->port == base->port;
-                                                      if (valid) {
-                                                          next = url->path;
-                                                          valid = !visited.contains(next);
-                                                      }
+                                      if (!linkHeader.empty()) {
+                                          const auto links = gh::nextLink(linkHeader, *base);
+                                          valid = valid && !std::holds_alternative<gh::Error>(links);
+                                          if (valid) {
+                                              const auto& link = std::get<std::optional<std::string>>(links);
+                                              if (link) {
+                                                  const auto url = gh::httpsUrl(*link);
+                                                  valid = url && url->host == base->host && url->port == base->port;
+                                                  if (valid) {
+                                                      next = url->path;
+                                                      valid = !visited.contains(next);
                                                   }
                                               }
                                           }
@@ -614,9 +640,8 @@ namespace coreci::app {
                     gh::loadDeclarations(
                         registryDefinition,
                         base->path,
-                        token.token(),
-                        [this](gh::Request request, auto done) {
-                            http->request(std::move(request), std::move(done));
+                        [this](std::string path, bool raw, auto done) {
+                            http->request(std::move(path), token.token(), std::move(done), {}, raw);
                         },
                         [this](auto result) {
                             if (std::holds_alternative<gh::Error>(result)) {

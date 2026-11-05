@@ -19,10 +19,30 @@ int main(int argc, char** argv) {
                                           "t",
                                           {},
                                           {"owner", "recipes", "build.yml", "trunk"}};
-            client.request(coreci::github::dispatch(b, "https://localhost", "smoke-token"), [&](const auto& response) {
-                std::cout << "HTTP status " << response.status << '\n';
-                result = response.status == std::stoi(argv[3]) ? 0 : 1;
-            });
+            client.request(
+                coreci::github::dispatchPath(b),
+                "smoke-token",
+                [&](int status, std::string, std::string) {
+                    std::cout << "HTTP status " << status << '\n';
+                    result = status == std::stoi(argv[3]) ? 0 : 1;
+                    if (result == 0 && status == 204) {
+                        // Exercise the declaration fixture's original token/header expectations over real HTTP.
+                        client.request("/repos/o/registry", "token", [&](int status, std::string, std::string) {
+                            result = status == 200 ? 0 : 1;
+                            if (result == 0) {
+                                client.request(
+                                    "/repos/o/registry/contents/ci%2Fregistry.json?ref=master",
+                                    "token",
+                                    [&](int status, std::string, std::string) {
+                                        result = status == 200 ? 0 : 1;
+                                    },
+                                    {},
+                                    true);
+                            }
+                        });
+                    }
+                },
+                coreci::github::dispatchBody(b, "https://localhost"));
             const int loop = core::SNodeC::start();
             if (loop != 0) {
                 result = 1;

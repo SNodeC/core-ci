@@ -154,7 +154,7 @@ namespace coreci::mariadb {
             });
     }
     void MariaDBEventStore::createSchema(std::size_t index, std::function<void()> done) {
-        // Schema.sql is embedded by CMake; its two CREATE statements contain no string literals.
+        // Schema.sql is embedded by CMake; its CREATE statements contain no string literals.
         const auto end = schema.find(';', index);
         if (end == std::string_view::npos) {
             done();
@@ -173,15 +173,15 @@ namespace coreci::mariadb {
             "EXISTS(SELECT 1 FROM coreci_graph_prerequisites LIMIT 1))",
             [this, done, bootstrap](const MYSQL_ROW row) {
                 if (row != nullptr) {
-                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "2") {
+                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "3") {
                         // Wait for query's final nullptr before starting the next operation.
                     } else if (row[0] != nullptr && std::string(row[0]) == "0" && row[2] != nullptr && std::string(row[2]) == "0") {
                         *bootstrap = true;
                     } else {
-                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 2 row, or empty schema and events"});
+                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 3 row, or empty schema and events"});
                     }
                 } else if (*bootstrap) {
-                    execute("INSERT INTO coreci_schema (version) VALUES (2)", done);
+                    execute("INSERT INTO coreci_schema (version) VALUES (3)", done);
                 } else {
                     done();
                 }
@@ -274,7 +274,10 @@ namespace coreci::mariadb {
                             if (table == 0) {
                                 graph.feeds.push_back({values[0], {values[1], values[2], values[3], values[4]}});
                             } else if (table == 1) {
-                                if (fields[9] == nullptr || (std::string(fields[9]) != "0" && std::string(fields[9]) != "1")) {
+                                unsigned revisionBase = 0;
+                                if (fields[10] == nullptr || !number(fields[10], revisionBase) || revisionBase > 1000000) {
+                                    error = "invalid revision_base";
+                                } else if (fields[9] == nullptr || (std::string(fields[9]) != "0" && std::string(fields[9]) != "1")) {
                                     error = "invalid accept_prereleases";
                                 } else {
                                     graph.packages.push_back({values[0],
@@ -282,7 +285,8 @@ namespace coreci::mariadb {
                                                               {values[4], values[5], values[6], values[7]},
                                                               {},
                                                               {},
-                                                              std::string(fields[9]) == "1"});
+                                                              std::string(fields[9]) == "1",
+                                                              revisionBase});
                                 }
                             } else if (table == 2) {
                                 graph.targets.push_back({values[0], values[1], values[2]});
