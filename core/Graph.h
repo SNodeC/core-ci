@@ -12,12 +12,14 @@ namespace coreci {
     struct Repo {
         std::string owner, repo;
         std::string branch = {};
-        bool operator==(const Repo&) const;
+        bool operator==(const Repo&) const = default;
     };
     struct Workflow {
         std::string owner, repo, workflowFile, branch;
-        bool operator==(const Workflow&) const;
+        bool operator==(const Workflow&) const = default;
     };
+    bool sameIdentity(const Repo& a, const Repo& b);
+    bool sameIdentity(const Workflow& a, const Workflow& b);
     struct Feed {
         std::string id;
         Workflow workflow;

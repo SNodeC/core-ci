@@ -25,12 +25,10 @@ namespace coreci::github {
         }
         Repo repo(const std::string& value) {
             const auto slash = value.find('/');
-            Repo result;
             if (slash == std::string::npos || value.find('/', slash + 1) != std::string::npos) {
                 throw std::invalid_argument("invalid repository reference");
             }
-            result.owner = repoKey(value.substr(0, slash));
-            result.repo = repoKey(value.substr(slash + 1));
+            const Repo result{value.substr(0, slash), value.substr(slash + 1), {}};
             validateRepository(result.owner, result.repo);
             return result;
         }
@@ -46,14 +44,14 @@ namespace coreci::github {
             return result;
         }
         std::string key(const Repo& value) {
-            return value.owner + "/" + value.repo;
+            return repoKey(value.owner + "/" + value.repo);
         }
         struct Load : std::enable_shared_from_this<Load> {
             DeclarationFile file;
             std::string apiPath, token;
             Fetch fetch;
             std::function<void(std::variant<LoadedDeclarations, Error>)> done;
-            std::map<std::string, std::string> branches;
+            std::map<std::string, Repo> repositories;
             std::vector<Repo> sources;
             std::vector<Feed> feeds;
             Workflow build;
@@ -72,9 +70,10 @@ namespace coreci::github {
             }
             void get(const Repo& source, const std::string& path, std::function<void(Json)> callback, bool info = false) {
                 const auto self = shared_from_this();
-                std::string url = apiPath + "/repos/" + escape(source.owner) + "/" + escape(source.repo);
+                const auto& target = info ? source : repositories.at(key(source));
+                std::string url = apiPath + "/repos/" + escape(target.owner) + "/" + escape(target.repo);
                 if (!info) {
-                    url += "/contents/" + escape(path) + "?ref=" + escape(branches.at(key(source)));
+                    url += "/contents/" + escape(path) + "?ref=" + escape(target.branch);
                 }
                 Request request{"GET",
                                 url,
@@ -83,22 +82,22 @@ namespace coreci::github {
                                  {"Authorization", "Bearer " + token},
                                  {"X-GitHub-Api-Version", "2022-11-28"},
                                  {"User-Agent", "core-ci"}}};
-                fetch(std::move(request), [self, source, path, callback, info](Response response) {
+                fetch(std::move(request), [self, target, path, callback, info](Response response) {
                     if (!self->done) {
                         // Another request has already failed this whole load.
                     } else if (response.status != 200) {
-                        self->fail(key(source), path, "HTTP " + std::to_string(response.status));
+                        self->fail(target.owner + "/" + target.repo, path, "HTTP " + std::to_string(response.status));
                     } else {
                         try {
                             callback(info ? Json::parse(response.body) : parse(response.body));
                         } catch (const std::exception& error) {
-                            self->fail(key(source), path, error.what());
+                            self->fail(target.owner + "/" + target.repo, path, error.what());
                         }
                     }
                 });
             }
             void branch(const Repo& source, std::function<void()> next) {
-                if (branches.contains(key(source))) {
+                if (repositories.contains(key(source))) {
                     next();
                 } else {
                     const auto self = shared_from_this();
@@ -106,11 +105,12 @@ namespace coreci::github {
                         source,
                         "<repository>",
                         [self, source, next](Json value) {
-                            const auto branch = value.at("default_branch").get<std::string>();
-                            if (!validBranch(branch)) {
+                            auto canonical = repo(value.at("full_name").get<std::string>());
+                            canonical.branch = value.at("default_branch").get<std::string>();
+                            if (!validBranch(canonical.branch)) {
                                 throw std::invalid_argument("invalid default branch");
                             }
-                            self->branches[key(source)] = branch;
+                            self->repositories[key(source)] = std::move(canonical);
                             next();
                         },
                         true);
@@ -149,9 +149,9 @@ namespace coreci::github {
                 for (const auto& source : sources) {
                     repositories.emplace(key(source), source);
                 }
-                repositories.emplace(build.owner + "/" + build.repo, Repo{build.owner, build.repo, {}});
+                repositories.emplace(key({build.owner, build.repo}), Repo{build.owner, build.repo, {}});
                 for (const auto& feed : feeds) {
-                    repositories.emplace(feed.workflow.owner + "/" + feed.workflow.repo, Repo{feed.workflow.owner, feed.workflow.repo, {}});
+                    repositories.emplace(key({feed.workflow.owner, feed.workflow.repo}), Repo{feed.workflow.owner, feed.workflow.repo, {}});
                 }
                 remaining = repositories.size();
                 const auto self = shared_from_this();
@@ -168,10 +168,14 @@ namespace coreci::github {
                 auto callback = std::move(done);
                 callback(LoadedDeclarations{pipeline});
             }
+            Workflow resolved(const Workflow& workflow) const {
+                const auto& canonical = repositories.at(key({workflow.owner, workflow.repo}));
+                return {canonical.owner, canonical.repo, workflow.workflowFile, canonical.branch};
+            }
             void packages() {
-                build.branch = branches.at(build.owner + "/" + build.repo);
+                build = resolved(build);
                 for (auto feed : feeds) {
-                    feed.workflow.branch = branches.at(feed.workflow.owner + "/" + feed.workflow.repo);
+                    feed.workflow = resolved(feed.workflow);
                     builder.feed(feed);
                 }
                 remaining = sources.size();
@@ -183,8 +187,7 @@ namespace coreci::github {
                         get(source, "ci/packages.json", [self, source](Json value) {
                             Package pkg;
                             pkg.name = value.at("package").get<std::string>();
-                            pkg.sourceRepo = source;
-                            pkg.sourceRepo.branch = self->branches.at(key(source));
+                            pkg.sourceRepo = self->repositories.at(key(source));
                             pkg.buildWorkflow = self->build;
                             const auto& prerequisites = value.at("depends_on");
                             if (!prerequisites.is_array()) {

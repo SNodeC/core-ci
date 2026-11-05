@@ -71,14 +71,16 @@ namespace coreci {
     }
     std::string statusText(const Engine& engine) {
         const auto states = statuses(engine);
-        std::string result = "PACKAGE\tTARGET\tRELEASE\tPUBLISHED\tSTATUS\n";
+        std::string result = "PACKAGE\tTARGET\tRELEASE\tPUBLISHED\tSTATUS\tSOURCE\n";
         for (const auto& [target, definition] : engine.pipeline().targets()) {
             for (const auto& package : engine.pipeline().topologicalOrder(target)) {
                 const Unit u{package, target};
                 const auto& r = engine.releases().at(package);
                 const auto& p = engine.units().at(u).published;
                 result += package + "\t" + target + "\t" + (r ? r->version.text() : "-") + "\t";
-                result += (p ? p->version.text() + "-" + std::to_string(p->revision) : "-") + "\t" + states.at(u) + "\n";
+                const auto& source = engine.pipeline().packages().at(package).sourceRepo;
+                result += (p ? p->version.text() + "-" + std::to_string(p->revision) : "-") + "\t" + states.at(u) + "\t" + source.owner +
+                          "/" + source.repo + "\n";
             }
         }
         return result;
@@ -96,8 +98,9 @@ namespace coreci {
             } else if (engine.units().at(u).inflight) {
                 color = "yellow";
             }
-            result +=
-                "  " + quoted(label(u)) + " [label=" + quoted(label(u) + "\n" + status) + ", style=filled, fillcolor=" + color + "];\n";
+            const auto& source = engine.pipeline().packages().at(u.package).sourceRepo;
+            result += "  " + quoted(label(u)) + " [label=" + quoted(label(u) + "\n" + source.owner + "/" + source.repo + "\n" + status) +
+                      ", style=filled, fillcolor=" + color + "];\n";
             for (const auto& q : engine.pipeline().prerequisites(u.package)) {
                 result += "  " + quoted(label({q, u.target})) + " -> " + quoted(label(u)) + ";\n";
             }

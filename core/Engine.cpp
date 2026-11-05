@@ -15,11 +15,10 @@ namespace coreci {
             const bool remains = next.packages().contains(unit.package) && next.packages().at(unit.package).targets.contains(unit.target);
             if (!remains) {
                 state.inflight.reset();
-            }
-            if (remains) {
+            } else {
                 const auto& [source, workflow] = lastIdentity.at(unit.package);
                 const auto& newPkg = next.packages().at(unit.package);
-                if (source != newPkg.sourceRepo || workflow != newPkg.buildWorkflow) {
+                if (!sameIdentity(source, newPkg.sourceRepo) || !sameIdentity(workflow, newPkg.buildWorkflow)) {
                     state.inflight.reset();
                 }
                 if (state.lastFeed != next.targets().at(unit.target).feed) {
@@ -29,7 +28,7 @@ namespace coreci {
             }
         }
         for (const auto& [name, pkg] : next.packages()) {
-            if (lastIdentity.contains(name) && lastIdentity.at(name).first != pkg.sourceRepo) {
+            if (lastIdentity.contains(name) && !sameIdentity(lastIdentity.at(name).first, pkg.sourceRepo)) {
                 released[name].reset();
             }
             released.try_emplace(name, std::nullopt);
@@ -88,13 +87,14 @@ namespace coreci {
                             const auto& feed = graph.targets().at(unit.target).feed;
                             allowed = allowed && next != e.pipeline.packages().end();
                             if (next != e.pipeline.packages().end()) {
-                                allowed =
-                                    allowed && next->second.targets.contains(unit.target) && next->second.sourceRepo == oldPkg.sourceRepo &&
-                                    next->second.buildWorkflow == oldPkg.buildWorkflow && e.pipeline.targets().at(unit.target).feed == feed;
+                                allowed = allowed && next->second.targets.contains(unit.target) &&
+                                          sameIdentity(next->second.sourceRepo, oldPkg.sourceRepo) &&
+                                          sameIdentity(next->second.buildWorkflow, oldPkg.buildWorkflow) &&
+                                          e.pipeline.targets().at(unit.target).feed == feed;
                             }
                             if (state.inflight->phase != Phase::AwaitingPublish) {
                                 allowed = allowed && e.pipeline.feeds().contains(feed) &&
-                                          e.pipeline.feeds().at(feed).workflow == graph.feeds().at(feed).workflow;
+                                          sameIdentity(e.pipeline.feeds().at(feed).workflow, graph.feeds().at(feed).workflow);
                             }
                         }
                     }

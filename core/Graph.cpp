@@ -14,12 +14,11 @@ namespace coreci {
         }
         return result;
     }
-    bool Repo::operator==(const Repo& other) const {
-        return repoKey(owner) == repoKey(other.owner) && repoKey(repo) == repoKey(other.repo) && branch == other.branch;
+    bool sameIdentity(const Repo& a, const Repo& b) {
+        return repoKey(a.owner) == repoKey(b.owner) && repoKey(a.repo) == repoKey(b.repo) && a.branch == b.branch;
     }
-    bool Workflow::operator==(const Workflow& other) const {
-        return repoKey(owner) == repoKey(other.owner) && repoKey(repo) == repoKey(other.repo) && workflowFile == other.workflowFile &&
-               branch == other.branch;
+    bool sameIdentity(const Workflow& a, const Workflow& b) {
+        return sameIdentity(Repo{a.owner, a.repo, a.branch}, Repo{b.owner, b.repo, b.branch}) && a.workflowFile == b.workflowFile;
     }
     bool validBranch(const std::string& value) {
         bool valid = !value.empty() &&
@@ -82,14 +81,12 @@ namespace coreci {
     std::set<std::pair<std::string, std::string>> Pipeline::repositories() const {
         std::set<std::pair<std::string, std::string>> result;
         for (const auto& [name, pkg] : packageMap) {
-            result.emplace(repoKey(pkg.sourceRepo.owner), repoKey(pkg.sourceRepo.repo));
+            result.emplace(pkg.sourceRepo.owner, pkg.sourceRepo.repo);
         }
         return result;
     }
 
     Pipeline::Builder& Pipeline::Builder::feed(Feed value) {
-        value.workflow.owner = repoKey(value.workflow.owner);
-        value.workflow.repo = repoKey(value.workflow.repo);
         feedList.push_back(std::move(value));
         return *this;
     }
@@ -98,10 +95,6 @@ namespace coreci {
         return *this;
     }
     Pipeline::Builder& Pipeline::Builder::package(Package value) {
-        value.sourceRepo.owner = repoKey(value.sourceRepo.owner);
-        value.sourceRepo.repo = repoKey(value.sourceRepo.repo);
-        value.buildWorkflow.owner = repoKey(value.buildWorkflow.owner);
-        value.buildWorkflow.repo = repoKey(value.buildWorkflow.repo);
         std::sort(value.prerequisites.begin(), value.prerequisites.end());
         value.prerequisites.erase(std::unique(value.prerequisites.begin(), value.prerequisites.end()), value.prerequisites.end());
         packageList.push_back(std::move(value));

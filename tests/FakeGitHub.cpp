@@ -114,7 +114,8 @@ int main(int argc, char** argv) {
                         res->set("Content-Type", "application/json").send(text.str());
                     }
                 } else if (!req->path.ends_with("/tags")) {
-                    res->set("Content-Type", "application/json").send(R"({"default_branch":"trunk"})");
+                    res->set("Content-Type", "application/json")
+                        .send("{\"default_branch\":\"trunk\",\"full_name\":\"" + req->path.substr(7) + "\"}");
                 } else {
                     if (req->path == "/repos/owner/e/tags") {
                         ++loadRounds;

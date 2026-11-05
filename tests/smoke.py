@@ -110,7 +110,7 @@ def run():
             assert curl(api + "/wait-load?count=" + str(loads))[0] == 200
         def webhook(package, tag="v1.0.0", delivery=None):
             body = ('{"ref":"refs/tags/' + tag + '","created":true,"deleted":false,"after":"' + "a" * 40 +
-                    '","repository":{"full_name":"owner/' + package + '"}}')
+                    '","repository":{"full_name":"OwNeR/' + package + '"}}')
             signature = "sha256=" + hmac.new(b"smoke-webhook", body.encode(), hashlib.sha256).hexdigest()
             return curl(app_url + "/api/v1/github/webhook", body,
                         ["Content-Type: application/json", "X-GitHub-Event: push", "X-GitHub-Delivery: " + (delivery or package + tag),
@@ -247,7 +247,7 @@ def run():
             changed = '{"package":"e","depends_on":["b","d"],"matrix":[{"id":"t1","feed":"f1"}]}'
             (declarations / "e.json").write_text(changed)
             def branch_push(delivery):
-                body = '{"ref":"refs/heads/trunk","deleted":false,"repository":{"full_name":"owner/e","default_branch":"trunk"}}'
+                body = '{"ref":"refs/heads/trunk","deleted":false,"repository":{"full_name":"OwNeR/e","default_branch":"trunk"}}'
                 signature = "sha256=" + hmac.new(b"smoke-webhook", body.encode(), hashlib.sha256).hexdigest()
                 return curl(app_url + "/api/v1/github/webhook", body, ["Content-Type: application/json", "X-GitHub-Event: push",
                     "X-GitHub-Delivery: " + delivery, "X-Hub-Signature-256: " + signature])

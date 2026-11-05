@@ -442,12 +442,11 @@ namespace coreci::app {
                     } else {
                         const auto push = std::get<gh::Push>(parsed);
                         const auto slash = push.repo.find('/');
-                        const auto repository = repoKey(push.repo);
                         if (!push.branch.empty()) {
                             const bool known =
-                                repository == registryDefinition.owner + "/" + registryDefinition.repo ||
-                                (queue->engine() && pipeline().repositories().contains(
-                                                        {repoKey(push.repo.substr(0, slash)), repoKey(push.repo.substr(slash + 1))}));
+                                repoKey(push.repo) == repoKey(registryDefinition.owner + "/" + registryDefinition.repo) ||
+                                (queue->engine() &&
+                                 !pipeline().packagesForRepo(push.repo.substr(0, slash), push.repo.substr(slash + 1)).empty());
                             if (known && push.branch == push.defaultBranch) {
                                 reload();
                                 rememberDelivery(delivery);
