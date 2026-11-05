@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <tuple>
 using namespace coreci;
 using namespace coreci::github;
 std::string package(const std::string& name, const std::string& dependency = "") {
@@ -29,28 +30,25 @@ int main() {
         loadDeclarations(
             std::get<DeclarationFile>(location),
             "",
-            "token",
-            [&](Request request, auto done) {
-                CHECK_EQ(request.headers.at("Authorization"), "Bearer token");
-                CHECK_EQ(request.headers.at("X-GitHub-Api-Version"), "2022-11-28");
-                Response response{
-                    200, "{\"default_branch\":\"" + branch + "\",\"full_name\":\"" + repoKey(request.path.substr(7)) + "\"}", {}};
-                if (request.path.find("/contents/") != std::string::npos) {
-                    CHECK_EQ(request.headers.at("Accept"), "application/vnd.github.raw");
-                    CHECK(request.path.ends_with("?ref=" + escape(branch)));
-                    CHECK(request.path.find("/contents/ci%2F") != std::string::npos);
-                    if (request.path.starts_with("/repos/o/registry/")) {
-                        response.body = reg;
-                    } else if (request.path.starts_with("/repos/o/a/")) {
-                        response.body = a;
-                        response.status = status;
-                    } else if (request.path.starts_with("/repos/o/b/")) {
-                        response.body = b;
+            [&](std::string path, bool raw, auto done) {
+                int httpStatus = 200;
+                std::string body = "{\"default_branch\":\"" + branch + "\",\"full_name\":\"" + repoKey(path.substr(7)) + "\"}";
+                if (path.find("/contents/") != std::string::npos) {
+                    CHECK(raw);
+                    CHECK(path.ends_with("?ref=" + escape(branch)));
+                    CHECK(path.find("/contents/ci%2F") != std::string::npos);
+                    if (path.starts_with("/repos/o/registry/")) {
+                        body = reg;
+                    } else if (path.starts_with("/repos/o/a/")) {
+                        body = a;
+                        httpStatus = status;
+                    } else if (path.starts_with("/repos/o/b/")) {
+                        body = b;
                     } else {
                         CHECK(false);
                     }
                 }
-                done(response);
+                done(httpStatus, std::move(body), {});
             },
             [&](auto value) {
                 completed = true;
@@ -181,16 +179,15 @@ int main() {
         CHECK(std::get<Error>(invalid).reason.find("o/registry:<repository>:") != std::string::npos);
     }
     // HTTP completions may arrive in any order. Independent package reads remain independent.
-    std::vector<std::pair<Request, std::function<void(Response)>>> pending;
+    std::vector<std::tuple<std::string, bool, Completion>> pending;
     std::size_t maximumPending = 0;
     int completions = 0;
     std::variant<LoadedDeclarations, Error> asynchronous = Error{"not completed"};
     loadDeclarations(
         std::get<DeclarationFile>(location),
         "",
-        "token",
-        [&](Request request, auto callback) {
-            pending.emplace_back(std::move(request), std::move(callback));
+        [&](std::string path, bool raw, auto callback) {
+            pending.emplace_back(std::move(path), raw, std::move(callback));
             maximumPending = std::max(maximumPending, pending.size());
         },
         [&](auto value) {
@@ -200,13 +197,12 @@ int main() {
     for (unsigned step = 0; !pending.empty() && step < 32; ++step) {
         auto item = std::move(pending.back());
         pending.pop_back();
-        Response response{200, "{\"default_branch\":\"master\",\"full_name\":\"" + repoKey(item.first.path.substr(7)) + "\"}", {}};
-        if (item.first.path.find("/contents/") != std::string::npos) {
-            response.body = item.first.path.starts_with("/repos/o/registry/")
-                                ? registry
-                                : (item.first.path.starts_with("/repos/o/a/") ? package("a") : package("b", "a"));
+        const auto& path = std::get<0>(item);
+        std::string body = "{\"default_branch\":\"master\",\"full_name\":\"" + repoKey(path.substr(7)) + "\"}";
+        if (path.find("/contents/") != std::string::npos) {
+            body = path.starts_with("/repos/o/registry/") ? registry : (path.starts_with("/repos/o/a/") ? package("a") : package("b", "a"));
         }
-        item.second(std::move(response));
+        std::get<2>(item)(200, std::move(body), {});
     }
     CHECK_EQ(completions, 1);
     CHECK(maximumPending >= 2);
@@ -220,21 +216,20 @@ int main() {
     loadDeclarations(
         std::get<DeclarationFile>(registryFile("snodec/REGISTRY:ci/registry.json")),
         "",
-        "token",
-        [&](Request request, auto done) {
-            paths.push_back(request.path);
-            const auto identity = repoKey(request.path);
-            Response response{200, {}, {}};
-            if (request.path.find("/contents/") != std::string::npos) {
-                CHECK(request.path.starts_with("/repos/SNodeC/"));
-                CHECK(request.path.find("/Registry/") != std::string::npos || request.path.find("/snode.c/") != std::string::npos);
-                response.body = identity.starts_with("/repos/snodec/registry/") ? caseRegistry : package("snodec");
+        [&](std::string path, bool, auto done) {
+            paths.push_back(path);
+            const auto identity = repoKey(path);
+            std::string body;
+            if (path.find("/contents/") != std::string::npos) {
+                CHECK(path.starts_with("/repos/SNodeC/"));
+                CHECK(path.find("/Registry/") != std::string::npos || path.find("/snode.c/") != std::string::npos);
+                body = identity.starts_with("/repos/snodec/registry/") ? caseRegistry : package("snodec");
             } else {
                 const std::string name =
                     identity == "/repos/snodec/registry" ? "Registry" : (identity == "/repos/snodec/recipes" ? "Recipes" : "snode.c");
-                response.body = "{\"default_branch\":\"master\",\"full_name\":\"SNodeC/" + name + "\"}";
+                body = "{\"default_branch\":\"master\",\"full_name\":\"SNodeC/" + name + "\"}";
             }
-            done(response);
+            done(200, std::move(body), {});
         },
         [&](auto value) {
             canonical = std::move(value);
@@ -254,9 +249,8 @@ int main() {
     CHECK(statusDot(display).find("SNodeC/snode.c") != std::string::npos);
     const auto commands = display.handle(TagObserved{2, "snodec", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
     REQUIRE(commands.size() == 1);
-    const auto dispatched = dispatch(commands.front(), "https://callback", "token");
-    CHECK_EQ(dispatched.path, "/repos/SNodeC/Recipes/actions/workflows/build.yml/dispatches");
-    CHECK(dispatched.body.find("SNodeC/snode.c") != std::string::npos);
+    CHECK_EQ(dispatchPath(commands.front()), "/repos/SNodeC/Recipes/actions/workflows/build.yml/dispatches");
+    CHECK(dispatchBody(commands.front(), "https://callback").find("SNodeC/snode.c") != std::string::npos);
     // Real source-owned declarations are data only; no distribution interpretation occurs.
     auto real = load(registry, read("snodec-packages.json"), read("mqttsuite-packages.json"));
     REQUIRE(std::holds_alternative<LoadedDeclarations>(real));

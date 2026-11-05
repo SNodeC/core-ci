@@ -86,8 +86,9 @@ int main(int argc, char** argv) {
             const std::string body(req->body.begin(), req->body.end());
             out << req->method << ' ' << req->url << ' ' << body << '\n';
             out.flush();
-            if (req->get("Authorization") != "Bearer smoke-token" ||
-                (req->get("Accept") != "application/vnd.github+json" && req->get("Accept") != "application/vnd.github.raw") ||
+            if (req->get("Authorization") != (req->path.starts_with("/repos/o/") ? "Bearer token" : "Bearer smoke-token") ||
+                req->get("Accept") !=
+                    (req->path.find("/contents/") == std::string::npos ? "application/vnd.github+json" : "application/vnd.github.raw") ||
                 req->get("X-GitHub-Api-Version") != "2022-11-28") {
                 out << "BAD HEADERS\n";
                 res->status(400).send("bad headers");

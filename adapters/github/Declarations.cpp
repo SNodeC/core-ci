@@ -48,7 +48,7 @@ namespace coreci::github {
         }
         struct Load : std::enable_shared_from_this<Load> {
             DeclarationFile file;
-            std::string apiPath, token;
+            std::string apiPath;
             Fetch fetch;
             std::function<void(std::variant<LoadedDeclarations, Error>)> done;
             std::map<std::string, Repo> repositories;
@@ -75,21 +75,14 @@ namespace coreci::github {
                 if (!info) {
                     url += "/contents/" + escape(path) + "?ref=" + escape(target.branch);
                 }
-                Request request{"GET",
-                                url,
-                                {},
-                                {{"Accept", info ? "application/vnd.github+json" : "application/vnd.github.raw"},
-                                 {"Authorization", "Bearer " + token},
-                                 {"X-GitHub-Api-Version", "2022-11-28"},
-                                 {"User-Agent", "core-ci"}}};
-                fetch(std::move(request), [self, target, path, callback, info](Response response) {
+                fetch(std::move(url), !info, [self, target, path, callback, info](int status, std::string body, std::string) {
                     if (!self->done) {
                         // Another request has already failed this whole load.
-                    } else if (response.status != 200) {
-                        self->fail(target.owner + "/" + target.repo, path, "HTTP " + std::to_string(response.status));
+                    } else if (status != 200) {
+                        self->fail(target.owner + "/" + target.repo, path, "HTTP " + std::to_string(status));
                     } else {
                         try {
-                            callback(info ? Json::parse(response.body) : parse(response.body));
+                            callback(info ? Json::parse(body) : parse(body));
                         } catch (const std::exception& error) {
                             self->fail(target.owner + "/" + target.repo, path, error.what());
                         }
@@ -253,13 +246,11 @@ namespace coreci::github {
     }
     void loadDeclarations(const DeclarationFile& registry,
                           const std::string& apiPath,
-                          const std::string& token,
                           Fetch fetch,
                           std::function<void(std::variant<LoadedDeclarations, Error>)> done) {
         auto load = std::make_shared<Load>();
         load->file = registry;
         load->apiPath = apiPath;
-        load->token = token;
         load->fetch = std::move(fetch);
         load->done = std::move(done);
         load->start();

@@ -286,15 +286,8 @@ namespace coreci::github {
         }
         return result;
     }
-    Request dispatch(const Command& command, const std::string& callbackBase, const std::string& token) {
-        Request request{"POST",
-                        {},
-                        {},
-                        {{"Accept", "application/vnd.github+json"},
-                         {"X-GitHub-Api-Version", "2022-11-28"},
-                         {"Authorization", "Bearer " + token},
-                         {"Content-Type", "application/json"},
-                         {"User-Agent", "core-ci"}}};
+    std::string dispatchBody(const Command& command, const std::string& callbackBase) {
+        std::string body;
         std::visit(
             [&](const auto& c) {
                 auto base = callbackBase;
@@ -323,12 +316,18 @@ namespace coreci::github {
                     inputs["build_run_id"] = std::to_string(c.runId);
                     inputs["artifact"] = c.artifact;
                 }
-                request.path = "/repos/" + escape(c.workflow.owner) + "/" + escape(c.workflow.repo) + "/actions/workflows/" +
-                               escape(c.workflow.workflowFile) + "/dispatches";
-                request.body = nlohmann::json{{"ref", c.workflow.branch}, {"inputs", inputs}}.dump();
+                body = nlohmann::json{{"ref", c.workflow.branch}, {"inputs", inputs}}.dump();
             },
             command);
-        return request;
+        return body;
+    }
+    std::string dispatchPath(const Command& command) {
+        return std::visit(
+            [](const auto& c) {
+                return "/repos/" + escape(c.workflow.owner) + "/" + escape(c.workflow.repo) + "/actions/workflows/" +
+                       escape(c.workflow.workflowFile) + "/dispatches";
+            },
+            command);
     }
     std::string EnvironmentTokenProvider::token() const {
         const auto* value = std::getenv("CORECI_GITHUB_TOKEN");

@@ -12,12 +12,14 @@ namespace coreci::github {
         std::unique_ptr<Client> client;
         Client::FlowHandle flow;
         std::unique_ptr<core::timer::Timer> timer;
-        std::function<void(Response)> callback;
+        Completion callback;
         std::function<void()> remove;
-        Request request;
+        std::string path, token;
+        std::optional<std::string> body;
+        bool raw = false;
         Url base;
         bool finished = false, verified = false;
-        void finish(Response response) {
+        void finish(int status = 0, std::string body = {}, std::string link = {}) {
             if (!finished) {
                 finished = true;
                 if (timer) {
@@ -28,7 +30,7 @@ namespace coreci::github {
                 }
                 auto done = std::move(callback);
                 remove();
-                done(std::move(response));
+                done(status, std::move(body), std::move(link));
             }
         }
         void start(const std::string& ca) {
@@ -38,38 +40,34 @@ namespace coreci::github {
                 [weak](const auto& req) {
                     if (const auto self = weak.lock()) {
                         if (self->verified && !self->finished) {
-                            req->method = self->request.method;
-                            req->url = self->request.path;
+                            req->method = self->body ? "POST" : "GET";
+                            req->url = self->path;
                             req->host(self->base.host + ":" + std::to_string(self->base.port));
-                            req->set(self->request.headers);
+                            req->set("Accept", self->raw ? "application/vnd.github.raw" : "application/vnd.github+json");
+                            req->set("X-GitHub-Api-Version", "2022-11-28");
+                            req->set("Authorization", "Bearer " + self->token);
+                            req->set("User-Agent", "core-ci");
+                            if (self->body) {
+                                req->set("Content-Type", "application/json");
+                            }
                             req->set("Connection", "close");
                             req->send(
-                                self->request.body,
+                                self->body.value_or(""),
                                 [weak](const auto&, const auto& res) {
                                     if (const auto e = weak.lock()) {
-                                        Response response;
+                                        int responseStatus = 0;
                                         const auto& status = res->statusCode;
-                                        const auto parsed = std::from_chars(status.data(), status.data() + status.size(), response.status);
+                                        const auto parsed = std::from_chars(status.data(), status.data() + status.size(), responseStatus);
                                         if (status.size() != 3 || status.front() < '0' || status.front() > '9' ||
                                             parsed.ec != std::errc{} || parsed.ptr != status.data() + status.size()) {
-                                            response.status = 0;
+                                            responseStatus = 0;
                                         }
-                                        response.body.assign(res->body.begin(), res->body.end());
-                                        for (const auto& [key, value] : res->headers) {
-                                            std::string name = key;
-                                            for (char& c : name) {
-                                                if (c >= 'A' && c <= 'Z') {
-                                                    c = static_cast<char>(c - 'A' + 'a');
-                                                }
-                                            }
-                                            response.headers[name] = value;
-                                        }
-                                        e->finish(std::move(response));
+                                        e->finish(responseStatus, std::string(res->body.begin(), res->body.end()), res->get("Link"));
                                     }
                                 },
                                 [weak](const auto&, const auto&) {
                                     if (const auto e = weak.lock()) {
-                                        e->finish({});
+                                        e->finish();
                                     }
                                 });
                         }
@@ -77,7 +75,7 @@ namespace coreci::github {
                 },
                 [weak](const auto&) {
                     if (const auto e = weak.lock()) {
-                        e->finish({});
+                        e->finish();
                     }
                 });
             client->getConfig()->setRetry(false);
@@ -97,21 +95,21 @@ namespace coreci::github {
                     X509_free(certificate);
                     if (!self->verified) {
                         connection->close();
-                        self->finish({});
+                        self->finish();
                     }
                 }
             });
             timer = std::make_unique<core::timer::Timer>(core::timer::Timer::singleshotTimer(
                 [weak] {
                     if (const auto self = weak.lock()) {
-                        self->finish({});
+                        self->finish();
                     }
                 },
                 30));
             flow = client->connect(base.host, base.port, [weak](const auto&, const auto& state) {
                 if (state != core::socket::State::OK) {
                     if (const auto self = weak.lock()) {
-                        self->finish({});
+                        self->finish();
                     }
                 }
             });
@@ -133,10 +131,13 @@ namespace coreci::github {
             }
         }
     }
-    void HttpClient::request(Request request, std::function<void(Response)> done) {
+    void HttpClient::request(std::string path, std::string token, Completion done, std::optional<std::string> body, bool raw) {
         auto e = std::make_shared<Exchange>();
         e->base = base;
-        e->request = std::move(request);
+        e->path = std::move(path);
+        e->token = std::move(token);
+        e->body = std::move(body);
+        e->raw = raw;
         e->callback = std::move(done);
         e->remove = [this, weak = std::weak_ptr<Exchange>(e)] {
             if (const auto item = weak.lock()) {
