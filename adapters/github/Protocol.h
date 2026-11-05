@@ -28,6 +28,7 @@ namespace coreci::github {
     std::variant<Event, Error, std::monostate> report(const std::string& buildId, const Form& values, std::int64_t at);
     struct Push {
         std::string repo, tag, sha;
+        std::string branch = {}, defaultBranch = {};
     };
     std::variant<Push, Error, std::monostate> webhook(const std::string& body, const std::string& event);
     struct Tag {

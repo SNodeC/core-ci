@@ -29,6 +29,7 @@ foreach(
     S08_WaitingTag
     S09_Validation
     S10_Timeouts
+    S15_GraphChanged
     I_RandomizedInvariants
 )
     add_executable(${scenario} tests/${scenario}.cpp)
@@ -37,6 +38,7 @@ foreach(
     set_tests_properties(${scenario} PROPERTIES LABELS core)
 endforeach()
 target_link_libraries(I_RandomizedInvariants PRIVATE coreci_persistence)
+target_link_libraries(S15_GraphChanged PRIVATE coreci_persistence)
 set_tests_properties(
     I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
 )
@@ -53,8 +55,9 @@ if(CORECI_WITH_SNODEC)
     )
     find_package(OpenSSL REQUIRED)
     add_library(
-        coreci_github adapters/github/Protocol.cpp
-                      adapters/github/HttpClient.cpp
+        coreci_github
+        adapters/github/Protocol.cpp adapters/github/HttpClient.cpp
+        adapters/github/Declarations.cpp
     )
     target_link_libraries(
         coreci_github
@@ -66,14 +69,8 @@ if(CORECI_WITH_SNODEC)
         coreci_app PUBLIC coreci_github coreci_mariadb
                           snodec::http-server-express-tls-in
     )
-    add_executable(A_Pipeline tests/A_Pipeline.cpp pipeline/Pipeline.cpp)
-    target_link_libraries(A_Pipeline PRIVATE coreci_core)
-    add_test(NAME A_Pipeline COMMAND A_Pipeline)
-    set_tests_properties(A_Pipeline PROPERTIES LABELS adapters)
-    add_executable(core-ci app/main.cpp pipeline/Pipeline.cpp)
+    add_executable(core-ci app/main.cpp)
     target_link_libraries(core-ci PRIVATE coreci_app)
-    add_executable(core-ci-smoke tests/core-ci-smoke.cpp)
-    target_link_libraries(core-ci-smoke PRIVATE coreci_app)
     add_executable(coreci-reset-store tests/ResetStore.cpp)
     target_link_libraries(coreci-reset-store PRIVATE coreci_mariadb)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -100,15 +97,17 @@ if(CORECI_WITH_SNODEC)
         coreci-fake-github PRIVATE coreci_core
                                    snodec::http-server-express-tls-in
     )
-    foreach(scenario A_WebhookHmac A_CallbackHmac A_DispatchRequest A_TagPages)
+    foreach(scenario A_WebhookHmac A_CallbackHmac A_DispatchRequest A_TagPages
+                     S16_Declarations
+    )
         add_executable(${scenario} tests/${scenario}.cpp)
         target_link_libraries(${scenario} PRIVATE coreci_github)
         add_test(NAME ${scenario} COMMAND ${scenario})
         set_tests_properties(${scenario} PROPERTIES LABELS adapters)
     endforeach()
-    set_target_properties(
-        core-ci-smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                 ${CMAKE_BINARY_DIR}/tests
+    target_compile_definitions(
+        S16_Declarations
+        PRIVATE CORECI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
     )
     set_property(
         DIRECTORY
@@ -148,8 +147,6 @@ file(
     adapters/github/*.cpp
     app/*.h
     app/*.cpp
-    pipeline/*.h
-    pipeline/*.cpp
     adapters/mariadb/*.h
     adapters/mariadb/*.cpp
     tests/*.h

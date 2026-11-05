@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include "adapters/github/Declarations.h"
 #include "adapters/github/HttpClient.h"
 #include "adapters/mariadb/MariaDBEventStore.h"
 #include "core/Status.h"
@@ -75,10 +76,10 @@ namespace coreci::app {
         }
         class Application {
         public:
-            explicit Application(Pipeline p)
-                : pipeline(std::move(p))
-                , server("coreci") {
-                const std::map<std::string, std::string> defaults{{"callback-base-url", ""},
+            Application()
+                : server("coreci") {
+                const std::map<std::string, std::string> defaults{{"registry", ""},
+                                                                  {"callback-base-url", ""},
                                                                   {"github-api-url", "https://api.github.com"},
                                                                   {"github-ca-cert", ""},
                                                                   {"db-host", "localhost"},
@@ -139,6 +140,12 @@ namespace coreci::app {
                         invalid(key, valid);
                     }
                 }
+                const auto registry = gh::registryFile(get("registry"));
+                if (std::holds_alternative<gh::Error>(registry)) {
+                    invalid("registry", valid);
+                } else {
+                    registryDefinition = std::get<gh::DeclarationFile>(registry);
+                }
                 base = gh::httpsUrl(get("github-api-url"));
                 if (base) {
                     while (!base->path.empty() && base->path.back() == '/') {
@@ -182,8 +189,7 @@ namespace coreci::app {
                     queue = std::make_unique<ps::EventQueue>(
                         *store,
                         [this] {
-                            return Engine(pipeline,
-                                          {buildTimeout,
+                            return Engine({buildTimeout,
                                            publishTimeout,
                                            static_cast<unsigned>(attempts),
                                            concurrent == 0 ? std::nullopt : std::optional<std::size_t>(concurrent)});
@@ -243,7 +249,7 @@ namespace coreci::app {
                             listening = true;
                             server.listen([this](const auto&, const auto& state) {
                                 if (state == core::socket::State::OK) {
-                                    reconcile();
+                                    reload();
                                     ticks = std::make_unique<core::timer::Timer>(core::timer::Timer::intervalTimer(
                                         [this] {
                                             tick();
@@ -251,7 +257,7 @@ namespace coreci::app {
                                         30));
                                     reconcileTimer = std::make_unique<core::timer::Timer>(core::timer::Timer::intervalTimer(
                                         [this] {
-                                            reconcile();
+                                            reload();
                                         },
                                         static_cast<double>(interval)));
                                 } else {
@@ -288,7 +294,14 @@ namespace coreci::app {
                 }
             }
             void dispatch(const Command& command) {
-                if (queue->engine()) {
+                const auto classification = std::visit(
+                    [this](const auto& c) -> Classification {
+                        constexpr auto kind = std::is_same_v<std::decay_t<decltype(c)>, DispatchBuild> ? Kind::Build : Kind::Publish;
+                        return queue->engine() ? queue->engine()->classify(DispatchAccepted{0, c.buildId, kind, c.attempt})
+                                               : Classification{Ignore{"recovering"}};
+                    },
+                    command);
+                if (std::holds_alternative<Accept>(classification)) {
                     auto request = gh::dispatch(command, get("callback-base-url"), token.token());
                     request.path = base->path + request.path;
                     http->request(std::move(request), [this, command](gh::Response response) {
@@ -310,7 +323,7 @@ namespace coreci::app {
                         }
                     });
                 } else {
-                    std::cerr << "dispatch deferred to Resumed during recovery\n";
+                    std::cerr << "dispatch skipped: stale command or recovery\n";
                 }
             }
             void submit(Event event, const Res& res) {
@@ -332,7 +345,8 @@ namespace coreci::app {
                 const bool retryUnit = std::regex_match(path, match, std::regex("^/api/v1/units/([^/]+)/([^/]+)/retry$"));
                 const bool hook = path == "/api/v1/github/webhook", reconcileRoute = path == "/api/v1/reconcile";
                 const bool status = path == "/api/v1/status", dot = path == "/api/v1/graph.dot";
-                const bool known = hook || report || retryUnit || reconcileRoute || status || dot;
+                const bool reloadRoute = path == "/api/v1/reload";
+                const bool known = hook || report || retryUnit || reconcileRoute || reloadRoute || status || dot;
                 const bool oversized = !hook && req->body.size() > 64U * 1024U;
                 const std::string body = oversized ? std::string{} : std::string(req->body.begin(), req->body.end());
                 const auto at = now();
@@ -346,7 +360,7 @@ namespace coreci::app {
                                                   req->get("X-CoreCI-Timestamp"),
                                                   req->get("X-CoreCI-Signature-256"),
                                                   at);
-                    } else if (retryUnit || reconcileRoute) {
+                    } else if (retryUnit || reconcileRoute || reloadRoute) {
                         const auto expected = "Bearer " + environment("CORECI_ADMIN_TOKEN"), supplied = req->get("Authorization");
                         auth = supplied.size() == expected.size() && CRYPTO_memcmp(supplied.data(), expected.data(), expected.size()) == 0;
                     }
@@ -363,10 +377,15 @@ namespace coreci::app {
                     if (queue->engine()) {
                         res->status(200)
                             .set("Content-Type", dot ? "text/vnd.graphviz" : "text/plain")
-                            .send(dot ? statusDot(*queue->engine()) : statusText(*queue->engine()));
+                            .send(dot ? statusDot(*queue->engine())
+                                      : (loadError.empty() ? "" : loadError + "\n") + statusText(*queue->engine()));
                     } else {
                         answer(res, 503, "unavailable");
                     }
+                } else if (reloadRoute) {
+                    const bool running = loading;
+                    reload();
+                    answer(res, 202, running ? "already running" : "started");
                 } else if (reconcileRoute) {
                     const bool running = reconciling;
                     reconcile();
@@ -400,6 +419,12 @@ namespace coreci::app {
                     webhook(req, res, body);
                 }
             }
+            void rememberDelivery(const std::string& delivery) {
+                deliveries.push_back(delivery);
+                if (deliveries.size() > 1000) {
+                    deliveries.pop_front();
+                }
+            }
             void webhook(const Req& req, const Res& res, const std::string& body) {
                 const auto event = req->get("X-GitHub-Event"), delivery = req->get("X-GitHub-Delivery");
                 if (event.empty() || delivery.empty() || !contentType(req, "application/json")) {
@@ -417,39 +442,53 @@ namespace coreci::app {
                     } else {
                         const auto push = std::get<gh::Push>(parsed);
                         const auto slash = push.repo.find('/');
-                        const auto packages = slash == std::string::npos
-                                                  ? std::vector<std::string>{}
-                                                  : pipeline.packagesForRepo(push.repo.substr(0, slash), push.repo.substr(slash + 1));
-                        if (packages.empty()) {
-                            answer(res, 202, "ignored");
+                        const auto repository = repoKey(push.repo);
+                        if (!push.branch.empty()) {
+                            const bool known =
+                                repository == registryDefinition.owner + "/" + registryDefinition.repo ||
+                                (queue->engine() && pipeline().repositories().contains(
+                                                        {repoKey(push.repo.substr(0, slash)), repoKey(push.repo.substr(slash + 1))}));
+                            if (known && push.branch == push.defaultBranch) {
+                                reload();
+                                rememberDelivery(delivery);
+                                answer(res, 202, "reload scheduled");
+                            } else {
+                                answer(res, 202, "ignored");
+                            }
+                        } else if (!queue->engine()) {
+                            answer(res, 503, "unavailable");
                         } else {
-                            struct Batch {
-                                std::vector<std::string> lines;
-                                std::size_t left;
-                                int code = 200;
-                            };
-                            const auto batch =
-                                std::make_shared<Batch>(Batch{std::vector<std::string>(packages.size()), packages.size(), 200});
-                            for (std::size_t i = 0; i < packages.size(); ++i) {
-                                queue->enqueue(TagObserved{now(), packages[i], push.tag, push.sha, Origin::Webhook},
-                                               [this, res, batch, delivery, p = packages[i], i](const auto& result) {
-                                                   const auto [code, text] = response(result);
-                                                   batch->code = std::max(batch->code, code);
-                                                   batch->lines[i] = p + ": " + text;
-                                                   if (--batch->left == 0) {
-                                                       if (batch->code == 200) {
-                                                           deliveries.push_back(delivery);
-                                                           if (deliveries.size() > 1000) {
-                                                               deliveries.pop_front();
+                            const auto packages = slash == std::string::npos
+                                                      ? std::vector<std::string>{}
+                                                      : pipeline().packagesForRepo(push.repo.substr(0, slash), push.repo.substr(slash + 1));
+                            if (packages.empty()) {
+                                answer(res, 202, "ignored");
+                            } else {
+                                struct Batch {
+                                    std::vector<std::string> lines;
+                                    std::size_t left;
+                                    int code = 200;
+                                };
+                                const auto batch =
+                                    std::make_shared<Batch>(Batch{std::vector<std::string>(packages.size()), packages.size(), 200});
+                                for (std::size_t i = 0; i < packages.size(); ++i) {
+                                    queue->enqueue(TagObserved{now(), packages[i], push.tag, push.sha, Origin::Webhook},
+                                                   [this, res, batch, delivery, p = packages[i], i](const auto& result) {
+                                                       const auto [code, text] = response(result);
+                                                       batch->code = std::max(batch->code, code);
+                                                       batch->lines[i] = p + ": " + text;
+                                                       if (--batch->left == 0) {
+                                                           if (batch->code == 200) {
+                                                               rememberDelivery(delivery);
                                                            }
+                                                           std::string text;
+                                                           for (const auto& line : batch->lines) {
+                                                               text += line + '\n';
+                                                           }
+                                                           answer(res, batch->code, text);
                                                        }
-                                                       std::string text;
-                                                       for (const auto& line : batch->lines) {
-                                                           text += line + '\n';
-                                                       }
-                                                       answer(res, batch->code, text);
-                                                   }
-                                               });
+                                                   });
+                                }
                             }
                         }
                     }
@@ -458,17 +497,14 @@ namespace coreci::app {
             struct Round {
                 std::size_t remaining;
             };
-            bool reconcile() {
-                const bool started = !reconciling;
+            bool reconcile(bool afterLoad = false) {
+                const bool started = (!reconciling || afterLoad) && queue->engine();
                 if (started) {
-                    reconciling = true;
-                    std::set<std::pair<std::string, std::string>> repos;
-                    for (const auto& [name, p] : pipeline.packages()) {
-                        repos.emplace(p.sourceRepo.owner, p.sourceRepo.repo);
-                    }
+                    ++reconciling;
+                    const auto repos = pipeline().repositories();
                     const auto round = std::make_shared<Round>(Round{repos.size()});
                     if (repos.empty()) {
-                        reconciling = false;
+                        --reconciling;
                     }
                     for (const auto& [owner, repo] : repos) {
                         page(owner,
@@ -531,15 +567,15 @@ namespace coreci::app {
                                   if (valid && !next.empty()) {
                                       page(owner, repo, next, std::move(collected), std::move(visited), round);
                                   } else {
-                                      if (valid) {
-                                          for (const auto& package : pipeline.packagesForRepo(owner, repo)) {
+                                      if (valid && queue->engine()) {
+                                          for (const auto& package : pipeline().packagesForRepo(owner, repo)) {
                                               std::optional<gh::Tag> best;
                                               for (const auto& tag : collected) {
                                                   const auto version = Version::parse(tag.tag);
                                                   const auto normalized =
                                                       ps::normalize(TagObserved{now(), package, tag.tag, tag.sha, Origin::Reconcile});
                                                   if (version && std::holds_alternative<Event>(normalized) &&
-                                                      (!version->prerelease() || pipeline.packages().at(package).acceptPrereleases) &&
+                                                      (!version->prerelease() || pipeline().packages().at(package).acceptPrereleases) &&
                                                       (!best || *version > *Version::parse(best->tag) ||
                                                        (*version == *Version::parse(best->tag) && tag.tag < best->tag))) {
                                                       best = tag;
@@ -555,12 +591,51 @@ namespace coreci::app {
                                           std::cerr << "tag reconciliation aborted for " << owner << '/' << repo << '\n';
                                       }
                                       if (--round->remaining == 0) {
-                                          reconciling = false;
+                                          --reconciling;
                                       }
                                   }
                               });
             }
-            Pipeline pipeline;
+            const Pipeline& pipeline() const {
+                return queue->engine()->pipeline();
+            }
+            void finishLoad() {
+                loading = false;
+                reconcile(true);
+                if (reloadPending) {
+                    reloadPending = false;
+                    reload();
+                }
+            }
+            void reload() {
+                if (loading) {
+                    reloadPending = true;
+                } else {
+                    loading = true;
+                    gh::loadDeclarations(
+                        registryDefinition,
+                        base->path,
+                        token.token(),
+                        [this](gh::Request request, auto done) {
+                            http->request(std::move(request), std::move(done));
+                        },
+                        [this](auto result) {
+                            if (std::holds_alternative<gh::Error>(result)) {
+                                loadError = std::get<gh::Error>(result).reason;
+                                std::cerr << loadError << '\n';
+                                finishLoad();
+                            } else {
+                                loadError.clear();
+                                queue->enqueue(GraphChanged{now(), std::get<gh::LoadedDeclarations>(result).pipeline}, [this](const auto&) {
+                                    finishLoad();
+                                });
+                            }
+                        });
+                }
+            }
+            gh::DeclarationFile registryDefinition;
+            std::string loadError;
+            bool loading = false, reloadPending = false;
             Server server;
             std::map<std::string, CLI::Option*> options;
             std::optional<gh::Url> base;
@@ -572,11 +647,12 @@ namespace coreci::app {
             std::deque<std::string> deliveries;
             std::int64_t buildTimeout = 0, publishTimeout = 0, attempts = 0, concurrent = 0, interval = 0;
             double recoveryDelay = 1;
-            bool listening = false, fatal = false, reconciling = false, tickPending = false;
+            std::size_t reconciling = 0;
+            bool listening = false, fatal = false, tickPending = false;
         };
     } // namespace
-    int run(int argc, char** argv, Pipeline pipeline) {
-        Application application(std::move(pipeline));
+    int run(int argc, char** argv) {
+        Application application;
         return application.start(argc, argv);
     }
 } // namespace coreci::app

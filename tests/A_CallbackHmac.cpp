@@ -16,9 +16,9 @@ int main() {
     CHECK(!verifyCallback("key", body, "-9223372036854775808", signature, 1000));
     const auto decoded = form(body);
     REQUIRE(std::holds_alternative<Form>(decoded));
-    const auto event = report("a.t.1.0.0%2Bmeta.r1", std::get<Form>(decoded), 1000);
+    const auto event = report("a~t~1.0.0%2Bmeta~r1", std::get<Form>(decoded), 1000);
     REQUIRE(std::holds_alternative<Event>(event));
-    CHECK_EQ(std::get<BuildStarted>(std::get<Event>(event)).buildId, "a.t.1.0.0+meta.r1");
+    CHECK_EQ(std::get<BuildStarted>(std::get<Event>(event)).buildId, "a~t~1.0.0+meta~r1");
     CHECK(std::holds_alternative<Event>(persistence::normalize(std::get<Event>(event))));
     for (const auto& s : {"x=%", "x=%xx", "x=1&x=2", "x", "=value"}) {
         CHECK(std::holds_alternative<Error>(form(s)));

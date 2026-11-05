@@ -258,6 +258,12 @@ namespace coreci::github {
                 const auto ref = j.at("ref").get<std::string>();
                 if (ref.starts_with("refs/tags/") && j.at("created").get<bool>() && !j.at("deleted").get<bool>()) {
                     output = Push{j.at("repository").at("full_name").get<std::string>(), ref.substr(10), j.at("after").get<std::string>()};
+                } else if (ref.starts_with("refs/heads/") && !j.at("deleted").get<bool>()) {
+                    output = Push{j.at("repository").at("full_name").get<std::string>(),
+                                  {},
+                                  {},
+                                  ref.substr(11),
+                                  j.at("repository").at("default_branch").get<std::string>()};
                 }
             }
         } catch (const nlohmann::json::exception&) {

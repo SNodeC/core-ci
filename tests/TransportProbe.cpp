@@ -9,7 +9,7 @@ int main(int argc, char** argv) {
         if (base) {
             core::SNodeC::init(1, argv);
             coreci::github::HttpClient client(*base, argv[2]);
-            const coreci::DispatchBuild b{"probe.t.1.0.0.r1",
+            const coreci::DispatchBuild b{"probe~t~1.0.0~r1",
                                           1,
                                           "probe",
                                           {"owner", "probe"},
