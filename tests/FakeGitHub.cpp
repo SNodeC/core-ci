@@ -20,7 +20,8 @@ int main(int argc, char** argv) {
     server.getConfig()->setCertKey(key->as<std::string>());
     server.getConfig()->Local::setHost("127.0.0.1")->setPort(port->as<std::uint16_t>());
     server.getConfig()->setReuseAddress();
-    std::size_t dispatches = 0;
+    std::size_t dispatches = 0, statusDispatches = 0;
+    std::vector<std::pair<std::size_t, std::shared_ptr<express::Response>>> statusWaiters;
     bool tagPages = false, holdFile = false, holdTag = false;
     std::shared_ptr<express::Response> heldTag, tagWaiter;
     std::shared_ptr<express::Response> heldFile, fileWaiter;
@@ -31,7 +32,14 @@ int main(int argc, char** argv) {
     std::vector<std::shared_ptr<express::Response>> held;
     std::vector<std::pair<std::size_t, std::shared_ptr<express::Response>>> waiters;
     server.use([&](const auto& req, const auto& res) {
-        if (req->path == "/hold-tag") {
+        if (req->path == "/wait-status") {
+            const auto wanted = static_cast<std::size_t>(std::stoul(req->query("count")));
+            if (statusDispatches >= wanted) {
+                res->send("ready");
+            } else {
+                statusWaiters.emplace_back(wanted, res);
+            }
+        } else if (req->path == "/hold-tag") {
             holdTag = true;
             res->send("held");
         } else if (req->path == "/wait-tag") {
@@ -170,7 +178,18 @@ int main(int argc, char** argv) {
                     }
                 }
             } else if (req->method == "POST" && req->path.ends_with("/dispatches") && req->get("Content-Type") == "application/json") {
-                ++dispatches;
+                if (req->path.ends_with("/status.yml/dispatches")) {
+                    ++statusDispatches;
+                    std::erase_if(statusWaiters, [&](const auto& waiter) {
+                        const bool ready = statusDispatches >= waiter.first;
+                        if (ready) {
+                            waiter.second->send("ready");
+                        }
+                        return ready;
+                    });
+                } else {
+                    ++dispatches;
+                }
                 auto found = holds.end();
                 for (auto i = holds.begin(); i != holds.end(); ++i) {
                     if (body.find("\"build_id\":\"" + i->first + "\"") != std::string::npos &&

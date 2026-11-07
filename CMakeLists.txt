@@ -52,6 +52,17 @@ foreach(scenario S11_Replay S12_WriteAhead S13_EventRow S14_EventSql)
     add_test(NAME ${scenario} COMMAND ${scenario})
     set_tests_properties(${scenario} PROPERTIES LABELS persistence)
 endforeach()
+add_executable(S19_StatusJson tests/S19_StatusJson.cpp app/StatusJson.cpp)
+target_link_libraries(S19_StatusJson PRIVATE coreci_persistence)
+add_test(NAME S19_StatusJson COMMAND S19_StatusJson)
+set_tests_properties(S19_StatusJson PROPERTIES LABELS "core;persistence")
+add_executable(
+    S20_PresentationDispatch tests/S20_PresentationDispatch.cpp
+                             app/StatusJson.cpp
+)
+target_link_libraries(S20_PresentationDispatch PRIVATE coreci_core)
+add_test(NAME S20_PresentationDispatch COMMAND S20_PresentationDispatch)
+set_tests_properties(S20_PresentationDispatch PROPERTIES LABELS adapters)
 if(CORECI_WITH_SNODEC)
     find_package(
         snodec REQUIRED COMPONENTS db-mariadb http-client net-in-stream-tls
@@ -68,13 +79,15 @@ if(CORECI_WITH_SNODEC)
         PUBLIC coreci_persistence snodec::http-client snodec::net-in-stream-tls
                OpenSSL::SSL OpenSSL::Crypto
     )
-    add_library(coreci_app app/App.cpp)
+    add_library(coreci_app app/App.cpp app/StatusJson.cpp)
     target_link_libraries(
         coreci_app PUBLIC coreci_github coreci_mariadb
                           snodec::http-server-express-tls-in
     )
     add_executable(core-ci app/main.cpp)
     target_link_libraries(core-ci PRIVATE coreci_app)
+    add_executable(coreci-interrupt-store tests/InterruptStore.cpp)
+    target_link_libraries(coreci-interrupt-store PRIVATE coreci_mariadb)
     add_executable(coreci-reset-store tests/ResetStore.cpp)
     target_link_libraries(coreci-reset-store PRIVATE coreci_mariadb)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)

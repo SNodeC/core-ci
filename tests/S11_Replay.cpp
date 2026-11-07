@@ -41,7 +41,7 @@ int apply(Engine& e, Event event, std::vector<Command> expected = {}) {
     if (store.rows().empty()) {
         store.append(
             GraphChanged{100, e.pipeline()},
-            [] {
+            [](std::uint64_t) {
             },
             [](const auto&) {
                 CHECK(false);
@@ -54,7 +54,7 @@ int apply(Engine& e, Event event, std::vector<Command> expected = {}) {
     if (std::holds_alternative<Accept>(e.classify(canonical))) {
         store.append(
             canonical,
-            [&] {
+            [&](std::uint64_t) {
                 CHECK(e.handle(canonical) == expected);
             },
             [](const auto&) {
@@ -392,7 +392,7 @@ int main() {
     bool failed = false;
     gaps.append(
         Resumed{1},
-        [] {
+        [](std::uint64_t) {
             CHECK(false);
         },
         [&](const auto&) {
@@ -401,7 +401,7 @@ int main() {
     CHECK(failed);
     gaps.append(
         Resumed{2},
-        [] {
+        [](std::uint64_t) {
         },
         [](const auto&) {
             CHECK(false);

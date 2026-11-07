@@ -190,7 +190,9 @@ namespace coreci::mariadb {
                 fail({StoreError::Kind::Unavailable, message});
             });
     }
-    void MariaDBEventStore::append(const Event& event, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) {
+    void MariaDBEventStore::append(const Event& event,
+                                   std::function<void(std::uint64_t)> onCommitted,
+                                   std::function<void(const std::string&)> onError) {
         const auto sql = persistence::insertSql(event);
         if (!ready) {
             onError("MariaDB session requires open before append");
@@ -200,35 +202,57 @@ namespace coreci::mariadb {
             onFailure = [onError](const StoreError& error) {
                 onError(error.message);
             };
-            const auto committed = [this, onCommitted] {
+            const auto seq = std::make_shared<std::uint64_t>(0);
+            const auto committed = [this, onCommitted, seq] {
                 onFailure = {};
-                onCommitted();
+                onCommitted(*seq);
+            };
+            const auto sequence = [this, seq](std::function<void()> done) {
+                client.query(
+                    "SELECT LAST_INSERT_ID()",
+                    [this, seq, done](const MYSQL_ROW row) {
+                        if (row != nullptr) {
+                            if (row[0] == nullptr || !number(std::string(row[0]), *seq) || *seq == 0) {
+                                fail({StoreError::Kind::Unavailable, "invalid committed event seq"});
+                            }
+                        } else if (ready) {
+                            done();
+                        }
+                    },
+                    [this](const std::string& error, unsigned) {
+                        fail({StoreError::Kind::Unavailable, error});
+                    });
             };
             if (std::holds_alternative<GraphChanged>(event)) {
                 auto statements = std::make_shared<std::vector<std::string>>();
-                statements->push_back(std::get<std::string>(sql));
                 const auto row = std::get<persistence::EventRow>(persistence::encode(event));
                 const auto graphSql = persistence::graphInsertSql(*row.graph);
                 statements->insert(statements->end(), graphSql.begin(), graphSql.end());
                 client.startTransactions(
-                    [this, statements, committed] {
-                        insertGraph(statements, 0, [this, committed] {
-                            client.commit(
-                                [this, committed] {
-                                    client.endTransactions(committed, [this](const auto& error, auto) {
-                                        fail({StoreError::Kind::Unavailable, error});
-                                    });
-                                },
-                                [this](const auto& error, auto) {
-                                    fail({StoreError::Kind::Unavailable, error});
+                    [this, statements, committed, sequence, eventSql = std::get<std::string>(sql)] {
+                        execute(eventSql, [this, statements, committed, sequence] {
+                            sequence([this, statements, committed] {
+                                insertGraph(statements, 0, [this, committed] {
+                                    client.commit(
+                                        [this, committed] {
+                                            client.endTransactions(committed, [this](const auto& error, auto) {
+                                                fail({StoreError::Kind::Unavailable, error});
+                                            });
+                                        },
+                                        [this](const auto& error, auto) {
+                                            fail({StoreError::Kind::Unavailable, error});
+                                        });
                                 });
+                            });
                         });
                     },
                     [this](const auto& error, auto) {
                         fail({StoreError::Kind::Unavailable, error});
                     });
             } else {
-                execute(std::get<std::string>(sql), committed);
+                execute(std::get<std::string>(sql), [sequence, committed] {
+                    sequence(committed);
+                });
             }
         }
     }

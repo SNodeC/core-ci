@@ -17,7 +17,7 @@ namespace coreci::mariadb {
         void setConnectionLost(std::function<void(const std::string&)> callback);
         // The event queue serializes operations. Keep this store alive through its callbacks.
         void open(std::function<void()> onReady, std::function<void(const StoreError&)> onError) override;
-        void append(const Event&, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) override;
+        void append(const Event&, std::function<void(std::uint64_t)> onCommitted, std::function<void(const std::string&)> onError) override;
         void loadAll(std::function<void(std::uint64_t, const Event&)> onEvent,
                      std::function<void()> onDone,
                      std::function<void(const StoreError&)> onError) override;

@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include "Presentation.h"
+#include "StatusJson.h"
 #include "adapters/github/Declarations.h"
 #include "adapters/github/HttpClient.h"
 #include "adapters/mariadb/MariaDBEventStore.h"
@@ -92,6 +94,7 @@ namespace coreci::app {
                                                                   {"max-dispatch-attempts", "8"},
                                                                   {"max-concurrent-builds", "0"},
                                                                   {"reconcile-interval", "900"},
+                                                                  {"status-interval", "60"},
                                                                   {"listen-address", "0.0.0.0"},
                                                                   {"listen-port", "8443"},
                                                                   {"tls-cert", ""},
@@ -167,6 +170,7 @@ namespace coreci::app {
                 attempts = number("max-dispatch-attempts", 1, 20, valid);
                 concurrent = number("max-concurrent-builds", 0, 1000, valid);
                 interval = number("reconcile-interval", 60, 86400, valid);
+                statusInterval = number("status-interval", 30, 3600, valid);
                 const auto port = number("listen-port", 1, 65535, valid), dbPort = number("db-port", 0, 65535, valid);
                 int result = 1;
                 if (valid) {
@@ -206,6 +210,12 @@ namespace coreci::app {
                         },
                         [](auto seq, const auto&) {
                             std::cerr << "replay ignored seq " << seq << '\n';
+                        },
+                        [this](auto seq, const Event&, const Engine& engine) {
+                            generation = seq;
+                            if (queue->engine()) {
+                                observePresentation(engine);
+                            }
                         });
                     store->setConnectionLost([this](const auto& reason) {
                         queue->recover(reason);
@@ -240,6 +250,7 @@ namespace coreci::app {
                 queue->start(
                     [this] {
                         recoveryDelay = 1;
+                        observePresentation(*queue->engine());
                         if (retry) {
                             retry->cancel();
                         }
@@ -284,11 +295,37 @@ namespace coreci::app {
             void tick() {
                 const auto* engine = queue->engine();
                 const auto at = now();
+                if (engine) {
+                    dispatchPresentations(at);
+                }
                 if (engine && !tickPending && engine->nextDeadline() && at >= *engine->nextDeadline()) {
                     tickPending = true;
                     queue->enqueue(Tick{at}, [this](const auto&) {
                         tickPending = false;
                     });
+                }
+            }
+            void observePresentation(const Engine& engine) {
+                std::map<std::string, StatusSnapshot> snapshots;
+                for (const auto& [feed, writer] : presentations) {
+                    if (engine.pipeline().feeds().contains(feed)) {
+                        snapshots.emplace(feed, statusSnapshot(engine, feed));
+                    }
+                }
+                presentation.observe(snapshots);
+            }
+            void dispatchPresentations(std::int64_t at) {
+                for (const auto& feed : presentation.due(at, statusInterval)) {
+                    const auto& writer = presentations.at(feed);
+                    const auto path = base->path + "/repos/" + gh::escape(writer.owner) + "/" + gh::escape(writer.repo) +
+                                      "/actions/workflows/" + gh::escape(writer.workflowFile) + "/dispatches";
+                    http->request(
+                        path,
+                        token.token(),
+                        [this, feed](int status, std::string, std::string) {
+                            presentation.complete(feed, status == 204);
+                        },
+                        gh::presentationBody(writer, feed, generation));
                 }
             }
             void dispatch(const Command& command) {
@@ -401,6 +438,17 @@ namespace coreci::app {
                     answer(res, 202, running ? "already running" : "started");
                 });
                 server.all("/api/v1/reconcile", size, method);
+                server.head("/api/v1/status.json", size, method);
+                server.get("/api/v1/status.json", size, [this](const Req&, const Res& res) {
+                    if (queue->engine()) {
+                        res->status(200)
+                            .set("Content-Type", "application/json")
+                            .send(statusJson(statusSnapshot(*queue->engine()), generation));
+                    } else {
+                        answer(res, 503, "unavailable");
+                    }
+                });
+                server.all("/api/v1/status.json", size, method);
                 server.head("/api/v1/status", size, method);
                 server.get("/api/v1/status", size, [this](const Req&, const Res& res) {
                     showStatus(res, false);
@@ -650,13 +698,22 @@ namespace coreci::app {
                                 finishLoad();
                             } else {
                                 loadError.clear();
-                                queue->enqueue(GraphChanged{now(), std::get<gh::LoadedDeclarations>(result).pipeline}, [this](const auto&) {
+                                const auto loaded = std::get<gh::LoadedDeclarations>(result);
+                                queue->enqueue(GraphChanged{now(), loaded.pipeline}, [this, loaded](const auto&) {
+                                    if (queue->engine() && pipeline() == loaded.pipeline) {
+                                        presentations = loaded.presentations;
+                                        observePresentation(*queue->engine());
+                                    }
                                     finishLoad();
                                 });
                             }
                         });
                 }
             }
+            std::uint64_t generation = 0;
+            std::int64_t statusInterval = 60;
+            Presentation presentation;
+            std::map<std::string, Workflow> presentations;
             gh::DeclarationFile registryDefinition;
             std::string loadError;
             bool loading = false, reloadPending = false;

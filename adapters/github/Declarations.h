@@ -7,6 +7,7 @@ namespace coreci::github {
     std::variant<DeclarationFile, Error> registryFile(const std::string& value);
     struct LoadedDeclarations {
         Pipeline pipeline;
+        std::map<std::string, Workflow> presentations = {};
     };
     using Fetch = std::function<void(std::string path, bool raw, Completion)>;
     void loadDeclarations(const DeclarationFile& registry,

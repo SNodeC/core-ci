@@ -21,7 +21,7 @@ int checkEvent(Engine& e, const Event& event, std::set<std::string>& allocations
     if (std::holds_alternative<Accept>(classification)) {
         store.append(
             std::get<Event>(normalized),
-            [&] {
+            [&](std::uint64_t) {
                 commands = e.handle(std::get<Event>(normalized));
             },
             [](const auto&) {

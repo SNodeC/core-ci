@@ -206,11 +206,13 @@ private:
         const auto expected = b.build();
         store->append(
             GraphChanged{200, expected},
-            [this, expected] {
+            [this, expected](std::uint64_t committedSeq) {
+                CHECK(committedSeq > 0);
                 const auto found = std::make_shared<bool>(false);
                 store->loadAll(
-                    [expected, found](auto, const Event& event) {
+                    [expected, found, committedSeq](auto seq, const Event& event) {
                         if (const auto* changed = std::get_if<GraphChanged>(&event); changed && changed->at == 200) {
+                            CHECK_EQ(seq, committedSeq);
                             CHECK(changed->pipeline == expected);
                             CHECK_EQ(changed->pipeline.packages().at("a").sourceRepo.owner, "SNodeC");
                             CHECK_EQ(changed->pipeline.feeds().at("f").workflow.owner, "SNodeC");
@@ -265,7 +267,7 @@ private:
             };
             store->append(
                 GraphChanged{201, pipeline()},
-                [restore] {
+                [restore](std::uint64_t) {
                     restore(false);
                 },
                 [restore](const auto&) {

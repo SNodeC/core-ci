@@ -5,12 +5,14 @@ namespace coreci::persistence {
                            std::function<Engine()> makeEngine,
                            std::function<Resumed()> resumed,
                            std::function<void(const std::vector<Command>&)> commands,
-                           std::function<void(std::uint64_t, const std::string&)> warning)
+                           std::function<void(std::uint64_t, const std::string&)> warning,
+                           std::function<void(std::uint64_t, const Event&, const Engine&)> committed)
         : store(store)
         , makeEngine(std::move(makeEngine))
         , resumed(std::move(resumed))
         , commands(std::move(commands))
-        , warning(std::move(warning)) {
+        , warning(std::move(warning))
+        , committed(std::move(committed)) {
     }
     void EventQueue::start(std::function<void()> ready, std::function<void(const EventStore::StoreError&)> error) {
         onReady = std::move(ready);
@@ -40,6 +42,9 @@ namespace coreci::persistence {
                                     warning(seq, std::get<Ignore>(classification).reason);
                                 } else {
                                     current->handle(event);
+                                }
+                                if (committed) {
+                                    committed(seq, event, *current);
                                 }
                             }
                         },
@@ -103,10 +108,13 @@ namespace coreci::persistence {
                         activeReply = std::move(item.reply);
                         store.append(
                             event,
-                            [this, event, epoch = generation] {
+                            [this, event, epoch = generation](std::uint64_t seq) {
                                 if (epoch == generation) {
                                     auto reply = std::move(activeReply);
                                     const auto emitted = current->handle(event);
+                                    if (committed) {
+                                        committed(seq, event, *current);
+                                    }
                                     if (!emitted.empty()) {
                                         commands(emitted);
                                     }
