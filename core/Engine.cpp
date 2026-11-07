@@ -214,10 +214,17 @@ namespace coreci {
         }
         unitStates.at(unit).inflight.reset();
     }
-    void Engine::fail(const Unit& unit, const std::string& reason) {
+    void Engine::fail(const Unit& unit, const std::string& reason, std::int64_t at) {
         auto& state = unitStates.at(unit);
-        state.failure = Failure{state.inflight->version, state.inflight->inputs, reason};
+        state.failure =
+            Failure{state.inflight->version, state.inflight->inputs, reason, state.inflight->revision, state.inflight->runId, at};
         clear(unit);
+    }
+    std::uint64_t Engine::nextRevision(const Unit& unit) const {
+        const auto& version = released.at(unit.package)->version;
+        const auto& revisions = unitStates.at(unit).lastRevision;
+        const auto previous = revisions.contains(version) ? revisions.at(version) : 0;
+        return std::max<std::uint64_t>(previous, graph.packages().at(unit.package).revisionBase) + 1;
     }
     void Engine::schedule(std::vector<Command>& commands) {
         auto derived = derive();
@@ -242,7 +249,7 @@ namespace coreci {
                     auto& state = unitStates.at(unit);
                     const auto& release = *released.at(package);
                     auto& revision = state.lastRevision[release.version];
-                    revision = std::max<std::uint64_t>(revision, graph.packages().at(package).revisionBase) + 1;
+                    revision = nextRevision(unit);
                     const auto id = package + "~" + target + "~" + release.version.text() + "~r" + std::to_string(revision);
                     state.inflight = Inflight{
                         id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}, {}};
@@ -292,7 +299,7 @@ namespace coreci {
                                             f->retryAt.reset();
                                             commands.push_back(dispatch(unit));
                                         } else if (f->deadline && *engineTime >= *f->deadline) {
-                                            fail(unit, f->phase == Phase::Building ? "build timeout" : "publish timeout");
+                                            fail(unit, f->phase == Phase::Building ? "build timeout" : "publish timeout", e.at);
                                         }
                                     }
                                 }
@@ -305,7 +312,7 @@ namespace coreci {
                         if constexpr (std::is_same_v<E, DispatchRejected>) {
                             if (e.httpStatus == 401 || e.httpStatus == 403 || e.httpStatus == 404 || e.httpStatus == 422 ||
                                 f.attempt == options.maxDispatchAttempts) {
-                                fail(unit, "dispatch rejected (" + std::to_string(e.httpStatus) + "): " + e.message);
+                                fail(unit, "dispatch rejected (" + std::to_string(e.httpStatus) + "): " + e.message, e.at);
                             } else {
                                 std::int64_t delay = 30;
                                 for (unsigned i = 1; i < f.attempt && delay < 1800; ++i) {
@@ -334,11 +341,14 @@ namespace coreci {
                                     clear(unit);
                                 }
                             } else if constexpr (std::is_same_v<E, PublishSucceeded>) {
-                                state.published = Published{f.version, f.revision, f.inputs};
+                                state.published = Published{f.version, f.revision, f.inputs, f.runId, e.at, e.feedCommit};
                                 state.failure.reset();
                                 clear(unit);
                             } else if constexpr (std::is_same_v<E, BuildFailed> || std::is_same_v<E, PublishFailed>) {
-                                fail(unit, e.reason);
+                                if constexpr (std::is_same_v<E, BuildFailed>) {
+                                    f.runId = e.runId;
+                                }
+                                fail(unit, e.reason, e.at);
                             }
                         }
                     }

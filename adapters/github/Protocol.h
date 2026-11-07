@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 namespace coreci::github {
+    std::string presentationBody(const Workflow& workflow, const std::string& feed, std::uint64_t generation);
     struct Error {
         std::string reason;
     };

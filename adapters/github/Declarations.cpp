@@ -54,6 +54,7 @@ namespace coreci::github {
             std::map<std::string, Repo> repositories;
             std::vector<Repo> sources;
             std::vector<Feed> feeds;
+            std::map<std::string, Workflow> presentations;
             Workflow build;
             std::string defaultFeed;
             std::size_t remaining = 0;
@@ -122,6 +123,12 @@ namespace coreci::github {
                         self->build = workflow(value.at("build").get<std::string>());
                         for (const auto& [id, definition] : feeds.items()) {
                             self->feeds.push_back({id, workflow(definition.at("publisher").get<std::string>())});
+                            if (definition.contains("presentation")) {
+                                self->presentations.emplace(id, workflow(definition.at("presentation").get<std::string>()));
+                                if (!httpsUrl(value.at("status_url").get<std::string>())) {
+                                    throw std::invalid_argument("invalid status_url");
+                                }
+                            }
                         }
                         if (!feeds.contains(self->defaultFeed)) {
                             throw std::invalid_argument("unknown default_feed");
@@ -146,6 +153,9 @@ namespace coreci::github {
                 for (const auto& feed : feeds) {
                     repositories.emplace(key({feed.workflow.owner, feed.workflow.repo}), Repo{feed.workflow.owner, feed.workflow.repo, {}});
                 }
+                for (const auto& [id, presentation] : presentations) {
+                    repositories.emplace(key({presentation.owner, presentation.repo}), Repo{presentation.owner, presentation.repo, {}});
+                }
                 remaining = repositories.size();
                 const auto self = shared_from_this();
                 for (const auto& [name, source] : repositories) {
@@ -159,7 +169,12 @@ namespace coreci::github {
             void finish() {
                 const auto pipeline = builder.build();
                 auto callback = std::move(done);
-                callback(LoadedDeclarations{pipeline});
+                auto writers = presentations;
+                for (auto& [id, writer] : writers) {
+                    writer = resolved(writer);
+                    writer.branch = repositories.at(key({file.owner, file.repo})).branch;
+                }
+                callback(LoadedDeclarations{pipeline, writers});
             }
             Workflow resolved(const Workflow& workflow) const {
                 const auto& canonical = repositories.at(key({workflow.owner, workflow.repo}));

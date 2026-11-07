@@ -8,6 +8,9 @@
 #include <openssl/hmac.h>
 #include <sstream>
 namespace coreci::github {
+    std::string presentationBody(const Workflow& workflow, const std::string& feed, std::uint64_t generation) {
+        return nlohmann::json{{"ref", workflow.branch}, {"inputs", {{"feed", feed}, {"generation", std::to_string(generation)}}}}.dump();
+    }
     namespace {
         template <class T>
         bool number(const std::string& value, T& result) {

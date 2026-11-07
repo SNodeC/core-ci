@@ -19,8 +19,9 @@ namespace coreci::persistence {
     void InMemoryEventStore::open(std::function<void()> onReady, std::function<void(const StoreError&)>) {
         perform(std::move(onReady));
     }
-    void
-    InMemoryEventStore::append(const Event& event, std::function<void()> onCommitted, std::function<void(const std::string&)> onError) {
+    void InMemoryEventStore::append(const Event& event,
+                                    std::function<void(std::uint64_t)> onCommitted,
+                                    std::function<void(const std::string&)> onError) {
         const auto row = encode(event, nextSeq++);
         const auto outcome = failure;
         failure = Failure::None;
@@ -32,7 +33,7 @@ namespace coreci::persistence {
                     stored.push_back(std::get<EventRow>(row));
                 }
                 if (outcome == Failure::None) {
-                    onCommitted();
+                    onCommitted(std::get<EventRow>(row).seq);
                 } else {
                     onError("injected append error: outcome unknown");
                 }

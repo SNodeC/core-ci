@@ -73,6 +73,20 @@ int main() {
             CHECK(std::get<Error>(result).reason.find(":ci/") != std::string::npos);
         }
     };
+    auto withPresentation = registry;
+    const auto publisherEnd = withPresentation.find("publish.yml\"") + std::string("publish.yml\"").size();
+    withPresentation.insert(publisherEnd, ",\"presentation\":\"o/recipes/.github/workflows/status.yml\"");
+    withPresentation.insert(1, "\"status_url\":\"https://controller.example/api/v1/status.json\",");
+    const auto presented = load(withPresentation, package("a"), package("b", "a"));
+    REQUIRE(std::holds_alternative<LoadedDeclarations>(presented));
+    CHECK(std::get<LoadedDeclarations>(presented).presentations.at("f") == Workflow({"o", "recipes", "status.yml", "master"}));
+    auto invalidStatus = withPresentation;
+    invalidStatus.replace(invalidStatus.find("https://"), 8, "http://");
+    bad(invalidStatus, package("a"));
+    auto missingStatus = withPresentation;
+    const auto firstComma = missingStatus.find(',');
+    missingStatus.erase(1, firstComma);
+    bad(missingStatus, package("a"));
     for (const auto& file : {"{}",
                              "[]",
                              "{",

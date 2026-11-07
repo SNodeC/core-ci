@@ -2,6 +2,7 @@
 """CTest smoke harness. All database access is through the SNode.C reset fixture and daemon."""
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import re
@@ -35,8 +36,8 @@ def run():
         declarations = work / "declarations"
         declarations.mkdir()
         (declarations / "registry.json").write_text(
-            '{"feeds":{"f1":{"publisher":"owner/feeds/.github/workflows/publish.yml"},'
-            '"f2":{"publisher":"owner/feeds/.github/workflows/publish.yml"}},"default_feed":"f1",'
+            '{"feeds":{"f1":{"publisher":"owner/feeds/.github/workflows/publish.yml","presentation":"owner/feeds/.github/workflows/status.yml"},'
+            '"f2":{"publisher":"owner/feeds/.github/workflows/publish.yml"}},"default_feed":"f1","status_url":"https://localhost/api/v1/status.json",'
             '"build":"owner/recipes/.github/workflows/build.yml","repositories":["owner/a","owner/b","owner/c","owner/d","owner/e"]}')
         for p, prerequisites in (("a", '[]'), ("b", '["a"]'), ("c", '["a"]'), ("d", '["b","c"]'), ("e", '["d"]')):
             matrix = '{"id":"t1","feed":"f1"}' + ('' if p == "e" else ',{"id":"t2","feed":"f2"}')
@@ -82,7 +83,7 @@ def run():
         config = work / "nonsecret.conf"
         config.write_text('db-user="wrong_user_from_config"\nbuild-timeout="7200"\n')
         def app_command(listen_port, parser=()):
-            command = [build / "core-ci", "--registry", "owner/registry:ci/registry.json", "--config-file", config, "--db-host", os.environ["CORECI_TEST_DB_HOST"],
+            command = [build / "core-ci", "--registry", "owner/registry:ci/registry.json", "--status-interval", "30", "--config-file", config, "--db-host", os.environ["CORECI_TEST_DB_HOST"],
                        "--db-port", os.environ.get("CORECI_TEST_DB_PORT", "0"), "--db-user", os.environ["CORECI_TEST_DB_USER"],
                        "--db-name", os.environ["CORECI_TEST_DB_NAME"], "--github-api-url", api, "--github-ca-cert", cert,
                        "--callback-base-url", app_url, "--tls-cert", cert, "--tls-key", key,
@@ -224,7 +225,7 @@ def run():
                             ["Content-Type: " + content_type, "X-CoreCI-Timestamp: " + stamp, "X-CoreCI-Signature-256: " + signature])
             assert signed_form("phase=build&phase=publish")[0] == 400
             assert signed_form("phase=%xx")[0] == 400
-            assert signed_form("phase=build", skew=301)[0] == 401
+            assert signed_form("phase=build", skew=-301)[0] == 401
             assert signed_form("phase=build", content_type="application/x-www-form-urlencodedBAD")[0] == 400
             assert signed_form("x=" + "x" * 65536)[0] == 413
             assert signed_form("phase=publish&status=started") == (200, "ignored: no event")
@@ -278,6 +279,21 @@ def run():
             print("PASS: live badge no-release, unknown, XML escaping, headers, building and published revision", flush=True)
             report("e", "t1", "build", "succeeded"); count += 1; wait_dispatch(count)
             report("e", "t1", "publish", "succeeded")
+            code, body = curl(app_url + "/api/v1/status.json")
+            status = json.loads(body)
+            assert code == 200 and status['schema'] == 1 and status['generation'] > 0
+            assert body == json.dumps(status,sort_keys=True,separators=(',',':'))
+            unit = next(u for u in status['units'] if (u['package'],u['target']) == ('e','t1'))
+            assert unit['status'] == 'Settled' and unit['published']['runId'] == 101
+            previous = sum('/status.yml/dispatches ' in line for line in trace.read_text().splitlines())
+            waited = subprocess.run(['curl','--silent','--show-error','--cacert',str(cert),'--max-time','40',
+                api+'/wait-status?count='+str(previous+1)],capture_output=True,text=True,timeout=45,check=True)
+            assert waited.stdout == 'ready'
+            sent = [line for line in trace.read_text().splitlines() if '/status.yml/dispatches ' in line][-1]
+            request = json.loads(sent.split(' ',2)[2])
+            assert request['ref'] == 'trunk' and request['inputs']['feed'] == 'f1'
+            assert int(request['inputs']['generation']) >= status['generation']
+            print('PASS: canonical status.json and presentation dispatch after publication',flush=True)
             changed = '{"package":"e","depends_on":["b","d"],"matrix":[{"id":"t1","feed":"f1"}]}'
             (declarations / "e.json").write_text(changed)
             def branch_push(delivery):
@@ -355,8 +371,28 @@ def run():
             a_dispatch = [line for line in trace.read_text().splitlines() if '"build_id":"a~t1~1.0.0~r1"' in line][-1]
             assert '"tag":"1.0.0"' in a_dispatch
             assert "/repos/owner/b/tags?page=2" in trace.read_text()
-            stop(reconciled)
             print("PASS: reconciliation pagination, highest version, lexical tie, prerelease filtering and per-repository abort", flush=True)
+            interrupt = start([build / 'coreci-interrupt-store'], 'interrupt', pipe=True)
+            locked = False
+            line = None
+            while not locked and line != '':
+                line = interrupt.stdout.readline()
+                locked = line.strip() == 'LOCKED'
+            assert locked, 'database fixture did not acquire the released writer lock'
+            assert webhook('a', 'v1.0.9')[0] == 503
+            assert curl(app_url + '/api/v1/status.json') == (503, 'unavailable')
+            badge_title('d', 'unavailable')
+            assert interrupt.wait(timeout=12) == 0
+            ready = False
+            attempts = 0
+            while not ready and attempts < 10:
+                ready = curl(app_url + '/api/v1/status.json')[0] == 200
+                attempts += 1
+                if not ready:
+                    time.sleep(1)
+            assert ready, 'status.json did not recover after database replay'
+            print('PASS: status.json is 503 during real connection-loss recovery and returns after replay', flush=True)
+            stop(reconciled)
             for log in logs:
                 if log.name in ("daemon.log", "restarted.log", "reconciliation.log"):
                     assert all(secret not in log.read_text() for secret in ("smoke-token", "smoke-webhook", "smoke-callback", "smoke-admin"))

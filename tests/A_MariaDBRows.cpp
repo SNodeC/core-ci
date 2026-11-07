@@ -72,7 +72,7 @@ int main() {
         });
     unopened.append(
         Tick{1},
-        [] {
+        [](std::uint64_t) {
             CHECK(false);
         },
         [&](const auto&) {

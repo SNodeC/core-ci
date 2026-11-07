@@ -16,6 +16,9 @@ namespace coreci {
         Version version;
         std::uint64_t revision;
         Inputs inputs;
+        std::optional<std::uint64_t> runId = {};
+        std::int64_t at = 0;
+        std::string feedCommit = {};
         bool operator==(const Published&) const = default;
     };
     struct Inflight {
@@ -35,6 +38,9 @@ namespace coreci {
         Version version;
         Inputs inputs;
         std::string reason;
+        std::uint64_t revision = 0;
+        std::optional<std::uint64_t> runId = {};
+        std::int64_t at = 0;
         bool operator==(const Failure&) const = default;
     };
     struct UnitState {
@@ -74,6 +80,7 @@ namespace coreci {
         Classification classify(const Event& event) const;
         std::vector<Command> handle(const Event& event);
         std::optional<std::int64_t> nextDeadline() const;
+        std::uint64_t nextRevision(const Unit& unit) const;
         std::map<Unit, Derived> derive() const;
         const Pipeline& pipeline() const;
         const std::map<std::string, std::optional<Released>>& releases() const;
@@ -87,7 +94,7 @@ namespace coreci {
         std::optional<Unit> find(const std::string& buildId) const;
         Command dispatch(const Unit& unit) const;
         void clear(const Unit& unit);
-        void fail(const Unit& unit, const std::string& reason);
+        void fail(const Unit& unit, const std::string& reason, std::int64_t at);
         void schedule(std::vector<Command>& commands);
         Pipeline graph;
         Options options;
