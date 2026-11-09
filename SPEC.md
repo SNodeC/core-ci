@@ -139,6 +139,7 @@ Per unit `(P,T)`:
 - `published`: optional `{version, revision, inputs}` where `inputs` is a sorted map `prerequisite → {version, revision}` — exactly what is in the feed.
 - `inflight`: optional `{buildId, version, tag, revision, inputs, phase, attempt, retryAt, deadline, runId, artifact}` with `phase ∈ {Dispatching, Building, AwaitingPublish, PublishDispatching, Publishing}`; `attempt` counts dispatch attempts of the current phase; `retryAt` is set only while waiting to retry a dispatch.
 - `failure`: optional `{version, inputs, reason}`.
+- `rebuild`: set by `RebuildRequested` (rule 16), cleared by `PublishSucceeded` (rule 6).
 - `lastRevision[version]`: highest revision ever allocated for this version.
 
 Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `PublishDispatching/Publishing`.
@@ -146,7 +147,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 ### 4.2 Derived predicates (recomputed after every event, per target in topological order)
 
 - `desiredInputs(P,T)` = for each prerequisite Q: `published(Q,T).{version,revision}`; **undefined** unless every prerequisite `(Q,T)` has `published` (no prerequisites → empty map). If undefined, `satisfied` is false.
-- `satisfied(P,T)` ⇔ `published` exists ∧ `published.version == released(P).version` ∧ `published.inputs == desiredInputs(P,T)`.
+- `satisfied(P,T)` ⇔ `published` exists ∧ `published.version == released(P).version` ∧ `published.inputs == desiredInputs(P,T)` ∧ ¬`rebuild`.
 - `settled(P,T)` ⇔ `satisfied(P,T)` ∧ no `inflight` ∧ every prerequisite `(Q,T)` is `settled`.
 - `ready(P,T)` ⇔ `released(P)` exists ∧ ¬`satisfied` ∧ no `inflight` ∧ ¬(`failure` exists ∧ `failure.version == released.version` ∧ `failure.inputs == desiredInputs`) ∧ every prerequisite `(Q,T)` is `settled`.
 
@@ -169,6 +170,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 | `PublishSucceeded` | buildId, runId, feedCommit |
 | `PublishFailed` | buildId, runId, reason |
 | `RetryRequested` | package, target |
+| `RebuildRequested` | package, target |
 | `PublishStarted` | buildId, runId |
 | `RetirementAcknowledged` | buildId, message (the acknowledgement) |
 | `Tick` | — (only `at`) |
@@ -187,7 +189,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 3. **DispatchAccepted:** `Dispatching → Building` (deadline = `engineTime` + buildTimeout) / `PublishDispatching → Publishing` (deadline = `engineTime` + publishTimeout).
 4. **DispatchRejected:** HTTP 401/403/404/422 → failure (rule 7) immediately. Otherwise, if `attempt == maxDispatchAttempts` (default 8) → failure. Otherwise `retryAt = engineTime + min(30 s · 2^(attempt−1), 30 min)`. On the first accepted `Tick` with `engineTime ≥ retryAt`: `attempt += 1`, clear `retryAt`, emit the same command again (same `buildId`, new `attempt`). A re-emission does not re-check readiness: it resends a dispatch already decided by rule 2. If the unit's inputs change meanwhile, its build is superseded by rule 5; if only an upstream unit changes, the build is consistent with the feed, may publish, and is rebuilt by rule 2 once that change is published. `httpStatus = 0` (transport error) is not permanent.
 5. **BuildSucceeded:** if `inflight.version == released.version` ∧ `inflight.inputs == desiredInputs` → phase `AwaitingPublish`, append to the feed queue. Otherwise the build is **superseded**: clear `inflight` (the unit becomes ready again in step 2). Superseded artifacts are never published.
-6. **PublishSucceeded:** `published = {inflight.version, inflight.revision, inflight.inputs}`, clear `inflight`, clear `failure`. (Even if superseded meanwhile, record the truth of what is in the feed; the unit then becomes unsatisfied and is rebuilt.)
+6. **PublishSucceeded:** `published = {inflight.version, inflight.revision, inflight.inputs}`, clear `inflight`, clear `failure` and `rebuild`. (Even if superseded meanwhile, record the truth of what is in the feed; the unit then becomes unsatisfied and is rebuilt.)
 7. **BuildFailed / PublishFailed / deadline exceeded on Tick:** `failure = {inflight.version, inflight.inputs, reason}`, clear `inflight`, remove from feed queue/slot. Dependents stay blocked (the unit is not settled). A new tag or new prerequisite publication changes the desired inputs and therefore automatically allows a retry; otherwise only `RetryRequested` clears `failure`.
 8. **Acceptance** is defined only by the table in section 4.7. Ignored events are not persisted and change nothing, so duplicates are idempotent. The engine exposes a pure, `const` `classify(event) → Accept | Ignore(reason)` implementing that table (needed by section 5).
 9. `BuildStarted` and `BuildSucceeded` record `runId`; `BuildSucceeded` also records `artifact` (both used by `DispatchPublish`). A build callback accepted in `Dispatching` (or a publish callback in `PublishDispatching`) proves the run exists: first clear `retryAt` and enter `Building` (`Publishing`) with deadline = `engineTime` + timeout, then apply the event.
@@ -198,6 +200,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 
 14. **PublishStarted:** in `PublishDispatching` first enter `Publishing` as in rule 9; record the publish `runId` (the publish run is bound). A later `PublishSucceeded`/`PublishFailed` must carry that `runId`.
 15. **RetirementAcknowledged:** record `retirement = {message, at}` on `inflight`; nothing else changes (no cancellation, no retry, no dispatch).
+16. **RebuildRequested:** set `rebuild`. The unit is no longer satisfied, so rule 2 rebuilds the same version with a new revision and it is published normally; its dependents on the same target follow through their `desiredInputs`. A failure of that build is handled by rule 7 and `RetryRequested`; `rebuild` stays set until the publication.
 
 ### 4.6 Status (core/Status.h)
 
@@ -231,6 +234,7 @@ SVG: height 20; label part on `#555`, message part on the colour; white text, `f
 | `PublishStarted` | `buildId` matches; phase `PublishDispatching` or `Publishing`; no publish `runId` recorded |
 | `RetirementAcknowledged` | `buildId` matches; phase `PublishDispatching` or `Publishing`; no publish `runId` recorded; no `retirement` recorded |
 | `RetryRequested` | unit exists; `failure` set; no `inflight` |
+| `RebuildRequested` | unit exists and is not dormant; `satisfied`; no `inflight` |
 | `Tick` | `nextDeadline()` exists and `max(engineTime, at) ≥ nextDeadline()` |
 | `Resumed` | always |
 | `GraphChanged` | the pipeline differs from the current one, and none of these holds (otherwise the next load retries): a unit in `AwaitingPublish`, `PublishDispatching` or `Publishing` would be removed or change its feed; a package with a unit in one of these phases changes its `sourceRepo` or `buildWorkflow`; a feed with a unit in `PublishDispatching` or `Publishing` changes its publisher workflow |
@@ -380,6 +384,7 @@ public:
 | `GET /api/v1/status.json` | none | Presentation data of 7.8 (`application/json`); `503` during recovery. |
 | `GET /api/v1/badge/<package>/<target>.svg` | none | Badge of 4.6.1 (`image/svg+xml; charset=utf-8`, `Cache-Control: no-cache, no-store, must-revalidate`). Always `200`: an unknown unit gets the `unknown` badge. |
 | `POST /api/v1/units/<package>/<target>/retry` | `Authorization: Bearer <admin token>` | `RetryRequested`. |
+| `POST /api/v1/units/<package>/<target>/rebuild` | admin token | `RebuildRequested`. |
 | `POST /api/v1/reconcile` | admin token | Trigger tag reconciliation now. |
 | `POST /api/v1/reload` | admin token | Trigger a declaration load now (3.3); `202 started` or `202 already running`. |
 
@@ -467,7 +472,7 @@ core-ci ignores these fields; the workflows require them. Every `feeds.<id>` add
 
 ### 7.3 Package versions
 
-Versions are encoded by the existing `versions(tag, revision, format)` without change: `MAJOR.MINOR.PATCH`; a prerelease as order-preserving tokens (`~p…` for deb, rpm and ipk, `_pre0_p…` for apk); build metadata dropped; release `N` for deb and rpm, `rN` for ipk and apk. An encoding longer than the tooling's 240-character limit fails the build with that reason.
+Versions are encoded by `versions(tag, revision, format)`, copied into `coreci/` (7.0) and changed only in the release field, so that package versions follow the feed before core-ci (`SNodeC/Packages` at `6c1007a`): `MAJOR.MINOR.PATCH`; a prerelease as order-preserving tokens (`~p…` for deb, rpm and ipk, `_pre0_p…` for apk); build metadata dropped; release `N~<codename>` for deb (the target's suite: `trixie`, `forky`, `sid`, `noble`, `resolute`, `bookworm`), `N.<disttag>` for rpm (`fc43`, `fc44`, `el9`, `el10`, from the target's distribution and release), `rN` for ipk and apk, where `N` is the revision. Examples: `2.1.0-123~trixie`, `2.1.0-123.fc44`, `2.1.0-123.el10`, `2.1.0-r123`. An encoding longer than the tooling's 240-character limit fails the build with that reason. Packages published before this change carry the release `N` without suffix; `N~<codename>` sorts below `N`, so the first suffixed build of a version needs a revision above every unsuffixed one, which rule 2 guarantees because revisions only grow.
 
 ### 7.4 `coreci-build.yml`
 
@@ -566,6 +571,7 @@ Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (di
 - **S23 EnrollmentAndCatalog:** `enroll` dry-loads the repository against the catalog and opens one registry pull request, or reuses the open one; a ref other than the default branch or a repository already in the registry is refused; an unknown catalog id, a duplicate id or an extra matrix field fails the load.
 - **S24 DashboardStream:** snapshot, ordered adds, `ready`, incremental `add`/`remove` after events, keep-alive, headers, pointer escaping, the stream limit, recovery behaviour.
 - **S25 DashboardAdmin:** each of the six operations against the fake GitHub, including reconciliation of a completed build run and a completed publish run.
+- **S26 Rebuild:** a satisfied unit → `RebuildRequested` → `DispatchBuild` of the same version with revision `lastRevision + 1`; ignored with `inflight`, without `published`, for a dormant unit or when not satisfied; after its publication every dependent on the same target is rebuilt exactly once and `rebuild` is cleared; a failed rebuild keeps `rebuild` and `RetryRequested` resumes it; replay reproduces every step; the route requires the admin token.
 - **S14 EventSql:** for every event type the `INSERT` contains string values only as `_utf8mb4 X'…'`, numbers only as decimal literals, absent values only as `NULL`; values containing `'`, `\`, `"`, `;`, `--`, `/*` and multi-byte UTF-8 appear only hex-encoded; empty strings appear as `_utf8mb4 X''`; the only non-literal expression in an `INSERT` is `UTC_TIMESTAMP(3)`; the `SELECT` lists every column except `recorded_at` in a fixed order, string columns as `HEX(col) AS col`, `ORDER BY seq`; a `GraphChanged` is written as `startTransactions`, the `INSERT`s (graph rows with `LAST_INSERT_ID()`), `commit`, `endTransactions`.
 
 ---
@@ -593,6 +599,7 @@ Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the re
 4. **Phase 4c2:** presentation and `snode.c-idp`. core-ci: `GET /api/v1/status.json`, the run fields it needs, presentation dispatch, `statusInterval`, tests S19–S20 and the smoke test change (`status.json` served; a presentation dispatch after a publication). DistributionPackages: 7.8 (`coreci/presentation.py`, receipts, `coreci-status.yml`, the publisher's lease retry and badge rule) with G1–G3 as CTest tests; the production registry PR updated (feed `url` of 7.1, `presentation`, no `badges`, `SNodeC/snode.c-idp` added). `snode.c-idp` (branch and PR, not merged): its hook on the 7.2 interface, `ci/packages.json` with `snodec-idp` depending on `snodec`, its existing 18 deb and 8 rpm targets and `revision_base` 12, removal of its old build wrapper and status-notification workflows. Proof (7.7): `snodec-idp` on one deb and one rpm target installing `snodec` from the staging feed; the staging registry gets `presentation`; the staging presentation renders with the unchanged templates; a presentation run and a publication racing for the staging feed both land through the lease retry. Stop and report.
 4. **Phase 4e:** dashboard and target catalog (6.5, 3.3, 4.3–4.7, 5.2). core-ci: the assets, `/events`, the projection, the job cache, the admin operations, `PublishStarted`, `RetirementAcknowledged`, origin `request`, enrollment pull requests (the core-ci token additionally needs Contents and Pull requests write on the registry repository), catalog loading, `title`, the load commit, `dashboardRedirectPort`, `adapters/dashboard/`, tests S21–S25 and G4–G6. DistributionPackages: `ci/targets.json` with every current target; the workflows read target details from the catalog and accept both matrix forms during the transition; `run-name: ${{ inputs.build_id }}` in `coreci-build.yml` and `coreci-publish.yml`; the report action also sends `publish`+`started`; registry `targets`. snode.c, mqttsuite and snode.c-idp: matrix entries reduced to catalog ids. Order: DistributionPackages, then the source repositories, then the core-ci deployment, then retirement of the earlier SNodeC instance and the 8081 redirect. Stop and report before the deployment.
 4. **Phase 4d:** deployment on `core.vchrist.at` and switch-over, by separate instructions; it also retires the old `core-ci-*.yml` workflows and the old status writer.
+4. **Phase 4d2:** package versions and rebuild (7.3; 4.1–4.7, 6.1). DistributionPackages: the release field of 7.3, with a test for every format and the ordering examples. core-ci: `RebuildRequested`, its route, S26 and a smoke-test step for the route; deployed on `core.vchrist.at` by separate instructions. Stop and report.
 
 ### Report format for every phase
 - Files changed (paths).
