@@ -426,6 +426,10 @@ namespace coreci::app {
                     submit(RetryRequested{now(), req->param("package"), req->param("target")}, res);
                 });
                 server.all("/api/v1/units/:package/:target/retry", size, method);
+                server.post("/api/v1/units/:package/:target/rebuild", size, adminAuth, [this](const Req& req, const Res& res) {
+                    submit(RebuildRequested{now(), req->param("package"), req->param("target")}, res);
+                });
+                server.all("/api/v1/units/:package/:target/rebuild", size, method);
                 server.post("/api/v1/reload", size, adminAuth, [this](const Req&, const Res& res) {
                     const bool running = loading;
                     reload();

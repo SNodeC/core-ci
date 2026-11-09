@@ -33,6 +33,7 @@ foreach(
     S15_GraphChanged
     S17_Badge
     S18_RevisionBase
+    S26_Rebuild
     I_RandomizedInvariants
 )
     add_executable(${scenario} tests/${scenario}.cpp)
@@ -43,6 +44,7 @@ endforeach()
 target_link_libraries(I_RandomizedInvariants PRIVATE coreci_persistence)
 target_link_libraries(S15_GraphChanged PRIVATE coreci_persistence)
 target_link_libraries(S18_RevisionBase PRIVATE coreci_persistence)
+target_link_libraries(S26_Rebuild PRIVATE coreci_persistence)
 set_tests_properties(
     I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
 )

@@ -70,6 +70,11 @@ namespace coreci {
         std::string package, target;
         bool operator==(const RetryRequested&) const = default;
     };
+    struct RebuildRequested {
+        std::int64_t at;
+        std::string package, target;
+        bool operator==(const RebuildRequested&) const = default;
+    };
     struct Tick {
         std::int64_t at;
         bool operator==(const Tick&) const = default;
@@ -92,6 +97,7 @@ namespace coreci {
                                PublishSucceeded,
                                PublishFailed,
                                RetryRequested,
+                               RebuildRequested,
                                Tick,
                                Resumed,
                                GraphChanged>;
