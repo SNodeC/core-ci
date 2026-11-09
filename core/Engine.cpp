@@ -115,6 +115,13 @@ namespace coreci {
                     } else {
                         result = Ignore{"unit has no retryable failure"};
                     }
+                } else if constexpr (std::is_same_v<E, RebuildRequested>) {
+                    const Unit unit{e.package, e.target};
+                    if (active(unit) && derive().at(unit).satisfied && !unitStates.at(unit).inflight) {
+                        result = Accept{};
+                    } else {
+                        result = Ignore{"unit is not satisfied or has an in-flight build"};
+                    }
                 } else {
                     const auto unit = find(e.buildId);
                     result = Ignore{"unknown or stale buildId"};
@@ -174,7 +181,7 @@ namespace coreci {
                 }
                 const auto& release = released.at(package);
                 d.satisfied = release && state.published && d.inputs && state.published->version == release->version &&
-                              state.published->inputs == *d.inputs;
+                              state.published->inputs == *d.inputs && !state.rebuild;
                 d.failed = release && state.failure && d.inputs && state.failure->version == release->version &&
                            state.failure->inputs == *d.inputs;
                 d.settled = d.satisfied && !state.inflight && settled;
@@ -283,6 +290,8 @@ namespace coreci {
                         released.at(e.package) = Released{*Version::parse(e.tag), e.tag};
                     } else if constexpr (std::is_same_v<E, RetryRequested>) {
                         unitStates.at({e.package, e.target}).failure.reset();
+                    } else if constexpr (std::is_same_v<E, RebuildRequested>) {
+                        unitStates.at({e.package, e.target}).rebuild = true;
                     } else if constexpr (std::is_same_v<E, Tick> || std::is_same_v<E, Resumed>) {
                         for (const auto& [target, definition] : graph.targets()) {
                             for (const auto& package : graph.topologicalOrder(target)) {
@@ -343,6 +352,7 @@ namespace coreci {
                             } else if constexpr (std::is_same_v<E, PublishSucceeded>) {
                                 state.published = Published{f.version, f.revision, f.inputs, f.runId, e.at, e.feedCommit};
                                 state.failure.reset();
+                                state.rebuild = false;
                                 clear(unit);
                             } else if constexpr (std::is_same_v<E, BuildFailed> || std::is_same_v<E, PublishFailed>) {
                                 if constexpr (std::is_same_v<E, BuildFailed>) {

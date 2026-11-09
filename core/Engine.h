@@ -49,6 +49,7 @@ namespace coreci {
         std::optional<Failure> failure;
         std::map<Version, std::uint64_t> lastRevision;
         std::string lastFeed;
+        bool rebuild = false;
         bool operator==(const UnitState&) const = default;
     };
     struct FeedState {

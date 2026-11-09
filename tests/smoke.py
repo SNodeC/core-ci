@@ -117,8 +117,8 @@ def run():
             return curl(app_url + "/api/v1/github/webhook", body,
                         ["Content-Type: application/json", "X-GitHub-Event: push", "X-GitHub-Delivery: " + (delivery or package + tag),
                          "X-Hub-Signature-256: " + signature])
-        def report(package, target, phase, status, version="1.0.0", literal_plus=False):
-            build_id = package + "~" + target + "~" + version + "~r1"
+        def report(package, target, phase, status, version="1.0.0", literal_plus=False, revision=1):
+            build_id = package + "~" + target + "~" + version + "~r" + str(revision)
             values = {"phase": phase, "status": status, "run_id": "101" if phase == "build" else "201"}
             if status == "started": values["run_attempt"] = "1"
             if status == "succeeded": values["artifact" if phase == "build" else "feed_commit"] = "artifact" if phase == "build" else "b" * 40
@@ -294,6 +294,17 @@ def run():
             assert request['ref'] == 'trunk' and request['inputs']['feed'] == 'f1'
             assert int(request['inputs']['generation']) >= status['generation']
             print('PASS: canonical status.json and presentation dispatch after publication',flush=True)
+            rebuild_url = app_url + '/api/v1/units/e/t1/rebuild'
+            assert curl(rebuild_url, '')[0] == 401
+            assert curl(rebuild_url, '', ['Authorization: Bearer wrong'])[0] == 401
+            assert curl(rebuild_url)[0] == 405
+            assert curl(rebuild_url, '', ['Authorization: Bearer smoke-admin']) == (200, 'accepted')
+            count += 1; wait_dispatch(count)
+            assert request_count('e~t1~1.0.0~r2', 'build') == 1
+            assert curl(rebuild_url, '', ['Authorization: Bearer smoke-admin'])[1].startswith('ignored:')
+            report('e', 't1', 'build', 'succeeded', revision=2); count += 1; wait_dispatch(count)
+            report('e', 't1', 'publish', 'succeeded', revision=2)
+            print('PASS: authenticated rebuild route allocates the next revision and publishes the same version', flush=True)
             changed = '{"package":"e","depends_on":["b","d"],"matrix":[{"id":"t1","feed":"f1"}]}'
             (declarations / "e.json").write_text(changed)
             def branch_push(delivery):
@@ -304,9 +315,9 @@ def run():
             assert branch_push("new-prerequisite") == (202, "reload scheduled")
             assert branch_push("new-prerequisite") == (200, "ignored: delivery")
             wait_load(); count += 1; wait_dispatch(count)
-            assert request_count("e~t1~1.0.0~r2", "build") == 1
+            assert request_count("e~t1~1.0.0~r3", "build") == 1
             posts = [line for line in trace.read_text().splitlines() if line.startswith("POST ")]
-            assert '\"build_id\":\"e~t1~1.0.0~r2\"' in posts[-1]
+            assert '\"build_id\":\"e~t1~1.0.0~r3\"' in posts[-1]
             assert '\"prerequisites\":\"b=1.0.0-1,d=1.0.0-1\"' in posts[-1]
             print("PASS: signed default-branch push records GraphChanged; only e is rebuilt with new inputs", flush=True)
             (declarations / "e.json").write_text(changed.replace('["b","d"]', '["e"]'))
@@ -314,8 +325,8 @@ def run():
             wait_load()
             cyclic = curl(app_url + "/api/v1/status")[1]
             assert "cycle: e -> e" in cyclic.splitlines()[0], cyclic
-            assert "e\tt1\t1.0.0\t1.0.0-1\t" in cyclic, cyclic
-            assert request_count("e~t1~1.0.0~r2", "build") == 1
+            assert "e\tt1\t1.0.0\t1.0.0-2\t" in cyclic, cyclic
+            assert request_count("e~t1~1.0.0~r3", "build") == 1
             (declarations / "e.json").write_text(changed)
             assert curl(app_url + "/api/v1/reload", "", ["Authorization: Bearer smoke-admin"]) == (202, "started")
             wait_load()
@@ -345,8 +356,8 @@ def run():
             daemon = launch_app(app_port, "graph-restarted")
             assert curl(app_url + "/api/v1/status", retry=True)[0] == 200
             wait_load()
-            assert "e\tt1\t1.0.0\t1.0.0-1\tBuilding" in curl(app_url + "/api/v1/status")[1]
-            assert request_count("e~t1~1.0.0~r2", "build") == 1
+            assert "e\tt1\t1.0.0\t1.0.0-2\tBuilding" in curl(app_url + "/api/v1/status")[1]
+            assert request_count("e~t1~1.0.0~r3", "build") == 1
             print("PASS: changed graph and execution state survive a fresh process replay", flush=True)
             assert webhook("a", "v1.0.1+meta")[0] == 200
             count += 2; wait_dispatch(count)

@@ -28,6 +28,7 @@ int main() {
                                     PublishSucceeded{6, text, 8, sha},
                                     PublishFailed{7, text, 8, ""},
                                     RetryRequested{8, text, text},
+                                    RebuildRequested{8, text, text},
                                     Tick{9},
                                     Resumed{10}};
     const std::string prefix =
@@ -46,6 +47,8 @@ int main() {
         hex("PublishSucceeded") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,8,NULL,NULL,NULL," + hex(sha) + ",NULL,6)",
         hex("PublishFailed") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,8,NULL,NULL,NULL,NULL,_utf8mb4 X'',7)",
         hex("RetryRequested") + "," + hex(text) + "," + hex(text) + ",NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,8)",
+        hex("RebuildRequested") + "," + hex(text) + "," + hex(text) +
+            ",NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,8)",
         hex("Tick") + ",NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,9)",
         hex("Resumed") + ",NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,10)"};
     REQUIRE(events.size() == expected.size());

@@ -18,6 +18,7 @@ namespace coreci::persistence {
                                                                                  "PublishSucceeded",
                                                                                  "PublishFailed",
                                                                                  "RetryRequested",
+                                                                                 "RebuildRequested",
                                                                                  "Tick",
                                                                                  "Resumed",
                                                                                  "GraphChanged"};
@@ -293,6 +294,8 @@ namespace coreci::persistence {
                     PublishFailed{at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.reason, "reason")}};
             } else if (row.eventType == "RetryRequested") {
                 result = Event{RetryRequested{at, required(row.package, "package"), required(row.target, "target")}};
+            } else if (row.eventType == "RebuildRequested") {
+                result = Event{RebuildRequested{at, required(row.package, "package"), required(row.target, "target")}};
             } else if (row.eventType == "Tick") {
                 result = Event{Tick{at}};
             } else if (row.eventType == "GraphChanged") {

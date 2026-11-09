@@ -75,6 +75,7 @@ int main() {
                                     PublishSucceeded{6, "id", 8, hash},
                                     PublishFailed{7, "id", 8, text},
                                     RetryRequested{8, "p", "t"},
+                                    RebuildRequested{8, "p", "t"},
                                     Tick{std::numeric_limits<std::int64_t>::max()},
                                     Resumed{10},
                                     GraphChanged{11, testPipeline()},
