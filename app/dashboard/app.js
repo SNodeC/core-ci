@@ -318,26 +318,28 @@ function mapModel(model) {
         const parent = byUnit.get(name + '~' + unit.target);
         return parent ? depth(parent) : -1;
     }));
-    units.sort((a, b) => a.target.localeCompare(b.target) || depth(a) - depth(b) || a.package.localeCompare(b.package));
+    units.sort((a, b) => a.order - b.order || depth(a) - depth(b));
     const repositories = {}, executions = {};
     for (const item of model.packages) {
         const source = item.sourceRepo, repository = source.owner + '/' + source.repo;
-        repositories[repository] = {title: item.title, ref: source.branch, commit: ''};
+        repositories[repository] = {title: item.title, ref: source.branch, commit: item.commit};
     }
     const states = {Waiting: 'waiting', Blocked: 'waiting', Ready: 'building', Dispatching: 'building',
         Building: 'building', AwaitingPublish: 'publishing', PublishDispatching: 'publishing',
         Publishing: 'publishing', Settled: 'published', Failed: 'failed'};
     const run = value => value ? {...value, identity: {html_url: value.html_url}} : undefined;
-    for (const [index, unit] of units.entries()) {
+    for (const unit of units) {
         const item = packages.get(unit.package), chosen = current(unit), id = identity(unit);
         const tag = unit.tag || (item.released?.version === chosen.version ? item.released.tag : chosen.version);
-        executions[id] = {id, index, selection: 0,
+        const buildId = `${unit.package}~${unit.target}~${chosen.version || ''}~r${chosen.revision}`;
+        const time = value => value == null ? undefined : new Date(value * 1000).toISOString();
+        executions[id] = {id, index: unit.order, selection: 0,
             source: {package: unit.package, repository: item.sourceRepo.owner + '/' + item.sourceRepo.repo, tag},
             target: {id: unit.target, distribution: unit.distribution, suite: unit.suite, arch: unit.arch, build: {format: unit.format}},
-            active: {id: unit.inflight?.buildId, revision: chosen.revision, state: states[unit.status],
-                assigned: Boolean(unit.build?.runId),
+            active: {id: buildId, revision: chosen.revision, state: states[unit.status],
+                assigned: unit.assigned, verification_started_at: time(unit.publishDispatchedAt),
                 ...(unit.status === 'Failed' ? {failure: unit.failure?.reason, failure_kind: 'definite'} : {}),
-                ...(unit.status === 'Settled' && unit.published ? {proof: {verified_at: new Date(unit.published.at * 1000).toISOString()}} : {})},
+                ...(unit.publishedAt == null ? {} : {proof: {verified_at: time(unit.publishedAt)}})},
             previous: [], prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
             build: run(unit.build), publish: run(unit.publish)};
     }

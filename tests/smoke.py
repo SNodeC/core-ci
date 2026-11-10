@@ -16,10 +16,18 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 
-def port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def ports(count):
+    reserved = []
+    try:
+        for _ in range(count):
+            sock = socket.socket()
+            reserved.append(sock)
+            sock.bind(("127.0.0.1", 0))
+        result = [sock.getsockname()[1] for sock in reserved]
+    finally:
+        for sock in reserved:
+            sock.close()
+    return result
 
 
 def run():
@@ -58,7 +66,8 @@ def run():
         wrong_cert, wrong_key = certificate("wrong", "wrong.invalid")
         public_key = work / "idp-public.pem"
         subprocess.run(["openssl", "pkey", "-in", str(key), "-pubout", "-out", str(public_key)], check=True)
-        api_port, bad_port, app_port, second_port = port(), port(), port(), port()
+        api_port, bad_port, app_port, second_port = ports(4)
+        assert len({api_port, bad_port, app_port, second_port}) == 4
         trace, wrong_trace = work / "requests.txt", work / "wrong.txt"
         def start(command, name, pipe=False):
             log = work / (name + ".log")

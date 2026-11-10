@@ -105,11 +105,18 @@ if(CORECI_WITH_SNODEC)
         PUBLIC coreci_github coreci_mariadb snodec::http-server-express-tls-in
                snodec-auth::auth-client
     )
-    foreach(scenario S21_Catalog S25_JobCache)
+    foreach(scenario S21_Catalog S25_JobCache S27_DashboardHistory)
         add_executable(${scenario} tests/${scenario}.cpp)
         target_link_libraries(${scenario} PRIVATE coreci_app)
         add_test(NAME ${scenario} COMMAND ${scenario})
     endforeach()
+    add_test(NAME M_SmokePorts
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_ports.py
+    )
+    set_tests_properties(
+        M_SmokePorts PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    )
     foreach(mode stream buttons auth)
         if(mode STREQUAL "stream")
             set(case S22_DashboardStream)

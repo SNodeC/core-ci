@@ -233,7 +233,7 @@ namespace coreci {
         const auto previous = revisions.contains(version) ? revisions.at(version) : 0;
         return std::max<std::uint64_t>(previous, graph.packages().at(unit.package).revisionBase) + 1;
     }
-    void Engine::schedule(std::vector<Command>& commands) {
+    void Engine::schedule(std::vector<Command>& commands, std::uint64_t seq) {
         auto derived = derive();
         for (const auto& [unit, d] : derived) {
             const auto& f = unitStates.at(unit).inflight;
@@ -257,6 +257,10 @@ namespace coreci {
                     const auto& release = *released.at(package);
                     auto& revision = state.lastRevision[release.version];
                     revision = nextRevision(unit);
+                    state.order = seq;
+                    state.buildAssigned = false;
+                    state.publishDispatchedAt.reset();
+                    state.publishedAt.reset();
                     const auto id = package + "~" + target + "~" + release.version.text() + "~r" + std::to_string(revision);
                     state.inflight = Inflight{
                         id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}, {}};
@@ -277,7 +281,7 @@ namespace coreci {
             }
         }
     }
-    std::vector<Command> Engine::handle(const Event& event) {
+    std::vector<Command> Engine::handle(const Event& event, std::uint64_t seq) {
         std::vector<Command> commands;
         if (std::holds_alternative<Accept>(classify(event))) {
             std::visit(
@@ -330,6 +334,13 @@ namespace coreci {
                                 f.retryAt = *engineTime + delay;
                             }
                         } else {
+                            if constexpr (std::is_same_v<E, DispatchAccepted>) {
+                                if (e.kind == Kind::Build) {
+                                    state.buildAssigned = true;
+                                } else {
+                                    state.publishDispatchedAt = *engineTime;
+                                }
+                            }
                             if (f.phase == Phase::Dispatching || f.phase == Phase::PublishDispatching) {
                                 const bool build = f.phase == Phase::Dispatching;
                                 f.phase = build ? Phase::Building : Phase::Publishing;
@@ -350,6 +361,7 @@ namespace coreci {
                                     clear(unit);
                                 }
                             } else if constexpr (std::is_same_v<E, PublishSucceeded>) {
+                                state.publishedAt = *engineTime;
                                 state.published = Published{f.version, f.revision, f.inputs, f.runId, e.at, e.feedCommit};
                                 state.failure.reset();
                                 state.rebuild = false;
@@ -364,7 +376,7 @@ namespace coreci {
                     }
                 },
                 event);
-            schedule(commands);
+            schedule(commands, seq);
         }
         return commands;
     }

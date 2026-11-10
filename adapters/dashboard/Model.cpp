@@ -73,6 +73,7 @@ namespace coreci::dashboard {
             const auto& source = engine.pipeline().packages().at(name).sourceRepo;
             package["title"] =
                 declarations.packages.contains(name) ? declarations.packages.at(name).title : source.owner + "/" + source.repo;
+            package["commit"] = declarations.packages.contains(name) ? declarations.packages.at(name).commit : "";
         }
         if (!ready) {
             value["units"] = Json::array();
@@ -80,6 +81,11 @@ namespace coreci::dashboard {
         const auto requests = jobRequests(engine);
         for (auto& unit : value["units"]) {
             const Unit key{unit.at("package"), unit.at("target")};
+            const auto& state = engine.units().at(key);
+            unit["order"] = state.order;
+            unit["assigned"] = state.buildAssigned;
+            unit["publishDispatchedAt"] = state.publishDispatchedAt ? Json(*state.publishDispatchedAt) : Json();
+            unit["publishedAt"] = state.publishedAt ? Json(*state.publishedAt) : Json();
             const auto& target = declarations.catalog.at(key.target);
             unit.update({{"distribution", target.distribution},
                          {"suite", target.suite},

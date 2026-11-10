@@ -35,6 +35,7 @@ tr[aria-selected="true"] { background: var(--soft); } .secondary { display: bloc
 dl { display: grid; grid-template-columns: 90px 1fr; gap: 5px 12px; }
 dt { color: var(--sub); } dd { margin: 0; overflow-wrap: anywhere; } .dependencies { list-style: none; padding: 0; }
 .dependencies li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.execution-content dl dd:nth-of-type(2) { min-height: 2lh; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; } a { color: var(--accent); }
 details { margin-top: 16px; } summary { cursor: pointer; color: var(--sub); padding: 5px 0; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .repository-layout { display: grid; grid-template-columns: 230px minmax(0,1fr); gap: 20px; } .editor-panel { margin-top: 0; }

@@ -1,7 +1,6 @@
 'use strict';
 const fs = require('fs'), path = require('path'), http = require('http');
 const {chromium} = require(process.env.CORECI_PLAYWRIGHT_PATH || 'playwright-core');
-const {reduce} = require('./reduced.cjs');
 const root = path.resolve(__dirname, '../..'), data = path.join(root, 'tests/data/dashboard');
 const output = process.argv[2], mode = process.argv[3];
 fs.mkdirSync(output, {recursive: true});
@@ -39,8 +38,8 @@ async function run() {
         }
         if (mode === 'references') {
             const references = JSON.parse(fs.readFileSync(path.join(data, 'reference/screenshots.json')));
-            const reductions = {};
-            for (const variant of ['baseline', 'reduced', 'new']) {
+            const masks = {};
+            for (const variant of ['baseline', 'new']) {
                 const original = variant !== 'new';
                 let context = null, page = null, group = '';
                 for (const record of references) {
@@ -50,11 +49,7 @@ async function run() {
                         group = key;
                         const captured = JSON.parse(fs.readFileSync(path.join(data, 'reference/fixtures', record.fixtureSha256 + '.json')));
                         baseline = original;
-                        const reduced = reduce(captured.graph);
-                        fixture = variant === 'reduced' ? reduced.graph : original ? captured.graph : JSON.parse(fs.readFileSync(path.join(data, 'models', record.file.replace('.png', '.json'))));
-                        if (variant === 'reduced') {
-                            reductions[key] = reduced.removed;
-                        }
+                        fixture = original ? captured.graph : JSON.parse(fs.readFileSync(path.join(data, 'models', record.file.replace('.png', '.json'))));
                         context = await browser.newContext({viewport: record.viewport, colorScheme: record.scheme,
                             locale: record.locale, timezoneId: record.timezone, deviceScaleFactor: record.deviceScaleFactor});
                         page = await context.newPage();
@@ -75,20 +70,37 @@ async function run() {
                         await page.locator('#repositories button').first().click();
                     }
                     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-                    await page.screenshot({path: path.join(output, (variant === 'new' ? '' : variant + '-') + record.file), fullPage: true, animations: 'disabled'});
-                    if (variant === 'reduced') {
-                        fs.writeFileSync(path.join(output, 'removed-' + record.file.replace('.png', '.json')), JSON.stringify(reductions[key], null, 2));
-                        fs.writeFileSync(path.join(output, 'reduced-' + record.file.replace('.png', '.json')), JSON.stringify(fixture));
-                    }
+                    const values = page.locator('.execution-content dl dd').nth(1);
+                    const masked = record.view === 'work-details' ? [values] : [];
+                    masks[record.file] ||= {};
+                    masks[record.file][variant] = masked.length ? await values.boundingBox() : null;
+                    masks[record.file][variant + 'Ink'] = masked.length ? await values.evaluate(element => {
+                        const box = element.getBoundingClientRect(), range = document.createRange();
+                        const canvas = document.createElement('canvas').getContext('2d');
+                        canvas.font = getComputedStyle(element).font;
+                        let right = box.right;
+                        const text = element.firstChild;
+                        for (let index = 0; text && index < text.length; ++index) {
+                            range.setStart(text, index); range.setEnd(text, index + 1);
+                            const glyph = range.getBoundingClientRect();
+                            right = Math.max(right, glyph.left + canvas.measureText(text.data[index]).actualBoundingBoxRight);
+                        }
+                        return {x: box.x, y: box.y, width: right - box.x, height: box.height};
+                    }) : null;
+                    await page.screenshot({path: path.join(output, (original ? 'baseline-' : '') + record.file), fullPage: true,
+                        animations: 'disabled'});
                     if (!original) {records.push(record.file);}
                 }
                 if (context) {await context.close();}
             }
+            fs.writeFileSync(path.join(output, 'G5-masks.json'), JSON.stringify(masks, null, 2));
         } else {
             const statuses = ['NoRelease', 'Waiting', 'Blocked', 'Ready', 'Dispatching', 'Building', 'AwaitingPublish', 'PublishDispatching', 'Publishing', 'Settled', 'Failed'];
             const samples = [JSON.parse(fs.readFileSync(path.join(data, 'models/work-all-1280x800-light.json')))];
-            const packages = statuses.map((status, index) => ({name: 'p' + index, title: status, sourceRepo: {owner: 'Example', repo: 'r' + index, branch: 'main'}, released: {tag: 'v1.0.0', version: '1.0.0'}}));
+            const packages = statuses.map((status, index) => ({name: 'p' + index, title: status, commit: 'a'.repeat(40), sourceRepo: {owner: 'Example', repo: 'r' + index, branch: 'main'}, released: {tag: 'v1.0.0', version: '1.0.0'}}));
             const units = statuses.map((status, index) => ({package: 'p' + index, target: 't', feed: 'f', status, detail: null, position: null,
+                order: index + 1, assigned: ['Building','AwaitingPublish','PublishDispatching','Publishing','Settled','Failed'].includes(status),
+                publishDispatchedAt: status === 'Settled' ? 1 : null, publishedAt: status === 'Settled' ? 1 : null,
                 distribution: 'test', suite: 'stable', arch: 'test', format: 'deb', prerequisites: [],
                 inflight: ['Dispatching','Building','AwaitingPublish','PublishDispatching','Publishing'].includes(status)
                     ? {version: '1.0.0', revision: 1, buildId: `p${index}~t~1.0.0~r1`, phase: status, runId: 1, attempt: 1} : null,
@@ -114,7 +126,7 @@ async function run() {
         }
         fs.writeFileSync(path.join(output, mode + '-console.json'), JSON.stringify(consoleLog, null, 2));
         fs.writeFileSync(path.join(output, mode + '-browser.json'), JSON.stringify({browser: browser.version(), records}, null, 2));
-        if (consoleLog.some(entry => entry.variant !== 'reduced')) {throw new Error('Browser console errors: ' + JSON.stringify(consoleLog));}
+        if (consoleLog.length) {throw new Error('Browser console errors: ' + JSON.stringify(consoleLog));}
     } finally {
         await browser.close();
         server.closeAllConnections();
