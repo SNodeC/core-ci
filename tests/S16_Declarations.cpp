@@ -21,7 +21,7 @@ std::string read(const std::string& file) {
 }
 int main() {
     const std::string registry =
-        R"({"feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"}},"default_feed":"f","build":"o/recipes/.github/workflows/build.yml","repositories":["O/A","o/b"],"ignored":42})";
+        R"({"feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"o/recipes/.github/workflows/build.yml","repositories":["O/A","o/b"],"ignored":42})";
     const auto location = registryFile("o/registry:ci/registry.json");
     REQUIRE(std::holds_alternative<DeclarationFile>(location));
     const auto load = [&](std::string reg, std::string a, std::string b, int status = 200, std::string branch = "master") {
@@ -33,11 +33,15 @@ int main() {
             [&](std::string path, bool raw, auto done) {
                 int httpStatus = 200;
                 std::string body = "{\"default_branch\":\"" + branch + "\",\"full_name\":\"" + repoKey(path.substr(7)) + "\"}";
-                if (path.find("/contents/") != std::string::npos) {
+                if (path.find("/commits/") != std::string::npos) {
+                    body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
+                } else if (path.find("/contents/") != std::string::npos) {
                     CHECK(raw);
-                    CHECK(path.ends_with("?ref=" + escape(branch)));
+                    CHECK(path.ends_with("?ref=" + std::string(40, 'a'))); // Read the resolved commit even if the branch advances.
                     CHECK(path.find("/contents/ci%2F") != std::string::npos);
-                    if (path.starts_with("/repos/o/registry/")) {
+                    if (path.find("targets.json") != std::string::npos) {
+                        body = read("targets.json");
+                    } else if (path.starts_with("/repos/o/registry/")) {
                         body = reg;
                     } else if (path.starts_with("/repos/o/a/")) {
                         body = a;
@@ -142,7 +146,7 @@ int main() {
          "[]",
          "{",
          R"({"feeds":[]})",
-         R"({"feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"}},"default_feed":"f","build":"o/recipes/.github/workflows/build.yml"})"}) {
+         R"({"feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"o/recipes/.github/workflows/build.yml"})"}) {
         bad(invalid, package("a"));
     }
     const auto replaced = [](std::string text, const std::string& oldValue, const std::string& newValue) {
@@ -213,7 +217,11 @@ int main() {
         pending.pop_back();
         const auto& path = std::get<0>(item);
         std::string body = "{\"default_branch\":\"master\",\"full_name\":\"" + repoKey(path.substr(7)) + "\"}";
-        if (path.find("/contents/") != std::string::npos) {
+        if (path.find("/commits/") != std::string::npos) {
+            body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
+        } else if (path.find("targets.json") != std::string::npos) {
+            body = read("targets.json");
+        } else if (path.find("/contents/") != std::string::npos) {
             body = path.starts_with("/repos/o/registry/") ? registry : (path.starts_with("/repos/o/a/") ? package("a") : package("b", "a"));
         }
         std::get<2>(item)(200, std::move(body), {});
@@ -224,7 +232,7 @@ int main() {
     CHECK(std::get<LoadedDeclarations>(asynchronous).pipeline == pipeline);
     // GitHub supplies spelling independently of the registry, for all repository roles.
     const std::string caseRegistry =
-        R"({"feeds":{"f":{"publisher":"snodec/RECIPES/.github/workflows/publish.yml"}},"default_feed":"f","build":"SNODEC/recipes/.github/workflows/build.yml","repositories":["snodec/SNODE.C"]})";
+        R"({"feeds":{"f":{"publisher":"snodec/RECIPES/.github/workflows/publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"SNODEC/recipes/.github/workflows/build.yml","repositories":["snodec/SNODE.C"]})";
     std::variant<LoadedDeclarations, Error> canonical = Error{"not completed"};
     std::vector<std::string> paths;
     loadDeclarations(
@@ -234,7 +242,11 @@ int main() {
             paths.push_back(path);
             const auto identity = repoKey(path);
             std::string body;
-            if (path.find("/contents/") != std::string::npos) {
+            if (path.find("/commits/") != std::string::npos) {
+                body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
+            } else if (path.find("targets.json") != std::string::npos) {
+                body = read("targets.json");
+            } else if (path.find("/contents/") != std::string::npos) {
                 CHECK(path.starts_with("/repos/SNodeC/"));
                 CHECK(path.find("/Registry/") != std::string::npos || path.find("/snode.c/") != std::string::npos);
                 body = identity.starts_with("/repos/snodec/registry/") ? caseRegistry : package("snodec");
@@ -250,7 +262,7 @@ int main() {
         });
     REQUIRE(std::holds_alternative<LoadedDeclarations>(canonical));
     const auto& canon = std::get<LoadedDeclarations>(canonical).pipeline;
-    CHECK_EQ(paths.size(), 5U); // Registry, shared workflow repository and source are each resolved once.
+    CHECK_EQ(paths.size(), 9U); // Registry, shared workflow repository and source are each resolved once.
     CHECK(canon.repositories() == (std::set<std::pair<std::string, std::string>>{{"SNodeC", "snode.c"}}));
     CHECK_EQ(canon.packages().at("snodec").sourceRepo.owner, "SNodeC");
     CHECK_EQ(canon.packages().at("snodec").sourceRepo.repo, "snode.c");

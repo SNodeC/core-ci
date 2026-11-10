@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include "Dashboard.h"
+#include "Http.h"
 #include "Presentation.h"
 #include "StatusJson.h"
 #include "adapters/github/Declarations.h"
@@ -10,17 +12,18 @@
 #include "persistence/EventQueue.h"
 
 #include <charconv>
-#include <chrono>
 #include <core/SNodeC.h>
 #include <core/timer/Timer.h>
 #include <cstdlib>
 #include <deque>
+#include <express/legacy/in/WebApp.h>
 #include <express/tls/in/WebApp.h>
 #include <filesystem>
 #include <iostream>
 #include <log/SemanticLogger.h>
 #include <openssl/crypto.h>
 #include <set>
+#include <sstream>
 #include <tuple>
 #include <utils/Config.h>
 #include <web/http/ConfigHttpParser.h>
@@ -35,46 +38,12 @@ namespace coreci::app {
         using Server = express::tls::in::WebApp;
         using Req = std::shared_ptr<express::Request>;
         using Res = std::shared_ptr<express::Response>;
-        std::int64_t now() {
-            return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        }
         std::string environment(const char* key) {
             const auto* v = std::getenv(key);
             return v == nullptr ? "" : v;
         }
         void answer(const Res& res, int code, const std::string& text) {
             res->status(code).set("Content-Type", "text/plain").send(text);
-        }
-        bool contentType(const Req& req, const std::string& expected) {
-            auto value = req->get("Content-Type");
-            value = value.substr(0, value.find(';'));
-            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
-                value.pop_back();
-            }
-            for (char& c : value) {
-                if (c >= 'A' && c <= 'Z') {
-                    c = static_cast<char>(c - 'A' + 'a');
-                }
-            }
-            return value == expected;
-        }
-        std::pair<int, std::string> response(const ps::Result& result) {
-            std::pair<int, std::string> output;
-            std::visit(
-                [&](const auto& r) {
-                    using T = std::decay_t<decltype(r)>;
-                    if constexpr (std::is_same_v<T, ps::Accepted>) {
-                        output = {200, "accepted"};
-                    } else if constexpr (std::is_same_v<T, ps::Ignored>) {
-                        output = {200, "ignored: " + r.reason};
-                    } else if constexpr (std::is_same_v<T, ps::Invalid>) {
-                        output = {400, "invalid: " + r.reason};
-                    } else {
-                        output = {503, "unavailable"};
-                    }
-                },
-                result);
-            return output;
         }
         class Application {
         public:
@@ -98,7 +67,12 @@ namespace coreci::app {
                                                                   {"listen-address", "0.0.0.0"},
                                                                   {"listen-port", "8443"},
                                                                   {"tls-cert", ""},
-                                                                  {"tls-key", ""}};
+                                                                  {"tls-key", ""},
+                                                                  {"idp-base-url", "https://core.snodec.org:8088"},
+                                                                  {"idp-client-id", ""},
+                                                                  {"idp-public-key-path", ""},
+                                                                  {"dashboard-users", ""},
+                                                                  {"dashboard-redirect-port", "0"}};
                 for (const auto& [name, value] : defaults) {
                     options[name] = utils::Config::configRoot.addOption("--" + name, name, "value", value, CLI::Validator());
                 }
@@ -110,7 +84,7 @@ namespace coreci::app {
                     ->setMaximumHeaderFields(maximumParserLimits.maximumHeaderFields)
                     ->setMaximumStartLineBytes(maximumParserLimits.maximumStartLineBytes);
                 server.getConfig()->Local::setPort(8443);
-                routes();
+                redirect.getConfig()->net::config::ConfigInstance::forceUnrequired(true);
             }
             int start(int argc, char** argv) {
                 core::SNodeC::init(argc, argv);
@@ -131,7 +105,14 @@ namespace coreci::app {
                         invalid(name, valid);
                     }
                 }
-                for (const auto& key : {"callback-base-url", "db-user", "db-name", "tls-cert", "tls-key"}) {
+                for (const auto& key : {"callback-base-url",
+                                        "db-user",
+                                        "db-name",
+                                        "tls-cert",
+                                        "tls-key",
+                                        "idp-client-id",
+                                        "idp-public-key-path",
+                                        "dashboard-users"}) {
                     if (get(key).empty()) {
                         invalid(key, valid);
                     }
@@ -159,7 +140,7 @@ namespace coreci::app {
                 if (!gh::httpsUrl(get("callback-base-url"))) {
                     invalid("callback-base-url", valid);
                 }
-                for (const auto& key : {"tls-cert", "tls-key", "github-ca-cert"}) {
+                for (const auto& key : {"tls-cert", "tls-key", "github-ca-cert", "idp-public-key-path"}) {
                     std::error_code error;
                     if (!get(key).empty() && !std::filesystem::is_regular_file(get(key), error)) {
                         invalid(key, valid);
@@ -172,6 +153,23 @@ namespace coreci::app {
                 interval = number("reconcile-interval", 60, 86400, valid);
                 statusInterval = number("status-interval", 30, 3600, valid);
                 const auto port = number("listen-port", 1, 65535, valid), dbPort = number("db-port", 0, 65535, valid);
+                const auto redirectPort = number("dashboard-redirect-port", 0, 65535, valid);
+                if (redirectPort == port) {
+                    invalid("dashboard-redirect-port", valid);
+                }
+                std::shared_ptr<snodec::auth::OAuthClient> auth;
+                try {
+                    auth = std::make_shared<snodec::auth::OAuthClient>(get("idp-base-url"),
+                                                                       get("idp-client-id"),
+                                                                       snodec::auth::endpoint(get("callback-base-url")).origin +
+                                                                           "/auth/callback",
+                                                                       snodec::auth::middleware::loadPublicKey(get("idp-public-key-path")),
+                                                                       snodec::auth::httpExchange,
+                                                                       "coreci_access_token",
+                                                                       43200);
+                } catch (const std::exception&) {
+                    invalid("dashboard-auth", valid);
+                }
                 int result = 1;
                 if (valid) {
                     server.getConfig()->setCert(get("tls-cert"));
@@ -215,11 +213,42 @@ namespace coreci::app {
                             generation = seq;
                             if (queue->engine()) {
                                 observePresentation(engine);
+                                dashboard->changed();
                             }
                         });
                     store->setConnectionLost([this](const auto& reason) {
                         queue->recover(reason);
                     });
+                    std::set<std::string> users;
+                    std::istringstream names(get("dashboard-users"));
+                    std::string name;
+                    while (std::getline(names, name, ',')) {
+                        users.insert(name);
+                    }
+                    dashboard = std::make_unique<Dashboard>(
+                        auth,
+                        users,
+                        *queue,
+                        *base,
+                        [this](std::string path, bool raw, auto done) {
+                            http->request(std::move(path), token.token(), std::move(done), {}, raw);
+                        },
+                        [this](auto done) {
+                            reload(std::move(done));
+                        },
+                        [this] {
+                            return generation;
+                        });
+                    routes();
+                    if (redirectPort != 0) {
+                        redirect.getConfig()->Local::setHost(get("listen-address"))->setPort(static_cast<std::uint16_t>(redirectPort));
+                        redirect.all("*",
+                                     [origin = snodec::auth::endpoint(get("callback-base-url")).origin](const Req& req, const Res& res) {
+                                         res->redirect(308, origin + req->originalUrl);
+                                     });
+                        redirect.listen([](const auto&, const auto&) {
+                        });
+                    }
                     rebuild();
                     result = core::SNodeC::start();
                     if (fatal) {
@@ -251,6 +280,10 @@ namespace coreci::app {
                     [this] {
                         recoveryDelay = 1;
                         observePresentation(*queue->engine());
+                        dashboard->changed();
+                        if (listening) {
+                            reload();
+                        }
                         if (retry) {
                             retry->cancel();
                         }
@@ -376,13 +409,13 @@ namespace coreci::app {
             }
             void routes() {
                 server.setStrictRouting().setCaseInsensitiveRouting(false);
-                const auto size = [](const Req& req, const Res& res, express::Next& next) {
-                    if (req->body.size() > 64U * 1024U) {
+                server.use([](const Req& req, const Res& res, express::Next& next) {
+                    if (req->path != "/api/v1/github/webhook" && req->body.size() > 64U * 1024U) {
                         answer(res, 413, "body too large");
                     } else {
                         next();
                     }
-                };
+                });
                 const auto webhookAuth = [](const Req& req, const Res& res, express::Next& next) {
                     if (gh::verify(environment("CORECI_WEBHOOK_SECRET"),
                                    std::string(req->body.begin(), req->body.end()),
@@ -418,32 +451,32 @@ namespace coreci::app {
                     webhook(req, res, std::string(req->body.begin(), req->body.end()));
                 });
                 server.all("/api/v1/github/webhook", method);
-                server.post("/api/v1/builds/:buildId/report", size, callbackAuth, [this](const Req& req, const Res& res) {
+                server.post("/api/v1/builds/:buildId/report", callbackAuth, [this](const Req& req, const Res& res) {
                     report(req, res);
                 });
-                server.all("/api/v1/builds/:buildId/report", size, method);
-                server.post("/api/v1/units/:package/:target/retry", size, adminAuth, [this](const Req& req, const Res& res) {
+                server.all("/api/v1/builds/:buildId/report", method);
+                server.post("/api/v1/units/:package/:target/retry", adminAuth, [this](const Req& req, const Res& res) {
                     submit(RetryRequested{now(), req->param("package"), req->param("target")}, res);
                 });
-                server.all("/api/v1/units/:package/:target/retry", size, method);
-                server.post("/api/v1/units/:package/:target/rebuild", size, adminAuth, [this](const Req& req, const Res& res) {
+                server.all("/api/v1/units/:package/:target/retry", method);
+                server.post("/api/v1/units/:package/:target/rebuild", adminAuth, [this](const Req& req, const Res& res) {
                     submit(RebuildRequested{now(), req->param("package"), req->param("target")}, res);
                 });
-                server.all("/api/v1/units/:package/:target/rebuild", size, method);
-                server.post("/api/v1/reload", size, adminAuth, [this](const Req&, const Res& res) {
+                server.all("/api/v1/units/:package/:target/rebuild", method);
+                server.post("/api/v1/reload", adminAuth, [this](const Req&, const Res& res) {
                     const bool running = loading;
                     reload();
                     answer(res, 202, running ? "already running" : "started");
                 });
-                server.all("/api/v1/reload", size, method);
-                server.post("/api/v1/reconcile", size, adminAuth, [this](const Req&, const Res& res) {
+                server.all("/api/v1/reload", method);
+                server.post("/api/v1/reconcile", adminAuth, [this](const Req&, const Res& res) {
                     const bool running = reconciling;
                     reconcile();
                     answer(res, 202, running ? "already running" : "started");
                 });
-                server.all("/api/v1/reconcile", size, method);
-                server.head("/api/v1/status.json", size, method);
-                server.get("/api/v1/status.json", size, [this](const Req&, const Res& res) {
+                server.all("/api/v1/reconcile", method);
+                server.head("/api/v1/status.json", method);
+                server.get("/api/v1/status.json", [this](const Req&, const Res& res) {
                     if (queue->engine()) {
                         res->status(200)
                             .set("Content-Type", "application/json")
@@ -452,27 +485,28 @@ namespace coreci::app {
                         answer(res, 503, "unavailable");
                     }
                 });
-                server.all("/api/v1/status.json", size, method);
-                server.head("/api/v1/status", size, method);
-                server.get("/api/v1/status", size, [this](const Req&, const Res& res) {
+                server.all("/api/v1/status.json", method);
+                server.head("/api/v1/status", method);
+                server.get("/api/v1/status", [this](const Req&, const Res& res) {
                     showStatus(res, false);
                 });
-                server.all("/api/v1/status", size, method);
-                server.head("/api/v1/graph.dot", size, method);
-                server.get("/api/v1/graph.dot", size, [this](const Req&, const Res& res) {
+                server.all("/api/v1/status", method);
+                server.head("/api/v1/graph.dot", method);
+                server.get("/api/v1/graph.dot", [this](const Req&, const Res& res) {
                     showStatus(res, true);
                 });
-                server.all("/api/v1/graph.dot", size, method);
-                server.head("/api/v1/badge/:package/:target.svg", size, method);
-                server.get("/api/v1/badge/:package/:target.svg", size, [this](const Req& req, const Res& res) {
+                server.all("/api/v1/graph.dot", method);
+                server.head("/api/v1/badge/:package/:target.svg", method);
+                server.get("/api/v1/badge/:package/:target.svg", [this](const Req& req, const Res& res) {
                     const Unit unit{req->param("package"), req->param("target")};
                     res->status(200)
                         .set("Content-Type", "image/svg+xml; charset=utf-8")
                         .set("Cache-Control", "no-cache, no-store, must-revalidate")
                         .send(queue->engine() ? unitBadge(*queue->engine(), unit) : badge(unit.package, "unavailable", "#6e7781"));
                 });
-                server.all("/api/v1/badge/:package/:target.svg", size, method);
-                server.use(size, [](const Req&, const Res& res) {
+                server.all("/api/v1/badge/:package/:target.svg", method);
+                dashboard->routes(server);
+                server.use([](const Req&, const Res& res) {
                     answer(res, 404, "not found");
                 });
             }
@@ -676,15 +710,24 @@ namespace coreci::app {
             const Pipeline& pipeline() const {
                 return queue->engine()->pipeline();
             }
-            void finishLoad() {
+            void finishLoad(bool success) {
                 loading = false;
                 reconcile(true);
                 if (reloadPending) {
                     reloadPending = false;
                     reload();
+                } else {
+                    auto replies = std::move(loadReplies);
+                    loadReplies.clear();
+                    for (const auto& reply : replies) {
+                        reply(success);
+                    }
                 }
             }
-            void reload() {
+            void reload(std::function<void(bool)> done = {}) {
+                if (done) {
+                    loadReplies.push_back(std::move(done));
+                }
                 if (loading) {
                     reloadPending = true;
                 } else {
@@ -699,16 +742,17 @@ namespace coreci::app {
                             if (std::holds_alternative<gh::Error>(result)) {
                                 loadError = std::get<gh::Error>(result).reason;
                                 std::cerr << loadError << '\n';
-                                finishLoad();
+                                finishLoad(false);
                             } else {
                                 loadError.clear();
                                 const auto loaded = std::get<gh::LoadedDeclarations>(result);
                                 queue->enqueue(GraphChanged{now(), loaded.pipeline}, [this, loaded](const auto&) {
                                     if (queue->engine() && pipeline() == loaded.pipeline) {
                                         presentations = loaded.presentations;
+                                        dashboard->loaded(loaded);
                                         observePresentation(*queue->engine());
                                     }
-                                    finishLoad();
+                                    finishLoad(queue->engine() && pipeline() == loaded.pipeline);
                                 });
                             }
                         });
@@ -722,6 +766,9 @@ namespace coreci::app {
             std::string loadError;
             bool loading = false, reloadPending = false;
             Server server;
+            express::legacy::in::WebApp redirect{"coreci-redirect"};
+            std::unique_ptr<Dashboard> dashboard;
+            std::vector<std::function<void(bool)>> loadReplies;
             std::map<std::string, CLI::Option*> options;
             std::optional<gh::Url> base;
             gh::EnvironmentTokenProvider token;

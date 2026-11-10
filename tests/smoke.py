@@ -16,10 +16,18 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 
-def port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def ports(count):
+    reserved = []
+    try:
+        for _ in range(count):
+            sock = socket.socket()
+            reserved.append(sock)
+            sock.bind(("127.0.0.1", 0))
+        result = [sock.getsockname()[1] for sock in reserved]
+    finally:
+        for sock in reserved:
+            sock.close()
+    return result
 
 
 def run():
@@ -43,6 +51,10 @@ def run():
             matrix = '{"id":"t1","feed":"f1"}' + ('' if p == "e" else ',{"id":"t2","feed":"f2"}')
             (declarations / (p + ".json")).write_text(
                 '{"package":"' + p + '","depends_on":' + prerequisites + ',"matrix":[' + matrix + ']}')
+        settings = json.loads((declarations / "registry.json").read_text())
+        settings["targets"] = "ci/targets.json"
+        (declarations / "registry.json").write_text(json.dumps(settings))
+        (declarations / "targets.json").write_text(json.dumps({"targets": [dict(id=t, distribution="test", suite="stable", arch="test", build={"format": "deb"}) for t in ("t1", "t2")]}))
         loads = 0
         def certificate(name, host):
             cert, key = work / (name + ".crt"), work / (name + ".key")
@@ -52,7 +64,10 @@ def run():
             return cert, key
         cert, key = certificate("good", "localhost")
         wrong_cert, wrong_key = certificate("wrong", "wrong.invalid")
-        api_port, bad_port, app_port, second_port = port(), port(), port(), port()
+        public_key = work / "idp-public.pem"
+        subprocess.run(["openssl", "pkey", "-in", str(key), "-pubout", "-out", str(public_key)], check=True)
+        api_port, bad_port, app_port, second_port = ports(4)
+        assert len({api_port, bad_port, app_port, second_port}) == 4
         trace, wrong_trace = work / "requests.txt", work / "wrong.txt"
         def start(command, name, pipe=False):
             log = work / (name + ".log")
@@ -87,7 +102,8 @@ def run():
                        "--db-port", os.environ.get("CORECI_TEST_DB_PORT", "0"), "--db-user", os.environ["CORECI_TEST_DB_USER"],
                        "--db-name", os.environ["CORECI_TEST_DB_NAME"], "--github-api-url", api, "--github-ca-cert", cert,
                        "--callback-base-url", app_url, "--tls-cert", cert, "--tls-key", key,
-                       "--listen-address", "127.0.0.1", "--listen-port", str(listen_port), "coreci"]
+                       "--listen-address", "127.0.0.1", "--listen-port", str(listen_port),
+                       "--idp-client-id", "smoke", "--idp-public-key-path", public_key, "--dashboard-users", "owner", "coreci"]
             if parser:
                 command += ["http", "parser", *parser]
             return command

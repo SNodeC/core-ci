@@ -41,7 +41,7 @@ namespace coreci::persistence {
                                 if (std::holds_alternative<Ignore>(classification)) {
                                     warning(seq, std::get<Ignore>(classification).reason);
                                 } else {
-                                    current->handle(event);
+                                    current->handle(event, seq);
                                 }
                                 if (committed) {
                                     committed(seq, event, *current);
@@ -111,7 +111,7 @@ namespace coreci::persistence {
                             [this, event, epoch = generation](std::uint64_t seq) {
                                 if (epoch == generation) {
                                     auto reply = std::move(activeReply);
-                                    const auto emitted = current->handle(event);
+                                    const auto emitted = current->handle(event, seq);
                                     if (committed) {
                                         committed(seq, event, *current);
                                     }

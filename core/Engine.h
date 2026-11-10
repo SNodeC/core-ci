@@ -44,6 +44,9 @@ namespace coreci {
         bool operator==(const Failure&) const = default;
     };
     struct UnitState {
+        std::uint64_t order = 0;
+        bool buildAssigned = false;
+        std::optional<std::int64_t> publishDispatchedAt, publishedAt;
         std::optional<Published> published;
         std::optional<Inflight> inflight;
         std::optional<Failure> failure;
@@ -79,7 +82,7 @@ namespace coreci {
     public:
         explicit Engine(Options options);
         Classification classify(const Event& event) const;
-        std::vector<Command> handle(const Event& event);
+        std::vector<Command> handle(const Event& event, std::uint64_t seq = 0);
         std::optional<std::int64_t> nextDeadline() const;
         std::uint64_t nextRevision(const Unit& unit) const;
         std::map<Unit, Derived> derive() const;
@@ -96,7 +99,7 @@ namespace coreci {
         Command dispatch(const Unit& unit) const;
         void clear(const Unit& unit);
         void fail(const Unit& unit, const std::string& reason, std::int64_t at);
-        void schedule(std::vector<Command>& commands);
+        void schedule(std::vector<Command>& commands, std::uint64_t seq);
         Pipeline graph;
         Options options;
         std::map<std::string, std::optional<Released>> released;

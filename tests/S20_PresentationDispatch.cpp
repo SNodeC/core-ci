@@ -46,5 +46,12 @@ int main() {
     CHECK(coreci::app::statusSnapshot(engine, "f2") == f2);
     actual.observe({{"f1", coreci::app::statusSnapshot(engine, "f1")}, {"f2", coreci::app::statusSnapshot(engine, "f2")}});
     CHECK(actual.due(160, 60) == std::vector<std::string>{"f1"});
+    Presentation publishing;
+    for (const auto& state : {"PublishDispatching", "Publishing"}) {
+        publishing.observe({{"f", view(state)}});
+        CHECK(publishing.due(1000, 60).empty());
+    }
+    publishing.observe({{"f", view("Settled")}});
+    CHECK(publishing.due(1001, 60) == std::vector<std::string>{"f"});
     return checkResult();
 }

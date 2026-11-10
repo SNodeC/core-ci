@@ -1,6 +1,7 @@
 #pragma once
 #include "StatusJson.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -23,7 +24,10 @@ namespace coreci::app {
         std::vector<std::string> due(std::int64_t now, std::int64_t interval) {
             std::vector<std::string> result;
             for (auto& [id, feed] : feeds) {
-                if (feed.dirty && !feed.pending && (!feed.last || now - *feed.last >= interval)) {
+                const bool publishing = std::any_of(feed.body.units.begin(), feed.body.units.end(), [](const auto& item) {
+                    return item.second.status == "PublishDispatching" || item.second.status == "Publishing";
+                });
+                if (feed.dirty && !feed.pending && !publishing && (!feed.last || now - *feed.last >= interval)) {
                     feed.last = now;
                     feed.pending = true;
                     feed.sent = feed.body;

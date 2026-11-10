@@ -100,8 +100,8 @@ int recovery(InMemoryEventStore::Failure failure) {
     store.defer(false);
     Engine fresh = engine();
     store.loadAll(
-        [&](auto, const Event& event) {
-            fresh.handle(event);
+        [&](auto seq, const Event& event) {
+            fresh.handle(event, seq);
         },
         [] {
         },
