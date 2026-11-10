@@ -37,7 +37,7 @@ int main() {
                     body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
                 } else if (path.find("/contents/") != std::string::npos) {
                     CHECK(raw);
-                    CHECK(path.ends_with("?ref=" + escape(branch)));
+                    CHECK(path.ends_with("?ref=" + std::string(40, 'a'))); // Read the resolved commit even if the branch advances.
                     CHECK(path.find("/contents/ci%2F") != std::string::npos);
                     if (path.find("targets.json") != std::string::npos) {
                         body = read("targets.json");

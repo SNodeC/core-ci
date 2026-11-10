@@ -77,7 +77,7 @@ namespace coreci::github {
                 const auto& target = info ? source : repositories.at(key(source));
                 std::string url = apiPath + "/repos/" + escape(target.owner) + "/" + escape(target.repo);
                 if (!info) {
-                    url += "/contents/" + escape(path) + "?ref=" + escape(target.branch);
+                    url += "/contents/" + escape(path) + "?ref=" + escape(commits.at(key(source)));
                 }
                 fetch(std::move(url), !info, [self, target, path, callback, info](int status, std::string body, std::string) {
                     if (!self->done) {
