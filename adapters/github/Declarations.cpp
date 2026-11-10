@@ -55,6 +55,9 @@ namespace coreci::github {
             std::vector<Repo> sources;
             std::vector<Feed> feeds;
             std::map<std::string, Workflow> presentations;
+            std::map<std::string, CatalogTarget> catalog;
+            std::map<std::string, PackageDetails> details;
+            std::map<std::string, std::string> commits;
             Workflow build;
             std::string defaultFeed;
             std::size_t remaining = 0;
@@ -105,7 +108,24 @@ namespace coreci::github {
                                 throw std::invalid_argument("invalid default branch");
                             }
                             self->repositories[key(source)] = std::move(canonical);
-                            next();
+                            const auto& target = self->repositories.at(key(source));
+                            self->fetch(self->apiPath + "/repos/" + escape(target.owner) + "/" + escape(target.repo) + "/commits/" +
+                                            escape(target.branch),
+                                        false,
+                                        [self, source, next](int status, std::string body, std::string) {
+                                            if (self->done) {
+                                                try {
+                                                    const auto sha = Json::parse(body).at("sha").get<std::string>();
+                                                    if (status != 200 || !std::regex_match(sha, std::regex("[a-f0-9]{40}"))) {
+                                                        throw std::invalid_argument("invalid HEAD commit");
+                                                    }
+                                                    self->commits[key(source)] = sha;
+                                                    next();
+                                                } catch (const std::exception& error) {
+                                                    self->fail(source.owner + "/" + source.repo, "<commit>", error.what());
+                                                }
+                                            }
+                                        });
                         },
                         true);
                 }
@@ -114,7 +134,7 @@ namespace coreci::github {
                 const auto self = shared_from_this();
                 const Repo registry{file.owner, file.repo, {}};
                 branch(registry, [self, registry] {
-                    self->get(registry, self->file.path, [self](Json value) {
+                    self->get(registry, self->file.path, [self, registry](Json value) {
                         const auto& feeds = value.at("feeds");
                         if (!feeds.is_object()) {
                             throw std::invalid_argument("feeds must be an object");
@@ -140,7 +160,29 @@ namespace coreci::github {
                         for (const auto& source : sources) {
                             self->sources.push_back(repo(source.get<std::string>()));
                         }
-                        self->resolve();
+                        const auto path = value.at("targets").get<std::string>();
+                        const auto checked = registryFile(registry.owner + "/" + registry.repo + ":" + path);
+                        if (std::holds_alternative<Error>(checked)) {
+                            throw std::invalid_argument("invalid catalog path");
+                        }
+                        self->get(registry, path, [self](Json data) {
+                            const auto& targets = data.at("targets");
+                            if (!targets.is_array()) {
+                                throw std::invalid_argument("catalog targets must be an array");
+                            }
+                            for (const auto& entry : targets) {
+                                const auto id = entry.at("id").get<std::string>();
+                                validateIdentifier(id, "catalog target");
+                                CatalogTarget coordinates{entry.at("distribution").get<std::string>(),
+                                                          entry.at("suite").get<std::string>(),
+                                                          entry.at("arch").get<std::string>(),
+                                                          entry.at("build").at("format").get<std::string>()};
+                                if (!self->catalog.emplace(id, std::move(coordinates)).second) {
+                                    throw std::invalid_argument("duplicate catalog id: " + id);
+                                }
+                            }
+                            self->resolve();
+                        });
                     });
                 });
             }
@@ -174,7 +216,7 @@ namespace coreci::github {
                     writer = resolved(writer);
                     writer.branch = repositories.at(key({file.owner, file.repo})).branch;
                 }
-                callback(LoadedDeclarations{pipeline, writers});
+                callback(LoadedDeclarations{pipeline, writers, catalog, details});
             }
             Workflow resolved(const Workflow& workflow) const {
                 const auto& canonical = repositories.at(key({workflow.owner, workflow.repo}));
@@ -197,6 +239,8 @@ namespace coreci::github {
                             pkg.name = value.at("package").get<std::string>();
                             pkg.sourceRepo = self->repositories.at(key(source));
                             pkg.buildWorkflow = self->build;
+                            self->details[pkg.name] = {value.value("title", pkg.sourceRepo.owner + "/" + pkg.sourceRepo.repo),
+                                                       self->commits.at(key(source))};
                             const auto& prerequisites = value.at("depends_on");
                             if (!prerequisites.is_array()) {
                                 throw std::invalid_argument("depends_on must be an array");
@@ -216,6 +260,10 @@ namespace coreci::github {
                             }
                             for (const auto& target : matrix) {
                                 const auto id = target.at("id").get<std::string>();
+                                if (!target.is_object() || target.size() > (target.contains("feed") ? 2U : 1U) ||
+                                    !self->catalog.contains(id)) {
+                                    throw std::invalid_argument("unknown catalog id or extra matrix field: " + id);
+                                }
                                 if (!pkg.targets.insert(id).second) {
                                     throw std::invalid_argument("duplicate target id: " + id);
                                 }

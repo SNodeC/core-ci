@@ -71,20 +71,129 @@ if(CORECI_WITH_SNODEC)
                                    http-server-express-tls-in
     )
     find_package(OpenSSL REQUIRED)
+    find_package(snodec-auth 2 REQUIRED)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_library(
         coreci_github
         adapters/github/Protocol.cpp adapters/github/HttpClient.cpp
-        adapters/github/Declarations.cpp
+        adapters/github/Declarations.cpp adapters/github/Jobs.cpp
     )
     target_link_libraries(
         coreci_github
         PUBLIC coreci_persistence snodec::http-client snodec::net-in-stream-tls
                OpenSSL::SSL OpenSSL::Crypto
     )
-    add_library(coreci_app app/App.cpp app/StatusJson.cpp)
+    file(READ app/dashboard/index.html DASHBOARD_HTML)
+    file(READ app/dashboard/style.css DASHBOARD_CSS)
+    file(READ app/dashboard/app.js DASHBOARD_JS)
+    set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY CMAKE_CONFIGURE_DEPENDS app/dashboard/index.html
+                 app/dashboard/style.css app/dashboard/app.js
+    )
+    configure_file(app/DashboardAssets.h.in generated/DashboardAssets.h @ONLY)
+    add_library(
+        coreci_app app/App.cpp app/StatusJson.cpp app/Dashboard.cpp
+                   app/JobCache.cpp adapters/dashboard/Model.cpp
+    )
+    target_include_directories(
+        coreci_app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated
+    )
     target_link_libraries(
-        coreci_app PUBLIC coreci_github coreci_mariadb
-                          snodec::http-server-express-tls-in
+        coreci_app
+        PUBLIC coreci_github coreci_mariadb snodec::http-server-express-tls-in
+               snodec-auth::auth-client
+    )
+    foreach(scenario S21_Catalog S25_JobCache)
+        add_executable(${scenario} tests/${scenario}.cpp)
+        target_link_libraries(${scenario} PRIVATE coreci_app)
+        add_test(NAME ${scenario} COMMAND ${scenario})
+    endforeach()
+    foreach(mode stream buttons auth)
+        if(mode STREQUAL "stream")
+            set(case S22_DashboardStream)
+        elseif(mode STREQUAL "buttons")
+            set(case S23_DashboardButtons)
+        else()
+            set(case S24_DashboardAuth)
+        endif()
+        add_test(
+            NAME ${case}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/checks.py
+                ${CMAKE_BINARY_DIR} ${mode}
+        )
+        set_tests_properties(
+            ${case}
+            PROPERTIES ENVIRONMENT
+                       "PYTHONDONTWRITEBYTECODE=1"
+                       SKIP_RETURN_CODE
+                       77
+                       RUN_SERIAL
+                       TRUE
+                       TIMEOUT
+                       150
+        )
+    endforeach()
+    set(CORECI_PLAYWRIGHT_PATH
+        ""
+        CACHE PATH "Installed playwright-core for the reference Chromium"
+    )
+    foreach(mode assets references)
+        if(mode STREQUAL "assets")
+            set(case G4_DashboardAssets)
+        else()
+            set(case G5_DashboardPixels)
+        endif()
+        add_test(
+            NAME ${case}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/visual.py
+                ${CMAKE_BINARY_DIR}/dashboard-evidence ${mode}
+        )
+        set_tests_properties(
+            ${case}
+            PROPERTIES
+                ENVIRONMENT
+                "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
+                TIMEOUT
+                180
+        )
+    endforeach()
+    add_test(
+        NAME G6_DashboardStates
+        COMMAND node ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/browser.cjs
+                ${CMAKE_BINARY_DIR}/dashboard-evidence states
+    )
+    set_tests_properties(
+        G6_DashboardStates
+        PROPERTIES
+            ENVIRONMENT
+            "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
+            TIMEOUT
+            120
+    )
+    add_test(
+        NAME M_DashboardEndToEnd
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/e2e.py
+            ${CMAKE_BINARY_DIR}
+    )
+    set_tests_properties(
+        M_DashboardEndToEnd
+        PROPERTIES
+            ENVIRONMENT
+            "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
+            SKIP_RETURN_CODE
+            77
+            RUN_SERIAL
+            TRUE
+            TIMEOUT
+            180
     )
     add_executable(core-ci app/main.cpp)
     target_link_libraries(core-ci PRIVATE coreci_app)
@@ -92,7 +201,6 @@ if(CORECI_WITH_SNODEC)
     target_link_libraries(coreci-interrupt-store PRIVATE coreci_mariadb)
     add_executable(coreci-reset-store tests/ResetStore.cpp)
     target_link_libraries(coreci-reset-store PRIVATE coreci_mariadb)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(
         NAME M_LocalSmoke
         COMMAND ${Python3_EXECUTABLE}
@@ -166,6 +274,8 @@ file(
     adapters/github/*.cpp
     app/*.h
     app/*.cpp
+    adapters/dashboard/*.h
+    adapters/dashboard/*.cpp
     adapters/mariadb/*.h
     adapters/mariadb/*.cpp
     tests/*.h

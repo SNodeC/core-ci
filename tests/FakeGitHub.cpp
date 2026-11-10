@@ -108,6 +108,9 @@ int main(int argc, char** argv) {
                             name = p;
                         }
                     }
+                    if (req->path.find("targets.json") != std::string::npos) {
+                        name = "targets";
+                    }
                     std::ifstream file(declarations->as<std::string>() + "/" + name + ".json");
                     std::stringstream text;
                     text << file.rdbuf();
@@ -122,6 +125,8 @@ int main(int argc, char** argv) {
                     } else {
                         res->set("Content-Type", "application/json").send(text.str());
                     }
+                } else if (req->path.find("/commits/") != std::string::npos) {
+                    res->send("{\"sha\":\"" + std::string(40, 'a') + "\"}");
                 } else if (!req->path.ends_with("/tags")) {
                     res->set("Content-Type", "application/json")
                         .send("{\"default_branch\":\"trunk\",\"full_name\":\"" + req->path.substr(7) + "\"}");

@@ -6,6 +6,7 @@
 
 namespace coreci {
     std::string repoKey(const std::string& value);
+    void validateIdentifier(const std::string& value, const std::string& kind);
     void validateRepository(const std::string& owner, const std::string& repo);
     void validateWorkflowFile(const std::string& file);
     bool validBranch(const std::string& value);

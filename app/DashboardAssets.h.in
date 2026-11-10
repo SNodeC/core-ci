@@ -1,0 +1,10 @@
+#pragma once
+#include <array>
+#include <string>
+#include <tuple>
+namespace coreci::app {
+    inline const std::array<std::tuple<std::string, std::string, std::string>, 3> assets{{
+        {"/", "text/html", R"coreci_asset(@DASHBOARD_HTML@)coreci_asset"},
+        {"/style.css", "text/css", R"coreci_asset(@DASHBOARD_CSS@)coreci_asset"},
+        {"/app.js", "application/javascript", R"coreci_asset(@DASHBOARD_JS@)coreci_asset"}}};
+}

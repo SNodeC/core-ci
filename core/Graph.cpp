@@ -49,11 +49,6 @@ namespace coreci {
                 return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || extra.find(c) != std::string::npos;
             });
         }
-        void identifier(const std::string& value, const std::string& kind) {
-            if (!characters(value, 64, "._-")) {
-                throw std::invalid_argument("invalid " + kind + ": " + value);
-            }
-        }
         void repository(const std::string& owner, const std::string& repo, const std::string& branch) {
             validateRepository(owner, repo);
             if (!validBranch(branch)) {
@@ -65,6 +60,11 @@ namespace coreci {
             validateWorkflowFile(w.workflowFile);
         }
     } // namespace
+    void validateIdentifier(const std::string& value, const std::string& kind) {
+        if (!characters(value, 64, "._-")) {
+            throw std::invalid_argument("invalid " + kind + ": " + value);
+        }
+    }
     void validateRepository(const std::string& owner, const std::string& repo) {
         if (!characters(owner, 39, "-")) {
             throw std::invalid_argument("invalid owner: " + owner);
@@ -103,14 +103,14 @@ namespace coreci {
     Pipeline Pipeline::Builder::build() const {
         Pipeline p;
         for (const auto& f : feedList) {
-            identifier(f.id, "feed");
+            validateIdentifier(f.id, "feed");
             workflow(f.workflow);
             if (!p.feedMap.emplace(f.id, f).second) {
                 throw std::invalid_argument("duplicate feed: " + f.id);
             }
         }
         for (const auto& t : targetList) {
-            identifier(t.id, "target");
+            validateIdentifier(t.id, "target");
             if (!p.targetMap.emplace(t.id, t).second && p.targetMap.at(t.id).feed != t.feed) {
                 throw std::invalid_argument("target has different feeds: " + t.id);
             }
@@ -119,7 +119,7 @@ namespace coreci {
             }
         }
         for (const auto& pkg : packageList) {
-            identifier(pkg.name, "package");
+            validateIdentifier(pkg.name, "package");
             if (pkg.revisionBase > 1000000) {
                 throw std::invalid_argument("revision_base outside 0–1000000: " + pkg.name);
             }

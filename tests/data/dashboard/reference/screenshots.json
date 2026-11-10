@@ -1,0 +1,478 @@
+[
+  {
+    "view": "work-all",
+    "file": "work-all-1280x800-light.png",
+    "fixtureSha256": "c88a3382c5346ad072a4b05293e3c0434cbc68dbf353ac7b8eccb4ef8ba151c3",
+    "capturedAt": "2026-11-08T10:59:35.437Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "2764b80fe1748c4b01235afca5792b1b3aef975e9b3c852116b1bd6578858106"
+  },
+  {
+    "view": "work-active",
+    "file": "work-active-1280x800-light.png",
+    "fixtureSha256": "24190ca2517c6781ba9db2b5690a48394f3d4446cf9df8c569ffaebea66fd0b3",
+    "capturedAt": "2026-11-08T10:59:35.928Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "bdb10643094818b20df588aeb143f06a75b26ee038efd328ee1b108e11680b68"
+  },
+  {
+    "view": "work-failed",
+    "file": "work-failed-1280x800-light.png",
+    "fixtureSha256": "3e5363b7c014fe35d81fba4aee3c45fa89920105fd39faa3ea15768bb18b0af4",
+    "capturedAt": "2026-11-08T10:59:36.192Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "fb12f37089b48e9e3b4097532bb3a5a8b537ef08e414a907d617b68b7d9f12d1"
+  },
+  {
+    "view": "work-published",
+    "file": "work-published-1280x800-light.png",
+    "fixtureSha256": "0b223de0b85f8a76c8821aec51e0d2a827d4098655d0728096549d79ce20f19c",
+    "capturedAt": "2026-11-08T10:59:36.357Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "053bfe5a615cc1afdecaa1fed6c9d131fa934b04a2a38b0ed3decf6938fd556d"
+  },
+  {
+    "view": "work-details",
+    "file": "work-details-1280x800-light.png",
+    "fixtureSha256": "7e0ef799b93e550ea5207b5f44750a72009013c7cc280e2549f03479425ccbd6",
+    "capturedAt": "2026-11-08T10:59:36.931Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "10839d4b56e3315bd12e151ee3e361ec527ade1e03cf459b58e3dad2574fd0f5"
+  },
+  {
+    "view": "repositories",
+    "file": "repositories-1280x800-light.png",
+    "fixtureSha256": "f517228b5313cafdf164ea26bb5a832e854db64eba81b9e3adda919f5f0bedda",
+    "capturedAt": "2026-11-08T10:59:37.083Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "150f0802825b2376c5157ac0f65a3b1ae869a35ae263df8b6143080b48fedd55"
+  },
+  {
+    "view": "repository-definition",
+    "file": "repository-definition-1280x800-light.png",
+    "fixtureSha256": "d5d3c4cb1f6dd49a63f8bbe02bf269c9b17a6f2180d7b767cd6d289d5ac7c81d",
+    "capturedAt": "2026-11-08T10:59:37.240Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "2056bb6b376b62f6d15bdaf6f8bb68b9f989fd9d9a7dcf9c011defbe722609e5"
+  },
+  {
+    "view": "work-all",
+    "file": "work-all-1280x800-dark.png",
+    "fixtureSha256": "c88a3382c5346ad072a4b05293e3c0434cbc68dbf353ac7b8eccb4ef8ba151c3",
+    "capturedAt": "2026-11-08T10:59:38.546Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "3bcb2c1b7d4392bfb6dd9fca116b55c38ff84468fe085d80e449b524e61556a0"
+  },
+  {
+    "view": "work-active",
+    "file": "work-active-1280x800-dark.png",
+    "fixtureSha256": "24190ca2517c6781ba9db2b5690a48394f3d4446cf9df8c569ffaebea66fd0b3",
+    "capturedAt": "2026-11-08T10:59:39.039Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "9d0573f95b1860031a78fd098a18dfab8b61078a30e664ee1827a955cf326364"
+  },
+  {
+    "view": "work-failed",
+    "file": "work-failed-1280x800-dark.png",
+    "fixtureSha256": "3e5363b7c014fe35d81fba4aee3c45fa89920105fd39faa3ea15768bb18b0af4",
+    "capturedAt": "2026-11-08T10:59:39.307Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "6428b35affaad27450a9ecc6e8a1a7f388bcc21e5018c759e53be9bc3e85f042"
+  },
+  {
+    "view": "work-published",
+    "file": "work-published-1280x800-dark.png",
+    "fixtureSha256": "0b223de0b85f8a76c8821aec51e0d2a827d4098655d0728096549d79ce20f19c",
+    "capturedAt": "2026-11-08T10:59:39.468Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "a23d27e65cad0ec32373fb883f8b80f7adc7dabf77cc1248e899dfa93dce4966"
+  },
+  {
+    "view": "work-details",
+    "file": "work-details-1280x800-dark.png",
+    "fixtureSha256": "7e0ef799b93e550ea5207b5f44750a72009013c7cc280e2549f03479425ccbd6",
+    "capturedAt": "2026-11-08T10:59:40.055Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "2c815d5e98ed537ef39a0da975699e70d72b38142e3c405aa0a7757460bb5861"
+  },
+  {
+    "view": "repositories",
+    "file": "repositories-1280x800-dark.png",
+    "fixtureSha256": "f517228b5313cafdf164ea26bb5a832e854db64eba81b9e3adda919f5f0bedda",
+    "capturedAt": "2026-11-08T10:59:40.205Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "520194f06f662746bc546e9fdf623736e1e8b2337d1441f3d46150cc4f3c3764"
+  },
+  {
+    "view": "repository-definition",
+    "file": "repository-definition-1280x800-dark.png",
+    "fixtureSha256": "d5d3c4cb1f6dd49a63f8bbe02bf269c9b17a6f2180d7b767cd6d289d5ac7c81d",
+    "capturedAt": "2026-11-08T10:59:40.353Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "bb1165bcb1dadf77920fef69de864dd79729c73786c0079f5df45fea94de7f1f"
+  },
+  {
+    "view": "work-all",
+    "file": "work-all-1920x1080-light.png",
+    "fixtureSha256": "c88a3382c5346ad072a4b05293e3c0434cbc68dbf353ac7b8eccb4ef8ba151c3",
+    "capturedAt": "2026-11-08T10:59:41.781Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "3083efcee3ecebce1c92c3e879afe1fb4b0d296895b77b8446b7c1d970773921"
+  },
+  {
+    "view": "work-active",
+    "file": "work-active-1920x1080-light.png",
+    "fixtureSha256": "24190ca2517c6781ba9db2b5690a48394f3d4446cf9df8c569ffaebea66fd0b3",
+    "capturedAt": "2026-11-08T10:59:42.348Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "7bcc3c6f26103484d6ca14d79fa54a66480af9a4d127a0e56d7d1bd4fec1bf2b"
+  },
+  {
+    "view": "work-failed",
+    "file": "work-failed-1920x1080-light.png",
+    "fixtureSha256": "3e5363b7c014fe35d81fba4aee3c45fa89920105fd39faa3ea15768bb18b0af4",
+    "capturedAt": "2026-11-08T10:59:42.654Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "de5a51c8b51ca9b8f39ade37b2fdb13e4cd56e71f7284ec42be5b89cdbff435a"
+  },
+  {
+    "view": "work-published",
+    "file": "work-published-1920x1080-light.png",
+    "fixtureSha256": "0b223de0b85f8a76c8821aec51e0d2a827d4098655d0728096549d79ce20f19c",
+    "capturedAt": "2026-11-08T10:59:42.802Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "c1be793ef51e749dcffef96abdd67469540e20cd4d113efc10110e23586887a7"
+  },
+  {
+    "view": "work-details",
+    "file": "work-details-1920x1080-light.png",
+    "fixtureSha256": "7e0ef799b93e550ea5207b5f44750a72009013c7cc280e2549f03479425ccbd6",
+    "capturedAt": "2026-11-08T10:59:43.492Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "79d467a28fc291a8dfc64431c20cde76eedf9e5f9dc5be7dbb05a9eae4d5bc60"
+  },
+  {
+    "view": "repositories",
+    "file": "repositories-1920x1080-light.png",
+    "fixtureSha256": "f517228b5313cafdf164ea26bb5a832e854db64eba81b9e3adda919f5f0bedda",
+    "capturedAt": "2026-11-08T10:59:43.650Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "6ba57f30a2b34f2753d615a156c5d2de2ade67920a470298eea3cff58b8be67a"
+  },
+  {
+    "view": "repository-definition",
+    "file": "repository-definition-1920x1080-light.png",
+    "fixtureSha256": "d5d3c4cb1f6dd49a63f8bbe02bf269c9b17a6f2180d7b767cd6d289d5ac7c81d",
+    "capturedAt": "2026-11-08T10:59:43.821Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "light",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "a46546857d65e8e72b26eecb52c81c2777ad80344f23fc1a9d7b4d44ff004323"
+  },
+  {
+    "view": "work-all",
+    "file": "work-all-1920x1080-dark.png",
+    "fixtureSha256": "c88a3382c5346ad072a4b05293e3c0434cbc68dbf353ac7b8eccb4ef8ba151c3",
+    "capturedAt": "2026-11-08T10:59:45.221Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "6a74a4371308ee8cdd11160a967e129e381334ee6bc40f21ce68a7bff87e7075"
+  },
+  {
+    "view": "work-active",
+    "file": "work-active-1920x1080-dark.png",
+    "fixtureSha256": "24190ca2517c6781ba9db2b5690a48394f3d4446cf9df8c569ffaebea66fd0b3",
+    "capturedAt": "2026-11-08T10:59:45.782Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "06d301a1508fd6a9eac93fc06e54b68d49c2ecc11fa08b2443768963aad999a2"
+  },
+  {
+    "view": "work-failed",
+    "file": "work-failed-1920x1080-dark.png",
+    "fixtureSha256": "3e5363b7c014fe35d81fba4aee3c45fa89920105fd39faa3ea15768bb18b0af4",
+    "capturedAt": "2026-11-08T10:59:46.104Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "1e5e47eb287b44ed2ca5ce5406f1b130a42a10a8ebf9002c79d4278220f750a6"
+  },
+  {
+    "view": "work-published",
+    "file": "work-published-1920x1080-dark.png",
+    "fixtureSha256": "0b223de0b85f8a76c8821aec51e0d2a827d4098655d0728096549d79ce20f19c",
+    "capturedAt": "2026-11-08T10:59:46.271Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "563636abdd462c7dcd3d5083370e147a220e4f15bcd6016492dbbe5d976ee394"
+  },
+  {
+    "view": "work-details",
+    "file": "work-details-1920x1080-dark.png",
+    "fixtureSha256": "7e0ef799b93e550ea5207b5f44750a72009013c7cc280e2549f03479425ccbd6",
+    "capturedAt": "2026-11-08T10:59:46.971Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "2771a245b299f9ecdb7d34ddd2e83b49e6c524567b0c52c75e77b3b27dfdcc61"
+  },
+  {
+    "view": "repositories",
+    "file": "repositories-1920x1080-dark.png",
+    "fixtureSha256": "f517228b5313cafdf164ea26bb5a832e854db64eba81b9e3adda919f5f0bedda",
+    "capturedAt": "2026-11-08T10:59:47.123Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "167267dd084ba6c33000e42d67c29c3bdf4c4539a5d3654d44b4a156b0cd83c9"
+  },
+  {
+    "view": "repository-definition",
+    "file": "repository-definition-1920x1080-dark.png",
+    "fixtureSha256": "d5d3c4cb1f6dd49a63f8bbe02bf269c9b17a6f2180d7b767cd6d289d5ac7c81d",
+    "capturedAt": "2026-11-08T10:59:47.274Z",
+    "url": "http://core.vchrist.at:8081/",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "deviceScaleFactor": 1,
+    "scheme": "dark",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "httpStatus": 200,
+    "sha256": "42ab34d2c9aaf0026a96fd6586c9d1ff01e529337e170a99d490e06291ae5f6a"
+  }
+]
