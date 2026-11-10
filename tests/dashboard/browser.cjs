@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs'), path = require('path'), http = require('http');
 const {chromium} = require(process.env.CORECI_PLAYWRIGHT_PATH || 'playwright-core');
+const {reduce} = require('./reduced.cjs');
 const root = path.resolve(__dirname, '../..'), data = path.join(root, 'tests/data/dashboard');
 const output = process.argv[2], mode = process.argv[3];
 fs.mkdirSync(output, {recursive: true});
@@ -38,7 +39,9 @@ async function run() {
         }
         if (mode === 'references') {
             const references = JSON.parse(fs.readFileSync(path.join(data, 'reference/screenshots.json')));
-            for (const original of [true, false]) {
+            const reductions = {};
+            for (const variant of ['baseline', 'reduced', 'new']) {
+                const original = variant !== 'new';
                 let context = null, page = null, group = '';
                 for (const record of references) {
                     const key = JSON.stringify([record.viewport, record.scheme]);
@@ -47,12 +50,16 @@ async function run() {
                         group = key;
                         const captured = JSON.parse(fs.readFileSync(path.join(data, 'reference/fixtures', record.fixtureSha256 + '.json')));
                         baseline = original;
-                        fixture = original ? captured.graph : JSON.parse(fs.readFileSync(path.join(data, 'models', record.file.replace('.png', '.json'))));
+                        const reduced = reduce(captured.graph);
+                        fixture = variant === 'reduced' ? reduced.graph : original ? captured.graph : JSON.parse(fs.readFileSync(path.join(data, 'models', record.file.replace('.png', '.json'))));
+                        if (variant === 'reduced') {
+                            reductions[key] = reduced.removed;
+                        }
                         context = await browser.newContext({viewport: record.viewport, colorScheme: record.scheme,
                             locale: record.locale, timezoneId: record.timezone, deviceScaleFactor: record.deviceScaleFactor});
                         page = await context.newPage();
-                        page.on('pageerror', error => consoleLog.push({group, baseline: original, error: error.message}));
-                        page.on('console', message => {if (message.type() === 'error') {consoleLog.push({group, baseline: original, error: message.text()});}});
+                        page.on('pageerror', error => consoleLog.push({group, variant, error: error.message}));
+                        page.on('console', message => {if (message.type() === 'error') {consoleLog.push({group, variant, error: message.text()});}});
                         await page.goto(url, {waitUntil: 'domcontentloaded'});
                         await page.waitForFunction(() => graph.ready);
                         await page.evaluate(() => document.fonts.ready);
@@ -68,7 +75,11 @@ async function run() {
                         await page.locator('#repositories button').first().click();
                     }
                     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-                    await page.screenshot({path: path.join(output, (original ? 'baseline-' : '') + record.file), fullPage: true, animations: 'disabled'});
+                    await page.screenshot({path: path.join(output, (variant === 'new' ? '' : variant + '-') + record.file), fullPage: true, animations: 'disabled'});
+                    if (variant === 'reduced') {
+                        fs.writeFileSync(path.join(output, 'removed-' + record.file.replace('.png', '.json')), JSON.stringify(reductions[key], null, 2));
+                        fs.writeFileSync(path.join(output, 'reduced-' + record.file.replace('.png', '.json')), JSON.stringify(fixture));
+                    }
                     if (!original) {records.push(record.file);}
                 }
                 if (context) {await context.close();}
@@ -101,9 +112,9 @@ async function run() {
             }
             records.push('all status kinds', 'running/completed jobs', 'loading/empty models', 'expanded details');
         }
-        if (consoleLog.length) {throw new Error('Browser console errors: ' + JSON.stringify(consoleLog));}
         fs.writeFileSync(path.join(output, mode + '-console.json'), JSON.stringify(consoleLog, null, 2));
         fs.writeFileSync(path.join(output, mode + '-browser.json'), JSON.stringify({browser: browser.version(), records}, null, 2));
+        if (consoleLog.some(entry => entry.variant !== 'reduced')) {throw new Error('Browser console errors: ' + JSON.stringify(consoleLog));}
     } finally {
         await browser.close();
         server.closeAllConnections();

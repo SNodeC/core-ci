@@ -51,15 +51,21 @@ else:
         baseline = difference(reference, output / ('baseline-' + name))
         assert baseline == 0, 'captured-assets control failed for %s: %d pixels' % (name, baseline)
         pixels = difference(reference, output / name)
-        if record['view'] == 'repositories':
-            reason = None
-            assert pixels == 0
-        elif record['view'] == 'repository-definition':
-            reason = 'The model has no declaration HEAD commit or full package definition.'
-        elif record['view'] == 'work-failed':
-            reason = 'The model has no captured evaluation index, creation grouping or original attempt identifiers.'
-        else:
-            reason = 'The model has no publication verification-start timestamp, captured evaluation index/creation grouping, original attempt identifiers or package-directory URL.'
-        report.append(dict(reference=name, pixelDifference=pixels, capturedAssetsControlDifference=baseline, exception=reason))
+        reduced = difference(output / ('reduced-' + name), output / name)
+        with Image.open(output / ('reduced-' + name)) as first, Image.open(output / name) as second:
+            width, height = max(first.width, second.width), max(first.height, second.height)
+            left, right = Image.new('RGBA', (width, height)), Image.new('RGBA', (width, height))
+            left.paste(first.convert('RGBA'), (0, 0))
+            right.paste(second.convert('RGBA'), (0, 0))
+            mask = np.any(np.asarray(left) != np.asarray(right), axis=2)
+            diff = np.zeros((height, width, 3), dtype=np.uint8)
+            diff[mask] = [255, 0, 255]
+            Image.fromarray(diff).save(output / ('diff-' + name))
+        removed = json.loads((output / ('removed-' + name.replace('.png', '.json'))).read_text())
+        report.append(dict(reference=name, pixelDifference=pixels, capturedAssetsControlDifference=baseline,
+                           fieldsRemoved=removed, reducedPixelDifference=reduced))
     (output / 'G5-results.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(json.dumps(report, indent=2))
+    print(json.dumps([{key: value for key, value in row.items() if key != 'fieldsRemoved'} for row in report], indent=2))
+    errors = json.loads((output / 'references-console.json').read_text())
+    assert all(row['reducedPixelDifference'] == 0 for row in report) and not errors, \
+        'Reduced-reference equivalence failed; see G5-results.json, diff-*.png and references-console.json'
