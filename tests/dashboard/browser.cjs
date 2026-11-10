@@ -109,6 +109,13 @@ async function run() {
                 build: {runId: 1, html_url: 'https://github.com/Example/Recipes/actions/runs/1', status: index % 2 ? 'in_progress' : 'completed',
                     job: {started_at: '2026-01-01T00:00:00Z', completed_at: index % 2 ? null : '2026-01-01T00:01:00Z', status: index % 2 ? 'in_progress' : 'completed', conclusion: index % 2 ? null : 'success'}}, publish: {}}));
             samples.push({schema: 1, generation: 1, ready: true, packages, units}, {schema: 1, generation: 0, ready: false, packages: [], units: []}, {schema: 1, generation: 1, ready: true, packages: [], units: []});
+            const ordering = structuredClone(samples[1]);
+            ordering.packages = ordering.packages.slice(0, 3);
+            ordering.units = ordering.units.slice(0, 3).map((unit, index) => ({...unit,
+                status: index === 1 ? 'Waiting' : 'Building', order: [100, 0, 200][index],
+                prerequisites: index === 1 ? ['p0'] : [],
+                inflight: index === 1 ? null : {...units[4].inflight, buildId: `p${index}~t~1.0.0~r1`}}));
+            samples.push(ordering);
             for (const [index, sample] of samples.entries()) {
                 fixture = sample;
                 const context = await browser.newContext({viewport: {width: 1280, height: 900}, locale: 'en-US', timezoneId: 'UTC'});
@@ -117,6 +124,12 @@ async function run() {
                 page.on('console', message => {if (message.type() === 'error') {consoleLog.push({sample: index, error: message.text()});}});
                 await page.goto(url, {waitUntil: 'domcontentloaded'});
                 await page.waitForFunction(() => element('connection').textContent !== 'Connecting…');
+                if (index === 4) {
+                    const names = await page.locator('#graph > .execution-row .package-identity strong').allTextContents();
+                    if (JSON.stringify(names) !== JSON.stringify(['p1', 'p2', 'p0'])) {
+                        throw new Error('Expected dependency level desc, then allocation order desc: ' + JSON.stringify(names));
+                    }
+                }
                 const toggles = page.locator('[data-expand]');
                 for (const toggle of await toggles.all()) {await toggle.click();}
                 await page.screenshot({path: path.join(output, 'g6-' + index + '.png'), fullPage: true});

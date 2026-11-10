@@ -318,7 +318,7 @@ function mapModel(model) {
         const parent = byUnit.get(name + '~' + unit.target);
         return parent ? depth(parent) : -1;
     }));
-    units.sort((a, b) => a.order - b.order || depth(a) - depth(b));
+    units.sort((a, b) => depth(a) - depth(b) || a.order - b.order);
     const repositories = {}, executions = {};
     for (const item of model.packages) {
         const source = item.sourceRepo, repository = source.owner + '/' + source.repo;
@@ -328,12 +328,12 @@ function mapModel(model) {
         Building: 'building', AwaitingPublish: 'publishing', PublishDispatching: 'publishing',
         Publishing: 'publishing', Settled: 'published', Failed: 'failed'};
     const run = value => value ? {...value, identity: {html_url: value.html_url}} : undefined;
-    for (const unit of units) {
+    for (const [index, unit] of units.entries()) {
         const item = packages.get(unit.package), chosen = current(unit), id = identity(unit);
         const tag = unit.tag || (item.released?.version === chosen.version ? item.released.tag : chosen.version);
         const buildId = `${unit.package}~${unit.target}~${chosen.version || ''}~r${chosen.revision}`;
         const time = value => value == null ? undefined : new Date(value * 1000).toISOString();
-        executions[id] = {id, index: unit.order, selection: 0,
+        executions[id] = {id, index, selection: 0,
             source: {package: unit.package, repository: item.sourceRepo.owner + '/' + item.sourceRepo.repo, tag},
             target: {id: unit.target, distribution: unit.distribution, suite: unit.suite, arch: unit.arch, build: {format: unit.format}},
             active: {id: buildId, revision: chosen.revision, state: states[unit.status],
