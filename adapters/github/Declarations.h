@@ -10,6 +10,7 @@ namespace coreci::github {
     };
     struct PackageDetails {
         std::string title, commit;
+        std::vector<std::string> prerequisites = {};
     };
     struct LoadedDeclarations {
         Pipeline pipeline;

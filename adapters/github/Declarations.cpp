@@ -248,6 +248,7 @@ namespace coreci::github {
                             for (const auto& q : prerequisites) {
                                 pkg.prerequisites.push_back(q.get<std::string>());
                             }
+                            self->details.at(pkg.name).prerequisites = pkg.prerequisites;
                             pkg.acceptPrereleases = value.value("accept_prereleases", false);
                             const auto base = value.value("revision_base", Json(0));
                             if (!base.is_number_integer() || base < 0 || base > 1000000) {

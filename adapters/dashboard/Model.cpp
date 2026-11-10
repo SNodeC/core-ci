@@ -91,7 +91,7 @@ namespace coreci::dashboard {
                          {"suite", target.suite},
                          {"arch", target.arch},
                          {"format", target.format},
-                         {"prerequisites", engine.pipeline().prerequisites(key.package)}});
+                         {"prerequisites", declarations.packages.at(key.package).prerequisites}});
             for (const auto& request : requests) {
                 if (request.buildId.starts_with(key.package + "~" + key.target + "~")) {
                     unit[request.mainJob] = run(request, jobs);
