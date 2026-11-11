@@ -1,7 +1,8 @@
 # Dashboard pixel checks
 
 G5 compares both the captured-assets control and the current dashboard with the
-28 original reference PNGs. Acceptance is zero differing pixels. Only the
+28 original reference PNGs. Pixel counts are advisory, as decided by the owner
+after information completeness was accepted. Only the
 existing attempt-id value mask applies to the current dashboard; the control
 has no mask. Never regenerate references from the current render.
 
@@ -12,9 +13,10 @@ ready model, document fonts, and two animation frames. Assets and fixture SSE
 are served from a disposable 127.0.0.1 server; no external page requests are
 needed. Forced colors remain off.
 
-G5 sets FONTCONFIG_FILE to fontconfig.conf for its child browser process. This
-keeps system font discovery and pins the reference's RGB subpixel order, rather
-than inheriting a desktop user's fontconfig settings. An isolated XDG_CONFIG_HOME
-otherwise hides those settings and changes text rasterization even with the
-same font families, font files and Chrome version. It does not alter the user's
-configuration or the environment of the application under test.
+An isolated XDG_CONFIG_HOME can hide the capture desktop's fontconfig RGB
+subpixel setting and change text rasterization with the same font families,
+font files and Chrome version. Counts and diff images still report this
+difference, without changing the references or adding tolerance or masks.
+
+Capture/browser errors remain failures. G6 and the dashboard HTTP/end-to-end
+tests verify information and behavior; exact historical pixels are not a gate.
