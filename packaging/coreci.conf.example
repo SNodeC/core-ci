@@ -1,0 +1,10 @@
+# Example only: replace every value before operator-managed deployment.
+registry="REPLACE_WITH_REGISTRY_REPOSITORY:ci/registry.json"
+callback-base-url="REPLACE_WITH_PUBLIC_HTTPS_BASE_URL"
+db-host="REPLACE_WITH_DATABASE_HOST"
+db-user="REPLACE_WITH_DATABASE_USER"
+db-name="REPLACE_WITH_DATABASE_NAME"
+idp-base-url="REPLACE_WITH_IDP_HTTPS_BASE_URL"
+idp-client-id="REPLACE_WITH_IDP_CLIENT_ID"
+idp-public-key-path="REPLACE_WITH_IDP_PUBLIC_KEY_PATH"
+dashboard-users="REPLACE_WITH_ALLOWED_IDP_SUBJECTS"

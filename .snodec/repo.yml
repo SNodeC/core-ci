@@ -1,0 +1,18 @@
+ci:
+  profile: cpp
+  apt:
+  - libsqlite3-dev
+  - python3-pil
+  - python3-numpy
+  deps:
+  - snode.c@source
+  - snode.c-idp@source
+  cmake_options:
+  - -DCMAKE_BUILD_TYPE=Release
+  - -DCORECI_WITH_SNODEC=ON
+  ctest_args:
+  - --output-on-failure
+  - -L
+  - ^(core|persistence|adapters)$
+  parallel: 14
+  runtime_dirs: true

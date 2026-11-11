@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(coreci LANGUAGES CXX)
+include(cmake/Version.cmake)
+project(
+    coreci
+    VERSION ${RELEASE_VERSION}
+    LANGUAGES CXX
+)
+include(GNUInstallDirs)
 option(CORECI_WITH_SNODEC "Build SNode.C adapters (introduced in Phase 3)" OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -112,13 +118,15 @@ if(CORECI_WITH_SNODEC)
         add_executable(${scenario} tests/${scenario}.cpp)
         target_link_libraries(${scenario} PRIVATE coreci_app)
         add_test(NAME ${scenario} COMMAND ${scenario})
+        set_tests_properties(${scenario} PROPERTIES LABELS adapters)
     endforeach()
     add_test(NAME M_SmokePorts
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_ports.py
     )
     set_tests_properties(
-        M_SmokePorts PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+        M_SmokePorts PROPERTIES LABELS adapters ENVIRONMENT
+                                "PYTHONDONTWRITEBYTECODE=1"
     )
     foreach(mode stream buttons auth)
         if(mode STREQUAL "stream")
@@ -137,7 +145,9 @@ if(CORECI_WITH_SNODEC)
         )
         set_tests_properties(
             ${case}
-            PROPERTIES ENVIRONMENT
+            PROPERTIES LABELS
+                       integration
+                       ENVIRONMENT
                        "PYTHONDONTWRITEBYTECODE=1"
                        SKIP_RETURN_CODE
                        77
@@ -173,6 +183,8 @@ if(CORECI_WITH_SNODEC)
                 180
         )
     endforeach()
+    set_tests_properties(G4_DashboardAssets PROPERTIES LABELS adapters)
+    set_tests_properties(G5_DashboardPixels PROPERTIES LABELS browser)
     add_test(
         NAME G6_DashboardStates
         COMMAND node ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/browser.cjs
@@ -181,6 +193,8 @@ if(CORECI_WITH_SNODEC)
     set_tests_properties(
         G6_DashboardStates
         PROPERTIES
+            LABELS
+            browser
             ENVIRONMENT
             "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
             TIMEOUT
@@ -196,6 +210,8 @@ if(CORECI_WITH_SNODEC)
     set_tests_properties(
         M_DashboardEndToEnd
         PROPERTIES
+            LABELS
+            integration
             ENVIRONMENT
             "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
             SKIP_RETURN_CODE
@@ -207,6 +223,14 @@ if(CORECI_WITH_SNODEC)
     )
     add_executable(core-ci app/main.cpp)
     target_link_libraries(core-ci PRIVATE coreci_app)
+    install(TARGETS core-ci RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES app/dashboard/index.html app/dashboard/style.css
+                  app/dashboard/app.js
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/core-ci/dashboard
+    )
+    install(FILES adapters/mariadb/Schema.sql
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/core-ci
+    )
     add_executable(coreci-interrupt-store tests/InterruptStore.cpp)
     target_link_libraries(coreci-interrupt-store PRIVATE coreci_mariadb)
     add_executable(coreci-reset-store tests/ResetStore.cpp)
@@ -294,18 +318,24 @@ file(
 find_program(CLANG_FORMAT clang-format)
 find_program(CMAKE_FORMAT cmake-format)
 if(CLANG_FORMAT AND CMAKE_FORMAT)
+    file(GLOB CORECI_FORMAT_CMAKE CONFIGURE_DEPENDS
+         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*.cmake"
+    )
     add_custom_target(
         format
         COMMAND ${CLANG_FORMAT} -i ${CORECI_FORMAT_SOURCES}
         COMMAND ${CMAKE_FORMAT} -i ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+                ${CORECI_FORMAT_CMAKE}
     )
     add_custom_target(
         format-check
         COMMAND ${CLANG_FORMAT} --dry-run --Werror ${CORECI_FORMAT_SOURCES}
-        COMMAND ${CMAKE_FORMAT} --check
-                ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+        COMMAND
+            ${CMAKE_FORMAT} --check ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+            ${CORECI_FORMAT_CMAKE}
     )
 endif()
+include(cmake/Packing.cmake)
 find_program(CLANG_TIDY clang-tidy)
 if(CLANG_TIDY)
     add_custom_target(

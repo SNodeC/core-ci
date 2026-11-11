@@ -1,0 +1,28 @@
+[Unit]
+Description=core-ci package orchestration daemon
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coreci
+Group=coreci
+EnvironmentFile=/etc/coreci/secrets.env
+Environment=XDG_CONFIG_HOME=/etc/coreci
+Environment=XDG_STATE_HOME=/tmp/coreci-state
+Environment=XDG_RUNTIME_DIR=/tmp/coreci-runtime
+LoadCredential=fullchain.pem:/etc/letsencrypt/live/snodec-idp/fullchain.pem
+LoadCredential=privkey.pem:/etc/letsencrypt/live/snodec-idp/privkey.pem
+ExecStart=/usr/bin/core-ci --config-file /etc/coreci/coreci.conf --tls-cert %d/fullchain.pem --tls-key %d/privkey.pem coreci
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
