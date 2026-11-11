@@ -55,15 +55,29 @@ if all(os.environ.get(key) for key in ('CORECI_TEST_DB_HOST', 'CORECI_TEST_DB_US
             command('save', name='06-published')
             command('refresh')
             command('save', name='07-refresh')
+            fx.token_lifetime = 10
+            command('expiring-login')
+            fx.token_lifetime = 3600
+            command('wait-disconnected')
+            assert fx.webhook('SNodeC/snode.c', 'v1.0.99') == 200
+            issued = len(fx.tokens)
+            command('reconnect')
+            assert len(fx.tokens) > issued, 'Reconnect must obtain a newly authorized token after expiry'
+            command('wait', target=target, state='building')
+            command('save', name='08-reauthenticated-stream')
             command('finish')
             browser.stdin.close()
             assert browser.wait(timeout=10) == 0
             console = json.loads((output / 'console.json').read_text())
             assert not console, console
-            print('S6: 178 S5 units + S3 registry/catalog; fake OIDC browser login; tag/build/failure/Retry/publish/Refresh; seven screenshots; no console errors')
+            print('S6: 178 S5 units + S3 registry/catalog; OIDC login, build/Retry/publish/Refresh, token expiry, Reconnect reauthorization and fresh committed state; eight screenshots; no unexpected console errors')
         finally:
             if browser.poll() is None:
                 browser.terminate()
-                browser.wait(timeout=10)
+                try:
+                    browser.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    browser.kill()
+                    browser.wait(timeout=10)
     result = 0
 raise SystemExit(result)

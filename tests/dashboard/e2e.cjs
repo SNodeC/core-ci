@@ -5,14 +5,23 @@ async function run() {
     const browser = await chromium.launch({executablePath: '/opt/google/chrome/chrome', headless: true,
         args: ['--no-sandbox', '--disable-background-networking']});
     const output = process.argv[3];
-    const consoleLog = [];
-    let page;
+    const consoleLog = [], expiredStreamErrors = [];
+    let page, expiredStream = false;
     try {
         if (browser.version() !== '156.0.8078.79') {throw new Error('Reference browser version mismatch');}
         const context = await browser.newContext({ignoreHTTPSErrors: true, viewport: {width: 1280, height: 800}, colorScheme: 'light', locale: 'en-US', timezoneId: 'UTC'});
         page = await context.newPage();
         page.on('pageerror', error => consoleLog.push({type: 'exception', message: error.message}));
-        page.on('console', message => {if (['error','warning'].includes(message.type())) {consoleLog.push({type: message.type(), message: message.text()});}});
+        page.on('console', message => {
+            if (['error','warning'].includes(message.type())) {
+                const entry = {type: message.type(), message: message.text()};
+                if (expiredStream && /CORS|Access-Control-Allow-Origin|EventSource|net::ERR_FAILED/.test(message.text())) {
+                    expiredStreamErrors.push(entry);
+                } else {
+                    consoleLog.push(entry);
+                }
+            }
+        });
         const input = readline.createInterface({input: process.stdin});
         for await (const line of input) {
             const command = JSON.parse(line);
@@ -21,6 +30,17 @@ async function run() {
                     await page.goto(process.argv[2], {waitUntil: 'domcontentloaded'});
                     await page.waitForFunction(() => graph.ready);
                     if (await page.locator('header strong').getAttribute('title') !== 'same@example.invalid') {throw new Error('Email display missing');}
+                } else if (command.action === 'expiring-login') {
+                    await context.clearCookies();
+                    await page.goto(process.argv[2], {waitUntil: 'domcontentloaded'});
+                    await page.waitForFunction(() => element('connection').textContent.startsWith('Live'));
+                    expiredStream = true;
+                } else if (command.action === 'wait-disconnected') {
+                    await page.waitForFunction(() => element('connection').textContent === 'Disconnected · reconnect required', null, {timeout: 70000});
+                } else if (command.action === 'reconnect') {
+                    await page.getByRole('button', {name: 'Reconnect', exact: true}).click();
+                    await page.waitForFunction(() => document.querySelector('#connection')?.textContent.startsWith('Live'));
+                    expiredStream = false;
                 } else if (command.action === 'wait') {
                     await page.waitForFunction(({target, state, job}) => Object.values(graph.executions).some(work => work.target.id === target && work.active.state === state && (!job || work.build?.job?.status === job)), command, {timeout: 40000});
                 } else if (command.action === 'focus') {
@@ -42,6 +62,7 @@ async function run() {
                     await page.screenshot({path: path.join(output, command.name + '.png'), fullPage: true, animations: 'disabled'});
                 } else if (command.action === 'finish') {
                     fs.writeFileSync(path.join(output, 'console.json'), JSON.stringify(consoleLog, null, 2));
+                    fs.writeFileSync(path.join(output, 'expired-stream-errors.json'), JSON.stringify(expiredStreamErrors, null, 2));
                     fs.writeFileSync(path.join(output, 'metadata.json'), JSON.stringify({browser: browser.version(), viewport: {width:1280,height:800}, scheme:'light',locale:'en-US',timezone:'UTC',consoleErrors:consoleLog.length},null,2));
                     await context.close();
                     input.close();

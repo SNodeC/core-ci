@@ -12,7 +12,7 @@ from fixture import fixture
 
 class Stream:
     def __init__(self, fx):
-        self.response = fx.request('/events')
+        self.response = fx.request('/events', headers={'Accept': 'text/event-stream'})
         assert self.response.status == 200
         assert self.response.headers['Content-Type'] == 'text/event-stream'
         assert self.response.headers['Cache-Control'] == 'no-store'
@@ -81,6 +81,9 @@ def stream_checks(fx):
     assert all(b[0] - a[0] >= .85 for a, b in zip(updates, updates[1:])), 'updates were not coalesced'
     first_comment = stream.comments.get(timeout=32)
     assert 29 <= first_comment - at <= 31.5
+    second_comment = stream.comments.get(timeout=32)
+    assert 59 <= second_comment - at <= 62.5
+    assert not stream.closed.is_set(), 'authenticated SSE must survive the 60-second timeout and session recheck'
     # Force real connection-loss recovery using the existing SNode.C-only fixture.
     import subprocess
     interrupt = subprocess.Popen([fx.build / 'coreci-interrupt-store'], env=fx.env, stdout=subprocess.PIPE, text=True)
