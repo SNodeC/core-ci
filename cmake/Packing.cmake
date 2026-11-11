@@ -39,7 +39,7 @@ if(CORECI_WITH_SNODEC)
         DESTINATION lib/sysusers.d
         RENAME core-ci.conf
     )
-    install(FILES packaging/core-ci.env.example
+    install(FILES packaging/core-ci.env.example packaging/coreci.conf.example
             DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/core-ci
     )
     include(CPack)
