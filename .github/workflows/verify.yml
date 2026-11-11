@@ -1,0 +1,7 @@
+name: Verify core-ci
+on: [pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: SNodeC/.github/.github/workflows/verify-project.yml@main

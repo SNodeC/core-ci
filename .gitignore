@@ -1,4 +1,5 @@
 /build*/
 /cmake-build-*/
+/checkouts/
 __pycache__/
 *.pyc
