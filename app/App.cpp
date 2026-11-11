@@ -60,6 +60,7 @@ namespace coreci::app {
                                                                   {"db-name", ""},
                                                                   {"build-timeout", "21600"},
                                                                   {"publish-timeout", "3600"},
+                                                                  {"retry-delay", "600"},
                                                                   {"max-dispatch-attempts", "8"},
                                                                   {"max-concurrent-builds", "0"},
                                                                   {"reconcile-interval", "900"},
@@ -148,6 +149,7 @@ namespace coreci::app {
                 }
                 buildTimeout = number("build-timeout", 60, 86400, valid);
                 publishTimeout = number("publish-timeout", 60, 86400, valid);
+                retryDelay = number("retry-delay", 0, 86400, valid);
                 attempts = number("max-dispatch-attempts", 1, 20, valid);
                 concurrent = number("max-concurrent-builds", 0, 1000, valid);
                 interval = number("reconcile-interval", 60, 86400, valid);
@@ -192,7 +194,8 @@ namespace coreci::app {
                             return Engine({buildTimeout,
                                            publishTimeout,
                                            static_cast<unsigned>(attempts),
-                                           concurrent == 0 ? std::nullopt : std::optional<std::size_t>(concurrent)});
+                                           concurrent == 0 ? std::nullopt : std::optional<std::size_t>(concurrent),
+                                           retryDelay});
                         },
                         [] {
                             return Resumed{now()};
@@ -777,7 +780,7 @@ namespace coreci::app {
             std::unique_ptr<ps::EventQueue> queue;
             std::unique_ptr<core::timer::Timer> retry, ticks, reconcileTimer;
             std::deque<std::string> deliveries;
-            std::int64_t buildTimeout = 0, publishTimeout = 0, attempts = 0, concurrent = 0, interval = 0;
+            std::int64_t buildTimeout = 0, publishTimeout = 0, attempts = 0, concurrent = 0, interval = 0, retryDelay = 0;
             double recoveryDelay = 1;
             std::size_t reconciling = 0;
             bool listening = false, fatal = false, tickPending = false;
