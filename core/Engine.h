@@ -50,6 +50,8 @@ namespace coreci {
         std::optional<Published> published;
         std::optional<Inflight> inflight;
         std::optional<Failure> failure;
+        std::optional<std::int64_t> retryAfter;
+        std::optional<std::pair<Version, Inputs>> autoRetried;
         std::map<Version, std::uint64_t> lastRevision;
         std::string lastFeed;
         bool rebuild = false;
@@ -69,6 +71,7 @@ namespace coreci {
         std::int64_t buildTimeout, publishTimeout;
         unsigned maxDispatchAttempts = 8;
         std::optional<std::size_t> maxConcurrentBuilds;
+        std::int64_t retryDelay = 600;
     };
     struct Accept {
         bool operator==(const Accept&) const = default;
@@ -98,7 +101,7 @@ namespace coreci {
         std::optional<Unit> find(const std::string& buildId) const;
         Command dispatch(const Unit& unit) const;
         void clear(const Unit& unit);
-        void fail(const Unit& unit, const std::string& reason, std::int64_t at);
+        void fail(const Unit& unit, const std::string& reason, std::int64_t at, bool automatic = true);
         void schedule(std::vector<Command>& commands, std::uint64_t seq);
         Pipeline graph;
         Options options;

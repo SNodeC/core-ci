@@ -15,6 +15,7 @@ namespace coreci {
             const bool remains = next.packages().contains(unit.package) && next.packages().at(unit.package).targets.contains(unit.target);
             if (!remains) {
                 state.inflight.reset();
+                state.retryAfter.reset();
             } else {
                 const auto& [source, workflow] = lastIdentity.at(unit.package);
                 const auto& newPkg = next.packages().at(unit.package);
@@ -221,10 +222,14 @@ namespace coreci {
         }
         unitStates.at(unit).inflight.reset();
     }
-    void Engine::fail(const Unit& unit, const std::string& reason, std::int64_t at) {
+    void Engine::fail(const Unit& unit, const std::string& reason, std::int64_t at, bool automatic) {
         auto& state = unitStates.at(unit);
         state.failure =
             Failure{state.inflight->version, state.inflight->inputs, reason, state.inflight->revision, state.inflight->runId, at};
+        state.retryAfter.reset();
+        if (automatic && options.retryDelay > 0 && state.autoRetried != std::pair{state.failure->version, state.failure->inputs}) {
+            state.retryAfter = *engineTime + options.retryDelay;
+        }
         clear(unit);
     }
     std::uint64_t Engine::nextRevision(const Unit& unit) const {
@@ -236,6 +241,9 @@ namespace coreci {
     void Engine::schedule(std::vector<Command>& commands, std::uint64_t seq) {
         auto derived = derive();
         for (const auto& [unit, d] : derived) {
+            if (!d.failed) {
+                unitStates.at(unit).retryAfter.reset();
+            }
             const auto& f = unitStates.at(unit).inflight;
             if (f && f->phase == Phase::AwaitingPublish &&
                 (f->version != released.at(unit.package)->version || !d.inputs || f->inputs != *d.inputs)) {
@@ -294,13 +302,22 @@ namespace coreci {
                         released.at(e.package) = Released{*Version::parse(e.tag), e.tag};
                     } else if constexpr (std::is_same_v<E, RetryRequested>) {
                         unitStates.at({e.package, e.target}).failure.reset();
+                        unitStates.at({e.package, e.target}).retryAfter.reset();
                     } else if constexpr (std::is_same_v<E, RebuildRequested>) {
                         unitStates.at({e.package, e.target}).rebuild = true;
                     } else if constexpr (std::is_same_v<E, Tick> || std::is_same_v<E, Resumed>) {
                         for (const auto& [target, definition] : graph.targets()) {
                             for (const auto& package : graph.topologicalOrder(target)) {
                                 const Unit unit{package, target};
-                                auto& f = unitStates.at(unit).inflight;
+                                auto& state = unitStates.at(unit);
+                                auto& f = state.inflight;
+                                if constexpr (std::is_same_v<E, Tick>) {
+                                    if (state.failure && state.retryAfter && *engineTime >= *state.retryAfter) {
+                                        state.autoRetried = {state.failure->version, state.failure->inputs};
+                                        state.failure.reset();
+                                        state.retryAfter.reset();
+                                    }
+                                }
                                 if (f) {
                                     if constexpr (std::is_same_v<E, Resumed>) {
                                         if ((f->phase == Phase::Dispatching || f->phase == Phase::PublishDispatching) && !f->retryAt) {
@@ -323,9 +340,9 @@ namespace coreci {
                         auto& state = unitStates.at(unit);
                         auto& f = *state.inflight;
                         if constexpr (std::is_same_v<E, DispatchRejected>) {
-                            if (e.httpStatus == 401 || e.httpStatus == 403 || e.httpStatus == 404 || e.httpStatus == 422 ||
-                                f.attempt == options.maxDispatchAttempts) {
-                                fail(unit, "dispatch rejected (" + std::to_string(e.httpStatus) + "): " + e.message, e.at);
+                            const bool permanent = e.httpStatus == 401 || e.httpStatus == 403 || e.httpStatus == 404 || e.httpStatus == 422;
+                            if (permanent || f.attempt == options.maxDispatchAttempts) {
+                                fail(unit, "dispatch rejected (" + std::to_string(e.httpStatus) + "): " + e.message, e.at, !permanent);
                             } else {
                                 std::int64_t delay = 30;
                                 for (unsigned i = 1; i < f.attempt && delay < 1800; ++i) {
@@ -383,6 +400,9 @@ namespace coreci {
     std::optional<std::int64_t> Engine::nextDeadline() const {
         std::optional<std::int64_t> result;
         for (const auto& [unit, state] : unitStates) {
+            if (state.retryAfter && (!result || *state.retryAfter < *result)) {
+                result = state.retryAfter;
+            }
             if (state.inflight) {
                 const auto& f = *state.inflight;
                 for (const auto& time : {f.retryAt, f.deadline}) {

@@ -66,7 +66,7 @@ void prime(Engine& e) {
 }
 
 int main() {
-    Engine e = fixtureEngine(testPipeline(), {100, 50, 8, {}});
+    Engine e = fixtureEngine(testPipeline(), {100, 50, 8, {}, 0});
     setup(e);
     apply(e, TagObserved{100, "a", "v1.0.0", "sha", Origin::Webhook}, {buildCommand("a", "t1"), buildCommand("a", "t2")});
     apply(e, DispatchAccepted{110, id("a", "t1"), Kind::Build, 1});
