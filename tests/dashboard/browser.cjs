@@ -100,7 +100,7 @@ async function run() {
             const packages = statuses.map((status, index) => ({name: 'p' + index, title: status, commit: 'a'.repeat(40), sourceRepo: {owner: 'Example', repo: 'r' + index, branch: 'main'}, released: {tag: 'v1.0.0', version: '1.0.0'}}));
             const units = statuses.map((status, index) => ({package: 'p' + index, target: 't', feed: 'f', status, detail: null, position: null,
                 order: index + 1, assigned: ['Building','AwaitingPublish','PublishDispatching','Publishing','Settled','Failed'].includes(status),
-                publishDispatchedAt: status === 'Settled' ? 1 : null, publishedAt: status === 'Settled' ? 1 : null,
+                publishDispatchedAt: ['Publishing', 'Settled'].includes(status) ? 1 : null, publishedAt: status === 'Settled' ? 121 : null,
                 distribution: 'test', suite: 'stable', arch: 'test', format: 'deb', prerequisites: [],
                 inflight: ['Dispatching','Building','AwaitingPublish','PublishDispatching','Publishing'].includes(status)
                     ? {version: '1.0.0', revision: 1, buildId: `p${index}~t~1.0.0~r1`, phase: status, runId: 1, attempt: 1} : null,
@@ -124,6 +124,21 @@ async function run() {
                 page.on('console', message => {if (message.type() === 'error') {consoleLog.push({sample: index, error: message.text()});}});
                 await page.goto(url, {waitUntil: 'domcontentloaded'});
                 await page.waitForFunction(() => element('connection').textContent !== 'Connecting…');
+                if (index === 1) {
+                    for (const status of ['Publishing', 'Settled']) {
+                        const unit = sample.units.find(unit => unit.status === status);
+                        const cell = page.locator(`[id="work-${unit.package}~t~1.0.0"] .work-verified`);
+                        if (await cell.locator('time').count() !== (status === 'Settled' ? 1 : 0)) {
+                            throw new Error(status + ': publication recording requires a committed receipt');
+                        }
+                        if (status === 'Settled' && await cell.locator('time').getAttribute('datetime') !== '1970-01-01T00:02:01.000Z') {
+                            throw new Error('Publication recording must use the committed event time');
+                        }
+                        if (!await cell.locator('[aria-label="Publication recorded started: —"]').count()) {
+                            throw new Error('Publisher dispatch must not invent a publication-recording start');
+                        }
+                    }
+                }
                 if (index === 4) {
                     const names = await page.locator('#graph > .execution-row .package-identity strong').allTextContents();
                     if (JSON.stringify(names) !== JSON.stringify(['p1', 'p2', 'p0'])) {
