@@ -370,14 +370,14 @@ function connect() {
     events.addEventListener('snapshot', receive);
     events.addEventListener('update', receive);
     events.onerror = () => {
-        element('connection').textContent = 'Reconnecting…';
+        element('connection').textContent = events.readyState === EventSource.CLOSED ? 'Disconnected · reconnect required' : 'Reconnecting…';
         element('reconnect').hidden = false;
     };
 }
 for (const name of ['work', 'repositories']) {
     element(name + '-tab').addEventListener('click', () => tab(name));
 }
-element('reconnect').addEventListener('click', connect);
+element('reconnect').addEventListener('click', () => events?.readyState === EventSource.CLOSED ? location.reload() : connect());
 element('search').addEventListener('input', renderWork);
 element('state-filter').addEventListener('change', renderWork);
 element('enroll').addEventListener('click', () => selectRepository());

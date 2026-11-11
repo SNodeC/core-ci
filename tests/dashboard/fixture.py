@@ -105,7 +105,7 @@ class Provider(BaseHTTPRequestHandler):
             now = int(time.time())
             claims = dict(iss=state.api, aud='coreci-test', sub=data['subject'], sid='session-' + data['subject'],
                           email='same@example.invalid', username='Fixture', scope=['openid', 'profile', 'email'],
-                          exp=now + 3600, iat=now, nbf=now, mfa_verified=True)
+                          exp=now + state.token_lifetime, iat=now, nbf=now, mfa_verified=True)
             def sign(kind):
                 payload = dict(claims, token_use=kind)
                 if kind == 'id':
@@ -140,6 +140,7 @@ class Fixture:
         self.build, self.work = Path(build), Path(work)
         self.codes, self.tokens, self.runs = {}, {}, {}
         self.subject, self.revoked = 'owner', set()
+        self.token_lifetime = 3600
         self.dispatches = queue.Queue()
         self.requested, self.release = threading.Event(), threading.Event()
         self.api_port, self.app_port, self.redirect_port = port(), port(), port()
