@@ -1,6 +1,7 @@
 """G4 asset accounting and G5 exact pixel comparison against the selected capture."""
 import difflib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -37,7 +38,8 @@ if mode == 'assets':
     (output / 'G4-assets.diff').write_text(''.join(changes))
     print('G4: HTML byte-identical; one exact N4 attempt-box CSS rule; drawing functions unchanged; full asset diff saved')
 else:
-    subprocess.run(['node', str(root / 'tests/dashboard/browser.cjs'), str(output), 'references'], check=True)
+    subprocess.run(['node', str(root / 'tests/dashboard/browser.cjs'), str(output), 'references'], check=True,
+                   env=dict(os.environ, FONTCONFIG_FILE=str(root / 'tests/dashboard/fontconfig.conf')))
     records = json.loads((data / 'reference/screenshots.json').read_text())
     report = []
     masks = json.loads((output / 'G5-masks.json').read_text())
