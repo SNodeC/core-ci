@@ -31,11 +31,14 @@ if mode == 'assets':
             old, new = functions(before), functions(after)
             for name2, body in old.items():
                 if name2 not in ('api', 'connect'):
+                    if name2 == 'phases':
+                        body = body.replace('const verification = {started_at: active.verification_started_at, completed_at: active.proof?.verified_at};',
+                                            'const verification = {completed_at: active.proof?.verified_at};')
                     assert body == new[name2], 'drawing function changed: ' + name2
         changes.extend(difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
                                           fromfile='captured/' + name, tofile='app/dashboard/' + name))
     (output / 'G4-assets.diff').write_text(''.join(changes))
-    print('G4: HTML byte-identical; one exact N4 attempt-box CSS rule; drawing functions unchanged; full asset diff saved')
+    print('G4: HTML byte-identical; exact N4 attempt-box CSS rule and committed-publication timestamp correction; remaining drawing functions unchanged; full asset diff saved')
 else:
     subprocess.run(['node', str(root / 'tests/dashboard/browser.cjs'), str(output), 'references'], check=True)
     records = json.loads((data / 'reference/screenshots.json').read_text())
