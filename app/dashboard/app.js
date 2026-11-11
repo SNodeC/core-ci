@@ -94,7 +94,7 @@ function phases(work) {
     const {active, build, publish} = work;
     const buildJob = build?.job, publishJob = publish?.job;
     const terminal = ['published', 'failed'].includes(active.state);
-    const verification = {started_at: active.verification_started_at, completed_at: active.proof?.verified_at};
+    const verification = {completed_at: active.proof?.verified_at};
     const verifying = publishJob?.conclusion === 'success';
     const uncertaintyStage = active.uncertainty?.stage || (active.publish_assigned ? 'publish' : 'build');
     const rows = [['Build', buildJob, build, null, active.state === 'waiting' || active.state === 'building'],
@@ -337,7 +337,7 @@ function mapModel(model) {
             source: {package: unit.package, repository: item.sourceRepo.owner + '/' + item.sourceRepo.repo, tag},
             target: {id: unit.target, distribution: unit.distribution, suite: unit.suite, arch: unit.arch, build: {format: unit.format}},
             active: {id: buildId, revision: chosen.revision, state: states[unit.status],
-                assigned: unit.assigned, verification_started_at: time(unit.publishDispatchedAt),
+                assigned: unit.assigned,
                 ...(unit.status === 'Failed' ? {failure: unit.failure?.reason, failure_kind: 'definite'} : {}),
                 ...(unit.publishedAt == null ? {} : {proof: {verified_at: time(unit.publishedAt)}})},
             previous: [], prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
