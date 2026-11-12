@@ -17,6 +17,17 @@ int main() {
     CHECK(std::all_of(allocated.begin(), allocated.end(), [](const auto& item) {
         return item.mainJob == "build";
     }));
+    const auto failedId = engine.units().at({"a", "t1"}).inflight->buildId;
+    engine.handle(BuildFailed{3, failedId, 1, "build failure"});
+    CHECK(engine.units().at({"a", "t1"}).failure.has_value());
+    const auto failedBuild = dashboard::jobRequests(engine);
+    CHECK_EQ(failedBuild.size(), allocated.size());
+    CHECK(std::any_of(failedBuild.begin(), failedBuild.end(), [&](const auto& item) {
+        return item.buildId == failedId && item.runId == 1;
+    }));
+    CHECK(std::all_of(failedBuild.begin(), failedBuild.end(), [](const auto& item) {
+        return item.mainJob == "build";
+    }));
     app::JobCache cache;
     const Url base{"api.example", ""};
     const JobRequest request{{"o", "r", "build.yml", "main"}, "a~t~1.0.0~r1", "build", 12};

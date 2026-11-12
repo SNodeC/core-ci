@@ -52,8 +52,11 @@ int main() {
     CHECK(queue.engine()->units().at(unit).buildAssigned);
     apply(BuildSucceeded{106, id, 77, "artifact"});
     CHECK(!queue.engine()->units().at(unit).publishDispatchedAt);
+    CHECK_EQ(dashboard::jobRequests(*queue.engine()).size(), 1U);
     apply(DispatchAccepted{104, id, Kind::Publish, 1});
+    CHECK_EQ(dashboard::jobRequests(*queue.engine()).size(), 2U);
     apply(PublishSucceeded{102, id, 88, std::string(40, 'b')});
+    CHECK_EQ(dashboard::jobRequests(*queue.engine()).size(), 2U);
     const auto before = queue.engine()->units();
     CHECK_EQ(*before.at(unit).publishDispatchedAt, 106);
     CHECK_EQ(*before.at(unit).publishedAt, 106);
@@ -76,7 +79,20 @@ int main() {
     const auto next = queue.engine()->units().at(unit);
     CHECK_EQ(next.order, store.rows().back().seq);
     CHECK(!next.buildAssigned && !next.publishDispatchedAt && !next.publishedAt);
+    CHECK_EQ(dashboard::jobRequests(*queue.engine()).size(), 1U);
     queue.recover("replay next revision");
     CHECK_EQ(queue.engine()->units().at(unit).order, next.order);
+    const auto secondId = queue.engine()->units().at(unit).inflight->buildId;
+    apply(BuildSucceeded{109, secondId, 90, "next artifact"});
+    apply(DispatchRejected{110, secondId, Kind::Publish, 1, 401, "publisher denied"});
+    CHECK(queue.engine()->units().at(unit).failure.has_value());
+    CHECK_EQ(dashboard::jobRequests(*queue.engine()).size(), 1U);
+    apply(RetryRequested{111, "p", "t"});
+    const auto thirdId = queue.engine()->units().at(unit).inflight->buildId;
+    apply(BuildSucceeded{112, thirdId, 91, "third artifact"});
+    apply(DispatchAccepted{113, thirdId, Kind::Publish, 1});
+    apply(PublishFailed{114, thirdId, 92, "validator failed"});
+    CHECK(queue.engine()->units().at(unit).failure.has_value());
+    CHECK_EQ(dashboard::jobRequests(*queue.engine()).size(), 2U);
     return checkResult();
 }

@@ -8,7 +8,7 @@ namespace coreci::dashboard {
             std::optional<app::VersionView> value;
             if (unit.inflight) {
                 value = unit.inflight->selection;
-            } else if (unit.status == "Failed" && unit.failure) {
+            } else if (unit.status.starts_with("Failed") && unit.failure) {
                 value = unit.failure->selection;
             } else if (unit.next) {
                 value = unit.next;
@@ -44,14 +44,13 @@ namespace coreci::dashboard {
         std::vector<github::JobRequest> result;
         for (const auto& [unit, view] : app::statusSnapshot(engine).units) {
             const auto current = selection(view);
-            if (current && (view.inflight || (view.status == "Failed" && view.failure) || (view.status == "Settled" && view.published))) {
+            if (current && (view.inflight || view.status.starts_with("Failed") || view.status == "Settled")) {
                 const auto id = unit.package + "~" + unit.target + "~" + current->version + "~r" + std::to_string(current->revision);
-                const auto runId = view.inflight                                ? view.inflight->runId
-                                   : view.status == "Failed" && view.failure    ? view.failure->runId
-                                   : view.status == "Settled" && view.published ? view.published->runId
-                                                                                : std::nullopt;
+                const auto runId = view.inflight                       ? view.inflight->runId
+                                   : view.status.starts_with("Failed") ? view.failure->runId
+                                                                       : view.published->runId;
                 result.push_back({engine.pipeline().packages().at(unit.package).buildWorkflow, id, "build", runId});
-                if (!view.inflight || view.inflight->phase == Phase::PublishDispatching || view.inflight->phase == Phase::Publishing) {
+                if (engine.units().at(unit).publishDispatchedAt) {
                     result.push_back({engine.pipeline().feeds().at(view.feed).workflow, id, "publish", {}});
                 }
             }
