@@ -93,6 +93,6 @@ namespace coreci::github {
         lookup->fetch = std::move(fetch);
         lookup->done = std::move(done);
         lookup->prefix = base.path + "/repos/" + escape(request.workflow.owner) + "/" + escape(request.workflow.repo) + "/actions/runs";
-        lookup->page(lookup->prefix + (request.runId ? "/" + std::to_string(*request.runId) : "?per_page=100"));
+        lookup->page(lookup->prefix + (request.runId ? std::string("/").append(std::to_string(*request.runId)) : "?per_page=100"));
     }
 } // namespace coreci::github

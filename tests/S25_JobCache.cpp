@@ -47,6 +47,7 @@ int main() {
     CHECK_EQ(cache.get(request)->runId, 12U);
     CHECK_EQ(cache.get(request)->job->status, "in_progress");
     CHECK_EQ(paths.size(), 2U);
+    CHECK_EQ(paths.front(), "/repos/o/r/actions/runs/12");
     cache.refresh({request}, 129, base, fetch, notify);
     CHECK_EQ(paths.size(), 2U);
     status = "completed";
