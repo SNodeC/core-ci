@@ -1,7 +1,40 @@
 name: Verify core-ci
-on: [pull_request, workflow_dispatch]
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bookworm_arm64:
+        description: Build every target with Bookworm GCC 12 and run non-browser tests
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   verify:
+    if: ${{ !inputs.bookworm_arm64 }}
     uses: SNodeC/.github/.github/workflows/verify-project.yml@main
+  bookworm-arm64:
+    if: ${{ inputs.bookworm_arm64 }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: SNodeC/snode.c
+          ref: 12aa9e365d6c67b1a7553136d5e929199ba24f5c
+          path: snodec
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: SNodeC/snode.c-idp
+          ref: bdbcc9bfb940e87aec7f098709bfaee5b8494007
+          path: idp
+          persist-credentials: false
+      - name: Build all targets with the native Bookworm compiler
+        run: docker build --platform linux/arm64 -f source/tests/package/bookworm.Dockerfile -t coreci-bookworm-regression .
+      - name: Run non-browser tests with a disposable MariaDB
+        run: docker run --rm --network=host coreci-bookworm-regression
