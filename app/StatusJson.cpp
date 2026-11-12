@@ -26,7 +26,7 @@ namespace coreci::app {
         std::string object(std::map<std::string, std::string> fields) {
             std::string result = "{";
             for (const auto& [key, value] : fields) {
-                result += (result.size() == 1 ? "" : ",") + quote(key) + ":" + value;
+                result.append(result.size() == 1 ? "" : ",").append(quote(key)).append(":").append(value);
             }
             return result + "}";
         }

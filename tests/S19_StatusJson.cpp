@@ -13,6 +13,11 @@ int main() {
     std::vector<Event> history;
     std::set<std::string> seen;
     CHECK_EQ(app::statusJson(app::statusSnapshot(engine), 0), "{\"generation\":0,\"packages\":[],\"schema\":1,\"units\":[]}");
+    app::StatusSnapshot snapshot;
+    snapshot.packages.emplace("a", app::PackageView{{"owner", "repo", "main"}, {}});
+    CHECK_EQ(app::statusJson(snapshot, 7),
+             "{\"generation\":7,\"packages\":[{\"name\":\"a\",\"released\":null,"
+             "\"sourceRepo\":{\"branch\":\"main\",\"owner\":\"owner\",\"repo\":\"repo\"}}],\"schema\":1,\"units\":[]}");
     const auto apply = [&](Event event) {
         REQUIRE(std::holds_alternative<Accept>(engine.classify(event)));
         history.push_back(event);
