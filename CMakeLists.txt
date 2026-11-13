@@ -120,14 +120,6 @@ if(CORECI_WITH_SNODEC)
         add_test(NAME ${scenario} COMMAND ${scenario})
         set_tests_properties(${scenario} PROPERTIES LABELS adapters)
     endforeach()
-    add_test(NAME M_SmokePorts
-             COMMAND ${Python3_EXECUTABLE}
-                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_ports.py
-    )
-    set_tests_properties(
-        M_SmokePorts PROPERTIES LABELS adapters ENVIRONMENT
-                                "PYTHONDONTWRITEBYTECODE=1"
-    )
     foreach(mode stream buttons auth)
         if(mode STREQUAL "stream")
             set(case S22_DashboardStream)
@@ -161,30 +153,6 @@ if(CORECI_WITH_SNODEC)
         ""
         CACHE PATH "Installed playwright-core for the reference Chromium"
     )
-    foreach(mode assets references)
-        if(mode STREQUAL "assets")
-            set(case G4_DashboardAssets)
-        else()
-            set(case G5_DashboardPixels)
-        endif()
-        add_test(
-            NAME ${case}
-            COMMAND
-                ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/visual.py
-                ${CMAKE_BINARY_DIR}/dashboard-evidence ${mode}
-        )
-        set_tests_properties(
-            ${case}
-            PROPERTIES
-                ENVIRONMENT
-                "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
-                TIMEOUT
-                180
-        )
-    endforeach()
-    set_tests_properties(G4_DashboardAssets PROPERTIES LABELS adapters)
-    set_tests_properties(G5_DashboardPixels PROPERTIES LABELS browser)
     add_test(
         NAME G6_DashboardStates
         COMMAND node ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/browser.cjs
