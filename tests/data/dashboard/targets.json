@@ -2,997 +2,915 @@
   "targets": [
     {
       "id": "debian-trixie-amd64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "trixie",
+      "release": "trixie",
+      "codename": "trixie",
       "arch": "amd64",
+      "image": "debian:trixie",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:trixie",
-        "platform": "linux/amd64",
-        "format": "deb"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "debian-trixie-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "trixie",
+      "release": "trixie",
+      "codename": "trixie",
       "arch": "arm64",
+      "image": "debian:trixie",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "debian:trixie",
-        "platform": "linux/arm64",
-        "format": "deb"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "debian-trixie-armhf",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "trixie",
+      "release": "trixie",
+      "codename": "trixie",
       "arch": "armhf",
+      "image": "debian:trixie",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:trixie",
-        "platform": "linux/arm/v7",
-        "format": "deb"
-      }
+      "platform": "linux/arm/v7",
+      "emulated": false
     },
     {
       "id": "debian-trixie-riscv64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "trixie",
+      "release": "trixie",
+      "codename": "trixie",
       "arch": "riscv64",
+      "image": "debian:trixie",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:trixie",
-        "platform": "linux/riscv64",
-        "format": "deb"
-      }
+      "platform": "linux/riscv64",
+      "emulated": false
     },
     {
       "id": "debian-forky-amd64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "forky",
+      "release": "forky",
+      "codename": "forky",
       "arch": "amd64",
+      "image": "debian:forky",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:forky",
-        "platform": "linux/amd64",
-        "format": "deb"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "debian-forky-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "forky",
+      "release": "forky",
+      "codename": "forky",
       "arch": "arm64",
+      "image": "debian:forky",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "debian:forky",
-        "platform": "linux/arm64",
-        "format": "deb"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "debian-forky-armhf",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "forky",
+      "release": "forky",
+      "codename": "forky",
       "arch": "armhf",
+      "image": "debian:forky",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:forky",
-        "platform": "linux/arm/v7",
-        "format": "deb"
-      }
+      "platform": "linux/arm/v7",
+      "emulated": false
     },
     {
       "id": "debian-forky-riscv64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "forky",
+      "release": "forky",
+      "codename": "forky",
       "arch": "riscv64",
+      "image": "debian:forky",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:forky",
-        "platform": "linux/riscv64",
-        "format": "deb"
-      }
+      "platform": "linux/riscv64",
+      "emulated": false
     },
     {
       "id": "debian-sid-amd64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "sid",
+      "release": "sid",
+      "codename": "sid",
       "arch": "amd64",
+      "image": "debian:sid",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:sid",
-        "platform": "linux/amd64",
-        "format": "deb"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "debian-sid-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "sid",
+      "release": "sid",
+      "codename": "sid",
       "arch": "arm64",
+      "image": "debian:sid",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "debian:sid",
-        "platform": "linux/arm64",
-        "format": "deb"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "debian-sid-armhf",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "sid",
+      "release": "sid",
+      "codename": "sid",
       "arch": "armhf",
+      "image": "debian:sid",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:sid",
-        "platform": "linux/arm/v7",
-        "format": "deb"
-      }
+      "platform": "linux/arm/v7",
+      "emulated": false
     },
     {
       "id": "debian-sid-riscv64",
-      "family": "native",
+      "family": "deb",
       "distribution": "debian",
-      "suite": "sid",
+      "release": "sid",
+      "codename": "sid",
       "arch": "riscv64",
+      "image": "debian:sid",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "debian:sid",
-        "platform": "linux/riscv64",
-        "format": "deb"
-      }
+      "platform": "linux/riscv64",
+      "emulated": false
     },
     {
       "id": "ubuntu-noble-amd64",
-      "family": "native",
+      "family": "deb",
       "distribution": "ubuntu",
-      "suite": "noble",
+      "release": "noble",
+      "codename": "noble",
       "arch": "amd64",
+      "image": "ubuntu:noble",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "ubuntu:noble",
-        "platform": "linux/amd64",
-        "format": "deb"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "ubuntu-noble-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "ubuntu",
-      "suite": "noble",
+      "release": "noble",
+      "codename": "noble",
       "arch": "arm64",
+      "image": "ubuntu:noble",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "ubuntu:noble",
-        "platform": "linux/arm64",
-        "format": "deb"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "ubuntu-resolute-amd64",
-      "family": "native",
+      "family": "deb",
       "distribution": "ubuntu",
-      "suite": "resolute",
+      "release": "resolute",
+      "codename": "resolute",
       "arch": "amd64",
+      "image": "ubuntu:resolute",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "ubuntu:resolute",
-        "platform": "linux/amd64",
-        "format": "deb"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "ubuntu-resolute-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "ubuntu",
-      "suite": "resolute",
+      "release": "resolute",
+      "codename": "resolute",
       "arch": "arm64",
+      "image": "ubuntu:resolute",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "ubuntu:resolute",
-        "platform": "linux/arm64",
-        "format": "deb"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "rocky-9-x86_64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "rocky",
-      "suite": "9",
+      "release": "9",
+      "codename": "9",
       "arch": "x86_64",
+      "image": "rockylinux/rockylinux:9",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "rockylinux/rockylinux:9",
-        "platform": "linux/amd64",
-        "format": "rpm",
-        "dependencies": [
-          "gcc-toolset-14-gcc-c++"
-        ]
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "rocky-9-aarch64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "rocky",
-      "suite": "9",
+      "release": "9",
+      "codename": "9",
       "arch": "aarch64",
+      "image": "rockylinux/rockylinux:9",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "rockylinux/rockylinux:9",
-        "platform": "linux/arm64",
-        "format": "rpm",
-        "dependencies": [
-          "gcc-toolset-14-gcc-c++"
-        ]
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "rocky-10-x86_64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "rocky",
-      "suite": "10",
+      "release": "10",
+      "codename": "10",
       "arch": "x86_64",
+      "image": "rockylinux/rockylinux:10",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "rockylinux/rockylinux:10",
-        "platform": "linux/amd64",
-        "format": "rpm"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "rocky-10-aarch64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "rocky",
-      "suite": "10",
+      "release": "10",
+      "codename": "10",
       "arch": "aarch64",
+      "image": "rockylinux/rockylinux:10",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "rockylinux/rockylinux:10",
-        "platform": "linux/arm64",
-        "format": "rpm"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "fedora-43-x86_64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "fedora",
-      "suite": "43",
+      "release": "43",
+      "codename": "43",
       "arch": "x86_64",
+      "image": "fedora:43",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "fedora:43",
-        "platform": "linux/amd64",
-        "format": "rpm"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "fedora-43-aarch64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "fedora",
-      "suite": "43",
+      "release": "43",
+      "codename": "43",
       "arch": "aarch64",
+      "image": "fedora:43",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "fedora:43",
-        "platform": "linux/arm64",
-        "format": "rpm"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "fedora-44-x86_64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "fedora",
-      "suite": "44",
+      "release": "44",
+      "codename": "44",
       "arch": "x86_64",
+      "image": "fedora:44",
       "runner": "ubuntu-24.04",
-      "build": {
-        "image": "fedora:44",
-        "platform": "linux/amd64",
-        "format": "rpm"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "fedora-44-aarch64",
-      "family": "native",
+      "family": "rpm",
       "distribution": "fedora",
-      "suite": "44",
+      "release": "44",
+      "codename": "44",
       "arch": "aarch64",
+      "image": "fedora:44",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "image": "fedora:44",
-        "platform": "linux/arm64",
-        "format": "rpm"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-x86_64",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "x86_64",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "x86/64",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-i386_pentium-mmx",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "i386_pentium-mmx",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "x86/geode",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-i386_pentium4",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "i386_pentium4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "x86/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-aarch64_cortex-a53",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "aarch64_cortex-a53",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mediatek/filogic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-aarch64_cortex-a72",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "aarch64_cortex-a72",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "bcm27xx/bcm2711",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-aarch64_cortex-a76",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "aarch64_cortex-a76",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "bcm27xx/bcm2712",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-aarch64_generic",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "aarch64_generic",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "armsr/armv8",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a5_vfpv4",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a5_vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "at91/sama5",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a7",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a7",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mediatek/mt7629",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a7_neon-vfpv4",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a7_neon-vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ipq40xx/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a7_vfpv4",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a7_vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "at91/sama7",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a8_vfpv3",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a8_vfpv3",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "sunxi/cortexa8",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a9",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a9",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "bcm53xx/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a9_neon",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a9_neon",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "imx/cortexa9",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a9_vfpv3-d16",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a9_vfpv3-d16",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mvebu/cortexa9",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-arm_cortex-a15_neon-vfpv4",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "arm_cortex-a15_neon-vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "armsr/armv7",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-loongarch64_generic",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "loongarch64_generic",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "loongarch64/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-mips64_octeonplus",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "mips64_octeonplus",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "octeon/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-mips_24kc",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "mips_24kc",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ath79/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-mipsel_24kc",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "mipsel_24kc",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ramips/mt76x8",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-mipsel_24kc_24kf",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "mipsel_24kc_24kf",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "pistachio/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-mipsel_74kc",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "mipsel_74kc",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ramips/rt3883",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-powerpc_464fp",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "powerpc_464fp",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "apm821xx/nand",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-powerpc_8548",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "powerpc_8548",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mpc85xx/p1010",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-24.10-riscv64_generic",
-      "family": "openwrt",
+      "family": "ipk",
       "distribution": "openwrt",
-      "suite": "24.10",
+      "release": "24.10",
+      "codename": "24.10",
       "arch": "riscv64_riscv64",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "sifiveu/generic",
-        "format": "ipk",
-        "release": "24.10.8"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-x86_64",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "x86_64",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "x86/64",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-i386_pentium-mmx",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "i386_pentium-mmx",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "x86/geode",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-i386_pentium4",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "i386_pentium4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "x86/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-aarch64_cortex-a53",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "aarch64_cortex-a53",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mediatek/filogic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-aarch64_cortex-a72",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "aarch64_cortex-a72",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "bcm27xx/bcm2711",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-aarch64_cortex-a76",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "aarch64_cortex-a76",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "bcm27xx/bcm2712",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-aarch64_generic",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "aarch64_generic",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "armsr/armv8",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a5_vfpv4",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a5_vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "at91/sama5",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a7",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a7",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mediatek/mt7629",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a7_neon-vfpv4",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a7_neon-vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ipq40xx/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a7_vfpv4",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a7_vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "at91/sama7",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a8_vfpv3",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a8_vfpv3",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "sunxi/cortexa8",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a9",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a9",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "bcm53xx/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a9_neon",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a9_neon",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "imx/cortexa9",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a9_vfpv3-d16",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a9_vfpv3-d16",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mvebu/cortexa9",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-arm_cortex-a15_neon-vfpv4",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "arm_cortex-a15_neon-vfpv4",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "armsr/armv7",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-loongarch64_generic",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "loongarch64_generic",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "loongarch64/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-mips64_octeonplus",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "mips64_octeonplus",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "octeon/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-mips_24kc",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "mips_24kc",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ath79/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-mipsel_24kc",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "mipsel_24kc",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ramips/mt76x8",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-mipsel_24kc_24kf",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "mipsel_24kc_24kf",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "pistachio/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-mipsel_74kc",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "mipsel_74kc",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "ramips/rt3883",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-powerpc_464fp",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "powerpc_464fp",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "apm821xx/nand",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-powerpc_8548",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "powerpc_8548",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "mpc85xx/p1010",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "openwrt-25.12-riscv64_generic",
-      "family": "openwrt",
+      "family": "apk",
       "distribution": "openwrt",
-      "suite": "25.12",
+      "release": "25.12",
+      "codename": "25.12",
       "arch": "riscv64_generic",
+      "image": "fixture:image",
       "runner": "ubuntu-24.04",
-      "build": {
-        "target": "sifiveu/generic",
-        "format": "apk",
-        "release": "25.12.5"
-      }
+      "platform": "linux/amd64",
+      "emulated": false
     },
     {
       "id": "raspberrypios-bookworm-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "raspberrypios",
-      "suite": "bookworm",
+      "release": "bookworm",
+      "codename": "bookworm",
       "arch": "arm64",
+      "image": "ghcr.io/snodec/raspberrypios-bookworm@sha256:31d641c002dae546612df0b9df7cb3b8e160cf26b15a438292da036612339d3a",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "platform": "linux/arm64",
-        "format": "deb",
-        "image": "ghcr.io/snodec/raspberrypios-bookworm@sha256:31d641c002dae546612df0b9df7cb3b8e160cf26b15a438292da036612339d3a"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     },
     {
       "id": "raspberrypios-trixie-arm64",
-      "family": "native",
+      "family": "deb",
       "distribution": "raspberrypios",
-      "suite": "trixie",
+      "release": "trixie",
+      "codename": "trixie",
       "arch": "arm64",
+      "image": "ghcr.io/snodec/raspberrypios-trixie@sha256:32f55705a349e55959141cad29f8fdcb99323734adc4ee35599919e7f831dc54",
       "runner": "ubuntu-24.04-arm",
-      "build": {
-        "platform": "linux/arm64",
-        "format": "deb",
-        "image": "ghcr.io/snodec/raspberrypios-trixie@sha256:32f55705a349e55959141cad29f8fdcb99323734adc4ee35599919e7f831dc54"
-      }
+      "platform": "linux/arm64",
+      "emulated": false
     }
   ]
 }

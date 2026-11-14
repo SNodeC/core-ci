@@ -8,29 +8,14 @@ using namespace coreci::persistence;
 
 Pipeline pipeline() {
     Pipeline::Builder b;
-    b.feed({"f", {"o", "publisher", "publish.yml", "stable"}})
-        .target({"t", "f"})
-        .package({"a", {"o", "a", "trunk"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {}})
-        .package({"b", {"o", "b", "trunk"}, {"o", "recipes", "build.yml", "trunk"}, {"t"}, {"a"}});
+    b.target({"t"}).package({"a", {"o", "a", "trunk"}, {"t"}, {}}).package({"b", {"o", "b", "trunk"}, {"t"}, {"a"}});
     return b.build();
 }
 Engine engine() {
-    return Engine({100, 50, 8, {}});
+    return Engine({0, 100, 8, 0});
 }
 Event tag(const std::string& package, std::int64_t at = 100) {
     return TagObserved{at, package, "v1.0.0", std::string(40, 'a'), Origin::Webhook};
-}
-Command buildCommand() {
-    return DispatchBuild{"a~t~1.0.0~r1",
-                         1,
-                         "a",
-                         {"o", "a", "trunk"},
-                         "v1.0.0",
-                         *Version::parse("1.0.0"),
-                         1,
-                         "t",
-                         {},
-                         {"o", "recipes", "build.yml", "trunk"}};
 }
 int recovery(InMemoryEventStore::Failure failure) {
     InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
@@ -87,7 +72,7 @@ int recovery(InMemoryEventStore::Failure failure) {
     REQUIRE(queue.engine());
     CHECK_EQ(ready, 2);
     const bool stored = failure == InMemoryEventStore::Failure::AfterStore;
-    CHECK(emitted == (stored ? std::vector<Command>{buildCommand()} : std::vector<Command>{}));
+    CHECK(emitted.empty());
     queue.enqueue(tag("a", 111), reply);
     if (stored) {
         CHECK(std::holds_alternative<Ignored>(replies.back()));
@@ -97,7 +82,7 @@ int recovery(InMemoryEventStore::Failure failure) {
         CHECK(std::holds_alternative<Accepted>(replies.back()));
         CHECK_EQ(store.rows()[2].seq, 4U); // graph=1, Resumed=2, failed append consumed seq 3
     }
-    CHECK((emitted == std::vector<Command>{buildCommand()}));
+    CHECK_EQ(emitted.size(), stored ? 0U : 1U);
     store.defer(false);
     Engine fresh = engine();
     store.loadAll(
@@ -111,7 +96,7 @@ int recovery(InMemoryEventStore::Failure failure) {
         });
     CHECK_EQ(recordedStatus(*queue.engine()), recordedStatus(fresh));
     CHECK(queue.engine()->units() == fresh.units());
-    CHECK(queue.engine()->feeds() == fresh.feeds());
+    CHECK(queue.engine()->waves() == fresh.waves());
     CHECK(queue.engine()->releases() == fresh.releases());
     CHECK(queue.engine()->time() == fresh.time());
     return checkResult();
@@ -217,7 +202,7 @@ int externalRecovery() {
     REQUIRE(store.completeOne()); // Resumed commit
     REQUIRE(queue.engine());
     CHECK_EQ(ready, 2);
-    CHECK((emitted == std::vector<Command>{buildCommand()}));
+    CHECK(emitted.empty());
     CHECK(queue.engine()->releases().at("a").has_value());
     CHECK(!queue.engine()->releases().at("b"));
     return checkResult();
@@ -242,7 +227,7 @@ int main() {
             emitted.insert(emitted.end(), commands.begin(), commands.end());
             if (reenter) {
                 reenter = false;
-                active->enqueue(DispatchAccepted{101, "a~t~1.0.0~r1", Kind::Build, 1}, reply);
+                active->enqueue(WaveDispatchAccepted{101, "w3", 1}, reply);
                 CHECK(replies.empty()); // command callback precedes original request reply
             }
         },
@@ -278,11 +263,11 @@ int main() {
     CHECK(replies.empty());
     CHECK(!queue.engine()->releases().at("a"));
     REQUIRE(store.completeOne());
-    CHECK((emitted == std::vector<Command>{buildCommand()}));
+    CHECK_EQ(emitted.size(), 1U);
     CHECK_EQ(replies.size(), 1U);
     CHECK(std::holds_alternative<Accepted>(replies.back()));
     CHECK_EQ(store.pending(), 1U);
-    CHECK(queue.engine()->units().at({"a", "t"}).inflight->phase == Phase::Dispatching);
+    CHECK(queue.engine()->activeWave()->phase == WavePhase::Dispatching);
     queue.enqueue(tag("a", 102), reply); // duplicate waits behind pending dispatch result
     CHECK_EQ(replies.size(), 1U);
     REQUIRE(store.completeOne());
@@ -291,11 +276,11 @@ int main() {
     CHECK(std::holds_alternative<Ignored>(replies[2]));
     CHECK_EQ(store.rows().size(), rows + 2);
     CHECK_EQ(store.pending(), 0U);
-    CHECK(queue.engine()->units().at({"a", "t"}).inflight->phase == Phase::Building);
+    CHECK(queue.engine()->activeWave()->phase == WavePhase::Running);
 
     // The committed row and engine both receive the normalized free text.
     store.defer(false);
-    queue.enqueue(BuildFailed{103, "a~t~1.0.0~r1", 101, std::string("A\0B\xff", 4)}, reply);
+    queue.enqueue(UnitBuildFailed{103, "w3", "w3~a~t", std::string("A\0B\xff", 4)}, reply);
     CHECK(std::holds_alternative<Accepted>(replies.back()));
     CHECK_EQ(*store.rows().back().reason, "AB\xef\xbf\xbd");
     CHECK_EQ(queue.engine()->units().at({"a", "t"}).failure->reason, "AB\xef\xbf\xbd");

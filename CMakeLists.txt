@@ -27,48 +27,33 @@ target_link_libraries(coreci_status PUBLIC coreci_core)
 add_library(coreci_test tests/InMemoryEventStore.cpp)
 target_link_libraries(coreci_test PUBLIC coreci_status coreci_persistence)
 enable_testing()
+foreach(scenario S06_Tags S09_Validation S12_WriteAhead S13_EventRow
+                 S14_EventSql
+)
+    add_executable(${scenario} tests/${scenario}.cpp)
+    target_link_libraries(${scenario} PRIVATE coreci_test)
+    add_test(NAME ${scenario} COMMAND ${scenario})
+endforeach()
+set_tests_properties(S06_Tags S09_Validation PROPERTIES LABELS core)
+set_tests_properties(
+    S12_WriteAhead S13_EventRow S14_EventSql PROPERTIES LABELS persistence
+)
+add_executable(W_Engine tests/W_Engine.cpp)
+target_link_libraries(W_Engine PRIVATE coreci_test)
 foreach(
     scenario
-    S01_Diamond
-    S02_PublishSerialization
-    S03_Superseding
-    S04_FailureRetry
-    S05_Idempotency
-    S06_Tags
-    S07_DependencyChange
-    S08_WaitingTag
-    S09_Validation
-    S10_Timeouts
-    S15_GraphChanged
-    S17_Badge
-    S18_RevisionBase
-    S26_Rebuild
-    S28_AutoRetry
-    I_RandomizedInvariants
+    debounce
+    planning
+    outcomes
+    retry
+    dispatch
+    restart
+    graph
+    randomized
 )
-    add_executable(${scenario} tests/${scenario}.cpp)
-    target_link_libraries(${scenario} PRIVATE coreci_test)
-    add_test(NAME ${scenario} COMMAND ${scenario})
-    set_tests_properties(${scenario} PROPERTIES LABELS core)
+    add_test(NAME W_${scenario} COMMAND W_Engine ${scenario})
+    set_tests_properties(W_${scenario} PROPERTIES LABELS "core;persistence")
 endforeach()
-target_link_libraries(I_RandomizedInvariants PRIVATE coreci_test)
-target_link_libraries(S15_GraphChanged PRIVATE coreci_test)
-target_link_libraries(S18_RevisionBase PRIVATE coreci_test)
-target_link_libraries(S26_Rebuild PRIVATE coreci_test)
-target_link_libraries(S28_AutoRetry PRIVATE coreci_test)
-set_tests_properties(
-    I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
-)
-foreach(scenario S11_Replay S12_WriteAhead S13_EventRow S14_EventSql)
-    add_executable(${scenario} tests/${scenario}.cpp)
-    target_link_libraries(${scenario} PRIVATE coreci_test)
-    add_test(NAME ${scenario} COMMAND ${scenario})
-    set_tests_properties(${scenario} PROPERTIES LABELS persistence)
-endforeach()
-add_executable(S19_StatusJson tests/S19_StatusJson.cpp)
-target_link_libraries(S19_StatusJson PRIVATE coreci_test)
-add_test(NAME S19_StatusJson COMMAND S19_StatusJson)
-set_tests_properties(S19_StatusJson PROPERTIES LABELS "core;persistence")
 if(CORECI_WITH_SNODEC)
     find_package(
         snodec REQUIRED COMPONENTS db-mariadb http-client net-in-stream-tls
@@ -113,12 +98,10 @@ if(CORECI_WITH_SNODEC)
         PUBLIC coreci_status coreci_github coreci_mariadb
                snodec::http-server-express-tls-in snodec-auth::auth-client
     )
-    foreach(scenario S21_Catalog S27_DashboardHistory)
-        add_executable(${scenario} tests/${scenario}.cpp)
-        target_link_libraries(${scenario} PRIVATE coreci_app coreci_test)
-        add_test(NAME ${scenario} COMMAND ${scenario})
-        set_tests_properties(${scenario} PROPERTIES LABELS adapters)
-    endforeach()
+    add_executable(W_Model tests/W_Model.cpp)
+    target_link_libraries(W_Model PRIVATE coreci_app coreci_test)
+    add_test(NAME W_Model COMMAND W_Model)
+    set_tests_properties(W_Model PROPERTIES LABELS adapters)
     foreach(mode stream buttons auth)
         if(mode STREQUAL "stream")
             set(case S22_DashboardStream)
@@ -148,46 +131,6 @@ if(CORECI_WITH_SNODEC)
                        150
         )
     endforeach()
-    set(CORECI_PLAYWRIGHT_PATH
-        ""
-        CACHE PATH "Installed playwright-core for the reference Chromium"
-    )
-    add_test(
-        NAME G6_DashboardStates
-        COMMAND node ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/browser.cjs
-                ${CMAKE_BINARY_DIR}/dashboard-evidence states
-    )
-    set_tests_properties(
-        G6_DashboardStates
-        PROPERTIES
-            LABELS
-            browser
-            ENVIRONMENT
-            "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
-            TIMEOUT
-            120
-    )
-    add_test(
-        NAME M_DashboardEndToEnd
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard/e2e.py
-            ${CMAKE_BINARY_DIR}
-    )
-    set_tests_properties(
-        M_DashboardEndToEnd
-        PROPERTIES
-            LABELS
-            integration
-            ENVIRONMENT
-            "CORECI_PLAYWRIGHT_PATH=${CORECI_PLAYWRIGHT_PATH};PYTHONDONTWRITEBYTECODE=1"
-            SKIP_RETURN_CODE
-            77
-            RUN_SERIAL
-            TRUE
-            TIMEOUT
-            180
-    )
     add_executable(core-ci app/main.cpp)
     target_link_libraries(core-ci PRIVATE coreci_app)
     install(TARGETS core-ci RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -1,93 +1,14 @@
 {
   "schema": 1,
-  "title": "SNode.C IDP",
   "package": "snodec-idp",
+  "title": "SNode.C IDP",
   "depends_on": [
     "snodec"
   ],
   "build": {
-    "native": "ci/package/native.sh"
+    "deb": "ci/package/native.sh",
+    "rpm": "ci/package/native.sh"
   },
-  "matrix": [
-    {
-      "id": "debian-trixie-amd64"
-    },
-    {
-      "id": "debian-trixie-arm64"
-    },
-    {
-      "id": "debian-trixie-armhf"
-    },
-    {
-      "id": "debian-trixie-riscv64"
-    },
-    {
-      "id": "debian-forky-amd64"
-    },
-    {
-      "id": "debian-forky-arm64"
-    },
-    {
-      "id": "debian-forky-armhf"
-    },
-    {
-      "id": "debian-forky-riscv64"
-    },
-    {
-      "id": "debian-sid-amd64"
-    },
-    {
-      "id": "debian-sid-arm64"
-    },
-    {
-      "id": "debian-sid-armhf"
-    },
-    {
-      "id": "debian-sid-riscv64"
-    },
-    {
-      "id": "ubuntu-noble-amd64"
-    },
-    {
-      "id": "ubuntu-noble-arm64"
-    },
-    {
-      "id": "ubuntu-resolute-amd64"
-    },
-    {
-      "id": "ubuntu-resolute-arm64"
-    },
-    {
-      "id": "rocky-9-x86_64"
-    },
-    {
-      "id": "rocky-9-aarch64"
-    },
-    {
-      "id": "rocky-10-x86_64"
-    },
-    {
-      "id": "rocky-10-aarch64"
-    },
-    {
-      "id": "fedora-43-x86_64"
-    },
-    {
-      "id": "fedora-43-aarch64"
-    },
-    {
-      "id": "fedora-44-x86_64"
-    },
-    {
-      "id": "fedora-44-aarch64"
-    },
-    {
-      "id": "raspberrypios-bookworm-arm64"
-    },
-    {
-      "id": "raspberrypios-trixie-arm64"
-    }
-  ],
   "build_dependencies": {
     "deb": [
       "cmake",
@@ -112,7 +33,36 @@
       "ncurses-devel",
       "json-devel",
       "sqlite-devel"
-    ]
+    ],
+    "openwrt": []
   },
+  "targets": [
+    "debian-trixie-amd64",
+    "debian-trixie-arm64",
+    "debian-trixie-armhf",
+    "debian-trixie-riscv64",
+    "debian-forky-amd64",
+    "debian-forky-arm64",
+    "debian-forky-armhf",
+    "debian-forky-riscv64",
+    "debian-sid-amd64",
+    "debian-sid-arm64",
+    "debian-sid-armhf",
+    "debian-sid-riscv64",
+    "ubuntu-noble-amd64",
+    "ubuntu-noble-arm64",
+    "ubuntu-resolute-amd64",
+    "ubuntu-resolute-arm64",
+    "rocky-9-x86_64",
+    "rocky-9-aarch64",
+    "rocky-10-x86_64",
+    "rocky-10-aarch64",
+    "fedora-43-x86_64",
+    "fedora-43-aarch64",
+    "fedora-44-x86_64",
+    "fedora-44-aarch64",
+    "raspberrypios-bookworm-arm64",
+    "raspberrypios-trixie-arm64"
+  ],
   "revision_base": 12
 }

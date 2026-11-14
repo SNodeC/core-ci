@@ -67,31 +67,33 @@ int main() {
     const std::string hash(40, 'a');
     const std::string text = "'\\\" UTF-8 \xc3\xa9 \xf0\x9f\x98\x80";
     const std::vector<Event> events{TagObserved{std::numeric_limits<std::int64_t>::min(), "p", "v1.0.0", hash, Origin::Webhook},
-                                    DispatchAccepted{1, "id", Kind::Build, 1},
-                                    DispatchRejected{2, "id", Kind::Publish, 2, 999, text},
-                                    BuildStarted{3, "id", std::numeric_limits<std::uint64_t>::max(), 1},
-                                    BuildSucceeded{4, "id", 7, "artifact"},
-                                    BuildFailed{5, "id", 7, text},
-                                    PublishStarted{5, "id", 8, 2},
-                                    PublishSucceeded{6, "id", 8, hash},
-                                    PublishFailed{7, "id", 8, text},
+                                    WaveDispatchAccepted{1, "w1", 1},
+                                    WaveDispatchRejected{2, "w1", 2, 999, text},
+                                    WaveStarted{3, "w1", std::numeric_limits<std::uint64_t>::max(), 1},
+                                    UnitBuildSucceeded{4, "w1", "id", "artifact"},
+                                    UnitBuildFailed{5, "w1", "id", text},
+                                    UnitBuildStarted{5, "w1", "id"},
+                                    UnitPublishSucceeded{6, "w1", "id", hash},
+                                    UnitPublishFailed{7, "w1", "id", text},
                                     RetryRequested{8, "p", "t"},
                                     RebuildRequested{8, "p", "t"},
                                     Tick{std::numeric_limits<std::int64_t>::max()},
                                     Resumed{10},
                                     GraphChanged{11, testPipeline()},
-                                    GraphChanged{12, Pipeline{}}};
+                                    GraphChanged{12, Pipeline{}},
+                                    WaveFinished{13, "w1", 7, "success"}};
     const auto fields = std::tuple{&EventRow::package,
                                    &EventRow::target,
                                    &EventRow::tag,
                                    &EventRow::sourceSha,
                                    &EventRow::origin,
                                    &EventRow::buildId,
-                                   &EventRow::kind,
+                                   &EventRow::waveId,
                                    &EventRow::message,
                                    &EventRow::artifact,
                                    &EventRow::feedCommit,
                                    &EventRow::reason,
+                                   &EventRow::conclusion,
                                    &EventRow::httpStatus,
                                    &EventRow::runAttempt,
                                    &EventRow::attempt,
@@ -131,9 +133,6 @@ int main() {
     bad = std::get<EventRow>(encode(events[0], 73));
     bad.origin = "invalid";
     fatal(bad);
-    bad = std::get<EventRow>(encode(events[1], 73));
-    bad.kind = "invalid";
-    fatal(bad);
     for (const auto n : {std::int64_t{-1}, std::int64_t{0}, std::int64_t{2147483648LL}}) {
         bad = std::get<EventRow>(encode(events[1], 73));
         bad.attempt = n;
@@ -171,42 +170,41 @@ int main() {
     identifiers(
         events[1],
         [](Event& e, const auto& s) {
-            std::get<DispatchAccepted>(e).buildId = s;
+            std::get<WaveDispatchAccepted>(e).waveId = s;
         },
-        255,
-        &EventRow::buildId);
+        64,
+        &EventRow::waveId);
     identifiers(
         events[4],
         [](Event& e, const auto& s) {
-            std::get<BuildSucceeded>(e).artifact = s;
+            std::get<UnitBuildSucceeded>(e).artifact = s;
         },
         255,
         &EventRow::artifact);
     for (const auto& s : {std::string(39, 'a'), std::string(41, 'a'), std::string(40, 'A'), std::string(40, 'g'), std::string(40, '\0')}) {
         CHECK(std::holds_alternative<Invalid>(normalize(TagObserved{1, "p", "tag", s, Origin::Webhook})));
-        CHECK(std::holds_alternative<Invalid>(normalize(PublishSucceeded{1, "id", 1, s})));
+        CHECK(std::holds_alternative<Invalid>(normalize(UnitPublishSucceeded{1, "w1", "id", s})));
         bad = std::get<EventRow>(encode(events[0], 73));
         bad.sourceSha = s;
         fatal(bad);
-        bad = std::get<EventRow>(encode(Event{PublishSucceeded{6, "id", 8, hash}}, 73));
+        bad = std::get<EventRow>(encode(Event{UnitPublishSucceeded{6, "w1", "id", hash}}, 73));
         bad.feedCommit = s;
         fatal(bad);
     }
     CHECK(std::holds_alternative<Event>(
         normalize(TagObserved{1, "p", "tag", "0123456789abcdef0123456789abcdef01234567", Origin::Reconcile})));
     CHECK(std::holds_alternative<Invalid>(normalize(TagObserved{1, "p", "tag", hash, static_cast<Origin>(99)})));
-    CHECK(std::holds_alternative<Invalid>(normalize(DispatchAccepted{1, "id", static_cast<Kind>(99), 1})));
     for (const auto n : {0U, std::numeric_limits<unsigned>::max()}) {
-        CHECK(std::holds_alternative<Invalid>(normalize(DispatchAccepted{1, "id", Kind::Build, n})));
-        CHECK(std::holds_alternative<Invalid>(normalize(BuildStarted{1, "id", 1, n})));
+        CHECK(std::holds_alternative<Invalid>(normalize(WaveDispatchAccepted{1, "w1", n})));
+        CHECK(std::holds_alternative<Invalid>(normalize(WaveStarted{1, "w1", 1, n})));
     }
-    CHECK(std::holds_alternative<Event>(normalize(BuildStarted{1, "id", 0, 2147483647U})));
-    CHECK(std::holds_alternative<Event>(normalize(DispatchAccepted{1, "id", Kind::Build, 2147483647U})));
+    CHECK(std::holds_alternative<Event>(normalize(WaveStarted{1, "w1", 1, 2147483647U})));
+    CHECK(std::holds_alternative<Event>(normalize(WaveDispatchAccepted{1, "w1", 2147483647U})));
     for (const auto n : {0, 999}) {
-        CHECK(std::holds_alternative<Event>(normalize(DispatchRejected{1, "id", Kind::Build, 1, n, ""})));
+        CHECK(std::holds_alternative<Event>(normalize(WaveDispatchRejected{1, "w1", 1, n, ""})));
     }
     for (const auto n : {-1, 1000}) {
-        CHECK(std::holds_alternative<Invalid>(normalize(DispatchRejected{1, "id", Kind::Build, 1, n, ""})));
+        CHECK(std::holds_alternative<Invalid>(normalize(WaveDispatchRejected{1, "w1", 1, n, ""})));
     }
     // Every free-text field is normalized, and decoding requires already-normalized values.
     const std::vector<std::pair<std::string, std::string>> texts{{"", ""},
@@ -218,7 +216,7 @@ int main() {
                                                                  {std::string(10000, 'x'), std::string(4096, 'x')}};
     for (const auto& [raw, expected] : texts) {
         for (auto event : std::vector<Event>{
-                 DispatchRejected{1, "id", Kind::Build, 1, 500, raw}, BuildFailed{1, "id", 1, raw}, PublishFailed{1, "id", 1, raw}}) {
+                 WaveDispatchRejected{1, "w1", 1, 500, raw}, UnitBuildFailed{1, "w1", "id", raw}, UnitPublishFailed{1, "w1", "id", raw}}) {
             const auto normalized = normalize(event);
             REQUIRE(std::holds_alternative<Event>(normalized));
             CHECK(normalize(std::get<Event>(normalized)) == normalized);

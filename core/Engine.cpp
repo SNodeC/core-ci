@@ -4,303 +4,243 @@
 #include <type_traits>
 
 namespace coreci {
+    std::string stateName(State state) {
+        const char* names[] = {"Idle", "Planned", "Building", "Built", "Published", "Failed", "Blocked"};
+        return names[static_cast<unsigned>(state)];
+    }
+    std::string phaseName(WavePhase phase) {
+        const char* names[] = {"Dispatching", "Running", "Finished"};
+        return names[static_cast<unsigned>(phase)];
+    }
     Engine::Engine(Options options)
-        : options(options) {
+        : options(std::move(options)) {
     }
-    bool Engine::active(const Unit& unit) const {
-        return graph.packages().contains(unit.package) && graph.packages().at(unit.package).targets.contains(unit.target);
+    bool Engine::newerTag(const TagObserved& tag, const Pipeline& candidate) const {
+        const auto version = Version::parse(tag.tag);
+        const auto old = released.find(tag.package);
+        return candidate.packages().contains(tag.package) && version && !version->prerelease() &&
+               (old == released.end() || !old->second || !sameSource(tag.package, candidate.packages().at(tag.package).sourceRepo) ||
+                *version > old->second->version);
     }
-    void Engine::changeGraph(const Pipeline& next) {
-        for (auto& [unit, state] : unitStates) {
-            const bool remains = next.packages().contains(unit.package) && next.packages().at(unit.package).targets.contains(unit.target);
-            if (!remains) {
-                state.inflight.reset();
-                state.retryAfter.reset();
-            } else {
-                const auto& [source, workflow] = lastIdentity.at(unit.package);
-                const auto& newPkg = next.packages().at(unit.package);
-                if (!sameIdentity(source, newPkg.sourceRepo) || !sameIdentity(workflow, newPkg.buildWorkflow)) {
-                    state.inflight.reset();
-                }
-                if (state.lastFeed != next.targets().at(unit.target).feed) {
-                    state.published.reset();
-                    state.failure.reset();
-                }
-            }
-        }
-        for (const auto& [name, pkg] : next.packages()) {
-            if (lastIdentity.contains(name) && !sameIdentity(lastIdentity.at(name).first, pkg.sourceRepo)) {
+    void Engine::dirty() {
+        quietUntil = *engineTime + options.waveDelay;
+    }
+    void Engine::changeGraph(const GraphChanged& event) {
+        bool changed = false;
+        for (const auto& [name, pkg] : event.pipeline.packages()) {
+            const bool sourceChanged = !sameSource(name, pkg.sourceRepo);
+            if (sourceChanged) {
                 released[name].reset();
+                changed = true;
             }
-            released.try_emplace(name, std::nullopt);
-            lastIdentity.insert_or_assign(name, std::pair{pkg.sourceRepo, pkg.buildWorkflow});
+            sources[name] = pkg.sourceRepo;
             for (const auto& target : pkg.targets) {
-                unitStates.try_emplace(Unit{name, target});
-                unitStates.at({name, target}).lastFeed = next.targets().at(target).feed;
+                changed = !graph.packages().contains(name) || !graph.packages().at(name).targets.contains(target) || changed;
+                auto& state = unitStates[Unit{name, target}];
+                if (sourceChanged) {
+                    state.failure.reset();
+                    state.autoRetried.reset();
+                    state.retryAfter.reset();
+                }
+            }
+            if (!graph.packages().contains(name) || graph.packages().at(name).prerequisites != pkg.prerequisites) {
+                changed = true;
             }
         }
-        for (auto i = feedStates.begin(); i != feedStates.end();) {
-            if (!next.feeds().contains(i->first)) {
-                i = feedStates.erase(i);
-            } else {
-                ++i;
+        graph = event.pipeline;
+        for (const auto& tag : event.tags) {
+            if (newerTag(tag, graph)) {
+                released[tag.package] = Released{*Version::parse(tag.tag), tag.tag, tag.sourceSha};
+                changed = true;
             }
         }
-        for (const auto& [name, feed] : next.feeds()) {
-            feedStates.try_emplace(name);
+        if (changed) {
+            dirty();
         }
-        graph = next;
     }
-    std::optional<Unit> Engine::find(const std::string& buildId) const {
-        std::optional<Unit> result;
-        for (const auto& [unit, state] : unitStates) {
-            if (state.inflight && state.inflight->buildId == buildId) {
-                result = unit;
+    const Wave* Engine::activeWave() const {
+        const auto* wave = latestWave();
+        return wave && wave->phase != WavePhase::Finished ? wave : nullptr;
+    }
+    const Wave* Engine::latestWave() const {
+        return latest.empty() ? nullptr : &waveStates.at(latest);
+    }
+    const PlanUnit* Engine::selection(const Unit& unit) const {
+        const PlanUnit* result = nullptr;
+        const auto state = unitStates.find(unit);
+        if (state != unitStates.end() && waveStates.contains(state->second.waveId)) {
+            const auto& plan = waveStates.at(state->second.waveId).plan;
+            if (plan.contains(unit.target)) {
+                for (const auto& entry : plan.at(unit.target)) {
+                    if (entry.unit == unit && entry.build) {
+                        result = &entry;
+                    }
+                }
             }
         }
         return result;
     }
-    bool Engine::newerTag(const TagObserved& event, const Pipeline& candidate) const {
-        const auto version = Version::parse(event.tag);
-        const auto release = released.find(event.package);
-        return candidate.packages().contains(event.package) && version &&
-               (!version->prerelease() || candidate.packages().at(event.package).acceptPrereleases) &&
-               (release == released.end() || !release->second || *version > release->second->version);
-    }
     Classification Engine::classify(const Event& event) const {
+        const auto* wave = activeWave();
+        const auto now = [&](std::int64_t at) {
+            return std::max(engineTime.value_or(at), at);
+        };
         return std::visit(
             [&](const auto& e) -> Classification {
                 using E = std::decay_t<decltype(e)>;
-                Classification result = Ignore{"event not applicable"};
+                bool allowed = false;
                 if constexpr (std::is_same_v<E, TagObserved>) {
-                    if (graph.packages().contains(e.package)) {
-                        if (newerTag(e, graph)) {
-                            result = Accept{};
-                        } else {
-                            result = Ignore{"tag is not a newer accepted version"};
-                        }
-                    } else {
-                        result = Ignore{"unknown package"};
-                    }
+                    allowed = newerTag(e, graph);
                 } else if constexpr (std::is_same_v<E, GraphChanged>) {
-                    bool allowed = graph != e.pipeline;
+                    allowed = graph != e.pipeline;
                     for (const auto& tag : e.tags) {
                         allowed = allowed || newerTag(tag, e.pipeline);
                     }
-                    for (const auto& [unit, state] : unitStates) {
-                        if (active(unit) && state.inflight && state.inflight->phase != Phase::Dispatching &&
-                            state.inflight->phase != Phase::Building) {
-                            const auto& oldPkg = graph.packages().at(unit.package);
-                            const auto next = e.pipeline.packages().find(unit.package);
-                            const auto& feed = graph.targets().at(unit.target).feed;
-                            allowed = allowed && next != e.pipeline.packages().end();
-                            if (next != e.pipeline.packages().end()) {
-                                allowed = allowed && next->second.targets.contains(unit.target) &&
-                                          sameIdentity(next->second.sourceRepo, oldPkg.sourceRepo) &&
-                                          sameIdentity(next->second.buildWorkflow, oldPkg.buildWorkflow) &&
-                                          e.pipeline.targets().at(unit.target).feed == feed;
-                            }
-                            if (state.inflight->phase != Phase::AwaitingPublish) {
-                                allowed = allowed && e.pipeline.feeds().contains(feed) &&
-                                          sameIdentity(e.pipeline.feeds().at(feed).workflow, graph.feeds().at(feed).workflow);
-                            }
-                        }
-                    }
-                    result = allowed ? Classification{Accept{}} : Classification{Ignore{"unchanged graph or publication in progress"}};
                 } else if constexpr (std::is_same_v<E, Resumed>) {
-                    result = Accept{};
+                    allowed = true;
                 } else if constexpr (std::is_same_v<E, Tick>) {
-                    const auto deadline = nextDeadline();
-                    if (deadline && std::max(engineTime.value_or(e.at), e.at) >= *deadline) {
-                        result = Accept{};
-                    } else {
-                        result = Ignore{"no deadline due"};
-                    }
-                } else if constexpr (std::is_same_v<E, RetryRequested>) {
-                    const auto it = unitStates.find({e.package, e.target});
-                    if (active({e.package, e.target}) && it != unitStates.end() && it->second.failure && !it->second.inflight) {
-                        result = Accept{};
-                    } else {
-                        result = Ignore{"unit has no retryable failure"};
-                    }
-                } else if constexpr (std::is_same_v<E, RebuildRequested>) {
+                    const auto next = nextDeadline();
+                    allowed = next && now(e.at) >= *next;
+                } else if constexpr (std::is_same_v<E, RetryRequested> || std::is_same_v<E, RebuildRequested>) {
                     const Unit unit{e.package, e.target};
-                    if (active(unit) && derive().at(unit).settled && !unitStates.at(unit).inflight) {
-                        result = Accept{};
+                    const auto state = unitStates.find(unit);
+                    allowed = graph.packages().contains(e.package) && graph.packages().at(e.package).targets.contains(e.target) &&
+                              state != unitStates.end() && !state->second.requested &&
+                              state->second.state == (std::is_same_v<E, RetryRequested> ? State::Failed : State::Published);
+                } else if (wave && e.waveId == wave->id) {
+                    if constexpr (std::is_same_v<E, WaveDispatchAccepted> || std::is_same_v<E, WaveDispatchRejected>) {
+                        allowed = wave->phase == WavePhase::Dispatching && !wave->retryAt && e.attempt == wave->attempt;
+                    } else if constexpr (std::is_same_v<E, WaveStarted>) {
+                        allowed = !wave->runId && e.runId > 0 && e.runAttempt > 0;
+                    } else if constexpr (std::is_same_v<E, WaveFinished>) {
+                        allowed = e.runId > 0 && (!wave->runId || *wave->runId == e.runId);
                     } else {
-                        result = Ignore{"unit is not settled or has an in-flight build"};
-                    }
-                } else {
-                    const auto unit = find(e.buildId);
-                    result = Ignore{"unknown or stale buildId"};
-                    if (unit) {
-                        const auto& f = *unitStates.at(*unit).inflight;
-                        const bool buildPhase = f.phase == Phase::Dispatching || f.phase == Phase::Building;
-                        const bool publishPhase = f.phase == Phase::PublishDispatching || f.phase == Phase::Publishing;
-                        bool accepted = false;
-                        if constexpr (std::is_same_v<E, DispatchAccepted> || std::is_same_v<E, DispatchRejected>) {
-                            accepted = (e.kind == Kind::Build ? f.phase == Phase::Dispatching : f.phase == Phase::PublishDispatching) &&
-                                       e.attempt == f.attempt && !f.retryAt;
-                        } else if constexpr (std::is_same_v<E, BuildStarted>) {
-                            accepted = buildPhase && !unitStates.at(*unit).build.runId;
-                        } else if constexpr (std::is_same_v<E, BuildSucceeded> || std::is_same_v<E, BuildFailed>) {
-                            accepted = buildPhase && (!unitStates.at(*unit).build.runId || *unitStates.at(*unit).build.runId == e.runId);
-                        } else if constexpr (std::is_same_v<E, PublishStarted>) {
-                            accepted = publishPhase && !unitStates.at(*unit).publish.runId;
-                        } else {
-                            accepted =
-                                publishPhase && (!unitStates.at(*unit).publish.runId || *unitStates.at(*unit).publish.runId == e.runId);
+                        for (const auto& [target, entries] : wave->plan) {
+                            for (const auto& entry : entries) {
+                                if (entry.build && entry.buildId == e.buildId) {
+                                    const auto state = unitStates.at(entry.unit).state;
+                                    if constexpr (std::is_same_v<E, UnitBuildStarted>) {
+                                        allowed = state == State::Planned;
+                                    } else if constexpr (std::is_same_v<E, UnitBuildSucceeded> || std::is_same_v<E, UnitBuildFailed>) {
+                                        allowed = state == State::Planned || state == State::Building;
+                                    } else {
+                                        allowed = state == State::Built;
+                                    }
+                                }
+                            }
                         }
-                        result = accepted ? Classification{Accept{}} : Classification{Ignore{"wrong phase, attempt or runId"}};
                     }
                 }
-                return result;
+                return allowed ? Classification{Accept{}} : Classification{Ignore{"unknown, duplicate or stale event"}};
             },
             event);
     }
-    std::map<Unit, Derived> Engine::derive() const {
-        std::map<Unit, Derived> result;
+    std::uint64_t Engine::nextRevision(const Unit& unit) const {
+        const auto& version = released.at(unit.package)->version;
+        const auto& previous = unitStates.at(unit).lastRevision;
+        return std::max<std::uint64_t>(previous.contains(version) ? previous.at(version) : 0,
+                                       graph.packages().at(unit.package).revisionBase) +
+               1;
+    }
+    Plan Engine::plan() const {
+        Plan result;
         for (const auto& [target, definition] : graph.targets()) {
-            for (const auto& package : graph.topologicalOrder(target)) {
-                const Unit unit{package, target};
+            std::map<std::string, PlanUnit> selected;
+            std::vector<PlanUnit> entries;
+            bool builds = false;
+            for (const auto& name : graph.topologicalOrder(target)) {
+                const auto& pkg = graph.packages().at(name);
+                const auto& release = released.at(name);
+                const Unit unit{name, target};
                 const auto& state = unitStates.at(unit);
-                auto& d = result[unit];
+                bool available = release.has_value(), cascade = false;
                 Inputs inputs;
-                bool available = true;
-                bool settled = true;
-                auto prerequisites = graph.prerequisites(package);
-                std::sort(prerequisites.begin(), prerequisites.end());
-                for (const auto& prerequisite : prerequisites) {
-                    const Unit q{prerequisite, target};
-                    const auto& qState = unitStates.at(q);
-                    const auto& qDerived = result.at(q);
-                    if (qState.published) {
-                        inputs.emplace(prerequisite, Input{qState.published->version, qState.published->revision});
-                    } else {
-                        available = false;
-                    }
-                    settled = settled && qDerived.settled;
-                    if (!d.waiting && !qDerived.settled) {
-                        d.waiting = q;
-                    }
-                    if (!d.blocker && (qDerived.failed || qDerived.blocker)) {
-                        d.blocker = qDerived.failed ? std::optional<Unit>{q} : qDerived.blocker;
+                for (const auto& prerequisite : pkg.prerequisites) {
+                    const auto q = selected.find(prerequisite);
+                    available = available && q != selected.end();
+                    if (q != selected.end()) {
+                        inputs.emplace(prerequisite, Input{q->second.release.version, q->second.revision});
+                        cascade = cascade || q->second.build;
                     }
                 }
                 if (available) {
-                    d.inputs = std::move(inputs);
+                    const bool build = state.requested || cascade || !state.published ||
+                                       !sameIdentity(state.published->source, pkg.sourceRepo) ||
+                                       state.published->version != release->version || state.published->inputs != inputs;
+                    const bool failed = state.failure && state.failure->version == release->version && state.failure->inputs == inputs;
+                    if (!build || !failed || state.requested || cascade) {
+                        PlanUnit entry{
+                            unit, pkg.sourceRepo, *release, build ? nextRevision(unit) : state.published->revision, inputs, {}, build};
+                        selected.emplace(name, entry);
+                        entries.push_back(std::move(entry));
+                        builds = builds || build;
+                    }
                 }
-                const auto& release = released.at(package);
-                d.satisfied = release && state.published && d.inputs && state.published->version == release->version &&
-                              state.published->inputs == *d.inputs && !state.rebuild;
-                d.failed = release && state.failure && d.inputs && state.failure->version == release->version &&
-                           state.failure->inputs == *d.inputs;
-                d.settled = d.satisfied && !state.inflight && settled;
-                d.ready = release && !d.satisfied && !state.inflight && !d.failed && settled;
+            }
+            if (builds) {
+                result.emplace(target, std::move(entries));
             }
         }
         return result;
     }
-    Command Engine::dispatch(const Unit& unit) const {
-        const auto& f = *unitStates.at(unit).inflight;
-        const auto& pkg = graph.packages().at(unit.package);
-        Command command;
-        if (f.phase == Phase::Dispatching) {
-            command = DispatchBuild{
-                f.buildId, f.attempt, unit.package, pkg.sourceRepo, f.tag, f.version, f.revision, unit.target, f.inputs, pkg.buildWorkflow};
-        } else {
-            const auto& feed = graph.feeds().at(graph.targets().at(unit.target).feed);
-            command = DispatchPublish{f.buildId,
-                                      f.attempt,
-                                      unit.package,
-                                      f.version,
-                                      f.revision,
-                                      unit.target,
-                                      feed.id,
-                                      {pkg.buildWorkflow.owner, pkg.buildWorkflow.repo},
-                                      *unitStates.at(unit).build.runId,
-                                      f.artifact,
-                                      feed.workflow};
-        }
-        return command;
-    }
-    void Engine::clear(const Unit& unit) {
-        auto& feed = feedStates.at(graph.targets().at(unit.target).feed);
-        std::erase(feed.queue, unit);
-        if (feed.active == unit) {
-            feed.active.reset();
-        }
-        unitStates.at(unit).inflight.reset();
-    }
-    void Engine::fail(const Unit& unit, const std::string& reason, std::int64_t at, bool automatic) {
-        auto& state = unitStates.at(unit);
-        auto& phase = state.inflight->phase == Phase::Dispatching || state.inflight->phase == Phase::Building ? state.build : state.publish;
-        phase.state = "failed";
-        phase.end = *engineTime;
-        state.failure = Failure{state.inflight->version, state.inflight->inputs, reason, state.inflight->revision, state.build.runId, at};
-        state.retryAfter.reset();
-        if (automatic && options.retryDelay > 0 && state.autoRetried != std::pair{state.failure->version, state.failure->inputs}) {
-            state.retryAfter = *engineTime + options.retryDelay;
-        }
-        clear(unit);
-    }
-    std::uint64_t Engine::nextRevision(const Unit& unit) const {
-        const auto& version = released.at(unit.package)->version;
-        const auto& revisions = unitStates.at(unit).lastRevision;
-        const auto previous = revisions.contains(version) ? revisions.at(version) : 0;
-        return std::max<std::uint64_t>(previous, graph.packages().at(unit.package).revisionBase) + 1;
-    }
-    void Engine::schedule(std::vector<Command>& commands, std::uint64_t seq) {
-        auto derived = derive();
-        for (const auto& [unit, d] : derived) {
-            if (!d.failed) {
-                unitStates.at(unit).retryAfter.reset();
-            }
-            const auto& f = unitStates.at(unit).inflight;
-            if (f && f->phase == Phase::AwaitingPublish &&
-                (f->version != released.at(unit.package)->version || !d.inputs || f->inputs != *d.inputs)) {
-                clear(unit);
-            }
-        }
-        derived = derive();
-        std::size_t running = 0;
-        for (const auto& [unit, state] : unitStates) {
-            if (state.inflight && (state.inflight->phase == Phase::Dispatching || state.inflight->phase == Phase::Building)) {
-                ++running;
-            }
-        }
-        for (const auto& [target, definition] : graph.targets()) {
-            for (const auto& package : graph.topologicalOrder(target)) {
-                const Unit unit{package, target};
-                if (derived.at(unit).ready && (!options.maxConcurrentBuilds || running < *options.maxConcurrentBuilds)) {
-                    auto& state = unitStates.at(unit);
-                    const auto& release = *released.at(package);
-                    auto& revision = state.lastRevision[release.version];
-                    revision = nextRevision(unit);
-                    state.order = seq;
-                    state.build = WorkflowPhase{};
-                    state.publish = WorkflowPhase{};
-                    state.build.state = "dispatching";
-                    const auto id = package + "~" + target + "~" + release.version.text() + "~r" + std::to_string(revision);
-                    state.inflight =
-                        Inflight{id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}};
-                    commands.push_back(dispatch(unit));
-                    ++running;
+    void Engine::request(const Unit& unit) {
+        unitStates.at(unit).requested = true;
+        unitStates.at(unit).retryAfter.reset();
+        if (graph.packages().contains(unit.package) && graph.packages().at(unit.package).targets.contains(unit.target)) {
+            std::set<std::string> requested{unit.package};
+            for (const auto& name : graph.topologicalOrder(unit.target)) {
+                auto& state = unitStates.at({name, unit.target});
+                const auto& prerequisites = graph.prerequisites(name);
+                if (state.state == State::Blocked && std::any_of(prerequisites.begin(), prerequisites.end(), [&](const auto& q) {
+                        return requested.contains(q);
+                    })) {
+                    state.requested = true;
+                    requested.insert(name);
                 }
             }
         }
-        for (auto& [name, feed] : feedStates) {
-            if (!feed.active && !feed.queue.empty()) {
-                const auto unit = feed.queue.front();
-                feed.queue.pop_front();
-                feed.active = unit;
-                auto& f = *unitStates.at(unit).inflight;
-                unitStates.at(unit).publish.state = "dispatching";
-                f.phase = Phase::PublishDispatching;
-                f.attempt = 1;
-                commands.push_back(dispatch(unit));
+        dirty();
+    }
+    void Engine::fail(const PlanUnit& entry, const std::string& reason, bool buildFailed, bool automatic) {
+        auto& state = unitStates.at(entry.unit);
+        state.state = State::Failed;
+        state.failure = Failure{entry.release.version, entry.inputs, reason, entry.revision, *engineTime, buildFailed};
+        state.retryAfter.reset();
+        if (!state.buildEnd) {
+            state.buildEnd = *engineTime;
+        }
+        if (automatic && options.retryDelay > 0 && state.autoRetried != std::pair{entry.release.version, entry.inputs}) {
+            state.retryAfter = *engineTime + options.retryDelay;
+        }
+    }
+    void Engine::finish(Wave& wave, const std::string& conclusion) {
+        for (const auto& [target, entries] : wave.plan) {
+            std::set<std::string> blocked;
+            for (const auto& entry : entries) {
+                if (entry.build) {
+                    auto& state = unitStates.at(entry.unit);
+                    const bool prerequisiteFailed = std::any_of(entry.inputs.begin(), entry.inputs.end(), [&](const auto& input) {
+                        return blocked.contains(input.first);
+                    });
+                    if (state.state == State::Planned && prerequisiteFailed) {
+                        state.state = State::Blocked;
+                        state.retryAfter.reset();
+                    } else if (state.state == State::Planned || state.state == State::Building || state.state == State::Built) {
+                        fail(entry, "no result");
+                    }
+                    if (state.state == State::Blocked || (state.failure && state.failure->buildFailed)) {
+                        blocked.insert(entry.unit.package);
+                    }
+                }
             }
         }
+        wave.phase = WavePhase::Finished;
+        wave.finished = *engineTime;
+        wave.conclusion = conclusion;
+        wave.retryAt.reset();
+    }
+    DispatchWave Engine::dispatch(const Wave& wave) const {
+        return {wave.id, wave.attempt, wave.workflow, wave.feedBranch};
     }
     std::vector<Command> Engine::handle(const Event& event, std::uint64_t seq) {
         std::vector<Command> commands;
@@ -310,137 +250,166 @@ namespace coreci {
                     using E = std::decay_t<decltype(e)>;
                     engineTime = std::max(engineTime.value_or(e.at), e.at);
                     if constexpr (std::is_same_v<E, GraphChanged>) {
-                        changeGraph(e.pipeline);
-                        for (const auto& tag : e.tags) {
-                            if (newerTag(tag, graph)) {
-                                released[tag.package] = Released{*Version::parse(tag.tag), tag.tag};
+                        changeGraph(e);
+                    } else if constexpr (std::is_same_v<E, TagObserved>) {
+                        released[e.package] = Released{*Version::parse(e.tag), e.tag, e.sourceSha};
+                        dirty();
+                    } else if constexpr (std::is_same_v<E, RetryRequested> || std::is_same_v<E, RebuildRequested>) {
+                        request({e.package, e.target});
+                    } else if constexpr (std::is_same_v<E, Tick> || std::is_same_v<E, Resumed>) {
+                        if (activeWave()) {
+                            auto& wave = waveStates.at(latest);
+                            if (*engineTime >= wave.deadline) {
+                                finish(wave, "timeout");
+                            } else if (wave.retryAt && *engineTime >= *wave.retryAt) {
+                                ++wave.attempt;
+                                wave.retryAt.reset();
+                                wave.dispatchedAt = *engineTime;
+                                wave.deadline = *engineTime + options.waveDeadline;
+                                commands.push_back(dispatch(wave));
                             }
                         }
-                    } else if constexpr (std::is_same_v<E, TagObserved>) {
-                        released.at(e.package) = Released{*Version::parse(e.tag), e.tag};
-                    } else if constexpr (std::is_same_v<E, RetryRequested>) {
-                        unitStates.at({e.package, e.target}).failure.reset();
-                        unitStates.at({e.package, e.target}).retryAfter.reset();
-                    } else if constexpr (std::is_same_v<E, RebuildRequested>) {
-                        unitStates.at({e.package, e.target}).rebuild = true;
-                    } else if constexpr (std::is_same_v<E, Tick> || std::is_same_v<E, Resumed>) {
-                        for (const auto& [target, definition] : graph.targets()) {
-                            for (const auto& package : graph.topologicalOrder(target)) {
-                                const Unit unit{package, target};
+                        for (const auto& [name, pkg] : graph.packages()) {
+                            for (const auto& target : pkg.targets) {
+                                const Unit unit{name, target};
                                 auto& state = unitStates.at(unit);
-                                auto& f = state.inflight;
-                                if constexpr (std::is_same_v<E, Tick>) {
-                                    if (state.failure && state.retryAfter && *engineTime >= *state.retryAfter) {
-                                        state.autoRetried = {state.failure->version, state.failure->inputs};
-                                        state.failure.reset();
-                                        state.retryAfter.reset();
-                                    }
-                                }
-                                if (f) {
-                                    if constexpr (std::is_same_v<E, Resumed>) {
-                                        if ((f->phase == Phase::Dispatching || f->phase == Phase::PublishDispatching) && !f->retryAt) {
-                                            commands.push_back(dispatch(unit));
-                                        }
-                                    } else {
-                                        if (f->retryAt && *engineTime >= *f->retryAt) {
-                                            ++f->attempt;
-                                            f->retryAt.reset();
-                                            commands.push_back(dispatch(unit));
-                                        } else if (f->deadline && *engineTime >= *f->deadline) {
-                                            fail(unit, f->phase == Phase::Building ? "build timeout" : "publish timeout", e.at);
-                                        }
-                                    }
+                                if (state.failure && state.retryAfter && *engineTime >= *state.retryAfter) {
+                                    state.autoRetried = {state.failure->version, state.failure->inputs};
+                                    request(unit);
                                 }
                             }
                         }
                     } else {
-                        const auto unit = *find(e.buildId);
-                        auto& state = unitStates.at(unit);
-                        auto& f = *state.inflight;
-                        if constexpr (std::is_same_v<E, DispatchRejected>) {
+                        auto& wave = waveStates.at(e.waveId);
+                        if constexpr (std::is_same_v<E, WaveDispatchRejected>) {
                             const bool permanent = e.httpStatus == 401 || e.httpStatus == 403 || e.httpStatus == 404 || e.httpStatus == 422;
-                            if (permanent || f.attempt == options.maxDispatchAttempts) {
-                                fail(unit, "dispatch rejected (" + std::to_string(e.httpStatus) + "): " + e.message, e.at, !permanent);
+                            if (permanent || wave.attempt >= options.maxDispatchAttempts) {
+                                for (const auto& [target, entries] : wave.plan) {
+                                    for (const auto& entry : entries) {
+                                        if (entry.build) {
+                                            fail(entry,
+                                                 "dispatch rejected (" + std::to_string(e.httpStatus) + "): " + e.message,
+                                                 false,
+                                                 !permanent);
+                                        }
+                                    }
+                                }
+                                finish(wave, "dispatch rejected");
                             } else {
                                 std::int64_t delay = 30;
-                                for (unsigned i = 1; i < f.attempt && delay < 1800; ++i) {
+                                for (unsigned i = 1; i < wave.attempt && delay < 1800; ++i) {
                                     delay = std::min<std::int64_t>(delay * 2, 1800);
                                 }
-                                f.retryAt = *engineTime + delay;
+                                wave.retryAt = *engineTime + delay;
                             }
                         } else {
-                            if constexpr (std::is_same_v<E, DispatchAccepted>) {
-                                auto& phase = e.kind == Kind::Build ? state.build : state.publish;
-                                phase.dispatchedAt = *engineTime;
-                                phase.state = "dispatched";
-                            }
-                            if (f.phase == Phase::Dispatching || f.phase == Phase::PublishDispatching) {
-                                const bool build = f.phase == Phase::Dispatching;
-                                f.phase = build ? Phase::Building : Phase::Publishing;
-                                f.retryAt.reset();
-                                f.deadline = *engineTime + (build ? options.buildTimeout : options.publishTimeout);
-                            }
-                            if constexpr (requires { e.runId; }) {
-                                auto& phase =
-                                    (std::is_same_v<E, BuildStarted> || std::is_same_v<E, BuildSucceeded> || std::is_same_v<E, BuildFailed>)
-                                        ? state.build
-                                        : state.publish;
-                                phase.runId = e.runId;
-                                if constexpr (requires { e.runAttempt; }) {
-                                    phase.runAttempt = e.runAttempt;
-                                    phase.start = *engineTime;
-                                    phase.state = "running";
-                                } else {
-                                    phase.end = *engineTime;
-                                    phase.state =
-                                        (std::is_same_v<E, BuildSucceeded> || std::is_same_v<E, PublishSucceeded>) ? "succeeded" : "failed";
+                            wave.phase = WavePhase::Running;
+                            wave.retryAt.reset();
+                            if constexpr (std::is_same_v<E, WaveStarted>) {
+                                wave.runId = e.runId;
+                                wave.runAttempt = e.runAttempt;
+                                wave.started = *engineTime;
+                            } else if constexpr (std::is_same_v<E, WaveFinished>) {
+                                wave.runId = e.runId;
+                                finish(wave, e.conclusion);
+                            } else if constexpr (!std::is_same_v<E, WaveDispatchAccepted>) {
+                                for (const auto& [target, entries] : wave.plan) {
+                                    for (const auto& entry : entries) {
+                                        if (entry.build && entry.buildId == e.buildId) {
+                                            auto& state = unitStates.at(entry.unit);
+                                            if constexpr (std::is_same_v<E, UnitBuildStarted>) {
+                                                state.state = State::Building;
+                                                state.buildStart = *engineTime;
+                                            } else if constexpr (std::is_same_v<E, UnitBuildSucceeded>) {
+                                                state.state = State::Built;
+                                                state.artifact = e.artifact;
+                                                state.buildEnd = *engineTime;
+                                            } else if constexpr (std::is_same_v<E, UnitBuildFailed>) {
+                                                fail(entry, e.reason, true);
+                                            } else if constexpr (std::is_same_v<E, UnitPublishSucceeded>) {
+                                                state.state = State::Published;
+                                                state.publishEnd = *engineTime;
+                                                state.published = Published{entry.release.version,
+                                                                            entry.revision,
+                                                                            entry.inputs,
+                                                                            entry.repo,
+                                                                            wave.id,
+                                                                            *engineTime,
+                                                                            e.feedCommit};
+                                                state.failure.reset();
+                                                state.retryAfter.reset();
+                                            } else if constexpr (std::is_same_v<E, UnitPublishFailed>) {
+                                                state.publishEnd = *engineTime;
+                                                fail(entry, e.reason);
+                                            }
+                                        }
+                                    }
                                 }
-                            }
-                            if constexpr (std::is_same_v<E, BuildSucceeded>) {
-                                f.artifact = e.artifact;
-                                const auto d = derive().at(unit);
-                                if (f.version == released.at(unit.package)->version && d.inputs && f.inputs == *d.inputs) {
-                                    f.phase = Phase::AwaitingPublish;
-                                    f.deadline.reset();
-                                    feedStates.at(graph.targets().at(unit.target).feed).queue.push_back(unit);
-                                } else {
-                                    clear(unit);
-                                }
-                            } else if constexpr (std::is_same_v<E, PublishSucceeded>) {
-                                state.published = Published{f.version, f.revision, f.inputs, state.build.runId, e.at, e.feedCommit};
-                                state.failure.reset();
-                                state.rebuild = false;
-                                clear(unit);
-                            } else if constexpr (std::is_same_v<E, BuildFailed> || std::is_same_v<E, PublishFailed>) {
-                                fail(unit, e.reason, e.at);
                             }
                         }
                     }
                 },
                 event);
-            schedule(commands, seq);
+            if (!activeWave() && quietUntil && *engineTime >= *quietUntil) {
+                auto planned = plan();
+                quietUntil.reset();
+                if (!planned.empty()) {
+                    Wave wave;
+                    wave.id = "w" + std::to_string(seq);
+                    wave.plan = std::move(planned);
+                    wave.feedBranch = options.feedBranch;
+                    wave.workflow = options.workflow;
+                    wave.dispatchedAt = *engineTime;
+                    wave.deadline = *engineTime + options.waveDeadline;
+                    for (auto& [target, entries] : wave.plan) {
+                        for (auto& entry : entries) {
+                            if (entry.build) {
+                                entry.buildId = wave.id + "~" + entry.unit.package + "~" + target;
+                                auto& state = unitStates.at(entry.unit);
+                                state.state = State::Planned;
+                                state.waveId = wave.id;
+                                state.order = seq;
+                                state.artifact.clear();
+                                state.buildStart.reset();
+                                state.buildEnd.reset();
+                                state.publishEnd.reset();
+                                state.failure.reset();
+                                state.retryAfter.reset();
+                                state.requested = false;
+                                state.lastRevision[entry.release.version] = entry.revision;
+                            }
+                        }
+                    }
+                    latest = wave.id;
+                    waveStates.emplace(latest, std::move(wave));
+                    commands.push_back(dispatch(waveStates.at(latest)));
+                }
+            }
         }
         return commands;
     }
     std::optional<std::int64_t> Engine::nextDeadline() const {
         std::optional<std::int64_t> result;
-        for (const auto& [unit, state] : unitStates) {
-            if (state.retryAfter && (!result || *state.retryAfter < *result)) {
-                result = state.retryAfter;
+        const auto add = [&](std::optional<std::int64_t> value) {
+            if (value && (!result || *value < *result)) {
+                result = value;
             }
-            if (state.inflight) {
-                const auto& f = *state.inflight;
-                for (const auto& time : {f.retryAt, f.deadline}) {
-                    if (time && (!result || *time < *result)) {
-                        result = time;
-                    }
-                }
+        };
+        if (const auto* wave = activeWave()) {
+            add(wave->deadline);
+            add(wave->retryAt);
+        } else {
+            add(quietUntil);
+        }
+        for (const auto& [name, pkg] : graph.packages()) {
+            for (const auto& target : pkg.targets) {
+                add(unitStates.at({name, target}).retryAfter);
             }
         }
         return result;
     }
     bool Engine::sameSource(const std::string& package, const Repo& source) const {
-        return lastIdentity.contains(package) && sameIdentity(lastIdentity.at(package).first, source);
+        return sources.contains(package) && sameIdentity(sources.at(package), source);
     }
     const Pipeline& Engine::pipeline() const {
         return graph;
@@ -451,8 +420,8 @@ namespace coreci {
     const std::map<Unit, UnitState>& Engine::units() const {
         return unitStates;
     }
-    const std::map<std::string, FeedState>& Engine::feeds() const {
-        return feedStates;
+    const std::map<std::string, Wave>& Engine::waves() const {
+        return waveStates;
     }
     std::optional<std::int64_t> Engine::time() const {
         return engineTime;

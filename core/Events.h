@@ -2,11 +2,9 @@
 #include "Graph.h"
 
 #include <cstdint>
-#include <string>
 #include <variant>
 
 namespace coreci {
-    enum class Kind { Build, Publish };
     enum class Origin { Webhook, Reconcile };
     struct TagObserved {
         std::int64_t at;
@@ -14,63 +12,64 @@ namespace coreci {
         Origin origin;
         bool operator==(const TagObserved&) const = default;
     };
-    struct DispatchAccepted {
+    struct GraphChanged {
         std::int64_t at;
-        std::string buildId;
-        Kind kind;
-        unsigned attempt;
-        bool operator==(const DispatchAccepted&) const = default;
+        Pipeline pipeline;
+        std::vector<TagObserved> tags = {};
+        bool operator==(const GraphChanged&) const = default;
     };
-    struct DispatchRejected {
+    struct WaveDispatchAccepted {
         std::int64_t at;
-        std::string buildId;
-        Kind kind;
+        std::string waveId;
+        unsigned attempt;
+        bool operator==(const WaveDispatchAccepted&) const = default;
+    };
+    struct WaveDispatchRejected {
+        std::int64_t at;
+        std::string waveId;
         unsigned attempt;
         int httpStatus;
         std::string message;
-        bool operator==(const DispatchRejected&) const = default;
+        bool operator==(const WaveDispatchRejected&) const = default;
     };
-    struct BuildStarted {
+    struct WaveStarted {
         std::int64_t at;
-        std::string buildId;
+        std::string waveId;
         std::uint64_t runId;
         unsigned runAttempt;
-        bool operator==(const BuildStarted&) const = default;
+        bool operator==(const WaveStarted&) const = default;
     };
-    struct PublishStarted {
+    struct WaveFinished {
         std::int64_t at;
-        std::string buildId;
+        std::string waveId;
         std::uint64_t runId;
-        unsigned runAttempt;
-        bool operator==(const PublishStarted&) const = default;
+        std::string conclusion;
+        bool operator==(const WaveFinished&) const = default;
     };
-    struct BuildSucceeded {
+    struct UnitBuildStarted {
         std::int64_t at;
-        std::string buildId;
-        std::uint64_t runId;
-        std::string artifact;
-        bool operator==(const BuildSucceeded&) const = default;
+        std::string waveId, buildId;
+        bool operator==(const UnitBuildStarted&) const = default;
     };
-    struct BuildFailed {
+    struct UnitBuildSucceeded {
         std::int64_t at;
-        std::string buildId;
-        std::uint64_t runId;
-        std::string reason;
-        bool operator==(const BuildFailed&) const = default;
+        std::string waveId, buildId, artifact;
+        bool operator==(const UnitBuildSucceeded&) const = default;
     };
-    struct PublishSucceeded {
+    struct UnitBuildFailed {
         std::int64_t at;
-        std::string buildId;
-        std::uint64_t runId;
-        std::string feedCommit;
-        bool operator==(const PublishSucceeded&) const = default;
+        std::string waveId, buildId, reason;
+        bool operator==(const UnitBuildFailed&) const = default;
     };
-    struct PublishFailed {
+    struct UnitPublishSucceeded {
         std::int64_t at;
-        std::string buildId;
-        std::uint64_t runId;
-        std::string reason;
-        bool operator==(const PublishFailed&) const = default;
+        std::string waveId, buildId, feedCommit;
+        bool operator==(const UnitPublishSucceeded&) const = default;
+    };
+    struct UnitPublishFailed {
+        std::int64_t at;
+        std::string waveId, buildId, reason;
+        bool operator==(const UnitPublishFailed&) const = default;
     };
     struct RetryRequested {
         std::int64_t at;
@@ -90,24 +89,19 @@ namespace coreci {
         std::int64_t at;
         bool operator==(const Resumed&) const = default;
     };
-    struct GraphChanged {
-        std::int64_t at;
-        Pipeline pipeline;
-        std::vector<TagObserved> tags = {};
-        bool operator==(const GraphChanged&) const = default;
-    };
     using Event = std::variant<TagObserved,
-                               DispatchAccepted,
-                               DispatchRejected,
-                               BuildStarted,
-                               BuildSucceeded,
-                               BuildFailed,
-                               PublishStarted,
-                               PublishSucceeded,
-                               PublishFailed,
+                               GraphChanged,
+                               WaveDispatchAccepted,
+                               WaveDispatchRejected,
+                               WaveStarted,
+                               WaveFinished,
+                               UnitBuildStarted,
+                               UnitBuildSucceeded,
+                               UnitBuildFailed,
+                               UnitPublishSucceeded,
+                               UnitPublishFailed,
                                RetryRequested,
                                RebuildRequested,
                                Tick,
-                               Resumed,
-                               GraphChanged>;
+                               Resumed>;
 } // namespace coreci

@@ -1,7 +1,7 @@
 # Example only: replace every value before operator-managed deployment.
-registry="REPLACE_WITH_REGISTRY_REPOSITORY:ci/registry.json"
-target-catalog="ci/targets.json"
-workflow-repository="REPLACE_WITH_WORKFLOW_REPOSITORY"
+registry=SNodeC/Packages:ci/registry.json
+target-catalog=ci/targets.json
+workflow-repository=SNodeC/Packages
 github-app-id="REPLACE_WITH_APP_ID"
 github-installation-id="REPLACE_WITH_INSTALLATION_ID"
 github-app-key-file="REPLACE_WITH_RSA_PEM_PATH"

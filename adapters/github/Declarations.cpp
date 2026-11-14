@@ -40,18 +40,14 @@ namespace coreci::github {
             DeclarationFile file;
             Url base;
             std::string catalogPath;
-            Repo workflowRepository;
             Fetch fetch;
             std::function<void(std::variant<LoadedDeclarations, Error>)> done;
             std::map<std::string, Repo> repositories;
             std::vector<Repo> sources;
-            std::vector<Feed> feeds;
             std::map<std::string, Tag> releases;
             std::map<std::string, CatalogTarget> catalog;
             std::map<std::string, PackageDetails> details;
             std::map<std::string, std::string> commits;
-            Workflow build;
-            std::string defaultFeed;
             std::size_t remaining = 0;
             Pipeline::Builder builder;
             void fail(const std::string& repository, const std::string& path, const std::string& reason) {
@@ -111,17 +107,8 @@ namespace coreci::github {
                 branch(registry, [self, registry] {
                     self->head(registry, [self, registry] {
                         self->get(registry, self->file.path, [self, registry](Json value) {
-                            const auto& feeds = value.at("feeds");
-                            if (!feeds.is_object()) {
-                                throw std::invalid_argument("feeds must be an object");
-                            }
-                            self->defaultFeed = value.at("default_feed").get<std::string>();
-                            self->build = self->workflow(value.at("build").get<std::string>());
-                            for (const auto& [id, definition] : feeds.items()) {
-                                self->feeds.push_back({id, self->workflow(definition.at("publisher").get<std::string>())});
-                            }
-                            if (!feeds.contains(self->defaultFeed)) {
-                                throw std::invalid_argument("unknown default_feed");
+                            if (!value.at("schema").is_number_integer() || value.at("schema") != 1) {
+                                throw std::invalid_argument("registry schema must be 1");
                             }
                             const auto& sources = value.at("repositories");
                             if (!sources.is_array()) {
@@ -144,9 +131,26 @@ namespace coreci::github {
                                     const auto id = entry.at("id").get<std::string>();
                                     validateIdentifier(id, "catalog target");
                                     CatalogTarget coordinates{entry.at("distribution").get<std::string>(),
-                                                              entry.at("suite").get<std::string>(),
+                                                              entry.at("release").get<std::string>(),
+                                                              entry.at("codename").get<std::string>(),
                                                               entry.at("arch").get<std::string>(),
-                                                              entry.at("build").at("format").get<std::string>()};
+                                                              entry.at("family").get<std::string>()};
+                                    if (coordinates.family != "deb" && coordinates.family != "rpm" && coordinates.family != "ipk" &&
+                                        coordinates.family != "apk") {
+                                        throw std::invalid_argument("unknown target family");
+                                    }
+                                    for (const auto& field :
+                                         {"distribution", "release", "codename", "arch", "image", "runner", "platform"}) {
+                                        if (entry.at(field).get<std::string>().empty()) {
+                                            throw std::invalid_argument("empty catalog field");
+                                        }
+                                    }
+                                    entry.at("emulated").get<bool>();
+                                    for (const auto& field : {"disttag", "sdk"}) {
+                                        if (entry.contains(field)) {
+                                            entry.at(field).get<std::string>();
+                                        }
+                                    }
                                     if (!self->catalog.emplace(id, std::move(coordinates)).second) {
                                         throw std::invalid_argument("duplicate catalog id: " + id);
                                     }
@@ -162,11 +166,6 @@ namespace coreci::github {
                 for (const auto& source : sources) {
                     repositories.emplace(key(source), source);
                 }
-                repositories.emplace(key({build.owner, build.repo}), Repo{build.owner, build.repo, {}});
-                for (const auto& feed : feeds) {
-                    repositories.emplace(key({feed.workflow.owner, feed.workflow.repo}), Repo{feed.workflow.owner, feed.workflow.repo, {}});
-                }
-
                 remaining = repositories.size();
                 const auto self = shared_from_this();
                 for (const auto& [name, source] : repositories) {
@@ -182,16 +181,7 @@ namespace coreci::github {
                 auto callback = std::move(done);
                 callback(LoadedDeclarations{pipeline, releases, catalog, details});
             }
-            Workflow resolved(const Workflow& workflow) const {
-                const auto& canonical = repositories.at(key({workflow.owner, workflow.repo}));
-                return {canonical.owner, canonical.repo, workflow.workflowFile, canonical.branch};
-            }
             void packages() {
-                build = resolved(build);
-                for (auto feed : feeds) {
-                    feed.workflow = resolved(feed.workflow);
-                    builder.feed(feed);
-                }
                 remaining = sources.size();
                 if (sources.empty()) {
                     finish();
@@ -205,10 +195,6 @@ namespace coreci::github {
                              {});
                     }
                 }
-            }
-            Workflow workflow(const std::string& file) const {
-                validateWorkflowFile(file);
-                return {workflowRepository.owner, workflowRepository.repo, file, {}};
             }
             void head(const Repo& source, std::function<void()> next) {
                 const auto self = shared_from_this();
@@ -247,7 +233,7 @@ namespace coreci::github {
                                       if (!std::regex_match(tag.sha, std::regex("[a-f0-9]{40}"))) {
                                           throw std::invalid_argument("invalid tag commit");
                                       }
-                                      if (Version::parse(tag.tag)) {
+                                      if (Version::parse(tag.tag) && !Version::parse(tag.tag)->prerelease()) {
                                           collected.push_back(tag);
                                       }
                                   }
@@ -285,16 +271,36 @@ namespace coreci::github {
                         self->commits[key(source)] = candidates[index].sha;
                     }
                     self->get(source, "ci/packages.json", [self, source, candidates, index](Json value) {
-                        const bool prereleases = value.value("accept_prereleases", false);
-                        if (index < candidates.size() && Version::parse(candidates[index].tag)->prerelease() && !prereleases) {
-                            self->package(source, candidates, index + 1);
-                        } else {
+                        if (!value.at("schema").is_number_integer() || value.at("schema") != 1) {
+                            throw std::invalid_argument("package schema must be 1");
+                        }
+                        {
+                            for (const auto& field : {"deb", "rpm"}) {
+                                const auto path = value.at("build").at(field).get<std::string>();
+                                if (std::holds_alternative<Error>(registryFile(source.owner + "/" + source.repo + ":" + path))) {
+                                    throw std::invalid_argument("invalid build path");
+                                }
+                            }
+                            if (value.at("build").contains("openwrt") &&
+                                std::holds_alternative<Error>(registryFile(source.owner + "/" + source.repo + ":" +
+                                                                           value.at("build").at("openwrt").get<std::string>()))) {
+                                throw std::invalid_argument("invalid openwrt build path");
+                            }
+                            for (const auto& field : {"deb", "rpm", "openwrt"}) {
+                                const auto& dependencies = value.at("build_dependencies").at(field);
+                                if (!dependencies.is_array()) {
+                                    throw std::invalid_argument("build dependencies must be arrays");
+                                }
+                                for (const auto& dependency : dependencies) {
+                                    if (dependency.get<std::string>().empty()) {
+                                        throw std::invalid_argument("empty build dependency");
+                                    }
+                                }
+                            }
                             Package pkg;
                             pkg.name = value.at("package").get<std::string>();
                             pkg.sourceRepo = self->repositories.at(key(source));
-                            pkg.buildWorkflow = self->build;
-                            self->details[pkg.name] = {value.value("title", pkg.sourceRepo.owner + "/" + pkg.sourceRepo.repo),
-                                                       self->commits.at(key(source))};
+                            self->details[pkg.name] = {value.at("title").get<std::string>(), self->commits.at(key(source))};
                             const auto& prerequisites = value.at("depends_on");
                             if (!prerequisites.is_array()) {
                                 throw std::invalid_argument("depends_on must be an array");
@@ -303,26 +309,21 @@ namespace coreci::github {
                                 pkg.prerequisites.push_back(q.get<std::string>());
                             }
                             self->details.at(pkg.name).prerequisites = pkg.prerequisites;
-                            pkg.acceptPrereleases = value.value("accept_prereleases", false);
                             const auto base = value.value("revision_base", Json(0));
                             if (!base.is_number_integer() || base < 0 || base > 1000000) {
                                 throw std::invalid_argument("revision_base must be an integer in 0–1000000");
                             }
                             pkg.revisionBase = base.get<unsigned>();
-                            const auto& matrix = value.at("matrix");
-                            if (!matrix.is_array()) {
-                                throw std::invalid_argument("matrix must be an array");
+                            const auto& targets = value.at("targets");
+                            if (!targets.is_array()) {
+                                throw std::invalid_argument("targets must be an array");
                             }
-                            for (const auto& target : matrix) {
-                                const auto id = target.at("id").get<std::string>();
-                                if (!target.is_object() || target.size() > (target.contains("feed") ? 2U : 1U) ||
-                                    !self->catalog.contains(id)) {
-                                    throw std::invalid_argument("unknown catalog id or extra matrix field: " + id);
+                            for (const auto& target : targets) {
+                                const auto id = target.get<std::string>();
+                                if (!self->catalog.contains(id) || !pkg.targets.insert(id).second) {
+                                    throw std::invalid_argument("unknown or duplicate target id: " + id);
                                 }
-                                if (!pkg.targets.insert(id).second) {
-                                    throw std::invalid_argument("duplicate target id: " + id);
-                                }
-                                self->builder.target({id, target.value("feed", self->defaultFeed)});
+                                self->builder.target({id});
                             }
                             self->builder.package(pkg);
                             if (index < candidates.size()) {
@@ -371,7 +372,6 @@ namespace coreci::github {
         return result;
     }
     void loadDeclarations(const DeclarationFile& registry,
-                          const std::string& workflowRepository,
                           const std::string& catalogPath,
                           const Url& base,
                           Fetch fetch,
@@ -380,7 +380,6 @@ namespace coreci::github {
         load->file = registry;
         load->base = base;
         load->catalogPath = catalogPath;
-        load->workflowRepository = repo(workflowRepository);
         load->fetch = std::move(fetch);
         load->done = std::move(done);
         load->start();

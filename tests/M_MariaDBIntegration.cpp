@@ -1,4 +1,4 @@
-#include "Check.h"
+#include "Fixture.h"
 #include "adapters/mariadb/MariaDBEventStore.h"
 #include "core/Status.h"
 #include "persistence/EventQueue.h"
@@ -14,48 +14,10 @@ using namespace coreci::persistence;
 using namespace coreci::mariadb;
 
 Pipeline pipeline() {
-    Pipeline::Builder b;
-    b.feed({"f1", {"owner", "feeds", "publish.yml", "stable"}})
-        .feed({"f2", {"owner", "feeds", "publish.yml", "stable"}})
-        .target({"t1", "f1"})
-        .target({"t2", "f2"})
-        .package({"a", {"owner", "a", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {}})
-        .package({"b", {"owner", "b", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"c", {"owner", "c", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-        .package({"d", {"owner", "d", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"b", "c"}})
-        .package({"e", {"owner", "e", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1"}, {"d"}});
-    return b.build();
+    return testPipeline();
 }
 Engine engine() {
-    return Engine({100, 50, 8, {}});
-}
-Command build(const std::string& package, const std::string& target, Inputs inputs = {}) {
-    return DispatchBuild{package + "~" + target + "~1.0.0~r1",
-                         1,
-                         package,
-                         {"owner", package, "trunk"},
-                         "v1.0.0",
-                         *Version::parse("1.0.0"),
-                         1,
-                         target,
-                         inputs,
-                         {"owner", "recipes", "build.yml", "trunk"}};
-}
-Command publish(const std::string& package, const std::string& target) {
-    return DispatchPublish{package + "~" + target + "~1.0.0~r1",
-                           1,
-                           package,
-                           *Version::parse("1.0.0"),
-                           1,
-                           target,
-                           target == "t1" ? "f1" : "f2",
-                           {"owner", "recipes"},
-                           101,
-                           "artifact",
-                           {"owner", "feeds", "publish.yml", "stable"}};
-}
-Inputs inputs(const std::string& package) {
-    return {{package, {*Version::parse("1.0.0"), 1}}};
+    return Engine({5, 100, 8, 0});
 }
 class Integration {
 public:
@@ -70,7 +32,7 @@ public:
         });
         admin->connect();
         sql("DROP TABLE IF EXISTS "
-            "coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases",
+            "coreci_events,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases",
             [this] {
                 sql("DROP TABLE IF EXISTS coreci_schema", [this] {
                     first();
@@ -132,44 +94,28 @@ private:
                 tags.push_back({100, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook});
             }
             steps.push_back({GraphChanged{100, pipeline(), tags}, {}});
-            steps.push_back({TagObserved{100, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook}, {build("a", "t1"), build("a", "t2")}});
-            addBuild("a", "t1");
-            addPublish("a", "t1", {build("b", "t1", inputs("a")), build("c", "t1", inputs("a"))});
-            addBuild("b", "t1");
-            addPublish("b", "t1", {});
-            addBuild("c", "t1");
-            const Inputs diamond{{"b", {*Version::parse("1.0.0"), 1}}, {"c", {*Version::parse("1.0.0"), 1}}};
-            addPublish("c", "t1", {build("d", "t1", diamond)});
-            addBuild("a", "t2");
-            addPublish("a", "t2", {build("b", "t2", inputs("a")), build("c", "t2", inputs("a"))});
-            addBuild("d", "t1"); // restart with both build and publish dispatches pending
+            steps.push_back({TagObserved{100, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook}, {}});
+            steps.push_back({Tick{105}, {DispatchWave{"w4", 1, {"SNodeC", "Packages", "main"}, "feed"}}});
+            steps.push_back({WaveDispatchAccepted{106, "w4", 1}, {}});
+            steps.push_back({WaveStarted{107, "w4", 101, 2}, {}});
+            steps.push_back({UnitBuildStarted{108, "w4", "w4~a~t1"}, {}});
+            steps.push_back({UnitBuildSucceeded{109, "w4", "w4~a~t1", "artifact"}, {}});
+            steps.push_back({UnitPublishSucceeded{110, "w4", "w4~a~t1", std::string(40, 'b')}, {}});
             next();
         });
-    }
-    void addBuild(const std::string& p, const std::string& t) {
-        const auto id = p + "~" + t + "~1.0.0~r1";
-        steps.push_back({DispatchAccepted{100, id, Kind::Build, 1}, {}});
-        steps.push_back({BuildStarted{100, id, 101, 1}, {}});
-        steps.push_back({BuildSucceeded{100, id, 101, "artifact"}, {publish(p, t)}});
-    }
-    void addPublish(const std::string& p, const std::string& t, std::vector<Command> commands) {
-        const auto id = p + "~" + t + "~1.0.0~r1";
-        steps.push_back({DispatchAccepted{100, id, Kind::Publish, 1}, {}});
-        steps.push_back({PublishStarted{100, id, 201, 2}, {}});
-        steps.push_back({PublishSucceeded{100, id, 201, std::string(40, 'b')}, std::move(commands)});
     }
     void next() {
         if (index == steps.size()) {
             before = recordedStatus(*queue->engine());
-            CHECK_EQ(statuses(*queue->engine()).at({"d", "t2"}), "Waiting(on b@t2)");
+            CHECK(queue->engine()->activeWave());
             later([this] {
                 queue.reset(); // destroys the first engine
                 store.reset(); // destroys the first SNode.C client and its connection
                 emitted.clear();
                 fresh([this] {
                     CHECK_EQ(recordedStatus(*queue->engine()), before);
-                    CHECK((emitted ==
-                           std::vector<Command>{publish("d", "t1"), build("b", "t2", inputs("a")), build("c", "t2", inputs("a"))}));
+                    CHECK(emitted.empty());
+                    CHECK(queue->engine()->activeWave());
                     checkRows();
                 });
             });
@@ -203,10 +149,9 @@ private:
     }
     void graphRows() {
         Pipeline::Builder b;
-        b.feed({"f", {"SNodeC", "publisher", "publish.yml", "master"}})
-            .target({"t", "f"})
-            .package({"a", {"SNodeC", "lower", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {}, false, 100})
-            .package({"A", {"SNodeC", "upper", "master"}, {"SNodeC", "recipes", "build.yml", "master"}, {"t"}, {"a"}, false, 1000000});
+        b.target({"t"})
+            .package({"a", {"SNodeC", "lower", "master"}, {"t"}, {}, 100})
+            .package({"A", {"SNodeC", "upper", "master"}, {"t"}, {"a"}, 1000000});
         const auto expected = b.build();
         store->append(
             GraphChanged{200, expected},
@@ -219,7 +164,6 @@ private:
                             CHECK_EQ(seq, committedSeq);
                             CHECK(changed->pipeline == expected);
                             CHECK_EQ(changed->pipeline.packages().at("a").sourceRepo.owner, "SNodeC");
-                            CHECK_EQ(changed->pipeline.feeds().at("f").workflow.owner, "SNodeC");
                             CHECK_EQ(changed->pipeline.packages().at("a").revisionBase, 100U);
                             CHECK_EQ(changed->pipeline.packages().at("A").revisionBase, 1000000U);
                             *found = true;
@@ -280,7 +224,7 @@ private:
         });
     }
     void orphanRow() {
-        sql("INSERT INTO coreci_graph_targets (event_seq,package,target,feed) VALUES (9999,'a','t','f')", [this] {
+        sql("INSERT INTO coreci_graph_targets (event_seq,package,target) VALUES (9999,'a','t')", [this] {
             store->loadAll(
                 [](auto, const auto&) {
                     CHECK(false);
@@ -370,7 +314,7 @@ private:
             [this](const auto& failure) {
                 CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
                 sql("DROP TABLE "
-                    "coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_"
+                    "coreci_events,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_"
                     "releases",
                     [this] {
                         sql("DROP TABLE coreci_schema", [this] {
