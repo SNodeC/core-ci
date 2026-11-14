@@ -1,6 +1,6 @@
 # core-ci — Implementation Specification for Codex
 
-Read this entire document before writing any code. It is the complete specification. Where something is not specified, **stop and ask** instead of inventing behaviour. Do not add features that are not listed here.
+This is the master contract for the slim controller. It manages GitHub package workflows and serves an authenticated SSE dashboard. No compatibility with earlier event histories is required: start with a fresh database. The GitHub workflows themselves remain to be specified in section 7.
 
 ---
 
@@ -12,16 +12,16 @@ Read this entire document before writing any code. It is the complete specificat
 
 ## 1. Non-negotiable constraints
 
-1. **The graph is declared in the repositories and modelled in C++.** Packages, targets, feeds and edges are declared in JSON files in the participating repositories (section 3.3); core-ci reads them and builds the graph as C++ objects. The graph as a whole is never represented, stored, exported or logged as JSON — not in persistence, not for debugging; it is stored only in typed database tables (section 5.2). One exception: the dashboard stream of 6.5 lists, at runtime only, each execution's prerequisites for the browser; it is never stored, logged or read back. Human-readable output is a text table and Graphviz DOT only. core-ci code contains no repository-, package-, distribution-, architecture- or release-specific knowledge (test data excepted).
-2. **No JSON for core-ci's own data.** Persistence (MariaDB, section 5), configuration and the callback protocol (section 6) are not JSON — no JSON columns, no JSON SQL functions, no JSON text stored in any column. JSON is used only inside `adapters/github/`: parsing GitHub webhook payloads, REST responses and the declaration files of section 3.3, and encoding REST request bodies. Tests of `adapters/github/` and the fake GitHub server in `tests/` may contain GitHub wire-format JSON and declaration files as test data. `#include <nlohmann/json.hpp>` (or any JSON library) outside `adapters/github/` is a defect. Two exceptions, never stored, logged or read back: the read-only HTTP response `GET /api/v1/status.json` of 7.8, written in `app/` by a small hand-written JSON writer (no JSON library; unit states, no graph edges); and the dashboard of 6.5 (`GET /events` and the requests and responses of `POST /api/<operation>`), encoded and parsed only inside `adapters/dashboard/`, which may use the same JSON library as `adapters/github/`.
-3. **Expensive work happens only on GitHub.** `core-ci` never compiles, packages, signs, holds signing keys, downloads artifacts, or writes to a feed repository; it reads feed repositories only through the REST API, for 6.5.
-4. **Only core-ci chains builds.** No workflow may trigger another repository's build: no `repository_dispatch` chaining, no `workflow_run` triggers, no pushes that trigger downstream builds. Existing direct chaining in DistributionPackages (e.g. SNode.C target push → MQTTSuite build) must be removed in phase 4.
+1. **The graph is declared in repositories and modelled in C++.** Packages, targets, feeds and edges are validated into a typed Pipeline. Persistence uses typed tables, never a JSON graph. Runtime dashboard JSON may expose prerequisites; it is never persisted or read back.
+2. **No JSON for core-ci's own data.** Persistence (MariaDB, section 5), configuration and the callback protocol (section 6) are not JSON — no JSON columns, no JSON SQL functions, no JSON text stored in any column. JSON is used only inside `adapters/github/`: parsing GitHub webhook payloads, REST responses and the declaration files of section 3.3, and encoding REST request bodies. Tests of `adapters/github/` and the fake GitHub server in `tests/` may contain GitHub wire-format JSON and declaration files as test data. `#include <nlohmann/json.hpp>` (or any JSON library) outside `adapters/github/` is a defect. Two exceptions, never stored, logged or read back: the read-only HTTP response `GET /api/v1/status.json` of 6.6, written in `app/` by a small hand-written JSON writer (no JSON library; unit states, no graph edges); and the dashboard of 6.5 (`GET /events` and the requests and responses of `POST /api/<operation>`), encoded and parsed only inside `adapters/dashboard/`, which may use the same JSON library as `adapters/github/`.
+3. **Expensive work happens only on GitHub.** core-ci never compiles, packages, downloads artifacts or writes feeds. Its GitHub App private key is used only to authenticate.
+4. **Only core-ci chains builds.** Workflows never chain downstream builds.
 5. **Feed publication is serialized by core-ci**, not by GitHub `concurrency:` groups. (GitHub concurrency groups keep at most one pending run and cancel older pending runs — that silently drops publications.)
 6. **Single-threaded.** No `std::thread`, no mutexes, no blocking sleeps, no polling loops. Everything runs in the SNode.C event loop; timers use SNode.C's timer facility.
 7. **The engine is pure.** The scheduling engine (section 4) performs no I/O, reads no clock, generates no randomness. Time arrives only as the `at` timestamp carried by every event (section 4.3). Same event sequence ⇒ same state and same commands, always.
 8. **Never pin to commits.** Workflows are dispatched on each repository's configured default branch (do not assume `main` — some repositories use `master`, and default branch names are never renamed). GitHub Actions are referenced by tag (e.g. `@v4`), never by commit SHA.
 9. Build flags: `-Wall -Wextra -Wpedantic -Werror`. Every phase ends with a clean build and all tests passing.
-10. **All development happens in the local repository `/home/voc/projects/snodec/core-ci`.** It already contains an earlier implementation. That code is discarded: Phase 0 (section 9) removes it, and nothing from it may be copied, adapted, consulted or reintroduced later. One owner-approved exception: the dashboard assets of 6.5 (HTML, CSS and JavaScript) may be reused and adapted; no other part of the earlier implementation. Development starts on a green field.
+10. **Development scope:** canonical checkout only; code, SPEC and tests. No production access, deployment or tags. Never consult the pre-greenfield implementation.
 
 ---
 
@@ -35,16 +35,15 @@ Read this entire document before writing any code. It is the complete specificat
     Graph.h/.cpp            # Package, Target, Feed, Pipeline builder, validation, topo order
     Engine.h/.cpp           # state + event handling + command emission
     Events.h  Commands.h    # std::variant types
-    Status.h/.cpp           # derived status, text table, DOT output
+    Status.h/.cpp           # derived unit status
   persistence/              # library coreci_persistence — pure C++20, no SNode.C, no database
     EventRow.h/.cpp         # Event <-> typed row mapping (pure, fully tested)
     EventStore.h            # asynchronous store interface
-    InMemoryEventStore.h/.cpp  # test implementation
   adapters/mariadb/         # MariaDBEventStore — implements EventStore with SNode.C's MariaDB client
     Schema.sql
   adapters/github/          # GitHub REST client, webhooks, HMAC, declaration loading (only place with JSON)
   app/                      # SNode.C express server, wiring, timers, main() — knows no repository
-  tests/                    # plain CTest executables (no test framework) — see section 8
+  tests/                    # CTest executables and test-only InMemoryEventStore
 ```
 
 `core/` and `persistence/` must compile and be tested without SNode.C installed.
@@ -61,7 +60,7 @@ Read this entire document before writing any code. It is the complete specificat
 - **Unit** — the scheduling unit `(package, target)`. A dependency edge `P → Q` applies per target: unit `(P,T)` depends on `(Q,T)`.
 - **Pipeline** — the immutable set of feeds and packages. Two pipelines are equal if all their feeds and packages are equal, compared in canonical order (by id and name).
 
-Every `branch` is the repository's default branch as reported by GitHub when the declarations were loaded — never assumed, never pinned. Repository owners and names are kept in GitHub's canonical spelling — the `full_name` returned by `GET /repos/{owner}/{repo}` during loading, however the registry spells them — and are never lowercased; that spelling is stored, shown in status and DOT, and used in API URLs. As identities they are compared ASCII case-insensitively, as GitHub does: uniqueness (3.2), webhook matching, and the `sourceRepo`/`buildWorkflow` change checks of rule 13 and 4.7. Pipeline equality compares the spelling exactly, so a change of spelling alone is recorded as `GraphChanged` without any other effect. Package names, feed ids and target ids are case-sensitive.
+Every `branch` is the repository's default branch as reported by GitHub when the declarations were loaded — never assumed, never pinned. Repository owners and names are kept in GitHub's canonical spelling — the `full_name` returned by `GET /repos/{owner}/{repo}` during loading, however the registry spells them — and are never lowercased; that spelling is stored, shown in status, and used in API URLs. As identities they are compared ASCII case-insensitively, as GitHub does: uniqueness (3.2), webhook matching, and the `sourceRepo`/`buildWorkflow` change checks of rule 13 and 4.7. Pipeline equality compares the spelling exactly, so a change of spelling alone is recorded as `GraphChanged` without any other effect. Package names, feed ids and target ids are case-sensitive.
 
 ### 3.2 Builder and validation
 
@@ -81,23 +80,22 @@ A fluent builder (`Pipeline::Builder`) produces an immutable `Pipeline`. `build(
 
 ### 3.3 Declarations (adapters/github/Declarations)
 
-The graph is declared in JSON files, read through the GitHub REST API at the HEAD of each repository's default branch (never a feature branch, never a pinned commit). core-ci contains no knowledge of the declared repositories; deploying it for other repositories needs only another `registry` setting.
+Configuration supplies `registry` as `<owner>/<repo>:<path>`, `target-catalog` as a relative path in that repository, and `workflow-repository` as `<owner>/<repo>`. There is no built-in repository name. Paths contain nonempty slash-separated segments of `A–Z a–z 0–9 . _ -`, excluding `.` and `..`, and are at most 255 characters. Repository and workflow identifiers obey 3.2.
 
-**Registry.** The `registry` setting names one file as `<owner>/<repo>:<path>`, where `<path>` is a relative path of at most 255 characters whose `/`-separated segments are non-empty, consist of `A–Z a–z 0–9 . _ -` and are not `.` or `..` (first deployment: `SNodeC/DistributionPackages:ci/registry.json`). core-ci reads only these fields and ignores all others:
+**Registry.** Read from the registry repository's default branch, at its resolved HEAD commit. Required fields:
 
 ```json
 {
-  "feeds": { "<feed id>": { "publisher": "<owner>/<repo>/.github/workflows/<file>" } },
+  "feeds": { "<feed id>": { "publisher": "<workflow file.yml>" } },
   "default_feed": "<feed id>",
-  "build": "<owner>/<repo>/.github/workflows/<file>",
-  "repositories": [ "<owner>/<repo>" ],
-  "targets": "<relative path in the registry repository>"
+  "build": "<workflow file.yml>",
+  "repositories": [ "<owner>/<repo>" ]
 }
 ```
 
-All five fields are required (`targets` from Phase 4e; first deployment `ci/targets.json`). `build` is the build workflow (section 7.1) of every package. A workflow reference has exactly the form shown; its workflow file name is the last path segment.
+Both build and publisher workflows belong to the configured workflow repository, dispatched on its reported default branch. Unknown fields are ignored. There is no presentation writer or status URL contract.
 
-**Package declaration.** Every listed repository contains `ci/packages.json`. core-ci reads only these fields; the target details come only from the target catalog below:
+**Package declaration.** Each source contains `ci/packages.json`:
 
 ```json
 {
@@ -109,13 +107,15 @@ All five fields are required (`targets` from Phase 4e; first deployment `ci/targ
 }
 ```
 
-`package`, `depends_on` and `matrix` (with `id` in every entry) are required; `accept_prereleases` defaults to `false`; `revision_base` (an integer 0–1 000 000) defaults to `0`; an entry's `feed` defaults to `default_feed`. The package's `sourceRepo` is its repository, its `buildWorkflow` the registry's `build`. A wrong JSON type, a duplicate object key, a file larger than 1 MiB, or malformed JSON is invalid. An optional top-level `title` (string) is kept for the dashboard (6.5).
+`package`, `depends_on` and `matrix` are required. `accept_prereleases` defaults false, `revision_base` defaults 0 (integer 0–1000000), and each feed defaults to `default_feed`. Optional `title` is used by the dashboard, otherwise the canonical source repository name. Matrix entries accept only `id` and optional `feed`.
 
-**Target catalog.** The registry's `targets` file lists every supported target exactly once: `{"targets": [ { "id": "<target id>", ... } ]}`, each entry with exactly the target fields the workflows use today (`distribution`, `suite`, `arch`, `build` and the rest), moved out of `ci/packages.json`. Target ids are unique. A matrix entry of `ci/packages.json` contains only `id` (a catalog id) and optionally `feed`; an id missing from the catalog, a duplicate id, or any other field in a matrix entry invalidates the load. core-ci keeps `distribution`, `suite`, `arch` and `build.format` of every catalog entry for the dashboard; the workflows read the remaining fields from the catalog. Same file rules as above.
+**Target catalog.** The configured file in the registry repository contains `{"targets":[{"id":"<id>",...}]}`. Every id is unique. Each entry supplies `distribution`, `suite`, `arch` and `build.format` for the dashboard; workflows interpret the remaining fields. Every matrix id must exist in the catalog.
 
-**Loading.** A load fetches the registry; the default branch of every listed repository and every workflow repository (`GET /repos/{owner}/{repo}` → `default_branch` and the canonical `full_name`); and every `ci/packages.json` (`GET /repos/{owner}/{repo}/contents/{path}?ref=<branch>` with `Accept: application/vnd.github.raw`; path and `ref` are percent-encoded). Each repository is read at the HEAD of its default branch; the load also fetches the target catalog from the registry repository and records, per repository, the commit SHA of that HEAD (`GET /repos/{owner}/{repo}/commits/{branch}`) for the dashboard. It builds the `Pipeline` with 3.2. Any failure — HTTP error, missing file, invalid file, validation error — fails the whole load: the graph stays unchanged, and `app/` shows the failure (repository, file, reason) as the first line of `/api/v1/status` until a later load succeeds (this line is not part of the engine status of 4.6). A successful load enqueues `GraphChanged` (rule 13); the engine ignores it when nothing changed, and a `GraphChanged` answered unavailable is retried by the next trigger.
+**Tag-bound loading.** Resolve canonical repository spelling and default branches with `GET /repos/{owner}/{repo}`. Resolve the registry HEAD with `GET /repos/{owner}/{repo}/commits/{branch}`; read registry and catalog at that commit. List source tags with pagination, ordered by 3.4 (equal precedence: lexicographically smallest tag). Read each candidate declaration at the tag's **commit SHA** from the tags API, never at the source default branch when building a tag. Select the highest version whose declaration permits its prerelease status. A repository without any accepted release is bootstrapped from its default-branch declaration solely to show NoRelease units; it is never built until a tag-bound load succeeds. Metadata commits for source default branches are needed only for that bootstrap.
 
-**Triggers.** A load runs after startup (after the listener is up, before the first tag reconciliation); on a webhook `push` to the default branch of the registry repository or of a repository in the current graph; every `reconcileInterval`, before tag reconciliation; and on `POST /api/v1/reload`. At most one load runs at a time; triggers during a load schedule exactly one further load afterwards.
+A load validates all files and the complete Pipeline before changing state. Malformed JSON, duplicate object keys, files over 1 MiB, wrong types, invalid identifiers or any HTTP failure fail the load, retaining the previous graph and releases. Errors identify repository, file and reason and appear in the authenticated dashboard response/stream. The successful load commits GraphChanged, then the selected TagObserved events through the same write-ahead queue. Units that remain settled are not rebuilt by a reload alone; added units become schedulable and removed units are retired from the active graph under rule 13. Changed dependency/feed/workflow definitions retain rule 13 semantics.
+
+Loads run at startup after the listener is up, every reconcileInterval, after a registry default-branch push, after a known source tag push, and through the dashboard reload/reconcile operations. Source default-branch pushes never trigger a load or rebuild. Concurrent load triggers coalesce to one further load; different source repositories are fetched independently. Reconciliation uses this same tag-bound loading path.
 
 ### 3.4 Tag format and version ordering (core/Version.h)
 
@@ -167,6 +167,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 | `DispatchAccepted` | buildId, kind (`build`/`publish`), attempt |
 | `DispatchRejected` | buildId, kind, attempt, httpStatus, message |
 | `BuildStarted` | buildId, runId, runAttempt |
+| `PublishStarted` | buildId, runId, runAttempt |
 | `BuildSucceeded` | buildId, runId, artifact |
 | `BuildFailed` | buildId, runId, reason |
 | `PublishSucceeded` | buildId, runId, feedCommit |
@@ -192,7 +193,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 6. **PublishSucceeded:** `published = {inflight.version, inflight.revision, inflight.inputs}`, clear `inflight`, clear `failure` and `rebuild`. (Even if superseded meanwhile, record the truth of what is in the feed; the unit then becomes unsatisfied and is rebuilt.)
 7. **BuildFailed / PublishFailed / deadline exceeded on Tick:** `failure = {inflight.version, inflight.inputs, reason}`, clear `inflight`, remove from feed queue/slot. Dependents stay blocked (the unit is not settled). A new tag or new prerequisite publication changes the desired inputs and therefore automatically allows a retry; otherwise only `RetryRequested` clears `failure`. An automatic retry is scheduled when `retryDelay > 0`, the failure is not a `DispatchRejected` with HTTP 401/403/404/422, and `autoRetried ≠ {failure.version, failure.inputs}`: `retryAfter = engineTime + retryDelay`.
 8. **Acceptance** is defined only by the table in section 4.7. Ignored events are not persisted and change nothing, so duplicates are idempotent. The engine exposes a pure, `const` `classify(event) → Accept | Ignore(reason)` implementing that table (needed by section 5).
-9. `BuildStarted` and `BuildSucceeded` record `runId`; `BuildSucceeded` also records `artifact` (both used by `DispatchPublish`). A build callback accepted in `Dispatching` (or a publish callback in `PublishDispatching`) proves the run exists: first clear `retryAt` and enter `Building` (`Publishing`) with deadline = `engineTime` + timeout, then apply the event.
+9. `BuildStarted` and `PublishStarted` record their phase's runId, runAttempt and start time. Terminal callbacks record end time and state, with durations derived from recorded start/end times; a missing start stays absent. `BuildStarted` and `BuildSucceeded` record `runId`; `BuildSucceeded` also records `artifact` (both used by `DispatchPublish`). A build callback accepted in `Dispatching` (or a publish callback in `PublishDispatching`) proves the run exists: first clear `retryAt` and enter `Building` (`Publishing`) with deadline = `engineTime` + timeout, then apply the event.
 10. Optional global `maxConcurrentBuilds` (default unlimited); a unit occupies a slot while its phase is `Dispatching` (also while waiting for `retryAt`) or `Building`; when no slot is free, ready units wait.
 11. The engine exposes `nextDeadline()` (earliest pending timeout or retry-backoff time, or none). `app/` only enqueues a `Tick` when the current UTC time ≥ `nextDeadline()`, so every `Tick` changes state. Before the first deadline exists no `Tick` is needed: every deadline is created by an event that itself carries `at`.
 12. **Resumed** (enqueued once by `app/` after replay, section 5.4): re-emit the command, with unchanged `buildId` and `attempt`, for every unit in `Dispatching`/`PublishDispatching` without `retryAt` (its dispatch result was lost); units waiting for `retryAt` keep their backoff. Like rule 4, this re-emission does not re-check readiness.
@@ -203,7 +204,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 
 ### 4.6 Status (core/Status.h)
 
-Per unit, derive one of: `NoRelease`, `Settled`, `Waiting(on <unit>)`, `Ready`, `Dispatching`, `Building(run <id>)`, `AwaitingPublish(position n on <feed>)`, `Publishing`, `Failed(<reason>)`, `Blocked(by <failed unit>)`. Render as a plain-text table and as Graphviz DOT (nodes coloured by status).
+Per unit, derive one of: `NoRelease`, `Settled`, `Waiting(on <unit>)`, `Ready`, `Dispatching`, `Building(run <id>)`, `AwaitingPublish(position n on <feed>)`, `Publishing`, `Failed(<reason>)`, `Blocked(by <failed unit>)`. Status is derived for status.json, badges and the dashboard; there are no text or DOT renderers.
 
 ### 4.6.1 Badges (core/Badge.h)
 
@@ -229,7 +230,8 @@ SVG: height 20; label part on `#555`, message part on the colour; white text, `f
 | `DispatchAccepted`, `DispatchRejected` | `buildId` = a unit's `inflight.buildId`; phase `Dispatching` (kind `build`) or `PublishDispatching` (kind `publish`); `attempt` = `inflight.attempt`; no `retryAt` |
 | `BuildStarted` | `buildId` matches; phase `Dispatching` or `Building`; no `runId` recorded |
 | `BuildSucceeded`, `BuildFailed` | `buildId` matches; phase `Dispatching` or `Building`; no `runId` recorded or the same `runId` |
-| `PublishSucceeded`, `PublishFailed` | `buildId` matches; phase `PublishDispatching` or `Publishing` |
+| `PublishStarted` | `buildId` matches; phase `PublishDispatching` or `Publishing`; no publisher runId recorded |
+| `PublishSucceeded`, `PublishFailed` | `buildId` matches; phase `PublishDispatching` or `Publishing`; no publisher runId recorded or the same runId |
 | `RetryRequested` | unit exists; `failure` set; no `inflight` |
 | `RebuildRequested` | unit exists and is not dormant; `satisfied`; no `inflight` |
 | `Tick` | `nextDeadline()` exists and `max(engineTime, at) ≥ nextDeadline()` |
@@ -322,7 +324,7 @@ CREATE TABLE IF NOT EXISTS coreci_graph_prerequisites (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
-`coreci_schema` holds exactly one row, `version = 3`. In `open`: if `coreci_schema` has no row and all `coreci_*` tables are empty, insert `version = 3`; no row while any table has rows, more than one row, or a version other than 3 → `Corrupt` (older databases are not migrated). Every event type uses only its own columns; the others are `NULL`.
+`coreci_schema` holds exactly one row, `version = 4`. In `open`: if `coreci_schema` has no row and all `coreci_*` tables are empty, insert `version = 4`; no row while any table has rows, more than one row, or a version other than 4 → `Corrupt` (older databases are not migrated). Every event type uses only its own columns; the others are `NULL`.
 
 **GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` set) plus its graph rows, written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the four graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail 3.2, are `Corrupt`. Schema migrations are out of scope.
 
@@ -332,7 +334,7 @@ Every event field from 4.3 maps to exactly one typed column; unused columns are 
 
 ### 5.3 Write-ahead ordering (critical)
 
-All inbound events (webhook, workflow callback, dispatch result, tick, admin request) go through **one FIFO event queue** and are processed strictly one at a time:
+All inbound events (webhook, workflow callback, dispatch result, tick, dashboard operation) go through **one FIFO event queue** and are processed strictly one at a time:
 
 0. Stamp `event.at` with the current UTC time (seconds) when the event enters the queue. This is the only place where core-ci reads the clock for events. Then `normalize(event)` (5.2); if invalid → answer `400 invalid: <reason>`, done (never retried, never classified, never stored).
 1. `engine.classify(event)`; if `Ignore` → answer the HTTP request (`200 ignored: <reason>`), done.
@@ -347,7 +349,7 @@ Consequence: the in-memory state only ever contains committed events, so a crash
 - **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine, discarding commands → enqueue one `Resumed` event through the normal write-ahead queue (rule 12) → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished.
 - During replay, a stored event that the engine classifies as `Ignore` (possible only if engine semantics changed between core-ci versions) is skipped with a warning naming its `seq`.
 - **Store errors** from `open`/`loadAll` have a kind (5.5): `Corrupt` (a row fails decoding per 5.2, or an unknown schema version) → log it and exit with a non-zero status, at startup and at runtime. `Unavailable` (any database or connection error) → stay in recovery (every event `503`, no ticks); `app/` retries the rebuild with an SNode.C timer, backoff 1 s doubling to at most 60 s, at startup and at runtime. A successful rebuild always starts from a fresh engine and replay (5.3 step 4).
-- Replaying the stored events must reproduce byte-identical status output (tested).
+- Replaying the stored events must reproduce byte-identical status.json output (tested).
 - Compaction/snapshots are **out of scope**.
 
 ### 5.5 Store interface (persistence/EventStore.h)
@@ -364,77 +366,128 @@ public:
 };
 ```
 
-`loadAll` delivers events in ascending `seq` order with the row's actual `seq` (gaps are allowed). `onCommitted` receives the committed row's actual `seq`: `InMemoryEventStore` its own counter, `MariaDBEventStore` the result of `SELECT LAST_INSERT_ID()` on the same connection directly after the event `INSERT` (for a `GraphChanged` inside its transaction, before `commit`); an error of that `SELECT` is an unknown commit outcome (5.3 step 4). `app/` keeps the `seq` of the last committed event, from `loadAll` and from `onCommitted`, as the `generation` of 7.8. `InMemoryEventStore` (pure, for tests) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
+`loadAll` delivers events in ascending `seq` order with the row's actual `seq` (gaps are allowed). `onCommitted` receives the committed row's actual `seq`: `InMemoryEventStore` its own counter, `MariaDBEventStore` the result of `SELECT LAST_INSERT_ID()` on the same connection directly after the event `INSERT` (for a `GraphChanged` inside its transaction, before `commit`); an error of that `SELECT` is an unknown commit outcome (5.3 step 4). `app/` keeps the `seq` of the last committed event, from `loadAll` and from `onCommitted`, as the status.json/SSE event sequence. `tests/InMemoryEventStore` (pure, test-only) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
 
 ---
 
-## 6. External interfaces (app/ and adapters/github/)
+## 6. External interfaces
 
-### 6.1 Inbound HTTP (SNode.C express)
+### 6.1 Complete inbound route list
 
-| Method & path | Auth | Purpose |
+| Method and path | Authentication | Purpose |
 |---|---|---|
-| `POST /api/v1/github/webhook` | `X-Hub-Signature-256` (HMAC-SHA256 over raw body, webhook secret, constant-time compare) | GitHub org webhook. Handle `ping` (200) and `push` where `ref` starts with `refs/tags/`, `created == true`, `deleted == false` → `TagObserved` for every package whose `sourceRepo` matches `repository.full_name`. Deduplicate by `X-GitHub-Delivery` (keep last 1000 ids). `push` to `refs/heads/<repository.default_branch>` of the registry repository or of a repository in the current graph → declaration load (3.3), `202 reload scheduled`. Everything else: `202 ignored`. |
-| `POST /api/v1/builds/<buildId>/report` | `X-CoreCI-Timestamp` + `X-CoreCI-Signature-256: sha256=<hex HMAC(secret, timestamp + "." + body)>`; reject if clock skew > 300 s | Workflow callbacks. Body `application/x-www-form-urlencoded`: `phase` (`build`/`publish`), `status` (`started`/`succeeded`/`failed`), `run_id`, `run_attempt`, `artifact`, `feed_commit`, `reason`. Maps to the events in 4.3. Responds `200 accepted` or `200 ignored: <reason>`. |
-| `GET /api/v1/status` | none | Text table (`text/plain`). |
-| `GET /api/v1/graph.dot` | none | DOT (`text/vnd.graphviz`). |
-| `GET /api/v1/status.json` | none | Presentation data of 7.8 (`application/json`); `503` during recovery. |
-| `GET /api/v1/badge/<package>/<target>.svg` | none | Badge of 4.6.1 (`image/svg+xml; charset=utf-8`, `Cache-Control: no-cache, no-store, must-revalidate`). Always `200`: an unknown unit gets the `unknown` badge. |
-| `POST /api/v1/units/<package>/<target>/retry` | `Authorization: Bearer <admin token>` | `RetryRequested`. |
-| `POST /api/v1/units/<package>/<target>/rebuild` | admin token | `RebuildRequested`. |
-| `POST /api/v1/reconcile` | admin token | Trigger tag reconciliation now. |
-| `POST /api/v1/reload` | admin token | Trigger a declaration load now (3.3); `202 started` or `202 already running`. |
+| POST /api/v1/github/webhook | Raw-body HMAC-SHA256, X-Hub-Signature-256 | Push notifications: known source tag creations and registry default-branch pushes only; ping acknowledged. |
+| POST /api/v1/builds/{buildId}/report | Callback HMAC | Workflow events below. |
+| GET /api/v1/status.json | Public | Recorded unit status, 503 during recovery. |
+| GET /api/v1/badge/{package}/{target}.svg | Public | Badge (4.6.1), always 200, unavailable during recovery. |
+| GET /, /style.css, /app.js, /events | IDP and subject allowlist | Dashboard assets and SSE. |
+| POST /api/{operation} | IDP and subject allowlist | retry, rebuild, reload, reconcile. |
+| GET /auth/callback | IDP authorization-code validation | Complete login; protected access checks subject. |
 
-Every inbound request that carries an event goes through the event queue of 5.3 and is answered only after its event row is committed (or with `200 ignored` / `503`).
+No other routes are supported. Removed API paths return 404, including text status, DOT, unit retry/rebuild, reload and reconcile under /api/v1. There is no admin bearer token. Optional plain HTTP listener redirects all requests with 308 to the same path on the configured HTTPS origin.
 
-**Routing uses SNode.C's express router.** One route per endpoint, registered with the router's method functions (`get`, `post`) and `:name` path parameters; path parameters are percent-decoded exactly once (verify whether the router already decodes them). The size limit, webhook HMAC, callback HMAC and admin token are separate middleware chained in front of exactly the routes that need them; a `405` handler per path and a final `404` fallback. Hand-written dispatch on `req->path` or `req->method` (string comparison or regular expression) is forbidden. The order size check → authentication → parsing is unchanged.
+Use SNode.C express routing, TLS, HTTP client and timer APIs. Per-path wrong-method handlers answer 405; a final fallback answers 404. Raw request limits: body 25 MiB for webhook, 64 KiB for all other routes, headers 64 KiB/100 fields, start line 8 KiB. Authenticate before parsing. Invalid encoding/form/required fields → 400; invalid authentication or callback timestamp skew over 300 seconds → 401. Badges use no-cache/no-store; status.json is application/json.
 
-Use SNode.C's express API and TLS server. **Do not guess SNode.C APIs**: find the express router, HTTP client and timer facilities in the SNode.C repository (master HEAD) and its examples/apps, and cite the source files you based your code on in the PR description.
+### 6.2 GitHub App authentication and complete outbound endpoints
 
-### 6.2 Outbound GitHub REST (adapters/github/)
+Configuration: github-app-id, github-installation-id, github-app-key-file (RSA private key PEM). Read and validate the key at startup and read it again on each mint, never log its bytes or credentials. Sign JWTs with OpenSSL RS256: iat = now − 60 seconds, exp = now + 9 minutes, iss = app id. POST /app/installations/{installation_id}/access_tokens with that JWT. Cache the installation access token only in memory; reuse while now < expires_at − 5 minutes. Concurrent callers share a pending mint. On HTTP 401 from an authenticated repository API call, invalidate the rejected cached token, mint once and retry that exact call once. A second 401 fails. A failed token mint fails the waiting call; no recursive mint retries.
 
-- Dispatch: `POST /repos/{owner}/{repo}/actions/workflows/{workflowFile}/dispatches` with body `{"ref": "<branch>", "inputs": {...}}` (all values strings), headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer <token>`. `204` → `DispatchAccepted`; other status → `DispatchRejected`; transport error → `DispatchRejected` with `httpStatus = 0`. Both carry the command's `buildId`, `kind` and `attempt`.
-- TLS: outbound connections use SNode.C's TLS HTTP client (`src/web/http/tls/in/Client.h`), set SNI to the host, and verify the server certificate against the system CA store (`setCaCertDirUseDefault`) or, if configured, the `githubCaCert` file. `setCaCertAcceptUnknown` is forbidden. The API base URL is `githubApiUrl` (default `https://api.github.com`). HMAC-SHA256 and its constant-time comparison use OpenSSL (`CRYPTO_memcmp`), already an SNode.C dependency.
-- Token: fine-grained PAT from an environment variable, behind an interface `TokenProvider` so a GitHub App provider can be added later (do not implement the App now).
-- **Tag reconciliation** (webhooks do not deliver tag events reliably, e.g. when several tags are pushed at once): after every declaration load attempt (at startup and every `reconcileInterval`, default 15 min) and on `/api/v1/reconcile`, list tags of every `sourceRepo` (`GET /repos/{owner}/{repo}/tags`, follow `Link` pagination) and emit `TagObserved{origin=reconcile}` for the highest accepted version. The engine ignores it if it is not newer.
-- An SNode.C timer fires every 30 s; it enqueues a `Tick` only if `now ≥ engine.nextDeadline()` (see 4.5 rule 11).
+Complete endpoint shapes:
+- POST /app/installations/{installation_id}/access_tokens
+- GET /repos/{owner}/{repo}/contents/{path}?ref={ref}, Accept: application/vnd.github.raw
+- GET /repos/{owner}/{repo}/tags (paginated)
+- GET /repos/{owner}/{repo} (canonical spelling and default branch)
+- GET /repos/{owner}/{repo}/commits/{branch} (registry HEAD or source bootstrap only)
+- POST /repos/{owner}/{repo}/actions/workflows/{file}/dispatches
+
+There are no Actions run or job lookups. No static bearer credential is accepted or configured. Repository calls use installation tokens; token mint uses the signed JWT. All use X-GitHub-Api-Version: 2022-11-28 and User-Agent core-ci.
+
+Dispatch JSON remains {"ref":"<default branch>","inputs":{...}} with string inputs: build_id, package, target, version, revision, callback_url; builds additionally source_repo, tag and prerequisites, publications additionally build_repo, build_run_id and artifact. Dispatch 204 emits DispatchAccepted; other statuses emit DispatchRejected (transport failure status 0). No workflow dispatch for presentation exists.
+
+Outbound TLS verifies the CA chain and hostname before sending request bytes, sets SNI, and uses system CA trust or github-ca-cert. One request per connection, 30-second deadline, no redirects. Pagination accepts only links on github-api-url's exact scheme/host/port and rejects loops. One 30-second engine timer enqueues Tick only when nextDeadline is due. There is no GitHub polling timer.
 
 ### 6.3 Configuration
 
-Non-secret settings through SNode.C's configuration (command line and configuration file; the command line wins), secrets only through the environment: listen address/port, TLS cert/key, `registry`, `callbackBaseUrl`, MariaDB host/port/socket/user/database, `githubApiUrl`, `githubCaCert` (optional CA file, used by the smoke test with a self-signed fake GitHub), timeouts, `maxDispatchAttempts`, `maxConcurrentBuilds`, `reconcileInterval`, `statusInterval`. Secrets only via environment: `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN`, `CORECI_DB_PASSWORD`. Never log secrets.
+Non-secret options use SNode.C configuration, command line overriding configuration file. Keys:
+registry, target-catalog, workflow-repository, github-app-id, github-installation-id,
+github-app-key-file, callback-base-url, github-api-url, github-ca-cert, db-host,
+db-port, db-socket, db-user, db-name, build-timeout, publish-timeout, retry-delay,
+max-dispatch-attempts, max-concurrent-builds, reconcile-interval, listen-address,
+listen-port, tls-cert, tls-key, idp-base-url, idp-client-id, idp-public-key-path,
+dashboard-users, dashboard-redirect-port.
 
-### 6.4 Operational contract
+Registry, target-catalog, workflow-repository, all three GitHub App keys,
+callback-base-url, db-user, db-name, TLS files, idp-client-id, idp-public-key-path and
+dashboard-users are required. App and installation ids are positive decimal ids.
+Defaults: github-api-url https://api.github.com (HTTPS only); db-host localhost,
+db-port 0, db-socket empty uses MYSQL_UNIX_ADDR; build-timeout 21600 and publish-timeout
+3600 seconds (60–86400), retry-delay 600 (0–86400; zero disables), max-dispatch-attempts
+8 (1–20), max-concurrent-builds 0/unlimited (0–1000), reconcile-interval 900 (60–86400),
+listen-address 0.0.0.0, listen-port 8443, dashboard-redirect-port 0/off.
+Missing or invalid settings fail before connecting and log only the option name.
+Required secret environment variables: CORECI_WEBHOOK_SECRET and CORECI_CALLBACK_SECRET.
+Optional CORECI_DB_PASSWORD (empty permits passwordless socket authentication).
+No other production CORECI environment variables remain.
 
-**Configuration.** Non-secret options use SNode.C's configuration (command line overrides config file); invalid or missing required settings → log the option name (never a value) and exit non-zero before connecting anywhere. Server: SNode.C TLS express instance `coreci`, default port 8443, certificate and key required. `registry` required, form `<owner>/<repo>:<path>`. `callbackBaseUrl` required, `https://`. `githubApiUrl` default `https://api.github.com`, `https://` only. `githubCaCert` optional. `dbHost` `localhost`, `dbPort` 0, `dbSocket` empty = the client library's default socket `MYSQL_UNIX_ADDR` (core-ci substitutes it, because SNode.C passes an empty string rather than `nullptr` to `mysql_real_connect`); `dbUser`, `dbName` required. `buildTimeout` 21600 s and `publishTimeout` 3600 s (each 60–86400); `maxDispatchAttempts` 8 (1–20); `maxConcurrentBuilds` 0 = unlimited (0–1000); `reconcileInterval` 900 s (60–86400); `statusInterval` 60 s (30–3600); `retryDelay` 600 s (0 = no automatic retry, 0–86400). `CORECI_GITHUB_TOKEN`, `CORECI_WEBHOOK_SECRET`, `CORECI_CALLBACK_SECRET`, `CORECI_ADMIN_TOKEN` required and non-empty; `CORECI_DB_PASSWORD` optional (empty = passwordless, e.g. unix_socket).
+### 6.4 Callbacks, write-ahead and recovery
 
-**HTTP responses.** Authenticate first (HMAC over the raw body, or bearer token), then parse. Only exception: a path whose `:name` parameters SNode.C's router cannot percent-decode is answered `400` by the framework before any middleware runs (no secret is checked, nothing is parsed). Missing/wrong signature or token, or timestamp skew > 300 s → `401 unauthorized` (no detail). Missing `X-GitHub-Event`/`X-GitHub-Delivery`, wrong content type, malformed JSON or form, duplicate form keys, malformed percent escapes, missing required field → `400 invalid: <reason>`. Size limits are enforced while reading, through SNode.C's server parser limits (`ConfigHttpParser`, whose defaults are unlimited): body ≤ 25 MiB, header block ≤ 64 KiB, ≤ 100 header fields, start line ≤ 8 KiB. Then, **before** authentication, a body over 64 KiB on any route except the webhook → `413`. Unknown route `404`, wrong method `405`. core-ci parses outbound status codes with `std::from_chars` (anything but exactly three digits → transport error, `httpStatus = 0`) and never throws on them. Known upstream defect: SNode.C's `src/web/http/client/ResponseParser.cpp` calls `std::stoi` on the status code before core-ci sees the response, so a non-numeric status line terminates the process; it is reachable only from the hostname-verified GitHub endpoint, must be fixed in SNode.C as a separate change, and is not tested in core-ci. Status and DOT during recovery → `503`; badges never answer an error (a broken image would replace them) and show `unavailable` during recovery.
+Callbacks are application/x-www-form-urlencoded, authenticated with
+X-CoreCI-Timestamp and X-CoreCI-Signature-256: sha256=HMAC(secret,timestamp+"."+rawBody).
 
-**Callbacks.** `build`+`started` → `BuildStarted` (needs `run_id`, `run_attempt`); `build`+`succeeded` → `BuildSucceeded` (`run_id`, `artifact`); `build`+`failed` → `BuildFailed` (`run_id`, `reason`); `publish`+`succeeded` → `PublishSucceeded` (`run_id`, `feed_commit`); `publish`+`failed` → `PublishFailed` (`run_id`, `reason`); `publish`+`started` → `200 ignored: no event`; anything else → `400`. Fields an event does not use are ignored; an empty value counts as absent. `buildId` is the percent-decoded path segment.
+| phase | status | Required payload beyond phase/status |
+|---|---|---|
+| build | started | run_id, run_attempt |
+| build | succeeded | run_id, artifact |
+| build | failed | run_id, reason |
+| publish | started | run_id, run_attempt |
+| publish | succeeded | run_id, feed_commit |
+| publish | failed | run_id, reason |
 
-**Webhook.** `sourceSha` = payload `after` (for an annotated tag the tag object); informational only — workflows always check out `tag`. A delivery that maps to several packages enqueues one `TagObserved` per package in package-name order; the response is `503` if any result is unavailable, otherwise `200` with one line per package (`<package>: accepted` or `<package>: ignored: <reason>`). The delivery id is remembered only if no result was unavailable; in memory, last 1000 ids, oldest evicted, empty after restart.
+Publish started is a persisted PublishStarted event with publisher run id, attempt and start time.
+Unused fields are ignored; an empty required value is absent. The router decodes buildId once.
+Responses follow 5.3; duplicate/stale callbacks are ignored. Callback-before-dispatch,
+dispatch backoff/deadlines, automatic retry, startup resumption and recovery are unchanged.
+Webhooks remember the last 1000 successful delivery ids in memory. Failed loads are retryable.
 
-**Reconciliation.** Per package the highest accepted version over all pages; among equal precedence the lexicographically smallest tag string. A failed, malformed or off-origin page aborts that repository for this round (warning, no event); other repositories continue. Startup reconciliation starts after the listener is up and does not delay it. `POST /api/v1/reconcile` answers `202 started` or `202 already running` immediately.
+MariaDB uses exactly one writer per database (GET_LOCK), retains the existing asynchronous
+client and unknown-commit-outcome recovery. No production access is required for acceptance.
 
-**Outbound HTTP and TLS.** One request per connection; 30 s from connect to complete response; redirects are not followed (3xx: dispatch → `DispatchRejected` with that status, not permanent; reconciliation → abort that repository). `Link` URLs must have the scheme, host and port of `githubApiUrl`. SNode.C's TLS client sets SNI but does not verify the hostname, so in the client's `onConnected` — called after the handshake and before the HTTP context is attached (`src/core/socket/stream/tls/SocketConnector.hpp`) — require `SSL_get_verify_result(ssl) == X509_V_OK` and `X509_check_host(peerCertificate, host) == 1`; otherwise close before any request byte is sent (transport error, `httpStatus = 0`).
+### 6.5 SSE dashboard
 
-**Recovery integration.** Authorized additions: `EventQueue::recover(reason)` (pending → unavailable, discard engine, rebuild) and a `MariaDBEventStore` connection-lost callback that `app/` wires to it. While the queue is not ready no `Tick` is generated and dispatch results are dropped with a log line; `Resumed` re-emits the dispatch after the rebuild.
+Preserve the existing layout and information about packages, targets, versions, dependencies,
+attempts and workflow phases. Derive all phase information solely from committed engine events:
+for build and publish, expose start, end, duration, state and run link
+https://github.com/{workflowRepo}/actions/runs/{run_id}[/attempts/{run_attempt}].
+Unknown values stay absent; dispatch acceptance must not invent a workflow start.
+Retain publication dispatch/finish times and assignment order from recorded events.
+Drop GitHub job queued/cancelled states, job cache, job log links and unsupported metadata
+(proof, verified_at, uncertainty, publish_assigned, publish_run_bound, retire action, step).
 
-**Single writer.** Exactly one core-ci per event database, enforced: `open` runs `SELECT GET_LOCK(CONCAT('coreci:', DATABASE()), 0)` after `SET autocommit = 1`; result `0` → `Unavailable` (another instance holds the writer lock), retried like any outage. The lock is per session and re-acquired on every reconnect.
+Assets use no-cache. SSE sends a snapshot on connect and full model updates at most once per
+second on committed events or successful declaration loads; no updates during recovery.
+Keep alive every 30 seconds, at most 64 streams (excess 503). Until declarations are loaded,
+ready is false and units are empty. A one-second SSE timer may coalesce events and check sessions;
+it never requests GitHub data. Dependencies sort descending by level and allocation order.
 
-**App library and smoke test.** There is one executable, `core-ci`; `pipeline/` does not exist. The smoke test runs `core-ci` itself against the fake GitHub, which serves a registry and five `ci/packages.json` files declaring the S1 test pipeline. The smoke script uses `CORECI_TEST_DB_*` (may drop and recreate the two tables there; exit 77 if unset) and shows: verified TLS dispatch to the fake GitHub; a wrong-host certificate rejected with no request reaching the fake; the S1 diamond driven by signed `curl` callbacks; a restart midway with correct `Resumed` dispatches; a second instance on the same database refused by the writer lock; a changed declaration (a new prerequisite) announced by a signed `push` webhook, recorded as `GraphChanged` and causing exactly the rebuild of rule 13; an invalid declaration (a cycle) keeping the previous graph and shown on the status page; the badge of `d@t1` showing `building` while it builds and its `version-revision` after publication.
+Supported POST /api/{operation}: retry (failed unit), rebuild (settled unit), reload
+(declarations and tags), reconcile (same reconciliation path). Unit operations take
+{"package":"...","target":"..."} and answer after commit; reload/reconcile answer after loading.
+Every other operation answers "Not supported by core-ci". The Refresh control sends reload.
 
-### 6.5 Dashboard
+IDP integration stays with snodec-auth 2: authorization code + PKCE S256/state/nonce,
+openid profile email, MFA ACR urn:snodec:acr:mfa, RS256 public-key verification and
+introspection on each protected request. Only validated subjects in dashboard-users are admitted;
+email is display-only. Cookie coreci_access_token is HttpOnly/Secure/SameSite=Lax, path /,
+lifetime 12 hours. Re-introspect open streams every 60 seconds and close invalid sessions.
 
-The retained realtime dashboard keeps its existing product behavior and appearance. Historical screenshot comparisons and captured-asset accounting are not acceptance criteria.
+### 6.6 Public status
 
-- **Assets.** `app/dashboard/index.html`, `style.css` and `app.js`, starting from the captured files. Only what the user sees must stay; code structure, data types and the protocol need not resemble the earlier system. Keeping the captured HTML, CSS and drawing functions and rewriting only the data layer of `app.js` (connection, message handling, mapping into the structures the drawing functions consume) is the expected way; any part may be restructured while preserving dashboard behavior and appearance. The TLS listener serves them at `GET /`, `GET /style.css` and `GET /app.js` (query string ignored), with the captured `Content-Type` and `Cache-Control: no-cache`.
-- **Stream `GET /events`** (SSE: `Content-Type: text/event-stream`, `Cache-Control: no-store`, a keep-alive comment every 30 s, at most 64 concurrent streams, more → `503`). On connect one `snapshot` event, then, whenever the dashboard model changes (a committed event, a job-cache update or a declaration load), at most one `update` event per second; both carry the complete model, written by `adapters/dashboard/`. The model is `status.json` (7.8) extended per package by `title` (from `ci/packages.json`, absent → `owner/repo`) and `commit` (the commit of its loaded declaration), and per unit by its catalog coordinates (`distribution`, `suite`, `arch`, `format`), its prerequisites on the same target (package names, in declaration order), `order` (the sequence number of the event that allocated its current revision, rule 2), its build and publish run (`runId`, `html_url`), `publishDispatchedAt` and `publishedAt` (the engine times of its publication's `DispatchAccepted` and `PublishSucceeded`), and the job data of the job cache. While the queue recovers no event is sent; until the first successful declaration load since start, the model has `ready: false` and no units.
-- **Mapping in the browser.** `app.js` maps each unit onto what its drawing functions show: `Waiting`, `Blocked` → `waiting`; `Ready`, `Dispatching`, `Building` → `building`; `AwaitingPublish`, `PublishDispatching`, `Publishing` → `publishing`; `Settled` → `published`; `Failed` → `failed`; plus version, revision, tag, runs and job data. Units are listed as the earlier dashboard lists them: dependency level descending, then `order` descending. The attempt identity shown is the `buildId`; a build counts as assigned from its `DispatchAccepted` on; the publication row shows `publishDispatchedAt` → `publishedAt`. Information the model does not carry (older attempts, uncertainty, retirement, enrollment) is absent, and the drawing functions show what they show when it is absent.
-- **Job cache** (in `app/`, in memory, refilled after a restart): for every unit with a build or publish run, the run found by its recorded `runId` or by its run name (= `buildId`) through `GET /repos/{owner}/{repo}/actions/runs` and its `jobs`; the job shown is the workflow's main job (`build` in `coreci-build.yml`, `publish` in `coreci-publish.yml`) of the run's latest attempt; refreshed every 30 s while the run is not completed, then kept; at most 4 requests in flight; an error leaves the fields absent.
-- **Buttons.** `POST /api/<operation>` with core-ci-aligned JSON bodies. Retry (`{package, target}`) → `RetryRequested` under the rules of `POST /api/v1/units/<package>/<target>/retry`; Refresh → a declaration load (3.3). Every other button (Enroll, Request, Reconcile, Retire) stays visible and answers with the dashboard's own error line: `Not supported by core-ci: <reason>`. A request is answered after its event is committed.
-- **Authentication.** The whole dashboard (assets, `/events`, `/api/<operation>`) requires a login through the OpenID Connect provider at `https://core.snodec.org:8088`, integrated with the `snodec-auth` client library (`find_package(snodec-auth 2)`, `snodec-auth::auth-client`) exactly as its `minimal-mfa-app` integrates it: authorization code with PKCE (S256), state and nonce; scopes `openid profile email`; required ACR `urn:snodec:acr:mfa`; public client without secret; RS256 validation against the configured public key; online introspection on every protected request; callback `GET /auth/callback`. core-ci uses its own cookie `coreci_access_token` (`HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, lifetime 12 h); the configurable cookie name and lifetime are a small extension of the client library in `SNodeC/snode.c-idp`, made in this phase. Only accounts whose subject (the `sub` claim of the validated token, assigned by the provider and never chosen by the user) is listed in `dashboardUsers` are admitted (first deployment: the subject of the owner's account `me@vchrist.at`, looked up in the provider's account store at deployment); any other login → `403`. The `email` claim is shown, never used for access; no `email_verified` claim is required. An open stream is re-introspected every 60 s and closed when its session is no longer valid. Settings: `idpBaseUrl`, `idpClientId`, `idpPublicKeyPath`, `dashboardUsers`. The provider registers the client in its `IDP_CLIENTS` with the redirect `https://core.vchrist.at:8443/auth/callback` (a deployment step). The admin token keeps protecting only the `/api/v1` admin routes of 6.1.
-- **Addresses.** The dashboard is served by the TLS listener (first deployment `https://core.vchrist.at:8443/`). The optional plain-HTTP listener `dashboardRedirectPort` (default off; first deployment 8081, once the earlier instance is retired) answers every request with `308` to the same path on the TLS listener.
-- **Acceptance.** Functional HTTP, authentication, operation, stream and browser end-to-end tests remain. G6 covers every status kind, running and completed jobs and an empty model without browser console errors. G4 captured-asset checks and G5 pixel comparisons, their reference images and reference-only fixtures are removed.
+status.json is generated from recorded unit state by the existing handwritten app/ writer,
+without a JSON library. It contains the event sequence, packages and unit selections, published,
+inflight and failure records. It is public alongside badges. No presentation dispatch,
+status workflow, generation/dirty bookkeeping for a presentation writer, registry presentation
+field or status_url field exists.
+
 
 ---
 
@@ -442,101 +495,48 @@ The retained realtime dashboard keeps its existing product behavior and appearan
 
 ## 8. Tests (CTest) — acceptance criteria
 
-### 8.0 Test infrastructure
+### 8.0 Infrastructure
 
-- Tests are run **only with CTest** (`enable_testing()`, `add_test()`, `ctest --output-on-failure`). **No test framework**: no GoogleTest, no Catch2, no doctest, no Boost.Test, nothing fetched with `FetchContent`.
-- Every test is a small, self-contained executable in `tests/` with its own `main()`. It returns `0` on success and a non-zero exit code on failure, after printing `file:line: expected … got …` for each failed check.
-- Shared helpers, written in this repository: `tests/Fixture.h` (test pipelines, `GraphChanged` setup, event builders) and `tests/Check.h` (≤ 60 lines): `CHECK(cond)` (records a failure, continues), `CHECK_EQ(a, b)` (prints both values), `REQUIRE(cond)` (prints and returns non-zero immediately), and a final `return checkResult();`.
-- One CTest test per scenario, named after it (`S01_Diamond`, `S02_PublishSerialization`, …, `I_RandomizedInvariants`, `A_WebhookHmac`, …). Each test gets a CTest `LABELS` property: `core`, `persistence`, `adapters` or `integration`.
-- A test that cannot run in the current environment (e.g. the MariaDB integration test without connection variables) prints the reason and exits with code `77`; it is registered with `set_tests_properties(<name> PROPERTIES SKIP_RETURN_CODE 77)` so CTest reports it as **Skipped**, never as passed.
-- The randomized test uses a fixed default seed, prints the seed it uses, and accepts a seed and run count through environment variables (`CORECI_TEST_SEED`, `CORECI_TEST_RUNS`) so a failure is reproducible.
-- `core` and `persistence` tests must build and pass without SNode.C installed (configure option `-DCORECI_WITH_SNODEC=OFF` builds only those).
+CTest only; no test framework or fetched dependencies. Keep pure core/persistence tests buildable
+without SNode.C. Full qualification builds all adapters and runs full CTest twice against a
+disposable MariaDB, with browser, IDP and fake GitHub fixtures. No skipped required tests.
+InMemoryEventStore is compiled only for tests. Tests use fixture repositories, never production.
 
-Test pipeline: packages `a` (no prereqs), `b → a`, `c → a`, `d → b, c` (diamond), `e → d`. Targets `t1` (feed `f1`), `t2` (feed `f2`); `e` only on `t1`. Tests assert the **exact** command list returned for each event. Every event has an explicit `at`. **Setup**, unless a scenario says otherwise: `GraphChanged` with the test pipeline, then observe tag `v1.0.0` for `b`, `c`, `d`, `e` (no commands), then the scenario's events.
+### 8.1 Remaining acceptance scenarios
 
-- **S1 Diamond:** tag `a v1.0.0` → exactly `DispatchBuild(a,t1)`, `DispatchBuild(a,t2)`. Build+publish `a@t1` → `DispatchBuild(b,t1)`, `DispatchBuild(c,t1)`, nothing for `d`. Publish `b@t1` → no command. Publish `c@t1` → exactly one `DispatchBuild(d,t1)` whose inputs contain the new `b` and `c`. `t2` progresses independently.
-- **S2 Publish serialization:** `b@t1` and `c@t1` succeed back to back → one `DispatchPublish` on `f1`; the second only after `PublishSucceeded` of the first.
-- **S3 Superseding:** `a@t1` building `1.0.0`; tag `1.1.0` arrives → no command; `BuildSucceeded` of `1.0.0` → no publish, `DispatchBuild(a,t1,1.1.0)`. `b@t1` waiting in `AwaitingPublish` behind `c@t1`; tag `b v1.1.0` → `b@t1` leaves the queue, is never published, `DispatchBuild(b,t1,1.1.0)`.
-- **S4 Failure & retry:** `BuildFailed(b,t1)` → `c@t1` continues and publishes; `d@t1`, `e@t1` show `Blocked(by b@t1)`; `RetryRequested(b,t1)` → `DispatchBuild(b,t1)` with a new revision; `d@t1` is then built exactly once.
-- **S5 Idempotency:** duplicate callbacks and callbacks with unknown/stale buildIds produce no commands and no state change (including `engineTime`); `BuildSucceeded` with a different `runId` and `DispatchRejected` for an old `attempt` are ignored.
-- **S6 Tags:** older tag, equal tag, non-semver tag, prerelease (default policy) → ignored. `Version` unit cases: every example in section 3.4; the Semantic Versioning 2.0.0 precedence chain `1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0`; `v1.0.0` == `1.0.0` == `1.0.0+build`; leading zeros rejected.
-- **S7 Rebuild on dependency change:** with everything settled, tag `a v1.0.1` → `b` is rebuilt with the **same** version and revision + 1.
-- **S8 Tag on a waiting unit:** tag `d v2.0.0` while `b@t1` is building → `d` dispatched once, after `b` and `c` are settled, with version `2.0.0`.
-- **S9 Validation:** cycle (message shows the path), prerequisite missing a target, unknown references, duplicate names, two packages from one repository, invalid ids (empty, longer than 64 characters, forbidden characters) → `build()` fails.
-- **S10 Timeouts and dispatch retries:** all events with explicit `at` values. Deadline = `at` of `DispatchAccepted` + timeout; a `Tick` one second before the deadline changes nothing, one at the deadline → `Failed`. `DispatchRejected` 5xx → backoff schedule exactly as in 4.5, measured from the rejection's `at`; 404 → immediate failure. An event whose `at` is earlier than `engineTime` does not move time backwards (deadlines unchanged). Eighth rejection → `Failed`. `Resumed` during backoff emits nothing for that unit. Re-emission without readiness check: `a@t1` published, `DispatchBuild(b,t1)` rejected (5xx), tag `a v1.1.0`, retry `Tick` → `DispatchBuild(b,t1)` re-emitted with the same `buildId`; its `BuildSucceeded` → `AwaitingPublish` (inputs still match the published `a`); once `a 1.1.0` is published, `b@t1` is rebuilt with revision + 1.
-- **S11 Replay:** after every step of S1–S8, take the events stored in `InMemoryEventStore`, map them through `EventRow` and back, replay into a fresh engine → identical status text; `Resumed` re-emits only units in `Dispatching`/`PublishDispatching` without `retryAt`.
-- **S12 Write-ahead:** with `InMemoryEventStore` failing `append` on demand: the event is not applied, no command is executed, the caller gets `503`; the next event is processed only after the previous `append` completed; ignored and invalid events are never appended. Recovery: `append` failing before storing and `append` failing after storing (ambiguous outcome) both lead to rebuild; afterwards the engine state equals a fresh replay of the store, events during recovery get `503`, a retried duplicate gets `200 ignored`, and `Resumed` re-emits the lost commands.
-- **S13 EventRow:** round-trip `Event → EventRow → Event` for every event type, including `NULL` handling, maximum lengths and characters that require escaping (`'`, `\`, `"`, NUL rejected, UTF-8); `normalize` cases for every field rule of 5.2 (character vs. byte counting, invalid UTF-8, NUL, 4096-byte truncation at a character boundary, 40-hex SHAs); every fatal decoding case of 5.2 reports the row's `seq`.
-- **MariaDB integration test (phase 3):** against a real MariaDB server (CI service container; connection from `CORECI_TEST_DB_HOST`, `CORECI_TEST_DB_PORT`, `CORECI_TEST_DB_USER`, `CORECI_TEST_DB_PASSWORD`, `CORECI_TEST_DB_NAME`; the test drops and recreates the `coreci_*` tables in that database only): create schema, append the S1 event sequence, then, in the same test process, destroy queue, engine, store and SNode.C MariaDB client and create fresh ones with a new connection (this is the restart), verify identical status and correct `Resumed` commands; a row with an embedded NUL inserted directly via SQL, and an events table without a schema-version row, are each reported as `Corrupt` (the former naming its `seq`); a `GraphChanged` round-trips with all its graph rows, and graph rows without their `GraphChanged` row are `Corrupt`; package names `a` and `A` round-trip as distinct, and repository owners keep their spelling (`SNodeC`); `revision_base` round-trips. If the environment variables are not set the test exits with `77` and CTest reports it as **Skipped** — never as passed.
-- **Randomized invariant test** (seeded, ≥ 10 000 runs over random event interleavings on the test pipeline): (I1) a new `buildId` is never allocated while any prerequisite of the unit is unsettled (re-emissions by rules 4 and 12 resend an existing `buildId` and are exempt); (I2) at most one inflight per unit; (I3) at most one publication per feed; (I4) when all builds succeed, the system quiesces with every unit settled against the latest tags; (I5) replay equivalence.
-- Adapter tests: webhook HMAC verification (valid, invalid, missing), push-tag filtering, callback HMAC + skew rejection, form decoding, dispatch request body/headers built correctly (against a fake HTTP endpoint); the callback route accepts a `buildId` containing `.`, `+` and `~` (tag with build metadata).
-- **S15 GraphChanged:** an unchanged pipeline is ignored; a new prerequisite edge rebuilds the dependent with the same version and revision + 1; a removed package becomes dormant (its callbacks ignored, its build slot freed, not shown) and, when re-added, continues its revisions without reuse; removing a unit in `AwaitingPublish` or `Publishing`, or changing its feed, is ignored; a new target is dispatched; a feed change clears `published` and rebuilds into the new feed; a `sourceRepo` change clears `released`; a `buildWorkflow` change abandons a `Building` unit and rebuilds it with a new revision; each of these changes is ignored while an affected unit is in a publish phase; re-adding a dormant package from another repository clears its `released`, and re-adding a dormant unit with another feed clears its `published`; package `a.b` with target `c` and package `a` with target `b.c` get distinct buildIds; a change of only the spelling of a repository is accepted, keeps `released` and abandons nothing; replay of a history with several `GraphChanged` reproduces identical status.
-- **S16 Declarations:** a valid registry, target catalog and package files load (fixtures in the catalog form); unknown top-level fields are ignored, while any field other than `id` and `feed` in a matrix entry fails the load; every invalid case (missing required field, wrong type, duplicate key, malformed workflow reference, unknown feed, file over 1 MiB, HTTP error, every identifier rule of 3.2, an invalid registry path, one target id with two feeds, a `revision_base` that is not an integer in 0–1 000 000) fails the whole load naming repository and file; repositories are matched case-insensitively; a registry entry `snodec/SNODE.C` yields the canonical `SNodeC/snode.c` reported by the fake GitHub in the pipeline, the status text and the dispatch URL; copies of the real `ci/packages.json` of `SNodeC/snode.c` (76ca647) and `SNodeC/mqttsuite` (35a4f78) in `tests/data/` yield 76 targets each and the edge `mqttsuite → snodec`.
-- **S17 Badge:** every row of the 4.6.1 table; XML escaping; the width formula; one golden SVG compared byte for byte.
-- **S18 RevisionBase:** `revisionBase` 100 → the first build is `r101`; a later `GraphChanged` lowering it continues above the last revision; raising it jumps above the new base; a `GraphChanged` that changes only `revisionBase` is accepted and affects only future allocations.
-- **S19 StatusJson:** the canonical form of 7.8 for every 4.6 kind; dormant units excluded; the run fields taken from their events; replay reproduces identical `status.json` bytes; `503` during recovery.
-- **S20 PresentationDispatch:** dirty after a status change of the feed and at startup, not after a change of another feed only; at most one dispatch per `statusInterval`; a rejected dispatch stays dirty; no dispatch without `presentation`.
-- **S21 Catalog:** an unknown catalog id, a duplicate id or an extra matrix field fails the load; the coordinates reach the dashboard model.
-- **S22 DashboardStream:** snapshot, coalesced updates (at most one per second) after events, job-cache updates and declaration loads; keep-alive; headers; the stream limit; recovery and `ready`.
-- **S23 DashboardButtons:** Retry and Refresh act as specified; the four other operations answer `Not supported by core-ci`.
-- **S24 DashboardAuth:** against a fake provider: no cookie → login redirect with PKCE, state and nonce; a valid login of a listed subject → access; another subject, also with the same email → `403`; an open stream is closed within 60 s after the session becomes invalid; `/api/v1` is unaffected.
-- **S25 JobCache:** a run found by `runId` and by run name; refresh while running, then kept; the 4-request limit; an error leaves the fields absent.
-- **S26 Rebuild:** a satisfied unit → `RebuildRequested` → `DispatchBuild` of the same version with revision `lastRevision + 1`; ignored with `inflight`, without `published`, for a dormant unit or when not satisfied; after its publication every dependent on the same target is rebuilt exactly once and `rebuild` is cleared; a failed rebuild keeps `rebuild` and `RetryRequested` resumes it; replay reproduces every step; the route requires the admin token.
-- **S28 AutoRetry:** a build failure → exactly one automatic retry after `retryDelay` with a new revision; a second failure of the same version and inputs stays `Failed`; a dispatch rejection with 401/403/404/422 → no automatic retry; `RetryRequested` before `retryAfter` cancels the pending one; a new tag resets it; `retryDelay` 0 disables it; replay reproduces every step.
-- **S14 EventSql:** for every event type the `INSERT` contains string values only as `_utf8mb4 X'…'`, numbers only as decimal literals, absent values only as `NULL`; values containing `'`, `\`, `"`, `;`, `--`, `/*` and multi-byte UTF-8 appear only hex-encoded; empty strings appear as `_utf8mb4 X''`; the only non-literal expression in an `INSERT` is `UTC_TIMESTAMP(3)`; the `SELECT` lists every column except `recorded_at` in a fixed order, string columns as `HEX(col) AS col`, `ORDER BY seq`; a `GraphChanged` is written as `startTransactions`, the `INSERT`s (graph rows with `LAST_INSERT_ID()`), `commit`, `endTransactions`.
+Retain S01 diamond, S02 per-feed serialization, S03 superseding, S04 failure/retry,
+S05 idempotency, S06 semantic tags, S07 dependency publication rebuild, S08 waiting tags,
+S09 validation, S10 deadlines/backoff, S11 replay, S12 write-ahead/ambiguous-outcome recovery,
+S13 typed event rows, S14 SQL encoding, S15 graph changes, S16 declarations, S17 badges,
+S18 revision base, S19 public status, S21 target catalog, S22 stream, S23 operations,
+S24 IDP authentication, S26 rebuild, S27 dashboard history and S28 automatic retry.
+Retain randomized invariants (10000 seeded runs), MariaDB integration, local smoke,
+dashboard browser state coverage and dashboard end-to-end tests. Remove tests of job lookup,
+presentation, text/DOT rendering and admin routes.
 
----
+### 8.2 Slim regressions
 
-## 9. Historical implementation phases
+- JWT header/claims and RS256 signature verified with a test key pair; unreadable/non-RSA key fails.
+- Installation token reused strictly before expires_at minus five minutes; refreshed at boundary;
+  concurrent mint sharing; key reread; one remint/retry on 401, second 401 fails; failed mint fails.
+- Source scan rejects static credential providers/environment names in production.
+- Declaration HTTP requests use the selected tag commit; pagination and prerelease selection;
+  source default-branch push ignored; malformed loads leave state unchanged.
+- Registry reload adds/schedules units, retires removed units and preserves settled units.
+- PublishStarted is HMAC parsed, persisted, replayed and records publisher run id/attempt/start;
+  duplicate/stale callbacks and callback-before-dispatch are covered.
+- Dashboard phases show recorded starts/ends/durations/states and run/attempt links in populated,
+  changing and completed states, including restart; no jobs are fetched.
+- Every removed route returns 404, retained public routes remain public, all four supported
+  operations require IDP login/subject allowlist and unsupported operations report errors.
+- Functional SSE snapshot/update/coalescing/keepalive/reconnect/recovery and session expiry,
+  stream limit and HTTP redirect remain covered. Browser checks verify phase rows and actions.
 
-The phase list below records the prior implementation and rollout. It does not specify the replacement GitHub CI. Historical GitHub workflow and golden/pixel acceptance requirements are retired; current controller acceptance uses the retained functional tests in section 8.
+### 8.3 Development constraints
 
-Work in `/home/voc/projects/snodec/core-ci`. Each phase is one branch off the repository's default branch (`coreci/phase-<n>`), with small, focused commits; if the repository has a GitHub remote, open one PR per phase. **Do not start the next phase until told to.**
-
-0. **Phase 0 — green field.** Prepare the repository; do not write any core-ci code in this phase.
-   1. **Inventory and stop if unsafe.** Report: `git status`, `git branch -a`, `git stash list`, `git remote -v`, the default branch, and the list of tracked files. If there are uncommitted changes, untracked files outside build directories, or stashes, **stop and ask** — never discard them yourself.
-   2. **Preserve the old state.** Create the annotated tag `pre-greenfield` on the current default-branch HEAD (`git tag -a pre-greenfield -m "State before core-ci green-field restart"`). Do not delete or rewrite any branch, tag or commit; do not force-push; do not rename the default branch.
-   3. **Remove everything.** On branch `coreci/phase-0`: `git rm -r` every tracked file and directory, including `.github/`, build scripts, CMake files, docs and configuration — **except** licence files (`LICENSE*`, `COPYING*`), which stay exactly as they are. Delete build output directories in the working tree (e.g. `build*/`, `cmake-build-*/`) only after listing them in the report.
-   4. **Add the minimum.** Add this specification as `SPEC.md` (verbatim), a minimal `README.md` (title "core-ci" and one sentence: "Orchestrator for the SNode.C package build pipeline — see SPEC.md."), and a `.gitignore` for build directories. Nothing else.
-   5. **Verify and report.** `git ls-files` must list only the licence files, `SPEC.md`, `README.md` and `.gitignore`. Report the tag name, the commit, and the output of `git ls-files`. Commit message: `Start core-ci from a clean slate`.
-   From now on, the code at `pre-greenfield` is history only: it is never checked out, diffed against, copied from, or used as a reference.
-1. **Phase 1:** `core/` + its tests (S1–S10, randomized test). No SNode.C, no I/O.
-2. **Phase 2:** `persistence/` (EventRow, EventStore, InMemoryEventStore, the write-ahead event queue of 5.3) + S11–S13 + replay in the invariant test. Still no SNode.C, no database.
-3. **Phase 3a:** `persistence/EventSql` + S14, `adapters/mariadb/` (`MariaDBEventStore`), the `StoreError` interface change, and the MariaDB integration test. Stop and report.
-3. **Phase 3b:** `adapters/github/` + `app/` on SNode.C + adapter tests + `pipeline/Pipeline.cpp`. Provide a local smoke test script: run core-ci against a fake GitHub HTTP server (a tiny SNode.C app in `tests/`) and drive the S1 diamond via `curl` callbacks.
-3. **Phase 3c:** declarations instead of a compiled graph: remove `pipeline/` and `core::Family`; `GraphChanged` in engine, persistence and MariaDB (schema version 2); `adapters/github/Declarations`; reload triggers and the status error line; tests S9, S14–S16 and the MariaDB integration and smoke test changes. Stop and report.
-3. **Phase 3d:** express routing (6.1) replacing the hand-written dispatcher in `app/`, with all existing adapter and smoke tests passing (only `A_CallbackHmac` changes: the router decodes path parameters, so `report()` receives an already-decoded buildId and no longer decodes it); badges (4.6.1 and the badge route), `revision_base` (declaration, engine, `coreci_graph_packages`, schema version 3), tests S16–S18 and the MariaDB integration and smoke test changes. Stop and report.
-4. **Phase 4a:** section 7 (specification only).
-4. **Phase 4b:** in DistributionPackages: the `coreci/` package, the two workflows, the action and the registry fields of 7.1, as a PR that the owner merges before the proof runs — GitHub dispatches a `workflow_dispatch` workflow only if the file exists on the default branch; the workflows stay inert until 4d because nothing dispatches them for the production feed. Also `SNodeC/Packages-staging`, the staging environment with generated keys and a test registry on a branch (7.7). In `snode.c` and `mqttsuite` (branch and PR each, not merged): the native hook environment of 7.2 and `development_packages`. Proof (7.7): `snodec` and then `mqttsuite` on one deb and one rpm target, `mqttsuite` installing `snodec` from the staging feed; repeating a `snodec` publication is a no-op; a conflicting one fails `immutable`; the README badge block is generated. Stop and report.
-4. **Phase 4c:** OpenWrt and production preparation. On the 4b branches of `snode.c` and `mqttsuite`: the OpenWrt hooks on the 7.2 interface (`SOURCE_TAG`, `PREREQUISITES_DIR` instead of receipts), the development export of `snodec`, removal of the old SHA-pinned build wrappers and status-notification workflows (effective only when merged in 4d), and `revision_base` = the highest revision any of the package's files has ever had in the production feed: over every branch and commit of `SNodeC/Packages` and of its retired predecessor `SNodeC/OpenWRT`, read read-only, so that a user who installed any earlier revision still receives the next build as an upgrade. In DistributionPackages (PR, not merged): the production `ci/registry.json` with the production key fingerprints. Proof (7.7): one ipk and one apk target, `mqttsuite` building against the development export of `snodec` from the staging feed. Stop and report.
-4. **Phase 4c2:** presentation and `snode.c-idp`. core-ci: `GET /api/v1/status.json`, the run fields it needs, presentation dispatch, `statusInterval`, tests S19–S20 and the smoke test change (`status.json` served; a presentation dispatch after a publication). DistributionPackages: 7.8 (`coreci/presentation.py`, receipts, `coreci-status.yml`, the publisher's lease retry and badge rule) with G1–G3 as CTest tests; the production registry PR updated (feed `url` of 7.1, `presentation`, no `badges`, `SNodeC/snode.c-idp` added). `snode.c-idp` (branch and PR, not merged): its hook on the 7.2 interface, `ci/packages.json` with `snodec-idp` depending on `snodec`, its existing 18 deb and 8 rpm targets and `revision_base` 12, removal of its old build wrapper and status-notification workflows. Proof (7.7): `snodec-idp` on one deb and one rpm target installing `snodec` from the staging feed; the staging registry gets `presentation`; the staging presentation renders with the unchanged templates; a presentation run and a publication racing for the staging feed both land through the lease retry. Stop and report.
-4. **Phase 4e:** dashboard and target catalog (6.5, 3.3, 4.3–4.7, 5.2). core-ci: the assets, `/events`, the projection, the job cache, the admin operations, the authentication (6.5), catalog loading, `title`, `dashboardRedirectPort`, `adapters/dashboard/`, the presentation dispatch rule of 7.8, tests S21–S25 and functional dashboard browser checks. snode.c-idp: the configurable cookie name and lifetime in its client library (a PR, merged before the core-ci deployment, without a snode.c-idp release, which follows with its next version). Deployment host: core-ci, the identity provider and its minimal application are built from the current SNode.C master commit (one build, installed once in a shared prefix `/opt/snodec/<commit>`), the client library and the provider from the merge commit of `SNodeC/snode.c-idp`; the earlier instances (`core-ci-snodec.service`, VOC-Experiments `core-ci.service`) are not rebuilt. DistributionPackages: `ci/targets.json` with every current target; the workflows read target details from the catalog and accept both matrix forms during the transition; `run-name: ${{ inputs.build_id }}` in `coreci-build.yml` and `coreci-publish.yml`; registry `targets`; the catalog's `openwrt-24.10-riscv64_generic` gets `arch` `riscv64_riscv64` (the profile's architecture). snode.c, mqttsuite and snode.c-idp: matrix entries reduced to catalog ids. Order: DistributionPackages, then the source repositories, then the core-ci deployment, then retirement of the earlier SNodeC instance and the 8081 redirect. Stop and report before the deployment.
-4. **Phase 4d:** deployment on `core.vchrist.at` and switch-over, by separate instructions; it also retires the old `core-ci-*.yml` workflows and the old status writer.
-4. **Phase 4d2:** package versions and rebuild (7.3; 4.1–4.7, 6.1). DistributionPackages: the release field of 7.3, with a test for every format and the ordering examples. core-ci: `RebuildRequested`, its route, S26 and a smoke-test step for the route; deployed on `core.vchrist.at` by separate instructions. Stop and report.
-4. **Phase 4g:** cleanup and speed (7.0, 7.2–7.5). DistributionPackages: remove `core_ci/` and the `core-ci-*.yml` workflows and move the used functions into `coreci/` (7.0); rename the image maintenance to `coreci-prepare-rootfs.yml` with its tool in `coreci/`; retention, the sparse feed checkout and emulation only where needed (7.5); no CPU limit (7.4). snode.c and mqttsuite: the hook rules of 7.2. Acceptance: full CTest and actionlint; a retention test (keeps the two newest publications, also across a version change, removes older ones including files from before core-ci, keeps architecture-independent files, ledgers and receipts, regenerates the indices, fails `retired`); for one target of every distribution and every OpenWrt series, the produced package file names and dependency fields equal those of the last build before the change (every difference listed and explained); per family one build and one publication timed before and after. Merged only by explicit owner authorization; deployed by separate instructions. Stop and report.
-4. **Phase 4h:** presentation cleanup (7.8). DistributionPackages: the renderer stops writing `index.html`, `status/index.html`, `status/*.html` and `status.json`; the templates only they use are removed; the presentation writer removes these files, `.github/workflows/pages.yml` and the orphaned pre-buildId receipts from the feed in its next commit. The status templates get the page header of 7.8. Acceptance: G1–G3 for the remaining files; on the same data, `README.md` and the badges are byte-identical before and after, and `status/README.md` and `status/*.md` differ only by the page header; in light and dark mode at 1280×900 on github.com, the header's buttons are pixel-identical to those of `docs/installation/snodec/README.md` and the banner and up link match their assets. Merged only by explicit owner authorization. Stop and report.
-4. **Phase 4i:** automatic retry (4.1, rules 7 and 15, configuration, S28) in core-ci; deployed by separate instructions. Stop and report.
-
-### Report format for every phase
-- Files changed (paths).
-- Exact configure/build commands and the complete `ctest --output-on-failure` output (passed/failed/skipped counts).
-- Any deviation from this specification, with the reason. Unlisted deviations are defects.
-- Open questions.
-
-### Forbidden (each one is a rejected PR)
-- Any test framework (GoogleTest, Catch2, doctest, Boost.Test, …) or `FetchContent`; tests run only through CTest.
-- JSON anywhere outside `adapters/github/` and `adapters/dashboard/` other than the `status.json` writer of 7.8; any JSON representation of the graph; any stored or logged JSON representation of state; JSON columns or JSON text in the database.
-- File-based persistence of state; any database access other than SNode.C's MariaDB client; SQL built from unescaped values.
-- Applying an event or executing a command before its row is committed.
-- Threads, mutexes, sleeps, busy polling.
-- I/O, clocks or randomness inside `core/`.
-- Workflows triggering other workflows or repositories.
-- GitHub `concurrency:` groups used for feed serialization.
-- Pinning repositories to commits or Actions to SHAs; assuming `main` as default branch.
-- Stubs, TODOs or placeholder implementations reported as done.
-- Changing engine semantics in later phases without asking.
-- Repository-, package-, distribution-, architecture- or release-specific knowledge in core-ci code (test data excepted); a compiled-in graph.
-- Hand-written request routing instead of SNode.C's express router.
-- Working in any directory other than `/home/voc/projects/snodec/core-ci` (except reading the SNode.C sources, reading DistributionPackages in phases 3b and 4, reading the declared repositories' `ci/packages.json` in phase 3c, changing DistributionPackages and `SNodeC/Packages-staging` in phases 4b–4e, and changing `snode.c`, `mqttsuite` and `snode.c-idp` in phases 4b–4e).
-- Before Phase 4d: any write to `SNodeC/Packages`, any use of a production environment or production signing key, any change to the old `core-ci-*.yml` workflows, merging anything (only the owner merges).
-- Reusing, copying or consulting code from the pre-greenfield implementation (except the three dashboard assets of 6.5); deleting history, force-pushing, discarding uncommitted work, or renaming the default branch.
+Canonical checkout /home/voc/projects/snodec/core-ci only. Never consult pre-greenfield tags.
+Build with -Wall -Wextra -Wpedantic -Werror. Use shared formatting copies and explicit targets.
+No production access, deployment or tags. No compatibility with previous persisted histories:
+fresh schema version 4 is required. One coherent SPEC PR, then implementation PR with full
+qualification before merge. Record baseline/final physical source lines separately for
+core/, persistence/, adapters/, app/ and dashboard assets; test lines separately.
