@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+family=$(printf '%s' "$TARGET_JSON" | jq -r .family)
+build=/tmp/codex/build/core-ci/wave
+mkdir -p "$build" "$OUTPUT_DIR"
+export TMPDIR="$build" QT_QPA_PLATFORM=offscreen
+cmake -S "$SOURCE_DIR" -B "$build" -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr -DCORECI_WITH_SNODEC=ON
+cmake --build "$build" --parallel "$(nproc)"
+ctest --test-dir "$build" -LE "mariadb|browser" -E '^M_DashboardEndToEnd$' --output-on-failure
+case "$family" in
+    deb)
+        cpack --config "$build/CPackConfig.cmake" -G DEB -B "$OUTPUT_DIR" \
+            -D "CPACK_PACKAGE_VERSION=$PACKAGE_VERSION-$PACKAGE_RELEASE"
+        ;;
+    rpm)
+        cpack --config "$build/CPackConfig.cmake" -G RPM -B "$OUTPUT_DIR" \
+            -D "CPACK_PACKAGE_VERSION=$PACKAGE_VERSION" \
+            -D "CPACK_RPM_PACKAGE_RELEASE=$PACKAGE_RELEASE"
+        ;;
+esac
