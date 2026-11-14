@@ -3,20 +3,28 @@
 #include <nlohmann/json.hpp>
 namespace coreci::dashboard {
     namespace {
-        nlohmann::json phase(const WorkflowPhase& value, const Workflow& workflow) {
-            using Json = nlohmann::json;
-            Json result{{"state", value.state},
-                        {"start", value.start ? Json(*value.start) : Json()},
-                        {"end", value.end ? Json(*value.end) : Json()},
-                        {"duration", value.start && value.end ? Json(*value.end - *value.start) : Json()}};
-            if (value.runId) {
-                result["runId"] = *value.runId;
-                result["html_url"] =
-                    "https://github.com/" + workflow.owner + "/" + workflow.repo + "/actions/runs/" + std::to_string(*value.runId);
-                if (value.runAttempt) {
-                    result["runAttempt"] = *value.runAttempt;
-                    result["html_url"] = result["html_url"].get<std::string>() + "/attempts/" + std::to_string(*value.runAttempt);
+        std::string runLink(const Wave& wave) {
+            std::string result;
+            if (wave.runId) {
+                result =
+                    "https://github.com/" + wave.workflow.owner + "/" + wave.workflow.repo + "/actions/runs/" + std::to_string(*wave.runId);
+                if (wave.runAttempt) {
+                    result += "/attempts/" + std::to_string(*wave.runAttempt);
                 }
+            }
+            return result;
+        }
+        nlohmann::json
+        phase(const std::string& state, std::optional<std::int64_t> start, std::optional<std::int64_t> end, const Wave* wave) {
+            using Json = nlohmann::json;
+            Json result{{"state", state},
+                        {"start", start ? Json(*start) : Json()},
+                        {"end", end ? Json(*end) : Json()},
+                        {"duration", start && end ? Json(*end - *start) : Json()}};
+            if (wave && wave->runId) {
+                result["runId"] = *wave->runId;
+                result["runAttempt"] = wave->runAttempt ? Json(*wave->runAttempt) : Json();
+                result["html_url"] = runLink(*wave);
             }
             return result;
         }
@@ -43,24 +51,30 @@ namespace coreci::dashboard {
         if (!ready) {
             value["units"] = Json::array();
         }
+        if (const auto* wave = engine.latestWave()) {
+            value["wave"]["html_url"] = runLink(*wave);
+        }
         for (auto& unit : value["units"]) {
             const Unit key{unit.at("package"), unit.at("target")};
             const auto& state = engine.units().at(key);
             unit["order"] = state.order;
-            unit["assigned"] = state.build.dispatchedAt.has_value() || state.build.runId.has_value();
-            unit["publishDispatchedAt"] = state.publish.dispatchedAt ? Json(*state.publish.dispatchedAt) : Json();
-            unit["publishedAt"] = state.publish.end ? Json(*state.publish.end) : Json();
+            const auto w = engine.waves().find(state.waveId);
+            const auto* wave = w == engine.waves().end() ? nullptr : &w->second;
+            unit["assigned"] = wave != nullptr;
+            unit["publishedAt"] = state.published ? Json(state.published->at) : Json();
             const auto& target = declarations.catalog.at(key.target);
             unit.update({{"distribution", target.distribution},
-                         {"suite", target.suite},
+                         {"suite", target.release},
                          {"arch", target.arch},
-                         {"format", target.format},
+                         {"format", target.family},
                          {"prerequisites", declarations.packages.at(key.package).prerequisites}});
-            unit["build"] = phase(state.build, engine.pipeline().packages().at(key.package).buildWorkflow);
-            unit["publish"] = phase(state.publish, engine.pipeline().feeds().at(unit.at("feed").get<std::string>()).workflow);
-            const auto& inflight = engine.units().at(key).inflight;
-            if (inflight) {
-                unit["tag"] = inflight->tag;
+            const auto buildState =
+                state.buildEnd ? (state.artifact.empty() ? "failed" : "succeeded") : (state.buildStart ? "running" : "pending");
+            unit["build"] = phase(buildState, state.buildStart, state.buildEnd, wave);
+            unit["publish"] = phase(
+                state.publishEnd ? (state.state == State::Published ? "succeeded" : "failed") : "pending", {}, state.publishEnd, wave);
+            if (const auto* entry = engine.selection(key)) {
+                unit["tag"] = entry->release.tag;
             }
         }
         return value.dump();

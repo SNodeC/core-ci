@@ -126,17 +126,19 @@ def button_checks(fx):
         code, value = fx.post('/api/' + name, {})
         assert code == 400 and value['error'].startswith('Not supported by core-ci: ')
     assert fx.webhook('SNodeC/snode.c') == 200
-    rid, values, main = fx.dispatches.get(timeout=10)
-    assert main == 'build'
-    fx.report(rid, values, 'build', 'failed')
-    code, value = fx.post('/api/retry', dict(package=values['package'], target=values['target']))
+    rid, values = fx.dispatches.get(timeout=10)
+    target = fx.plan(values)['targets'][0]
+    entry = target['units'][0]
+    fx.started(rid, values)
+    fx.unit(values, entry, status='failed')
+    fx.finished(rid, values, 'failure')
+    code, value = fx.post('/api/retry', dict(package=entry['package'], target=target['id']))
     assert code == 200 and value['result'] == 'accepted'
-    retry_id, retry_values, _ = fx.dispatches.get(timeout=10)
-    deadline = time.monotonic() + 10
-    while (retry_values['target'] != values['target'] or retry_values['revision'] == values['revision']) and time.monotonic() < deadline:
-        retry_id, retry_values, _ = fx.dispatches.get(timeout=10)
-    assert retry_id != rid and retry_values['target'] == values['target']
-    assert int(retry_values['revision']) == int(values['revision']) + 1
+    retry_id, retry_values = fx.dispatches.get(timeout=10)
+    retried = fx.plan(retry_values)
+    retry_entry = next(unit for item in retried['targets'] if item['id'] == target['id']
+                       for unit in item['units'] if unit['package'] == entry['package'])
+    assert retry_id != rid and int(retry_entry['revision']) == int(entry['revision']) + 1
     assert fx.post('/api/retry', {'package': 'unknown', 'target': 'unknown'})[0] == 200
     assert fx.post('/api/reconcile', {})[0] == 200
     fx.release.clear()
@@ -177,7 +179,7 @@ def auth_checks(fx):
     assert refused.code == 403, 'another subject with the same email was admitted'
     fx.subject = 'owner'
     assert fx.request('/api/v1/status.json', browser=False).status == 200
-    for path in ('status', 'graph.dot', 'reload', 'reconcile', 'units/p/t/retry', 'units/p/t/rebuild'):
+    for path in ('status', 'graph.dot', 'reload', 'reconcile', 'units/p/t/retry', 'units/p/t/rebuild', 'builds/id/report'):
         for body in (None, b''):
             assert fx.request('/api/v1/' + path, body, browser=False).status == 404
     for operation in ('retry', 'rebuild', 'reload', 'reconcile'):

@@ -144,13 +144,14 @@ differ from publication, retry/rebuild requested, or any same-target prerequisit
 builds. Otherwise reuse published version-revision. Missing releases prevent that
 chain from building. Unchanged failed units wait for retry with their dependent
 chain; independent units remain eligible. Omit targets with no build units.
-Reuse has empty build_id and no callbacks.
+Reuse has empty build_id and no callbacks. Wave counts include reuse as Published.
 
 For each build allocate max(lastRevision[version], revision_base)+1 as before,
 including retry/rebuild; reuse retains publication revision. Freeze source repo,
 tag, commit, version, revision, inputs and direct prerequisites. Reset build/result
 timings on allocation, assign Planned, consume its request. Allocate only builds
-on included targets. The plan is the sole authority for unit callbacks.
+on included targets. The plan is the sole authority for unit callbacks. Publication records refer to
+that wave for run identity, so a later WaveStarted binds an earlier unit receipt.
 
 ### 4.4 Dispatch and lifetime
 
@@ -209,7 +210,7 @@ per-package workflow columns. Schema.sql is the exact DDL authority.
 
 Every event field from 4.3 maps to exactly one typed column; unused columns are `NULL`. The mapping `Event ↔ EventRow` lives in `persistence/EventRow.cpp`, is pure and is round-trip tested for every event type.
 
-**Field rules** (`persistence/EventRow`, pure): `normalize(event) → Event | Invalid(reason)`. Identifier fields (`package`, `target`, `tag`, `wave_id`, `build_id`, `artifact`) must be non-empty valid UTF-8 without NUL and fit their column, counted in characters as MariaDB `utf8mb4` does. `source_sha` and `feed_commit` are exactly 40 lowercase hexadecimal characters. Numbers must fit their column (`run_attempt`, `attempt` ≥ 1; `http_status` 0–999). Free text (`message`, `reason`) is never rejected: invalid UTF-8 → U+FFFD, NUL removed, truncated to 4096 bytes at a character boundary. Every field listed for an event in 4.3 is required; `message`/`reason` may be empty. **Decoding** a row with an unknown `event_type`, an invalid `origin`, a missing required field, a non-NULL field the event type does not use, or a value violating these rules is fatal: `loadAll` reports it through `onError` naming the row's `seq`, and core-ci refuses to start.
+**Field rules** (`persistence/EventRow`, pure): `normalize(event) → Event | Invalid(reason)`. Identifier fields (`package`, `target`, `tag`, `wave_id`, `build_id`, `artifact`, `conclusion`) must be non-empty valid UTF-8 without NUL and fit their column, counted in characters as MariaDB `utf8mb4` does. `source_sha` and `feed_commit` are exactly 40 lowercase hexadecimal characters. Numbers must fit their column (`run_attempt`, `attempt` ≥ 1; `http_status` 0–999). Free text (`message`, `reason`) is never rejected: invalid UTF-8 → U+FFFD, NUL removed, truncated to 4096 bytes at a character boundary. Every field listed for an event in 4.2 is required; `message`/`reason` may be empty. **Decoding** a row with an unknown `event_type`, an invalid `origin`, a missing required field, a non-NULL field the event type does not use, or a value violating these rules is fatal: `loadAll` reports it through `onError` naming the row's `seq`, and core-ci refuses to start.
 
 ### 5.3 Write-ahead ordering (critical)
 
@@ -259,7 +260,7 @@ public:
 | GET /api/v1/waves/{wave_id}/plan.json | Public | Frozen W5 plan, including after finish/restart; unknown id 404, recovery 503, no-store. |
 | POST /api/v1/waves/{wave_id}/report | Callback HMAC | Workflow events below. |
 | GET /api/v1/status.json | Public | Recorded unit status, 503 during recovery. |
-| GET /api/v1/badge/{package}/{target}.svg | Public | Badge (4.6.1), always 200, unavailable during recovery. |
+| GET /api/v1/badge/{package}/{target}.svg | Public | Badge from recorded unit state, always 200, unavailable during recovery. |
 | GET /, /style.css, /app.js, /events | IDP and subject allowlist | Dashboard assets and SSE. |
 | POST /api/{operation} | IDP and subject allowlist | retry, rebuild, reload, reconcile. |
 | GET /auth/callback | IDP authorization-code validation | Complete login; protected access checks subject. |
@@ -363,7 +364,7 @@ lifetime 12 hours. Re-introspect open streams at least every 60 seconds and clos
 
 status.json is generated from recorded unit state by the existing handwritten app/ writer,
 without a JSON library. It contains the event sequence, packages and unit selections, published,
-inflight and failure records. It is public alongside badges. No presentation dispatch,
+selection and failure records, plus the current wave. It is public alongside badges. No presentation dispatch,
 status workflow, generation/dirty bookkeeping for a presentation writer, registry presentation
 field or status_url field exists.
 
@@ -413,17 +414,20 @@ W10 Concurrency: core-ci runs at most one wave at a time; wave.yml uses concurre
 ## 8. Acceptance
 
 Full build with adapters and full CTest twice green, no required skips, against
-disposable MariaDB, fake GitHub/IDP and browser fixtures. No test framework or
+disposable MariaDB and fake GitHub/IDP HTTP fixtures. No test framework or
 fetched dependencies. Retain HMAC/TLS/App auth, version/validation, write-ahead/
-ambiguous-outcome, SQL/row/replay, SSE, badges, status, browser and integration
-coverage. Delete obsolete per-unit/feed tests.
+ambiguous-outcome, SQL/row/replay, SSE, badges, status, dashboard model and integration
+coverage. Delete obsolete per-unit/feed tests. Browser-driven tests, dashboard
+end-to-end/browser scripts, Node/npm dependencies, Playwright and reference-browser
+requirements are removed completely. C++ dashboard model tests and HTTP tests of
+SSE, routes, operations and authentication remain; no test launches a browser.
 
 Cover debounce coalescing, only one wave active, changes during a wave, build vs
 reuse/unchanged reuse/diamond cascades, revision increments/base, W5 plan schema,
 callback transitions/idempotency, transitive Blocked dependents, independent
 success, no-result failures, manual/automatic retry cascades/limit, dispatch
 rejection/backoff/exhaustion, deadline, restart waiting, frozen plan during graph
-changes, dashboard unit/wave contents and browser updates, old report route 404,
+changes, dashboard unit/wave contents, SSE output and routes, old report route 404,
 public plan and authenticated callbacks. Retain 10000 seeded randomized scenarios.
 
 Report baseline/final physical production lines per directory and dashboard

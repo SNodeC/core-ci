@@ -6,7 +6,7 @@ namespace coreci::github {
     };
     std::variant<DeclarationFile, Error> registryFile(const std::string& value);
     struct CatalogTarget {
-        std::string distribution, suite, arch, format;
+        std::string distribution, release, codename, arch, family;
     };
     struct PackageDetails {
         std::string title, commit;
@@ -20,7 +20,6 @@ namespace coreci::github {
     };
     using Fetch = std::function<void(std::string path, bool raw, Completion)>;
     void loadDeclarations(const DeclarationFile& registry,
-                          const std::string& workflowRepository,
                           const std::string& catalogPath,
                           const Url& base,
                           Fetch fetch,

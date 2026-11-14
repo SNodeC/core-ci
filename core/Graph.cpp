@@ -17,9 +17,6 @@ namespace coreci {
     bool sameIdentity(const Repo& a, const Repo& b) {
         return repoKey(a.owner) == repoKey(b.owner) && repoKey(a.repo) == repoKey(b.repo) && a.branch == b.branch;
     }
-    bool sameIdentity(const Workflow& a, const Workflow& b) {
-        return sameIdentity(Repo{a.owner, a.repo, a.branch}, Repo{b.owner, b.repo, b.branch}) && a.workflowFile == b.workflowFile;
-    }
     bool validBranch(const std::string& value) {
         bool valid = !value.empty() &&
                      std::count_if(value.begin(),
@@ -55,10 +52,6 @@ namespace coreci {
                 throw std::invalid_argument("invalid branch: " + branch);
             }
         }
-        void workflow(const Workflow& w) {
-            repository(w.owner, w.repo, w.branch);
-            validateWorkflowFile(w.workflowFile);
-        }
     } // namespace
     void validateIdentifier(const std::string& value, const std::string& kind) {
         if (!characters(value, 64, "._-")) {
@@ -73,42 +66,23 @@ namespace coreci {
             throw std::invalid_argument("invalid repository: " + repo);
         }
     }
-    void validateWorkflowFile(const std::string& file) {
-        if (!characters(file, 255, "._-") || !(file.ends_with(".yml") || file.ends_with(".yaml"))) {
-            throw std::invalid_argument("invalid workflow: " + file);
-        }
-    }
-    Pipeline::Builder& Pipeline::Builder::feed(Feed value) {
-        feedList.push_back(std::move(value));
-        return *this;
-    }
     Pipeline::Builder& Pipeline::Builder::target(Target value) {
         targetList.push_back(std::move(value));
         return *this;
     }
     Pipeline::Builder& Pipeline::Builder::package(Package value) {
         std::sort(value.prerequisites.begin(), value.prerequisites.end());
-        value.prerequisites.erase(std::unique(value.prerequisites.begin(), value.prerequisites.end()), value.prerequisites.end());
+        if (std::adjacent_find(value.prerequisites.begin(), value.prerequisites.end()) != value.prerequisites.end()) {
+            throw std::invalid_argument("duplicate prerequisite: " + value.name);
+        }
         packageList.push_back(std::move(value));
         return *this;
     }
     Pipeline Pipeline::Builder::build() const {
         Pipeline p;
-        for (const auto& f : feedList) {
-            validateIdentifier(f.id, "feed");
-            workflow(f.workflow);
-            if (!p.feedMap.emplace(f.id, f).second) {
-                throw std::invalid_argument("duplicate feed: " + f.id);
-            }
-        }
         for (const auto& t : targetList) {
             validateIdentifier(t.id, "target");
-            if (!p.targetMap.emplace(t.id, t).second && p.targetMap.at(t.id).feed != t.feed) {
-                throw std::invalid_argument("target has different feeds: " + t.id);
-            }
-            if (!p.feedMap.contains(t.feed)) {
-                throw std::invalid_argument("unknown feed: " + t.feed + " for target " + t.id);
-            }
+            p.targetMap.emplace(t.id, t);
         }
         for (const auto& pkg : packageList) {
             validateIdentifier(pkg.name, "package");
@@ -116,7 +90,6 @@ namespace coreci {
                 throw std::invalid_argument("revision_base outside 0–1000000: " + pkg.name);
             }
             repository(pkg.sourceRepo.owner, pkg.sourceRepo.repo, pkg.sourceRepo.branch);
-            workflow(pkg.buildWorkflow);
             if (!p.packageMap.emplace(pkg.name, pkg).second) {
                 throw std::invalid_argument("duplicate package: " + pkg.name);
             }
@@ -194,9 +167,6 @@ namespace coreci {
         }
         return p;
     }
-    const std::map<std::string, Feed>& Pipeline::feeds() const {
-        return feedMap;
-    }
     const std::map<std::string, Target>& Pipeline::targets() const {
         return targetMap;
     }
@@ -208,15 +178,6 @@ namespace coreci {
     }
     const std::vector<std::string>& Pipeline::prerequisites(const std::string& package) const {
         return packageMap.at(package).prerequisites;
-    }
-    std::vector<std::string> Pipeline::dependents(const std::string& package) const {
-        std::vector<std::string> result;
-        for (const auto& [name, pkg] : packageMap) {
-            if (std::find(pkg.prerequisites.begin(), pkg.prerequisites.end(), package) != pkg.prerequisites.end()) {
-                result.push_back(name);
-            }
-        }
-        return result;
     }
     std::vector<std::string> Pipeline::packagesForRepo(const std::string& owner, const std::string& repo) const {
         std::vector<std::string> result;

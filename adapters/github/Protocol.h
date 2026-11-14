@@ -25,7 +25,7 @@ namespace coreci::github {
         const std::string& secret, const std::string& body, const std::string& timestamp, const std::string& signature, std::int64_t now);
     using Form = std::map<std::string, std::string>;
     std::variant<Form, Error> form(const std::string& body);
-    std::variant<Event, Error> report(const std::string& buildId, const Form& values, std::int64_t at);
+    std::variant<Event, Error, std::monostate> report(const std::string& waveId, const Form& values, std::int64_t at);
     struct Push {
         std::string repo, tag, sha;
         std::string branch = {}, defaultBranch = {};

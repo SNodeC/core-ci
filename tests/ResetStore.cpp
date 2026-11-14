@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
         client.connect();
         client.exec(
             "DROP TABLE IF EXISTS "
-            "coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases",
+            "coreci_events,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases",
             [&] {
                 client.exec(
                     "DROP TABLE IF EXISTS coreci_schema",
