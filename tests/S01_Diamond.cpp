@@ -1,6 +1,7 @@
 #include "Check.h"
 #include "Fixture.h"
 #include "core/Status.h"
+#include "tests/Status.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -78,9 +79,5 @@ int main() {
     build(e, "a", "t2", {publishCommand("a", "t2")});
     publish(e, "a", "t2", {buildCommand("b", "t2", input("a")), buildCommand("c", "t2", input("a"))});
     CHECK(e.units().at({"d", "t1"}).inflight.has_value());
-    const auto dot = statusDot(e);
-    CHECK(dot.find("\"b@t1\" -> \"d@t1\"") != std::string::npos);
-    CHECK(dot.find("fillcolor=yellow") != std::string::npos);
-    CHECK(statusText(e).starts_with("PACKAGE\tTARGET\tRELEASE\tPUBLISHED\tSTATUS\tSOURCE\n"));
     return checkResult();
 }

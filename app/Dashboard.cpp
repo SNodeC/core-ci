@@ -18,15 +18,11 @@ namespace coreci::app {
     Dashboard::Dashboard(std::shared_ptr<snodec::auth::OAuthClient> client,
                          std::set<std::string> users,
                          persistence::EventQueue& queue,
-                         github::Url base,
-                         github::Fetch fetch,
                          std::function<void(std::function<void(bool)>)> reload,
                          std::function<std::uint64_t()> generation)
         : client(std::move(client))
         , users(std::move(users))
         , queue(queue)
-        , base(std::move(base))
-        , fetch(std::move(fetch))
         , reload(std::move(reload))
         , generation(std::move(generation)) {
         timer = std::make_unique<core::timer::Timer>(core::timer::Timer::intervalTimer(
@@ -38,11 +34,16 @@ namespace coreci::app {
     Dashboard::~Dashboard() {
         timer->cancel();
     }
+    void Dashboard::failed(const std::string& message) {
+        loadError = message;
+        changed();
+    }
     void Dashboard::changed() {
         dirty = true;
     }
     void Dashboard::loaded(const github::LoadedDeclarations& value) {
         declarations = value;
+        loadError.clear();
         ready = true;
         changed();
     }
@@ -68,9 +69,7 @@ namespace coreci::app {
                 res->status(405).send("Method not allowed");
             });
         }
-        router.get("/favicon.ico", auth, gate, [](const auto&, const Res& res) {
-            res->status(204).end();
-        });
+
         router.get("/events", auth, gate, [this](const auto& req, const Res& res) {
             std::erase_if(streams, [](const auto& stream) {
                 return !stream->res || !stream->res->isConnected();
@@ -85,7 +84,7 @@ namespace coreci::app {
                 req->template getAttribute<snodec::auth::UserContext>([&](const auto& user) {
                     stream->email = user.email;
                 });
-                stream->checked = stream->keepAlive = now();
+                stream->checked = stream->keepAlive = std::chrono::steady_clock::now();
                 streams.push_back(stream);
                 res->set("Content-Type", "text/event-stream")
                     .set("Cache-Control", "no-store")
@@ -94,7 +93,8 @@ namespace coreci::app {
                     .sendHeader();
                 if (queue.engine()) {
                     res->sendFragment("event: snapshot\ndata: " +
-                                      dashboard::model(*queue.engine(), declarations, jobs, generation(), ready, stream->email) + "\n\n");
+                                      dashboard::model(*queue.engine(), declarations, generation(), ready, stream->email, loadError) +
+                                      "\n\n");
                     stream->snapshot = false;
                 }
             }
@@ -106,18 +106,20 @@ namespace coreci::app {
             const auto operation = req->param("operation");
             if (!contentType(req, "application/json")) {
                 result(res, 400, "invalid content type");
-            } else if (operation == "retry") {
-                const auto parsed = dashboard::retry(std::string(req->body.begin(), req->body.end()));
+            } else if (operation == "retry" || operation == "rebuild") {
+                const auto parsed = dashboard::unit(std::string(req->body.begin(), req->body.end()));
                 if (std::holds_alternative<github::Error>(parsed)) {
                     result(res, 400, std::get<github::Error>(parsed).reason);
                 } else {
                     const auto unit = std::get<Unit>(parsed);
-                    queue.enqueue(RetryRequested{now(), unit.package, unit.target}, [res](const auto& value) {
-                        const auto [code, text] = response(value);
-                        result(res, code, text);
-                    });
+                    queue.enqueue(operation == "retry" ? Event{RetryRequested{now(), unit.package, unit.target}}
+                                                       : Event{RebuildRequested{now(), unit.package, unit.target}},
+                                  [res](const auto& value) {
+                                      const auto [code, text] = response(value);
+                                      result(res, code, text);
+                                  });
                 }
-            } else if (operation == "refresh") {
+            } else if (operation == "reload" || operation == "reconcile") {
                 reload([res](bool loaded) {
                     result(res, loaded ? 200 : 503, loaded ? "Declarations loaded" : "Declaration load failed");
                 });
@@ -130,12 +132,12 @@ namespace coreci::app {
         });
     }
     void Dashboard::tick() {
-        const auto at = now();
+        const auto at = std::chrono::steady_clock::now();
         std::erase_if(streams, [](const auto& stream) {
             return !stream->res || !stream->res->isConnected();
         });
         for (const auto& stream : streams) {
-            if (!stream->pending && at - stream->checked >= 60) {
+            if (!stream->pending && at - stream->checked >= std::chrono::seconds(59)) {
                 stream->pending = true;
                 stream->checked = at;
                 client->authorize(stream->token,
@@ -153,11 +155,6 @@ namespace coreci::app {
         }
         const auto* engine = queue.engine();
         if (engine) {
-            if (ready) {
-                jobs.refresh(dashboard::jobRequests(*engine), at, base, fetch, [this] {
-                    changed();
-                });
-            }
             const bool update = dirty;
             dirty = false;
             for (const auto& stream : streams) {
@@ -165,10 +162,10 @@ namespace coreci::app {
                     if (stream->snapshot || update) {
                         stream->res->sendFragment(
                             std::string("event: ") + (stream->snapshot ? "snapshot" : "update") +
-                            "\ndata: " + dashboard::model(*engine, declarations, jobs, generation(), ready, stream->email) + "\n\n");
+                            "\ndata: " + dashboard::model(*engine, declarations, generation(), ready, stream->email, loadError) + "\n\n");
                         stream->snapshot = false;
                     }
-                    if (at - stream->keepAlive >= 30) {
+                    if (at - stream->keepAlive >= std::chrono::seconds(30)) {
                         stream->res->sendFragment(": keep-alive\n\n");
                         stream->keepAlive = at;
                     }

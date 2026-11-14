@@ -1,16 +1,12 @@
 #include "Protocol.h"
 
 #include <charconv>
-#include <cstdlib>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <openssl/crypto.h>
 #include <openssl/hmac.h>
 #include <sstream>
 namespace coreci::github {
-    std::string presentationBody(const Workflow& workflow, const std::string& feed, std::uint64_t generation) {
-        return nlohmann::json{{"ref", workflow.branch}, {"inputs", {{"feed", feed}, {"generation", std::to_string(generation)}}}}.dump();
-    }
     namespace {
         template <class T>
         bool number(const std::string& value, T& result) {
@@ -222,7 +218,7 @@ namespace coreci::github {
         }
         return output;
     }
-    std::variant<Event, Error, std::monostate> report(const std::string& buildId, const Form& values, std::int64_t at) {
+    std::variant<Event, Error> report(const std::string& buildId, const Form& values, std::int64_t at) {
         const auto get = [&](const std::string& key) {
             const auto i = values.find(key);
             return i == values.end() ? std::string{} : i->second;
@@ -230,12 +226,12 @@ namespace coreci::github {
         const auto phase = get("phase"), status = get("status");
         std::uint64_t run = 0;
         unsigned attempt = 0;
-        std::variant<Event, Error, std::monostate> output = Error{"invalid callback fields"};
+        std::variant<Event, Error> output = Error{"invalid callback fields"};
         if (!buildId.empty()) {
-            if (phase == "publish" && status == "started") {
-                output = std::monostate{};
-            } else if (number(get("run_id"), run)) {
-                if (phase == "build" && status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
+            if (number(get("run_id"), run)) {
+                if (phase == "publish" && status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
+                    output = Event{PublishStarted{at, buildId, run, attempt}};
+                } else if (phase == "build" && status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
                     output = Event{BuildStarted{at, buildId, run, attempt}};
                 } else if (phase == "build" && status == "succeeded" && !get("artifact").empty()) {
                     output = Event{BuildSucceeded{at, buildId, run, get("artifact")}};
@@ -331,9 +327,5 @@ namespace coreci::github {
                        escape(c.workflow.workflowFile) + "/dispatches";
             },
             command);
-    }
-    std::string EnvironmentTokenProvider::token() const {
-        const auto* value = std::getenv("CORECI_GITHUB_TOKEN");
-        return value == nullptr ? "" : value;
     }
 } // namespace coreci::github

@@ -18,6 +18,7 @@ namespace coreci::persistence {
         bool operator==(const GraphPrerequisiteRow&) const = default;
     };
     struct GraphRows {
+        std::vector<TagObserved> releases;
         std::vector<Feed> feeds;
         std::vector<Package> packages;
         std::vector<GraphTargetRow> targets;

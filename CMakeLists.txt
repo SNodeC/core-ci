@@ -18,11 +18,14 @@ add_library(
 target_include_directories(coreci_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(coreci_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
 add_library(
-    coreci_persistence
-    persistence/EventRow.cpp persistence/InMemoryEventStore.cpp
-    persistence/EventQueue.cpp persistence/EventSql.cpp
+    coreci_persistence persistence/EventRow.cpp persistence/EventQueue.cpp
+                       persistence/EventSql.cpp
 )
 target_link_libraries(coreci_persistence PUBLIC coreci_core)
+add_library(coreci_status app/StatusJson.cpp)
+target_link_libraries(coreci_status PUBLIC coreci_core)
+add_library(coreci_test tests/InMemoryEventStore.cpp)
+target_link_libraries(coreci_test PUBLIC coreci_status coreci_persistence)
 enable_testing()
 foreach(
     scenario
@@ -44,36 +47,28 @@ foreach(
     I_RandomizedInvariants
 )
     add_executable(${scenario} tests/${scenario}.cpp)
-    target_link_libraries(${scenario} PRIVATE coreci_core)
+    target_link_libraries(${scenario} PRIVATE coreci_test)
     add_test(NAME ${scenario} COMMAND ${scenario})
     set_tests_properties(${scenario} PROPERTIES LABELS core)
 endforeach()
-target_link_libraries(I_RandomizedInvariants PRIVATE coreci_persistence)
-target_link_libraries(S15_GraphChanged PRIVATE coreci_persistence)
-target_link_libraries(S18_RevisionBase PRIVATE coreci_persistence)
-target_link_libraries(S26_Rebuild PRIVATE coreci_persistence)
-target_sources(S28_AutoRetry PRIVATE app/StatusJson.cpp)
-target_link_libraries(S28_AutoRetry PRIVATE coreci_persistence)
+target_link_libraries(I_RandomizedInvariants PRIVATE coreci_test)
+target_link_libraries(S15_GraphChanged PRIVATE coreci_test)
+target_link_libraries(S18_RevisionBase PRIVATE coreci_test)
+target_link_libraries(S26_Rebuild PRIVATE coreci_test)
+target_link_libraries(S28_AutoRetry PRIVATE coreci_test)
 set_tests_properties(
     I_RandomizedInvariants PROPERTIES LABELS "core;persistence"
 )
 foreach(scenario S11_Replay S12_WriteAhead S13_EventRow S14_EventSql)
     add_executable(${scenario} tests/${scenario}.cpp)
-    target_link_libraries(${scenario} PRIVATE coreci_persistence)
+    target_link_libraries(${scenario} PRIVATE coreci_test)
     add_test(NAME ${scenario} COMMAND ${scenario})
     set_tests_properties(${scenario} PROPERTIES LABELS persistence)
 endforeach()
-add_executable(S19_StatusJson tests/S19_StatusJson.cpp app/StatusJson.cpp)
-target_link_libraries(S19_StatusJson PRIVATE coreci_persistence)
+add_executable(S19_StatusJson tests/S19_StatusJson.cpp)
+target_link_libraries(S19_StatusJson PRIVATE coreci_test)
 add_test(NAME S19_StatusJson COMMAND S19_StatusJson)
 set_tests_properties(S19_StatusJson PROPERTIES LABELS "core;persistence")
-add_executable(
-    S20_PresentationDispatch tests/S20_PresentationDispatch.cpp
-                             app/StatusJson.cpp
-)
-target_link_libraries(S20_PresentationDispatch PRIVATE coreci_core)
-add_test(NAME S20_PresentationDispatch COMMAND S20_PresentationDispatch)
-set_tests_properties(S20_PresentationDispatch PROPERTIES LABELS adapters)
 if(CORECI_WITH_SNODEC)
     find_package(
         snodec REQUIRED COMPONENTS db-mariadb http-client net-in-stream-tls
@@ -82,10 +77,15 @@ if(CORECI_WITH_SNODEC)
     find_package(OpenSSL REQUIRED)
     find_package(snodec-auth 2 REQUIRED)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME A_SlimSource
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/slim_source.py
+    )
+    set_tests_properties(A_SlimSource PROPERTIES LABELS adapters)
     add_library(
         coreci_github
         adapters/github/Protocol.cpp adapters/github/HttpClient.cpp
-        adapters/github/Declarations.cpp adapters/github/Jobs.cpp
+        adapters/github/Declarations.cpp adapters/github/AppToken.cpp
     )
     target_link_libraries(
         coreci_github
@@ -103,20 +103,19 @@ if(CORECI_WITH_SNODEC)
     )
     configure_file(app/DashboardAssets.h.in generated/DashboardAssets.h @ONLY)
     add_library(
-        coreci_app app/App.cpp app/StatusJson.cpp app/Dashboard.cpp
-                   app/JobCache.cpp adapters/dashboard/Model.cpp
+        coreci_app app/App.cpp app/Dashboard.cpp adapters/dashboard/Model.cpp
     )
     target_include_directories(
         coreci_app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
     target_link_libraries(
         coreci_app
-        PUBLIC coreci_github coreci_mariadb snodec::http-server-express-tls-in
-               snodec-auth::auth-client
+        PUBLIC coreci_status coreci_github coreci_mariadb
+               snodec::http-server-express-tls-in snodec-auth::auth-client
     )
-    foreach(scenario S21_Catalog S25_JobCache S27_DashboardHistory)
+    foreach(scenario S21_Catalog S27_DashboardHistory)
         add_executable(${scenario} tests/${scenario}.cpp)
-        target_link_libraries(${scenario} PRIVATE coreci_app)
+        target_link_libraries(${scenario} PRIVATE coreci_app coreci_test)
         add_test(NAME ${scenario} COMMAND ${scenario})
         set_tests_properties(${scenario} PROPERTIES LABELS adapters)
     endforeach()
@@ -219,18 +218,11 @@ if(CORECI_WITH_SNODEC)
                    RUN_SERIAL
                    TRUE
     )
-    add_executable(coreci-transport-probe tests/TransportProbe.cpp)
-    target_link_libraries(coreci-transport-probe PRIVATE coreci_github)
-    add_executable(coreci-fake-github tests/FakeGitHub.cpp)
-    target_link_libraries(
-        coreci-fake-github PRIVATE coreci_core
-                                   snodec::http-server-express-tls-in
-    )
     foreach(scenario A_WebhookHmac A_CallbackHmac A_DispatchRequest A_TagPages
-                     S16_Declarations
+                     S16_Declarations A_AppToken
     )
         add_executable(${scenario} tests/${scenario}.cpp)
-        target_link_libraries(${scenario} PRIVATE coreci_github)
+        target_link_libraries(${scenario} PRIVATE coreci_github coreci_test)
         add_test(NAME ${scenario} COMMAND ${scenario})
         set_tests_properties(${scenario} PROPERTIES LABELS adapters)
     endforeach()
@@ -254,7 +246,7 @@ if(CORECI_WITH_SNODEC)
     )
     foreach(scenario A_MariaDBRows M_MariaDBIntegration)
         add_executable(${scenario} tests/${scenario}.cpp)
-        target_link_libraries(${scenario} PRIVATE coreci_mariadb)
+        target_link_libraries(${scenario} PRIVATE coreci_mariadb coreci_test)
         add_test(NAME ${scenario} COMMAND ${scenario})
     endforeach()
     set_tests_properties(A_MariaDBRows PROPERTIES LABELS adapters)
@@ -316,7 +308,6 @@ if(CLANG_TIDY)
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Status.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/core/Badge.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventRow.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/persistence/InMemoryEventStore.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventQueue.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/persistence/EventSql.cpp
     )

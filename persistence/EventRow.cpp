@@ -1,5 +1,7 @@
 #include "EventRow.h"
 
+#include "core/Version.h"
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -15,6 +17,7 @@ namespace coreci::persistence {
                                                                                  "BuildStarted",
                                                                                  "BuildSucceeded",
                                                                                  "BuildFailed",
+                                                                                 "PublishStarted",
                                                                                  "PublishSucceeded",
                                                                                  "PublishFailed",
                                                                                  "RetryRequested",
@@ -92,6 +95,7 @@ namespace coreci::persistence {
                     row.eventAt = e.at;
                     if constexpr (requires { e.pipeline; }) {
                         row.graph = GraphRows{};
+                        row.graph->releases = e.tags;
                         for (const auto& [id, feed] : e.pipeline.feeds()) {
                             row.graph->feeds.push_back(feed);
                         }
@@ -183,6 +187,17 @@ namespace coreci::persistence {
                     }
                 };
                 if constexpr (requires { e.pipeline; }) {
+                    std::set<std::string> packages;
+                    for (const auto& tag : e.tags) {
+                        const auto normalized = normalize(Event{tag});
+                        if (std::holds_alternative<Invalid>(normalized) || tag.at != e.at || !e.pipeline.packages().contains(tag.package) ||
+                            !Version::parse(tag.tag) || !packages.insert(tag.package).second) {
+                            error = "invalid graph release";
+                        }
+                    }
+                    std::sort(e.tags.begin(), e.tags.end(), [](const auto& a, const auto& b) {
+                        return a.package < b.package;
+                    });
                     for (const auto& [id, feed] : e.pipeline.feeds()) {
                         check(feed.workflow.branch, 255, "branch");
                     }
@@ -286,6 +301,9 @@ namespace coreci::persistence {
             } else if (row.eventType == "BuildFailed") {
                 result = Event{
                     BuildFailed{at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.reason, "reason")}};
+            } else if (row.eventType == "PublishStarted") {
+                result = Event{PublishStarted{
+                    at, required(row.buildId, "build_id"), required(row.runId, "run_id"), attempt(row.runAttempt, "run_attempt")}};
             } else if (row.eventType == "PublishSucceeded") {
                 result = Event{PublishSucceeded{
                     at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.feedCommit, "feed_commit")}};
@@ -329,7 +347,7 @@ namespace coreci::persistence {
                 for (const auto& [name, pkg] : packages) {
                     builder.package(pkg);
                 }
-                result = Event{GraphChanged{at, builder.build()}};
+                result = Event{GraphChanged{at, builder.build(), graph.releases}};
             } else if (row.eventType == "Resumed") {
                 result = Event{Resumed{at}};
             }

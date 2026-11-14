@@ -1,17 +1,13 @@
-# Native packaging
+# Native packaging and operator configuration
 
-`VERSION` supplies the requested 0.1.0 project version. The only installed executable is `core-ci`; interrupt/reset helpers and other test tools are never installed. Temporary enrollment builds use `/tmp/codex/build/core-ci/enrollment-native` and `/tmp/codex/build/core-ci/enrollment-container`.
+The package installs only core-ci, its reference dashboard assets/schema and placeholder configuration examples. Tests and reset helpers are never installed. Package scripts do not enable, start or restart services.
 
-Decision: declare `snodec-idp` alongside `snodec` because the existing dashboard links the installed `snodec-auth::auth-client`. The owner approved this edge and the IDP client-dev export. The cleanup thread must merge the IDP revision/export PR before starting the enrolled chain.
+Supply registry as owner/repository:path, target-catalog as a relative path in that registry repository, and workflow-repository as owner/repository. Registry build and publisher entries are workflow filenames in that repository. No repository name is built in.
 
-Decision: preserve the existing embedded dashboard and SQL schema. Both are generated from the authoritative source files at configure time, so the binary has no working-directory or install-prefix dependency and the `/opt` release layout keeps working. The package also installs reference copies under `share/core-ci`; no alternate runtime lookup path or C++ application behavior is added.
+Create a GitHub App with Actions write and Contents read on the workflow/registry repository, Contents read and Metadata read on source repositories; subscribe to push and install it on those repositories. Configure github-app-id, github-installation-id and github-app-key-file. The RSA PEM must be readable by the service user; core-ci rereads it on each token mint so an operator can rotate it. Installation tokens refresh in memory and are never configured or persisted. Protect the key as an operator-managed credential. No production access or key creation is part of this change.
 
-Decision: the package hook selects CTest labels `core`, `persistence` and `adapters`. These include all database/browser-independent scenarios and the G4 asset check; browser and database integration scenarios retain their explicit labels and are run in full local qualification.
+Provide webhook and callback HMAC secrets through the environment and optionally the database password. IDP login and dashboard-users protect retry, rebuild, reload and reconcile. Public output is status.json and badges. All configuration keys are listed in SPEC 6.3.
 
-The environment example contains placeholders only and is installed below `share/doc/core-ci`. Package verification must use throwaway containers; never install the package on the development host or activate services during installation.
+Start with a fresh database (schema 4); older event histories are unsupported. The single writer lock, write-ahead logging and replay remain. The binary embeds the dashboard assets and schema from authoritative sources at configure time; installation-prefix and working-directory changes do not introduce alternate lookup paths.
 
-Decision: keep CPack's default unknown RPM license metadata because the current repository contains no license file or source license declaration; do not infer a license from dependencies.
-
-Decision: preserve the deployed unit name `coreci.service`, user/group `coreci`, configuration/environment and credential paths, arguments, hardening and restart policy. The template is named `core-ci.service.in` as requested; only its executable changes from `/opt/coreci/current/core-ci` to `/usr/bin/core-ci`. The authoritative current evidence is the cleanup thread's `build/codex/phase-5/deployed-unit.txt`; the owner also supplied the Phase 4e plan/handover in `core-ci-phase-4i-a2/build/codex/phase-4i/obsolete-worktree-evidence.tar.gz`. These are evidence paths, not build dependencies. The package neither overwrites the deployed `/etc` unit nor changes the existing `/opt` layout.
-
-The sysusers entry creates the same system user/group when absent. The package owns no `/etc` file. Its install script runs only `systemd-sysusers` and, when systemd is running, `daemon-reload`; removal only reloads the unit definitions. Neither DEB nor RPM scripts enable, start or restart a service. Existing deployment configuration and credentials remain operator-provided.
+The unit template preserves the existing service user and operator-owned configuration/TLS paths. Installing or activating it is a separate operator action; this task performs neither.

@@ -25,6 +25,7 @@ int main() {
                                     BuildStarted{3, text, std::numeric_limits<std::uint64_t>::max(), 1},
                                     BuildSucceeded{4, text, 7, text},
                                     BuildFailed{5, text, 7, text},
+                                    PublishStarted{5, text, 8, 2},
                                     PublishSucceeded{6, text, 8, sha},
                                     PublishFailed{7, text, 8, ""},
                                     RetryRequested{8, text, text},
@@ -44,6 +45,7 @@ int main() {
         hex("BuildStarted") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,18446744073709551615,1,NULL,NULL,NULL,NULL,3)",
         hex("BuildSucceeded") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,7,NULL,NULL," + hex(text) + ",NULL,NULL,4)",
         hex("BuildFailed") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,7,NULL,NULL,NULL,NULL," + hex(text) + ",5)",
+        hex("PublishStarted") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,8,2,NULL,NULL,NULL,NULL,5)",
         hex("PublishSucceeded") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,8,NULL,NULL,NULL," + hex(sha) + ",NULL,6)",
         hex("PublishFailed") + ",NULL,NULL,NULL,NULL,NULL," + hex(text) + ",NULL,NULL,NULL,8,NULL,NULL,NULL,NULL,_utf8mb4 X'',7)",
         hex("RetryRequested") + "," + hex(text) + "," + hex(text) + ",NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,8)",
@@ -74,7 +76,7 @@ int main() {
         CHECK(statement.find("owner") == std::string::npos || statement.find("(event_seq,feed,owner") != std::string::npos ||
               statement.find("source_owner") != std::string::npos);
     }
-    CHECK_EQ(graphSelectSql().size(), 4U);
+    CHECK_EQ(graphSelectSql().size(), 5U);
     CHECK(std::get<std::string>(insertSql(graphEvent)).find(hex("GraphChanged")) != std::string::npos);
     return checkResult();
 }

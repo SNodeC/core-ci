@@ -4,7 +4,7 @@
 #include "core/Status.h"
 #include "persistence/EventQueue.h"
 #include "persistence/EventRow.h"
-#include "persistence/InMemoryEventStore.h"
+#include "tests/InMemoryEventStore.h"
 
 #include <set>
 using namespace coreci;

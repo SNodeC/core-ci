@@ -1,6 +1,7 @@
 #include "Check.h"
 #include "adapters/github/Declarations.h"
 #include "core/Status.h"
+#include "tests/Status.h"
 
 #include <algorithm>
 #include <fstream>
@@ -21,7 +22,7 @@ std::string read(const std::string& file) {
 }
 int main() {
     const std::string registry =
-        R"({"feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"o/recipes/.github/workflows/build.yml","repositories":["O/A","o/b"],"ignored":42})";
+        R"({"feeds":{"f":{"publisher":"publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"build.yml","repositories":["O/A","o/b"],"ignored":42})";
     const auto location = registryFile("o/registry:ci/registry.json");
     REQUIRE(std::holds_alternative<DeclarationFile>(location));
     const auto load = [&](std::string reg, std::string a, std::string b, int status = 200, std::string branch = "master") {
@@ -29,15 +30,22 @@ int main() {
         bool completed = false;
         loadDeclarations(
             std::get<DeclarationFile>(location),
-            "",
+            "o/recipes",
+            "ci/targets.json",
+            Url{"api.example", ""},
             [&](std::string path, bool raw, auto done) {
                 int httpStatus = 200;
                 std::string body = "{\"default_branch\":\"" + branch + "\",\"full_name\":\"" + repoKey(path.substr(7)) + "\"}";
-                if (path.find("/commits/") != std::string::npos) {
+                if (path.find("/tags?") != std::string::npos) {
+                    body = "[{\"name\":\"v1.0.0\",\"commit\":{\"sha\":\"" + std::string(40, 'b') + "\"}}]";
+                } else if (path.find("/commits/") != std::string::npos) {
                     body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
                 } else if (path.find("/contents/") != std::string::npos) {
                     CHECK(raw);
-                    CHECK(path.ends_with("?ref=" + std::string(40, 'a'))); // Read the resolved commit even if the branch advances.
+                    CHECK(path.ends_with("?ref=" + std::string(40,
+                                                               path.find("packages.json") != std::string::npos
+                                                                   ? 'b'
+                                                                   : 'a'))); // Read the resolved commit even if the branch advances.
                     CHECK(path.find("/contents/ci%2F") != std::string::npos);
                     if (path.find("targets.json") != std::string::npos) {
                         body = read("targets.json");
@@ -77,20 +85,6 @@ int main() {
             CHECK(std::get<Error>(result).reason.find(":ci/") != std::string::npos);
         }
     };
-    auto withPresentation = registry;
-    const auto publisherEnd = withPresentation.find("publish.yml\"") + std::string("publish.yml\"").size();
-    withPresentation.insert(publisherEnd, ",\"presentation\":\"o/recipes/.github/workflows/status.yml\"");
-    withPresentation.insert(1, "\"status_url\":\"https://controller.example/api/v1/status.json\",");
-    const auto presented = load(withPresentation, package("a"), package("b", "a"));
-    REQUIRE(std::holds_alternative<LoadedDeclarations>(presented));
-    CHECK(std::get<LoadedDeclarations>(presented).presentations.at("f") == Workflow({"o", "recipes", "status.yml", "master"}));
-    auto invalidStatus = withPresentation;
-    invalidStatus.replace(invalidStatus.find("https://"), 8, "http://");
-    bad(invalidStatus, package("a"));
-    auto missingStatus = withPresentation;
-    const auto firstComma = missingStatus.find(',');
-    missingStatus.erase(1, firstComma);
-    bad(missingStatus, package("a"));
     for (const auto& file : {"{}",
                              "[]",
                              "{",
@@ -121,13 +115,13 @@ int main() {
     for (const auto& name : {std::string{}, std::string(65, 'a'), std::string("a/b"), std::string("a b"), std::string("é")}) {
         bad(registry, package(name));
     }
-    for (const auto& workflow : {"o/recipes/build.yml",
+    for (const auto& workflow : {"bad/path.yml",
                                  "o/recipes/.github/workflows/a/b.yml",
                                  "o/recipes/.github/workflows/build",
                                  "bad!/recipes/.github/workflows/build.yml"}) {
         auto changed = registry;
-        const auto at = changed.find("o/recipes/.github/workflows/build.yml");
-        changed.replace(at, std::string("o/recipes/.github/workflows/build.yml").size(), workflow);
+        const auto at = changed.find("build.yml");
+        changed.replace(at, std::string("build.yml").size(), workflow);
         bad(changed, package("a"));
     }
     for (const auto& path : std::vector<std::string>{
@@ -138,15 +132,14 @@ int main() {
     conflict.replace(conflict.find("\"default_feed\""), 0, R"("extra":true,)");
     auto aFeed = package("a");
     aFeed.replace(aFeed.find("\"id\":\"t\""), 8, "\"id\":\"t\",\"feed\":\"g\"");
-    conflict.replace(conflict.find("\"feeds\":{") + 9, 0, R"("g":{"publisher":"o/recipes/.github/workflows/publish.yml"},)");
+    conflict.replace(conflict.find("\"feeds\":{") + 9, 0, R"("g":{"publisher":"publish.yml"},)");
     bad(conflict, aFeed);
-    for (
-        const auto& invalid :
-        {"{}",
-         "[]",
-         "{",
-         R"({"feeds":[]})",
-         R"({"feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"o/recipes/.github/workflows/build.yml"})"}) {
+    for (const auto& invalid :
+         {"{}",
+          "[]",
+          "{",
+          R"({"feeds":[]})",
+          R"({"feeds":{"f":{"publisher":"publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"build.yml"})"}) {
         bad(invalid, package("a"));
     }
     const auto replaced = [](std::string text, const std::string& oldValue, const std::string& newValue) {
@@ -155,15 +148,15 @@ int main() {
         text.replace(at, oldValue.size(), newValue);
         return text;
     };
-    for (const auto& [oldValue, newValue] : std::vector<std::pair<std::string, std::string>>{
-             {R"("default_feed":"f")", R"("default_feed":false)"},
-             {R"("default_feed":"f")", R"("default_feed":"missing")"},
-             {R"("build":"o/recipes/.github/workflows/build.yml")", R"("build":1)"},
-             {R"("repositories":["O/A","o/b"])", R"("repositories":{})"},
-             {R"("repositories":["O/A","o/b"])", R"("repositories":[1])"},
-             {R"("repositories":["O/A","o/b"])", R"("repositories":["o/a","O/A"])"},
-             {R"("feeds":{)", R"("feeds":{"f":{"publisher":"o/recipes/.github/workflows/publish.yml"},)"},
-             {R"("ignored":42)", R"("ignored":{"x":1,"x":2})"}}) {
+    for (const auto& [oldValue, newValue] :
+         std::vector<std::pair<std::string, std::string>>{{R"("default_feed":"f")", R"("default_feed":false)"},
+                                                          {R"("default_feed":"f")", R"("default_feed":"missing")"},
+                                                          {R"("build":"build.yml")", R"("build":1)"},
+                                                          {R"("repositories":["O/A","o/b"])", R"("repositories":{})"},
+                                                          {R"("repositories":["O/A","o/b"])", R"("repositories":[1])"},
+                                                          {R"("repositories":["O/A","o/b"])", R"("repositories":["o/a","O/A"])"},
+                                                          {R"("feeds":{)", R"("feeds":{"f":{"publisher":"publish.yml"},)"},
+                                                          {R"("ignored":42)", R"("ignored":{"x":1,"x":2})"}}) {
         bad(replaced(registry, oldValue, newValue), package("a"));
     }
     for (const auto& invalid : {std::string{}, std::string(65, 'x'), std::string("a/b"), std::string("bad id")}) {
@@ -203,7 +196,9 @@ int main() {
     std::variant<LoadedDeclarations, Error> asynchronous = Error{"not completed"};
     loadDeclarations(
         std::get<DeclarationFile>(location),
-        "",
+        "o/recipes",
+        "ci/targets.json",
+        Url{"api.example", ""},
         [&](std::string path, bool raw, auto callback) {
             pending.emplace_back(std::move(path), raw, std::move(callback));
             maximumPending = std::max(maximumPending, pending.size());
@@ -217,7 +212,9 @@ int main() {
         pending.pop_back();
         const auto& path = std::get<0>(item);
         std::string body = "{\"default_branch\":\"master\",\"full_name\":\"" + repoKey(path.substr(7)) + "\"}";
-        if (path.find("/commits/") != std::string::npos) {
+        if (path.find("/tags?") != std::string::npos) {
+            body = "[{\"name\":\"v1.0.0\",\"commit\":{\"sha\":\"" + std::string(40, 'b') + "\"}}]";
+        } else if (path.find("/commits/") != std::string::npos) {
             body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
         } else if (path.find("targets.json") != std::string::npos) {
             body = read("targets.json");
@@ -232,17 +229,21 @@ int main() {
     CHECK(std::get<LoadedDeclarations>(asynchronous).pipeline == pipeline);
     // GitHub supplies spelling independently of the registry, for all repository roles.
     const std::string caseRegistry =
-        R"({"feeds":{"f":{"publisher":"snodec/RECIPES/.github/workflows/publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"SNODEC/recipes/.github/workflows/build.yml","repositories":["snodec/SNODE.C"]})";
+        R"({"feeds":{"f":{"publisher":"publish.yml"}},"default_feed":"f","targets":"ci/targets.json","build":"build.yml","repositories":["snodec/SNODE.C"]})";
     std::variant<LoadedDeclarations, Error> canonical = Error{"not completed"};
     std::vector<std::string> paths;
     loadDeclarations(
         std::get<DeclarationFile>(registryFile("snodec/REGISTRY:ci/registry.json")),
-        "",
+        "snodec/recipes",
+        "ci/targets.json",
+        Url{"api.example", ""},
         [&](std::string path, bool, auto done) {
             paths.push_back(path);
             const auto identity = repoKey(path);
             std::string body;
-            if (path.find("/commits/") != std::string::npos) {
+            if (path.find("/tags?") != std::string::npos) {
+                body = "[{\"name\":\"v1.0.0\",\"commit\":{\"sha\":\"" + std::string(40, 'b') + "\"}}]";
+            } else if (path.find("/commits/") != std::string::npos) {
                 body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
             } else if (path.find("targets.json") != std::string::npos) {
                 body = read("targets.json");
@@ -262,8 +263,7 @@ int main() {
         });
     REQUIRE(std::holds_alternative<LoadedDeclarations>(canonical));
     const auto& canon = std::get<LoadedDeclarations>(canonical).pipeline;
-    CHECK_EQ(paths.size(), 9U); // Registry, shared workflow repository and source are each resolved once.
-    CHECK(canon.repositories() == (std::set<std::pair<std::string, std::string>>{{"SNodeC", "snode.c"}}));
+    CHECK_EQ(paths.size(), 8U); // Registry, shared workflow repository and source are each resolved once.
     CHECK_EQ(canon.packages().at("snodec").sourceRepo.owner, "SNodeC");
     CHECK_EQ(canon.packages().at("snodec").sourceRepo.repo, "snode.c");
     CHECK_EQ(canon.packages().at("snodec").buildWorkflow.repo, "Recipes");
@@ -271,8 +271,7 @@ int main() {
     CHECK(canon.packagesForRepo("SNODEC", "SNODE.C") == std::vector<std::string>{"snodec"});
     Engine display({100, 50, 8, {}});
     display.handle(GraphChanged{1, canon});
-    CHECK(statusText(display).find("SNodeC/snode.c") != std::string::npos);
-    CHECK(statusDot(display).find("SNodeC/snode.c") != std::string::npos);
+    CHECK(app::statusSnapshot(display).packages.at("snodec").sourceRepo == Repo({"SNodeC", "snode.c", "master"}));
     const auto commands = display.handle(TagObserved{2, "snodec", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
     REQUIRE(commands.size() == 1);
     CHECK_EQ(dispatchPath(commands.front()), "/repos/SNodeC/Recipes/actions/workflows/build.yml/dispatches");
@@ -284,5 +283,73 @@ int main() {
     CHECK_EQ(actual.packages().at("snodec").targets.size(), 76U);
     CHECK_EQ(actual.packages().at("mqttsuite").targets.size(), 76U);
     CHECK(actual.prerequisites("mqttsuite") == std::vector<std::string>{"snodec"});
+    for (const auto& mode : {"pages", "off-origin", "loop", "malformed", "empty"}) {
+        for (const bool acceptPrereleases : {false, true}) {
+            std::variant<LoadedDeclarations, Error> result = Error{"not completed"};
+            std::vector<std::string> refs;
+            unsigned sourceHeads = 0, completions = 0;
+            loadDeclarations(
+                {"o", "registry", "ci/registry.json"},
+                "o/recipes",
+                "ci/targets.json",
+                Url{"api.example", ""},
+                [&](std::string path, bool raw, Completion done) {
+                    std::string body, link;
+                    if (path.find("/commits/") != std::string::npos) {
+                        sourceHeads += path.starts_with("/repos/o/a/") ? 1 : 0;
+                        body = "{\"sha\":\"" + std::string(40, 'a') + "\"}";
+                    } else if (path.find("/tags?") != std::string::npos) {
+                        if (std::string(mode) == "empty") {
+                            body = "[]";
+                        } else if (path.ends_with("page=2")) {
+                            body = std::string(mode) == "malformed"
+                                       ? "{"
+                                       : "[{\"name\":\"v2.0.0-rc.1\",\"commit\":{\"sha\":\"" + std::string(40, 'c') + "\"}}]";
+                            if (std::string(mode) == "loop") {
+                                link = "<https://api.example/repos/o/a/tags?page=2>; rel=\"next\"";
+                            }
+                        } else {
+                            body = "[{\"name\":\"v1.0.0\",\"commit\":{\"sha\":\"" + std::string(40, 'b') + "\"}}]";
+                            link = "<https://" + std::string(std::string(mode) == "off-origin" ? "other.example" : "api.example") +
+                                   "/repos/o/a/tags?page=2>; rel=\"next\"";
+                        }
+                    } else if (path.find("registry.json") != std::string::npos) {
+                        body =
+                            R"({"feeds":{"f":{"publisher":"publish.yml"}},"default_feed":"f","build":"build.yml","repositories":["o/a"]})";
+                    } else if (path.find("targets.json") != std::string::npos) {
+                        body = read("targets.json");
+                    } else if (path.find("packages.json") != std::string::npos) {
+                        CHECK(raw);
+                        refs.push_back(path.substr(path.find("?ref=") + 5));
+                        body = package("a");
+                        if (acceptPrereleases) {
+                            body.insert(1, "\"accept_prereleases\":true,");
+                        }
+                    } else {
+                        body = "{\"full_name\":\"" + path.substr(7) + "\",\"default_branch\":\"trunk\"}";
+                    }
+                    done(200, body, link);
+                },
+                [&](auto value) {
+                    ++completions;
+                    result = std::move(value);
+                });
+            CHECK_EQ(completions, 1U);
+            const bool valid = std::string(mode) == "pages" || std::string(mode) == "empty";
+            CHECK(std::holds_alternative<LoadedDeclarations>(result) == valid);
+            if (valid) {
+                const auto& loaded = std::get<LoadedDeclarations>(result);
+                if (std::string(mode) == "empty") {
+                    CHECK(loaded.releases.empty() && sourceHeads == 1);
+                    CHECK(refs == std::vector<std::string>{std::string(40, 'a')});
+                } else {
+                    CHECK_EQ(sourceHeads, 0U);
+                    CHECK_EQ(loaded.releases.at("a").tag, acceptPrereleases ? "v2.0.0-rc.1" : "v1.0.0");
+                    CHECK_EQ(refs.front(), std::string(40, 'c'));
+                    CHECK_EQ(refs.back(), std::string(40, acceptPrereleases ? 'c' : 'b'));
+                }
+            }
+        }
+    }
     return checkResult();
 }

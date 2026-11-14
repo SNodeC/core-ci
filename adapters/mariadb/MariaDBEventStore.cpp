@@ -170,18 +170,18 @@ namespace coreci::mariadb {
             "SELECT (SELECT COUNT(*) FROM coreci_schema),(SELECT MIN(version) FROM coreci_schema),"
             "(EXISTS(SELECT 1 FROM coreci_events LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_feeds LIMIT 1) OR "
             "EXISTS(SELECT 1 FROM coreci_graph_packages LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_targets LIMIT 1) OR "
-            "EXISTS(SELECT 1 FROM coreci_graph_prerequisites LIMIT 1))",
+            "EXISTS(SELECT 1 FROM coreci_graph_prerequisites LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_releases LIMIT 1))",
             [this, done, bootstrap](const MYSQL_ROW row) {
                 if (row != nullptr) {
-                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "3") {
+                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "4") {
                         // Wait for query's final nullptr before starting the next operation.
                     } else if (row[0] != nullptr && std::string(row[0]) == "0" && row[2] != nullptr && std::string(row[2]) == "0") {
                         *bootstrap = true;
                     } else {
-                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 3 row, or empty schema and events"});
+                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 4 row, or empty schema and events"});
                     }
                 } else if (*bootstrap) {
-                    execute("INSERT INTO coreci_schema (version) VALUES (3)", done);
+                    execute("INSERT INTO coreci_schema (version) VALUES (4)", done);
                 } else {
                     done();
                 }
@@ -285,7 +285,7 @@ namespace coreci::mariadb {
                             error = "orphan graph row";
                         }
                         std::vector<std::string> values;
-                        const std::size_t count = table == 0 ? 5 : (table == 1 ? 8 : (table == 2 ? 3 : 2));
+                        const std::size_t count = table == 0 ? 5 : (table == 1 ? 8 : (table == 2 ? 3 : (table == 3 ? 2 : 4)));
                         for (std::size_t i = 1; i <= count && error.empty(); ++i) {
                             std::string value;
                             if (fields[i] == nullptr || !unhex(fields[i], value)) {
@@ -314,8 +314,16 @@ namespace coreci::mariadb {
                                 }
                             } else if (table == 2) {
                                 graph.targets.push_back({values[0], values[1], values[2]});
-                            } else {
+                            } else if (table == 3) {
                                 graph.prerequisites.push_back({values[0], values[1]});
+                            } else if (values[3] != "webhook" && values[3] != "reconcile") {
+                                error = "invalid graph release origin";
+                            } else {
+                                graph.releases.push_back({*rows->at(seq).eventAt,
+                                                          values[0],
+                                                          values[1],
+                                                          values[2],
+                                                          values[3] == "webhook" ? Origin::Webhook : Origin::Reconcile});
                             }
                         }
                         if (!error.empty()) {

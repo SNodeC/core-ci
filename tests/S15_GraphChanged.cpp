@@ -1,7 +1,8 @@
 #include "Check.h"
 #include "Fixture.h"
 #include "core/Status.h"
-#include "persistence/InMemoryEventStore.h"
+#include "tests/InMemoryEventStore.h"
+#include "tests/Status.h"
 using namespace coreci;
 using namespace coreci::persistence;
 Pipeline graph(bool edge = false,
@@ -72,7 +73,7 @@ int main() {
             CHECK(std::holds_alternative<Event>(decoded));
             replay.handle(std::get<Event>(decoded));
         }
-        CHECK_EQ(statusText(replay), statusText(e));
+        CHECK_EQ(recordedStatus(replay), recordedStatus(e));
         CHECK(replay.pipeline() == e.pipeline());
         CHECK(replay.units() == e.units());
         CHECK(replay.time() == e.time());
@@ -89,10 +90,10 @@ int main() {
     apply(GraphChanged{5, graph(true)}, {build("b", 2, a)});
     apply(GraphChanged{6, graph(true, false, false, "f", "a", "next.yml")}); // b keeps its workflow
     apply(BuildSucceeded{7, "b~t~1.0.0~r2", 1, "artifact"}, {publish("b", 2)});
-    const auto before = statusText(e);
+    const auto before = recordedStatus(e);
     for (const auto& changed : {graph(true, false, false, "g"), graph(true, false, false, "f", "a", "build.yml", "next.yml")}) {
         apply(GraphChanged{8, changed});
-        CHECK_EQ(statusText(e), before);
+        CHECK_EQ(recordedStatus(e), before);
     }
     apply(PublishSucceeded{9, "b~t~1.0.0~r2", 2, std::string(40, 'b')});
     apply(GraphChanged{10, graph(false, false, true, "f", "a", "next.yml")}, {build("b", 3), build("a", 1, {}, "u", "next.yml")});
@@ -162,7 +163,7 @@ int main() {
         }
         CHECK(replay.handle(GraphChanged{105, next}) == commands);
         CHECK(replay.units() == dormant.units());
-        CHECK_EQ(statusText(replay), statusText(dormant));
+        CHECK_EQ(recordedStatus(replay), recordedStatus(dormant));
     }
     Engine abandoned = fixtureEngine(graph(), {100, 50, 8, {}});
     abandoned.handle(TagObserved{101, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
@@ -236,8 +237,7 @@ int main() {
         CHECK(spelling.feeds() == feeds);
         CHECK(spelling.nextDeadline() == deadline);
         CHECK_EQ(spelling.pipeline().packages().at("a").sourceRepo.owner, "O");
-        CHECK(statusText(spelling).find("O/A") != std::string::npos);
-        CHECK(statusDot(spelling).find("O/A") != std::string::npos);
+        CHECK(app::statusSnapshot(spelling).packages.at("a").sourceRepo == Repo({"O", "A", "trunk"}));
         const auto row = std::get<EventRow>(encode(GraphChanged{104, canonical}, 1));
         CHECK(std::get<GraphChanged>(std::get<Event>(decode(row))).pipeline == canonical);
         CHECK(std::holds_alternative<Ignore>(spelling.classify(GraphChanged{105, canonical})));
@@ -246,5 +246,23 @@ int main() {
     limited.handle(TagObserved{101, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
     limited.handle(TagObserved{101, "b", "v1.0.0", std::string(40, 'a'), Origin::Webhook});
     CHECK(limited.handle(GraphChanged{102, graph(false, true)}) == std::vector<Command>{build("b")});
+    {
+        Engine atomic({100, 50, 8, {}});
+        const auto pipeline = graph();
+        const TagObserved tag{200, "a", "v2.0.0", std::string(40, 'c'), Origin::Reconcile};
+        const Event loaded = GraphChanged{200, pipeline, {tag}};
+        const auto row = std::get<EventRow>(encode(loaded, 100));
+        const auto decoded = std::get<Event>(decode(row));
+        CHECK(decoded == loaded);
+        auto commands = atomic.handle(decoded);
+        CHECK(!commands.empty());
+        for (const auto& command : commands) {
+            CHECK(std::get<DispatchBuild>(command).tag == "v2.0.0");
+        }
+        CHECK(std::holds_alternative<Ignore>(atomic.classify(loaded)));
+        Engine replay({100, 50, 8, {}});
+        replay.handle(decoded);
+        CHECK(replay.units() == atomic.units());
+    }
     return checkResult();
 }

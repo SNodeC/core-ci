@@ -122,7 +122,7 @@ def button_checks(fx):
         response = fx.request('/api/retry', b'{"package":"unknown","target":"unknown"}',
                               {'Content-Type': content_type, 'Origin': fx.app})
         assert response.status == expected
-    for name in ('enroll', 'request', 'reconcile', 'retire'):
+    for name in ('enroll', 'request', 'unknown'):
         code, value = fx.post('/api/' + name, {})
         assert code == 400 and value['error'].startswith('Not supported by core-ci: ')
     assert fx.webhook('SNodeC/snode.c') == 200
@@ -138,15 +138,16 @@ def button_checks(fx):
     assert retry_id != rid and retry_values['target'] == values['target']
     assert int(retry_values['revision']) == int(values['revision']) + 1
     assert fx.post('/api/retry', {'package': 'unknown', 'target': 'unknown'})[0] == 200
+    assert fx.post('/api/reconcile', {})[0] == 200
     fx.release.clear()
     fx.requested.clear()
     with concurrent.futures.ThreadPoolExecutor() as workers:
-        pending = workers.submit(fx.post, '/api/refresh', {})
+        pending = workers.submit(fx.post, '/api/reload', {})
         assert fx.requested.wait(10)
         assert not pending.done()
         fx.release.set()
         assert pending.result(timeout=10)[0] == 200
-    print('S23: Retry commits and allocates the next revision; Refresh waits for loading; four unsupported operations passed')
+    print('S23: Retry commits and allocates the next revision; Refresh waits for loading; unsupported operations passed')
 
 
 def auth_checks(fx):
@@ -175,8 +176,17 @@ def auth_checks(fx):
         refused = error
     assert refused.code == 403, 'another subject with the same email was admitted'
     fx.subject = 'owner'
-    assert fx.request('/api/v1/status', browser=False).status == 200
-    assert fx.request('/api/v1/reload', b'', browser=False).status == 401
+    assert fx.request('/api/v1/status.json', browser=False).status == 200
+    for path in ('status', 'graph.dot', 'reload', 'reconcile', 'units/p/t/retry', 'units/p/t/rebuild'):
+        for body in (None, b''):
+            assert fx.request('/api/v1/' + path, body, browser=False).status == 404
+    for operation in ('retry', 'rebuild', 'reload', 'reconcile'):
+        try:
+            opener.open(urllib.request.Request(fx.app + '/api/' + operation, data=b"{}", headers={'Content-Type': 'application/json', 'Origin': fx.app}))
+            raise AssertionError('unauthenticated operation succeeded')
+        except urllib.error.HTTPError as error:
+            assert error.code == 401
+    assert fx.request('/api/v1/reload', b'', browser=False).status == 404
     stream = Stream(fx)
     stream.next()
     fx.revoked.add('owner')
@@ -185,7 +195,7 @@ def auth_checks(fx):
     assert stream.error is None, stream.error
     elapsed = time.monotonic() - invalidated
     assert elapsed <= 60.5
-    print('S24: PKCE/state/nonce, subject allowlist, same-email denial, secure 12h cookie, admin isolation passed; revoked stream closed after %.3f s' % elapsed)
+    print('S24: PKCE/state/nonce, subject allowlist, same-email denial, secure 12h cookie, public status and removed route isolation passed; revoked stream closed after %.3f s' % elapsed)
 
 
 result = 77

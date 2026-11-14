@@ -46,6 +46,6 @@ namespace coreci::app {
         std::map<Unit, UnitView> units;
         bool operator==(const StatusSnapshot&) const = default;
     };
-    StatusSnapshot statusSnapshot(const Engine& engine, const std::string& feed = {});
+    StatusSnapshot statusSnapshot(const Engine& engine);
     std::string statusJson(const StatusSnapshot& snapshot, std::uint64_t generation);
 } // namespace coreci::app

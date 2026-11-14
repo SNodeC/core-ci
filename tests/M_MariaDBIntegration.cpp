@@ -2,6 +2,7 @@
 #include "adapters/mariadb/MariaDBEventStore.h"
 #include "core/Status.h"
 #include "persistence/EventQueue.h"
+#include "tests/Status.h"
 
 #include <charconv>
 #include <core/SNodeC.h>
@@ -68,7 +69,8 @@ public:
             }
         });
         admin->connect();
-        sql("DROP TABLE IF EXISTS coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites",
+        sql("DROP TABLE IF EXISTS "
+            "coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases",
             [this] {
                 sql("DROP TABLE IF EXISTS coreci_schema", [this] {
                     first();
@@ -125,10 +127,11 @@ private:
     void first() {
         fresh([this] {
             CHECK(emitted.empty());
-            steps.push_back({GraphChanged{100, pipeline()}, {}});
+            std::vector<TagObserved> tags;
             for (const auto& p : {"b", "c", "d", "e"}) {
-                steps.push_back({TagObserved{100, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook}, {}});
+                tags.push_back({100, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook});
             }
+            steps.push_back({GraphChanged{100, pipeline(), tags}, {}});
             steps.push_back({TagObserved{100, "a", "v1.0.0", std::string(40, 'a'), Origin::Webhook}, {build("a", "t1"), build("a", "t2")}});
             addBuild("a", "t1");
             addPublish("a", "t1", {build("b", "t1", inputs("a")), build("c", "t1", inputs("a"))});
@@ -152,18 +155,19 @@ private:
     void addPublish(const std::string& p, const std::string& t, std::vector<Command> commands) {
         const auto id = p + "~" + t + "~1.0.0~r1";
         steps.push_back({DispatchAccepted{100, id, Kind::Publish, 1}, {}});
+        steps.push_back({PublishStarted{100, id, 201, 2}, {}});
         steps.push_back({PublishSucceeded{100, id, 201, std::string(40, 'b')}, std::move(commands)});
     }
     void next() {
         if (index == steps.size()) {
-            before = statusText(*queue->engine());
+            before = recordedStatus(*queue->engine());
             CHECK_EQ(statuses(*queue->engine()).at({"d", "t2"}), "Waiting(on b@t2)");
             later([this] {
                 queue.reset(); // destroys the first engine
                 store.reset(); // destroys the first SNode.C client and its connection
                 emitted.clear();
                 fresh([this] {
-                    CHECK_EQ(statusText(*queue->engine()), before);
+                    CHECK_EQ(recordedStatus(*queue->engine()), before);
                     CHECK((emitted ==
                            std::vector<Command>{publish("d", "t1"), build("b", "t2", inputs("a")), build("c", "t2", inputs("a"))}));
                     checkRows();
@@ -365,7 +369,9 @@ private:
             },
             [this](const auto& failure) {
                 CHECK(failure.kind == EventStore::StoreError::Kind::Corrupt);
-                sql("DROP TABLE coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites",
+                sql("DROP TABLE "
+                    "coreci_events,coreci_graph_feeds,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_"
+                    "releases",
                     [this] {
                         sql("DROP TABLE coreci_schema", [this] {
                             finished = true;

@@ -1,7 +1,8 @@
 #include "Check.h"
 #include "core/Status.h"
 #include "persistence/EventQueue.h"
-#include "persistence/InMemoryEventStore.h"
+#include "tests/InMemoryEventStore.h"
+#include "tests/Status.h"
 using namespace coreci;
 using namespace coreci::persistence;
 
@@ -108,7 +109,7 @@ int recovery(InMemoryEventStore::Failure failure) {
         [](const auto&) {
             CHECK(false);
         });
-    CHECK_EQ(statusText(*queue.engine()), statusText(fresh));
+    CHECK_EQ(recordedStatus(*queue.engine()), recordedStatus(fresh));
     CHECK(queue.engine()->units() == fresh.units());
     CHECK(queue.engine()->feeds() == fresh.feeds());
     CHECK(queue.engine()->releases() == fresh.releases());

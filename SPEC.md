@@ -6,7 +6,7 @@ This is the master contract for the slim controller. It manages GitHub package w
 
 ## 0. Goal in one paragraph
 
-`core-ci` is a small, single-threaded C++20 daemon that **orchestrates** package builds for a set of GitHub repositories (first deployment: the SNode.C ecosystem). It contains no knowledge of any particular repository, package, distribution, architecture or release: everything it builds is declared in JSON files in the participating repositories (section 3.3), so the same program can be deployed for other repositories by configuration alone. It does no expensive work itself: every build, every signing operation and every feed publication runs as a GitHub Actions workflow. `core-ci` only (a) receives notifications from GitHub, (b) maintains a dependency graph of packages × targets modelled in C++, (c) decides which unit is allowed to build or publish next, and (d) triggers the corresponding GitHub workflows via the GitHub REST API. Dependency chains, including diamonds, are resolved by `core-ci` and **never** by workflows triggering each other.
+`core-ci` is a small, single-threaded C++20 daemon that **orchestrates** package builds for a set of GitHub repositories (first deployment: the SNode.C ecosystem). It contains no knowledge of any particular repository, package, distribution, architecture or release: everything it builds is declared in JSON files in the participating repositories (section 3.3), so the same program can be deployed for other repositories by configuration alone. It does no expensive work itself: every build, every package-signing operation and every feed publication runs as a GitHub Actions workflow. `core-ci` only (a) receives notifications from GitHub, (b) maintains a dependency graph of packages × targets modelled in C++, (c) decides which unit is allowed to build or publish next, and (d) triggers the corresponding GitHub workflows via the GitHub REST API. Dependency chains, including diamonds, are resolved by `core-ci` and **never** by workflows triggering each other.
 
 ---
 
@@ -76,7 +76,7 @@ A fluent builder (`Pipeline::Builder`) produces an immutable `Pipeline`. `build(
 - a workflow file name that is not 1–255 characters of `A–Z a–z 0–9 . _ -` ending in `.yml` or `.yaml`,
 - a branch that is empty, longer than 255 characters, or not a valid branch name under the rules of `git check-ref-format --branch` (no control characters, space, `~ ^ : ? * [ \`, `..`, `@{` or `//`; not `@`; no leading `-` or `/`; no trailing `/`, `.` or `.lock`).
 
-`Pipeline` provides: per-target topological order (deterministic: ties broken by package name), direct prerequisites, direct dependents, `packagesForRepo(owner, repo)`, and the set of declaring repositories.
+`Pipeline` provides: per-target topological order (deterministic: ties broken by package name), direct prerequisites, direct dependents, `packagesForRepo(owner, repo)`.
 
 ### 3.3 Declarations (adapters/github/Declarations)
 
@@ -113,7 +113,7 @@ Both build and publisher workflows belong to the configured workflow repository,
 
 **Tag-bound loading.** Resolve canonical repository spelling and default branches with `GET /repos/{owner}/{repo}`. Resolve the registry HEAD with `GET /repos/{owner}/{repo}/commits/{branch}`; read registry and catalog at that commit. List source tags with pagination, ordered by 3.4 (equal precedence: lexicographically smallest tag). Read each candidate declaration at the tag's **commit SHA** from the tags API, never at the source default branch when building a tag. Select the highest version whose declaration permits its prerelease status. A repository without any accepted release is bootstrapped from its default-branch declaration solely to show NoRelease units; it is never built until a tag-bound load succeeds. Metadata commits for source default branches are needed only for that bootstrap.
 
-A load validates all files and the complete Pipeline before changing state. Malformed JSON, duplicate object keys, files over 1 MiB, wrong types, invalid identifiers or any HTTP failure fail the load, retaining the previous graph and releases. Errors identify repository, file and reason and appear in the authenticated dashboard response/stream. The successful load commits GraphChanged, then the selected TagObserved events through the same write-ahead queue. Units that remain settled are not rebuilt by a reload alone; added units become schedulable and removed units are retired from the active graph under rule 13. Changed dependency/feed/workflow definitions retain rule 13 semantics.
+A load validates all files and the complete Pipeline before changing state. For a source repository whose identity is unchanged, a load that omits an already recorded release or selects an older version or a different tag of equal version fails, preserving its tag-bound declaration and release together, including dormant packages. Malformed JSON, duplicate object keys, files over 1 MiB, wrong types, invalid identifiers or any HTTP failure fail the load, retaining the previous graph and releases. Errors identify repository, file and reason and appear in the authenticated dashboard response/stream. The successful load commits GraphChanged with its selected TagObserved records atomically through the same write-ahead queue. Release selection and declarations take effect before scheduling once, so no command can use a tag with another tag's declaration. A load with an unchanged pipeline but a newer accepted release is accepted. Units that remain settled are not rebuilt by a reload alone; added units become schedulable and removed units are retired from the active graph under rule 13. Changed dependency/feed/workflow definitions retain rule 13 semantics.
 
 Loads run at startup after the listener is up, every reconcileInterval, after a registry default-branch push, after a known source tag push, and through the dashboard reload/reconcile operations. Source default-branch pushes never trigger a load or rebuild. Concurrent load triggers coalesce to one further load; different source repositories are fetched independently. Reconciliation uses this same tag-bound loading path.
 
@@ -137,12 +137,13 @@ Per package:
 
 Per unit `(P,T)`:
 - `published`: optional `{version, revision, inputs}` where `inputs` is a sorted map `prerequisite → {version, revision}` — exactly what is in the feed.
-- `inflight`: optional `{buildId, version, tag, revision, inputs, phase, attempt, retryAt, deadline, runId, artifact}` with `phase ∈ {Dispatching, Building, AwaitingPublish, PublishDispatching, Publishing}`; `attempt` counts dispatch attempts of the current phase; `retryAt` is set only while waiting to retry a dispatch.
+- `inflight`: optional `{buildId, version, tag, revision, inputs, phase, attempt, retryAt, deadline, artifact}` with `phase ∈ {Dispatching, Building, AwaitingPublish, PublishDispatching, Publishing}`; `attempt` counts dispatch attempts of the current phase; `retryAt` is set only while waiting to retry a dispatch.
 - `failure`: optional `{version, inputs, reason}`.
 - `retryAfter`: optional engine time of the automatic retry (rule 15).
 - `autoRetried`: optional `{version, inputs}` of the last automatic retry (rule 15).
 - `rebuild`: set by `RebuildRequested` (rule 14), cleared by `PublishSucceeded` (rule 6).
 - `lastRevision[version]`: highest revision ever allocated for this version.
+- `build` and `publish`: recorded phase state, run id/attempt, optional start/end/dispatch timestamps, retained after completion and reset on the next allocation. Inflight dispatch uses the recorded build run id; there is no separate run cache.
 
 Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `PublishDispatching/Publishing`.
 
@@ -176,7 +177,7 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 | `RebuildRequested` | package, target |
 | `Tick` | — (only `at`) |
 | `Resumed` | — (only `at`; rule 12) |
-| `GraphChanged` | pipeline (complete, section 3.1; rule 13) |
+| `GraphChanged` | pipeline (complete, section 3.1; rule 13), selected tags (TagObserved records, same timestamp) |
 
 ### 4.4 Commands (engine output; not persisted — they are reproduced by replay)
 
@@ -197,9 +198,9 @@ Per feed: FIFO queue of units in `AwaitingPublish`, and at most one unit in `Pub
 10. Optional global `maxConcurrentBuilds` (default unlimited); a unit occupies a slot while its phase is `Dispatching` (also while waiting for `retryAt`) or `Building`; when no slot is free, ready units wait.
 11. The engine exposes `nextDeadline()` (earliest pending timeout or retry-backoff time, or none). `app/` only enqueues a `Tick` when the current UTC time ≥ `nextDeadline()`, so every `Tick` changes state. Before the first deadline exists no `Tick` is needed: every deadline is created by an event that itself carries `at`.
 12. **Resumed** (enqueued once by `app/` after replay, section 5.4): re-emit the command, with unchanged `buildId` and `attempt`, for every unit in `Dispatching`/`PublishDispatching` without `retryAt` (its dispatch result was lost); units waiting for `retryAt` keep their backoff. Like rule 4, this re-emission does not re-check readiness.
-13. **GraphChanged:** replace the pipeline. State is keyed by package name and by `(package, target)`. Packages and units that remain keep their state. Packages and units no longer in the pipeline become **dormant**: their `inflight` is cleared (later callbacks are ignored, a held build slot is freed); `released`, `published`, `failure` and `lastRevision` are kept, together with the package's last `sourceRepo` and `buildWorkflow` and each unit's last feed, but neither evaluated nor shown. If they reappear in a later `GraphChanged` they continue from that state — the change rules below are applied against these retained values — so revisions are never reused. Changed prerequisites act through the derived predicates: a unit whose `published.inputs` no longer match its new `desiredInputs` is rebuilt, and builds with outdated inputs are superseded by rules 2(a) and 5. A unit whose feed changes loses `published` and `failure` (its packages are not in the new feed), keeps `lastRevision` and is rebuilt into the new feed. If a package's `sourceRepo` changes, its `released` is cleared; the next tag reconciliation re-establishes it from the new repository. If a package's `sourceRepo` or `buildWorkflow` changes, its units in `Dispatching` or `Building` are abandoned like dormant ones and rebuilt through the new workflow with a new revision.
+13. **GraphChanged:** replace the pipeline and apply its newer accepted selected tags before scheduling. State is keyed by package name and by `(package, target)`. Packages and units that remain keep their state. Packages and units no longer in the pipeline become **dormant**: their `inflight` is cleared (later callbacks are ignored, a held build slot is freed); `released`, `published`, `failure` and `lastRevision` are kept, together with the package's last `sourceRepo` and `buildWorkflow` and each unit's last feed, but neither evaluated nor shown. If they reappear in a later `GraphChanged` they continue from that state — the change rules below are applied against these retained values — so revisions are never reused. Changed prerequisites act through the derived predicates: a unit whose `published.inputs` no longer match its new `desiredInputs` is rebuilt, and builds with outdated inputs are superseded by rules 2(a) and 5. A unit whose feed changes loses `published` and `failure` (its packages are not in the new feed), keeps `lastRevision` and is rebuilt into the new feed. If a package's `sourceRepo` changes, its `released` is cleared; the next tag reconciliation re-establishes it from the new repository. If a package's `sourceRepo` or `buildWorkflow` changes, its units in `Dispatching` or `Building` are abandoned like dormant ones and rebuilt through the new workflow with a new revision.
 
-14. **RebuildRequested:** set `rebuild`. The unit is no longer satisfied, so rule 2 rebuilds the same version with a new revision and it is published normally; its dependents on the same target follow through their `desiredInputs`. A failure of that build is handled by rule 7 and `RetryRequested`; `rebuild` stays set until the publication.
+14. **RebuildRequested:** for a settled unit, set `rebuild`. The unit is no longer satisfied, so rule 2 rebuilds the same version with a new revision and it is published normally; its dependents on the same target follow through their `desiredInputs`. A failure of that build is handled by rule 7 and `RetryRequested`; `rebuild` stays set until the publication.
 15. **Automatic retry (on Tick):** a unit with `failure` and `retryAfter ≤ engineTime` records `autoRetried = {failure.version, failure.inputs}`; then `failure` and `retryAfter` are cleared exactly as by `RetryRequested`. `RetryRequested` and every change of version or inputs clear `retryAfter`. At most one automatic retry per `{version, inputs}`.
 
 ### 4.6 Status (core/Status.h)
@@ -228,15 +229,15 @@ SVG: height 20; label part on `#555`, message part on the colour; white text, `f
 |---|---|
 | `TagObserved` | package known; tag is a version (3.4); not a rejected prerelease; version > `released` |
 | `DispatchAccepted`, `DispatchRejected` | `buildId` = a unit's `inflight.buildId`; phase `Dispatching` (kind `build`) or `PublishDispatching` (kind `publish`); `attempt` = `inflight.attempt`; no `retryAt` |
-| `BuildStarted` | `buildId` matches; phase `Dispatching` or `Building`; no `runId` recorded |
+| `BuildStarted` | `buildId` matches; phase `Dispatching` or `Building`; no build `runId` recorded |
 | `BuildSucceeded`, `BuildFailed` | `buildId` matches; phase `Dispatching` or `Building`; no `runId` recorded or the same `runId` |
 | `PublishStarted` | `buildId` matches; phase `PublishDispatching` or `Publishing`; no publisher runId recorded |
 | `PublishSucceeded`, `PublishFailed` | `buildId` matches; phase `PublishDispatching` or `Publishing`; no publisher runId recorded or the same runId |
 | `RetryRequested` | unit exists; `failure` set; no `inflight` |
-| `RebuildRequested` | unit exists and is not dormant; `satisfied`; no `inflight` |
+| `RebuildRequested` | unit exists and is not dormant; `settled`; no `inflight` |
 | `Tick` | `nextDeadline()` exists and `max(engineTime, at) ≥ nextDeadline()` |
 | `Resumed` | always |
-| `GraphChanged` | the pipeline differs from the current one, and none of these holds (otherwise the next load retries): a unit in `AwaitingPublish`, `PublishDispatching` or `Publishing` would be removed or change its feed; a package with a unit in one of these phases changes its `sourceRepo` or `buildWorkflow`; a feed with a unit in `PublishDispatching` or `Publishing` changes its publisher workflow |
+| `GraphChanged` | the pipeline differs or a selected tag is newer and accepted, and none of these holds (otherwise the next load retries): a unit in `AwaitingPublish`, `PublishDispatching` or `Publishing` would be removed or change its feed; a package with a unit in one of these phases changes its `sourceRepo` or `buildWorkflow`; a feed with a unit in `PublishDispatching` or `Publishing` changes its publisher workflow |
 
 A workflow re-run started in the GitHub UI is not a retry; once the unit has left the phase its callbacks are ignored. Use `RetryRequested`.
 
@@ -326,7 +327,7 @@ CREATE TABLE IF NOT EXISTS coreci_graph_prerequisites (
 
 `coreci_schema` holds exactly one row, `version = 4`. In `open`: if `coreci_schema` has no row and all `coreci_*` tables are empty, insert `version = 4`; no row while any table has rows, more than one row, or a version other than 4 → `Corrupt` (older databases are not migrated). Every event type uses only its own columns; the others are `NULL`.
 
-**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` set) plus its graph rows, written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the four graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail 3.2, are `Corrupt`. Schema migrations are out of scope.
+**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` set) plus its graph rows and selected tags in coreci_graph_releases(event_seq, package, tag, source_sha, origin), all non-null and keyed by (event_seq, package), written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail 3.2, are `Corrupt`. Schema migrations are out of scope.
 
 Every event field from 4.3 maps to exactly one typed column; unused columns are `NULL`. The mapping `Event ↔ EventRow` lives in `persistence/EventRow.cpp`, is pure and is round-trip tested for every event type.
 
@@ -404,7 +405,7 @@ There are no Actions run or job lookups. No static bearer credential is accepted
 
 Dispatch JSON remains {"ref":"<default branch>","inputs":{...}} with string inputs: build_id, package, target, version, revision, callback_url; builds additionally source_repo, tag and prerequisites, publications additionally build_repo, build_run_id and artifact. Dispatch 204 emits DispatchAccepted; other statuses emit DispatchRejected (transport failure status 0). No workflow dispatch for presentation exists.
 
-Outbound TLS verifies the CA chain and hostname before sending request bytes, sets SNI, and uses system CA trust or github-ca-cert. One request per connection, 30-second deadline, no redirects. Pagination accepts only links on github-api-url's exact scheme/host/port and rejects loops. One 30-second engine timer enqueues Tick only when nextDeadline is due. There is no GitHub polling timer.
+Outbound TLS verifies the CA chain and hostname before sending request bytes, sets SNI, and uses system CA trust or github-ca-cert. One request per connection, 30-second deadline, no redirects. Pagination accepts only links on github-api-url's exact scheme/host/port and rejects loops. One 30-second engine timer enqueues Tick only when nextDeadline is due. There is no Actions run/job polling timer; the dashboard timer performs no GitHub I/O. Configured declaration reconciliation (3.3) belongs to workflow management.
 
 ### 6.3 Configuration
 
@@ -478,7 +479,7 @@ IDP integration stays with snodec-auth 2: authorization code + PKCE S256/state/n
 openid profile email, MFA ACR urn:snodec:acr:mfa, RS256 public-key verification and
 introspection on each protected request. Only validated subjects in dashboard-users are admitted;
 email is display-only. Cookie coreci_access_token is HttpOnly/Secure/SameSite=Lax, path /,
-lifetime 12 hours. Re-introspect open streams every 60 seconds and close invalid sessions.
+lifetime 12 hours. Re-introspect open streams at least every 60 seconds and close invalid sessions. Stream maintenance uses monotonic elapsed time; the existing one-second tick starts the session check once 59 seconds have elapsed, leaving a tick for the 60-second boundary. Keep-alives also use monotonic elapsed time.
 
 ### 6.6 Public status
 

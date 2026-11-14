@@ -2,6 +2,7 @@
 #include "Fixture.h"
 #include "core/Status.h"
 #include "persistence/EventRow.h"
+#include "tests/Status.h"
 
 using namespace coreci;
 Pipeline graph(unsigned base) {
@@ -41,7 +42,7 @@ int main() {
                 }
             }
         }
-        CHECK_EQ(statusText(replay), statusText(engine));
+        CHECK_EQ(recordedStatus(replay), recordedStatus(engine));
         CHECK(replay.units() == engine.units());
         CHECK(replay.pipeline() == engine.pipeline());
         return commands;

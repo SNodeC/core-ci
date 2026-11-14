@@ -73,6 +73,7 @@ int main() {
     CHECK(build.buildId == id("a", 2));
     CHECK(build.version == *Version::parse("1.0.0") && build.revision == 2);
     CHECK(engine.units().at(a).rebuild && !engine.derive().at(a).satisfied);
+    ignored(RebuildRequested{100, "b", "target"}); // Its inputs still match, but the prerequisite is unsettled.
     ignored(RebuildRequested{100, "a", "target"});
     apply(BuildFailed{100, id("a", 2), 101, "compiler failed"});
     CHECK(engine.units().at(a).rebuild && engine.units().at(a).failure);

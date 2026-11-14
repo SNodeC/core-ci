@@ -54,7 +54,7 @@ details { margin-top: 16px; } summary { cursor: pointer; color: var(--sub); padd
 #work-panel { max-width: 1078px; margin-inline: auto; } #work-panel > .table-wrap { container-type: inline-size; }
 .work-table { table-layout: fixed; width: 1076px; }
 col.work-toggle { width: 32px; } col.work-package { width: 208px; } col.work-target { width: 156px; } col.work-state { width: 128px; }
-col.work-job, col.work-verified { width: 184px; }
+col.work-phase, col.work-recorded { width: 184px; }
 .work-table > thead th { height: 60px; padding: 8px 12px; font-size: 12px; }
 .work-table > tbody > .execution-row > :is(th,td) { padding: 10px 12px; border-top: 1px solid var(--line); height: 64px; }
 .work-table > tbody > .execution-row > th { background: transparent; color: var(--text); font-size: 13px; font-weight: 400; }
@@ -69,13 +69,13 @@ col.work-job, col.work-verified { width: 184px; }
 .execution-state .state.published { background: light-dark(#e8f5ee,#193c30); }
 .execution-state .state.waiting { background: light-dark(#fff3dc,#3e321c); }
 .execution-state .state.failed { background: light-dark(#fcebea,#47282d); }
-.work-table > thead th.work-job, .work-table > tbody > .execution-row > td.work-job { padding-inline: 16px; text-align: center; }
-.job-pair { display: grid; grid-template-columns: 72px 72px; gap: 8px; justify-content: center; align-items: center; }
-.work-job > strong, .work-verified > strong { display: block; margin-bottom: 7px; } thead .job-pair { font-size: 10px; font-weight: 400; }
+.work-table > thead th.work-phase, .work-table > tbody > .execution-row > td.work-phase { padding-inline: 16px; text-align: center; }
+.phase-pair { display: grid; grid-template-columns: 72px 72px; gap: 8px; justify-content: center; align-items: center; }
+.work-phase > strong, .work-recorded > strong { display: block; margin-bottom: 7px; } thead .phase-pair { font-size: 10px; font-weight: 400; }
 .timestamp { display: block; font-variant-numeric: tabular-nums; } .timestamp > span { display: block; white-space: nowrap; text-align: center; }
 .timestamp > span:first-child { font-size: 13px; font-weight: 650; } .timestamp > span:last-child { font-size: 11px; color: var(--sub); }
-.job-pair > .secondary, .timings .activity { font-size: 11px; min-width: 0; max-width: 72px; }
-.work-verified { text-align: center; }
+.phase-pair > .secondary, .timings .activity { font-size: 11px; min-width: 0; max-width: 72px; }
+.work-recorded { text-align: center; }
 .work-table > thead strong { color: var(--text); font-size: 12px; font-weight: 700; }
 .execution-content { position: sticky; left: 0; width: 100%; max-width: 100cqi; padding: 16px; }
 .execution-details dl { grid-template-columns: max-content minmax(0,1fr); } .execution-details dt, .timings th { white-space: nowrap; }
@@ -84,6 +84,6 @@ col.work-job, col.work-verified { width: 184px; }
 @container (max-width:760px) { .detail-grid { grid-template-columns: minmax(0,1fr); }
     .execution-content { padding: 12px; }
     .timings, .timings thead, .timings tbody { display: block; }
-    .timings tr { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+    .timings tr { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); }
     .timings th:first-child { grid-column: 1/-1; }
 }

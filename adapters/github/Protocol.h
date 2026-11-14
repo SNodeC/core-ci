@@ -8,7 +8,6 @@
 #include <variant>
 #include <vector>
 namespace coreci::github {
-    std::string presentationBody(const Workflow& workflow, const std::string& feed, std::uint64_t generation);
     struct Error {
         std::string reason;
     };
@@ -26,7 +25,7 @@ namespace coreci::github {
         const std::string& secret, const std::string& body, const std::string& timestamp, const std::string& signature, std::int64_t now);
     using Form = std::map<std::string, std::string>;
     std::variant<Form, Error> form(const std::string& body);
-    std::variant<Event, Error, std::monostate> report(const std::string& buildId, const Form& values, std::int64_t at);
+    std::variant<Event, Error> report(const std::string& buildId, const Form& values, std::int64_t at);
     struct Push {
         std::string repo, tag, sha;
         std::string branch = {}, defaultBranch = {};
@@ -38,13 +37,4 @@ namespace coreci::github {
     std::variant<std::vector<Tag>, Error> tags(const std::string& body);
     std::string dispatchBody(const Command& command, const std::string& callbackBase);
     std::string dispatchPath(const Command& command);
-    class TokenProvider {
-    public:
-        virtual ~TokenProvider() = default;
-        virtual std::string token() const = 0;
-    };
-    class EnvironmentTokenProvider : public TokenProvider {
-    public:
-        std::string token() const override;
-    };
 } // namespace coreci::github
