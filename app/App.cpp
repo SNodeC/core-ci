@@ -2,8 +2,8 @@
 
 #include "Dashboard.h"
 #include "Http.h"
-#include "Presentation.h"
 #include "StatusJson.h"
+#include "adapters/github/AppToken.h"
 #include "adapters/github/Declarations.h"
 #include "adapters/github/HttpClient.h"
 #include "adapters/mariadb/MariaDBEventStore.h"
@@ -21,7 +21,6 @@
 #include <filesystem>
 #include <iostream>
 #include <log/SemanticLogger.h>
-#include <openssl/crypto.h>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -50,6 +49,11 @@ namespace coreci::app {
             Application()
                 : server("coreci") {
                 const std::map<std::string, std::string> defaults{{"registry", ""},
+                                                                  {"target-catalog", ""},
+                                                                  {"workflow-repository", ""},
+                                                                  {"github-app-id", ""},
+                                                                  {"github-installation-id", ""},
+                                                                  {"github-app-key-file", ""},
                                                                   {"callback-base-url", ""},
                                                                   {"github-api-url", "https://api.github.com"},
                                                                   {"github-ca-cert", ""},
@@ -64,7 +68,6 @@ namespace coreci::app {
                                                                   {"max-dispatch-attempts", "8"},
                                                                   {"max-concurrent-builds", "0"},
                                                                   {"reconcile-interval", "900"},
-                                                                  {"status-interval", "60"},
                                                                   {"listen-address", "0.0.0.0"},
                                                                   {"listen-port", "8443"},
                                                                   {"tls-cert", ""},
@@ -106,7 +109,12 @@ namespace coreci::app {
                         invalid(name, valid);
                     }
                 }
-                for (const auto& key : {"callback-base-url",
+                for (const auto& key : {"github-app-id",
+                                        "github-installation-id",
+                                        "github-app-key-file",
+                                        "target-catalog",
+                                        "workflow-repository",
+                                        "callback-base-url",
                                         "db-user",
                                         "db-name",
                                         "tls-cert",
@@ -118,7 +126,7 @@ namespace coreci::app {
                         invalid(key, valid);
                     }
                 }
-                for (const auto& key : {"CORECI_GITHUB_TOKEN", "CORECI_WEBHOOK_SECRET", "CORECI_CALLBACK_SECRET", "CORECI_ADMIN_TOKEN"}) {
+                for (const auto& key : {"CORECI_WEBHOOK_SECRET", "CORECI_CALLBACK_SECRET"}) {
                     if (environment(key).empty()) {
                         invalid(key, valid);
                     }
@@ -128,6 +136,17 @@ namespace coreci::app {
                     invalid("registry", valid);
                 } else {
                     registryDefinition = std::get<gh::DeclarationFile>(registry);
+                }
+                if (std::holds_alternative<gh::Error>(
+                        gh::registryFile(get("registry").substr(0, get("registry").find(':')) + ":" + get("target-catalog"))) ||
+                    std::holds_alternative<gh::Error>(gh::registryFile(get("workflow-repository") + ":file"))) {
+                    invalid("declarations", valid);
+                }
+                for (const auto& key : {"github-app-id", "github-installation-id"}) {
+                    if (get(key).empty() || get(key).find_first_not_of("0123456789") != std::string::npos ||
+                        get(key).find_first_not_of('0') == std::string::npos) {
+                        invalid(key, valid);
+                    }
                 }
                 base = gh::httpsUrl(get("github-api-url"));
                 if (base) {
@@ -141,7 +160,7 @@ namespace coreci::app {
                 if (!gh::httpsUrl(get("callback-base-url"))) {
                     invalid("callback-base-url", valid);
                 }
-                for (const auto& key : {"tls-cert", "tls-key", "github-ca-cert", "idp-public-key-path"}) {
+                for (const auto& key : {"tls-cert", "tls-key", "github-ca-cert", "idp-public-key-path", "github-app-key-file"}) {
                     std::error_code error;
                     if (!get(key).empty() && !std::filesystem::is_regular_file(get(key), error)) {
                         invalid(key, valid);
@@ -153,13 +172,28 @@ namespace coreci::app {
                 attempts = number("max-dispatch-attempts", 1, 20, valid);
                 concurrent = number("max-concurrent-builds", 0, 1000, valid);
                 interval = number("reconcile-interval", 60, 86400, valid);
-                statusInterval = number("status-interval", 30, 3600, valid);
                 const auto port = number("listen-port", 1, 65535, valid), dbPort = number("db-port", 0, 65535, valid);
                 const auto redirectPort = number("dashboard-redirect-port", 0, 65535, valid);
                 if (redirectPort == port) {
                     invalid("dashboard-redirect-port", valid);
                 }
                 std::shared_ptr<snodec::auth::OAuthClient> auth;
+                if (base) {
+                    http = std::make_unique<gh::HttpClient>(*base, get("github-ca-cert"));
+                    try {
+                        github = std::make_unique<gh::AppToken>(
+                            get("github-app-id"),
+                            get("github-installation-id"),
+                            get("github-app-key-file"),
+                            base->path,
+                            [this](auto path, auto credential, auto done, auto body, bool raw) {
+                                http->request(std::move(path), std::move(credential), std::move(done), std::move(body), raw);
+                            },
+                            now);
+                    } catch (const std::exception&) {
+                        invalid("github-app-key-file", valid);
+                    }
+                }
                 try {
                     auth = std::make_shared<snodec::auth::OAuthClient>(get("idp-base-url"),
                                                                        get("idp-client-id"),
@@ -187,7 +221,6 @@ namespace coreci::app {
                     details.database = get("db-name");
                     details.password = environment("CORECI_DB_PASSWORD");
                     store = std::make_unique<mariadb::MariaDBEventStore>(details);
-                    http = std::make_unique<gh::HttpClient>(*base, get("github-ca-cert"));
                     queue = std::make_unique<ps::EventQueue>(
                         *store,
                         [this] {
@@ -212,10 +245,9 @@ namespace coreci::app {
                         [](auto seq, const auto&) {
                             std::cerr << "replay ignored seq " << seq << '\n';
                         },
-                        [this](auto seq, const Event&, const Engine& engine) {
+                        [this](auto seq, const Event&, const Engine&) {
                             generation = seq;
                             if (queue->engine()) {
-                                observePresentation(engine);
                                 dashboard->changed();
                             }
                         });
@@ -232,10 +264,6 @@ namespace coreci::app {
                         auth,
                         users,
                         *queue,
-                        *base,
-                        [this](std::string path, bool raw, auto done) {
-                            http->request(std::move(path), token.token(), std::move(done), {}, raw);
-                        },
                         [this](auto done) {
                             reload(std::move(done));
                         },
@@ -282,7 +310,6 @@ namespace coreci::app {
                 queue->start(
                     [this] {
                         recoveryDelay = 1;
-                        observePresentation(*queue->engine());
                         dashboard->changed();
                         if (listening) {
                             reload();
@@ -331,37 +358,11 @@ namespace coreci::app {
             void tick() {
                 const auto* engine = queue->engine();
                 const auto at = now();
-                if (engine) {
-                    dispatchPresentations(at);
-                }
                 if (engine && !tickPending && engine->nextDeadline() && at >= *engine->nextDeadline()) {
                     tickPending = true;
                     queue->enqueue(Tick{at}, [this](const auto&) {
                         tickPending = false;
                     });
-                }
-            }
-            void observePresentation(const Engine& engine) {
-                std::map<std::string, StatusSnapshot> snapshots;
-                for (const auto& [feed, writer] : presentations) {
-                    if (engine.pipeline().feeds().contains(feed)) {
-                        snapshots.emplace(feed, statusSnapshot(engine, feed));
-                    }
-                }
-                presentation.observe(snapshots);
-            }
-            void dispatchPresentations(std::int64_t at) {
-                for (const auto& feed : presentation.due(at, statusInterval)) {
-                    const auto& writer = presentations.at(feed);
-                    const auto path = base->path + "/repos/" + gh::escape(writer.owner) + "/" + gh::escape(writer.repo) +
-                                      "/actions/workflows/" + gh::escape(writer.workflowFile) + "/dispatches";
-                    http->request(
-                        path,
-                        token.token(),
-                        [this, feed](int status, std::string, std::string) {
-                            presentation.complete(feed, status == 204);
-                        },
-                        gh::presentationBody(writer, feed, generation));
                 }
             }
             void dispatch(const Command& command) {
@@ -373,9 +374,8 @@ namespace coreci::app {
                     },
                     command);
                 if (std::holds_alternative<Accept>(classification)) {
-                    http->request(
+                    github->request(
                         base->path + gh::dispatchPath(command),
-                        token.token(),
                         [this, command](int status, std::string body, std::string) {
                             if (queue->engine()) {
                                 std::visit(
@@ -439,14 +439,6 @@ namespace coreci::app {
                         answer(res, 401, "unauthorized");
                     }
                 };
-                const auto adminAuth = [](const Req& req, const Res& res, express::Next& next) {
-                    const auto expected = "Bearer " + environment("CORECI_ADMIN_TOKEN"), supplied = req->get("Authorization");
-                    if (supplied.size() == expected.size() && CRYPTO_memcmp(supplied.data(), expected.data(), expected.size()) == 0) {
-                        next();
-                    } else {
-                        answer(res, 401, "unauthorized");
-                    }
-                };
                 const auto method = [](const Req&, const Res& res) {
                     answer(res, 405, "method not allowed");
                 };
@@ -458,26 +450,6 @@ namespace coreci::app {
                     report(req, res);
                 });
                 server.all("/api/v1/builds/:buildId/report", method);
-                server.post("/api/v1/units/:package/:target/retry", adminAuth, [this](const Req& req, const Res& res) {
-                    submit(RetryRequested{now(), req->param("package"), req->param("target")}, res);
-                });
-                server.all("/api/v1/units/:package/:target/retry", method);
-                server.post("/api/v1/units/:package/:target/rebuild", adminAuth, [this](const Req& req, const Res& res) {
-                    submit(RebuildRequested{now(), req->param("package"), req->param("target")}, res);
-                });
-                server.all("/api/v1/units/:package/:target/rebuild", method);
-                server.post("/api/v1/reload", adminAuth, [this](const Req&, const Res& res) {
-                    const bool running = loading;
-                    reload();
-                    answer(res, 202, running ? "already running" : "started");
-                });
-                server.all("/api/v1/reload", method);
-                server.post("/api/v1/reconcile", adminAuth, [this](const Req&, const Res& res) {
-                    const bool running = reconciling;
-                    reconcile();
-                    answer(res, 202, running ? "already running" : "started");
-                });
-                server.all("/api/v1/reconcile", method);
                 server.head("/api/v1/status.json", method);
                 server.get("/api/v1/status.json", [this](const Req&, const Res& res) {
                     if (queue->engine()) {
@@ -489,16 +461,6 @@ namespace coreci::app {
                     }
                 });
                 server.all("/api/v1/status.json", method);
-                server.head("/api/v1/status", method);
-                server.get("/api/v1/status", [this](const Req&, const Res& res) {
-                    showStatus(res, false);
-                });
-                server.all("/api/v1/status", method);
-                server.head("/api/v1/graph.dot", method);
-                server.get("/api/v1/graph.dot", [this](const Req&, const Res& res) {
-                    showStatus(res, true);
-                });
-                server.all("/api/v1/graph.dot", method);
                 server.head("/api/v1/badge/:package/:target.svg", method);
                 server.get("/api/v1/badge/:package/:target.svg", [this](const Req& req, const Res& res) {
                     const Unit unit{req->param("package"), req->param("target")};
@@ -513,16 +475,6 @@ namespace coreci::app {
                     answer(res, 404, "not found");
                 });
             }
-            void showStatus(const Res& res, bool dot) {
-                if (queue->engine()) {
-                    res->status(200)
-                        .set("Content-Type", dot ? "text/vnd.graphviz" : "text/plain")
-                        .send(dot ? statusDot(*queue->engine())
-                                  : (loadError.empty() ? "" : loadError + "\n") + statusText(*queue->engine()));
-                } else {
-                    answer(res, 503, "unavailable");
-                }
-            }
             void report(const Req& req, const Res& res) {
                 if (!contentType(req, "application/x-www-form-urlencoded")) {
                     answer(res, 400, "invalid: content type");
@@ -534,8 +486,7 @@ namespace coreci::app {
                         const auto event = gh::report(req->param("buildId"), std::get<gh::Form>(decoded), now());
                         if (std::holds_alternative<gh::Error>(event)) {
                             answer(res, 400, "invalid: " + std::get<gh::Error>(event).reason);
-                        } else if (std::holds_alternative<std::monostate>(event)) {
-                            answer(res, 200, "ignored: no event");
+
                         } else {
                             submit(std::get<Event>(event), res);
                         }
@@ -566,10 +517,7 @@ namespace coreci::app {
                         const auto push = std::get<gh::Push>(parsed);
                         const auto slash = push.repo.find('/');
                         if (!push.branch.empty()) {
-                            const bool known =
-                                repoKey(push.repo) == repoKey(registryDefinition.owner + "/" + registryDefinition.repo) ||
-                                (queue->engine() &&
-                                 !pipeline().packagesForRepo(push.repo.substr(0, slash), push.repo.substr(slash + 1)).empty());
+                            const bool known = repoKey(push.repo) == repoKey(registryDefinition.owner + "/" + registryDefinition.repo);
                             if (known && push.branch == push.defaultBranch) {
                                 reload();
                                 rememberDelivery(delivery);
@@ -586,136 +534,22 @@ namespace coreci::app {
                             if (packages.empty()) {
                                 answer(res, 202, "ignored");
                             } else {
-                                struct Batch {
-                                    std::vector<std::string> lines;
-                                    std::size_t left;
-                                    int code = 200;
-                                };
-                                const auto batch =
-                                    std::make_shared<Batch>(Batch{std::vector<std::string>(packages.size()), packages.size(), 200});
-                                for (std::size_t i = 0; i < packages.size(); ++i) {
-                                    queue->enqueue(TagObserved{now(), packages[i], push.tag, push.sha, Origin::Webhook},
-                                                   [this, res, batch, delivery, p = packages[i], i](const auto& result) {
-                                                       const auto [code, text] = response(result);
-                                                       batch->code = std::max(batch->code, code);
-                                                       batch->lines[i] = p + ": " + text;
-                                                       if (--batch->left == 0) {
-                                                           if (batch->code == 200) {
-                                                               rememberDelivery(delivery);
-                                                           }
-                                                           std::string text;
-                                                           for (const auto& line : batch->lines) {
-                                                               text += line + '\n';
-                                                           }
-                                                           answer(res, batch->code, text);
-                                                       }
-                                                   });
-                                }
+                                reload([this, res, delivery](bool success) {
+                                    if (success) {
+                                        rememberDelivery(delivery);
+                                    }
+                                    answer(res, success ? 200 : 503, success ? "accepted" : "unavailable");
+                                });
                             }
                         }
                     }
                 }
-            }
-            struct Round {
-                std::size_t remaining;
-            };
-            bool reconcile(bool afterLoad = false) {
-                const bool started = (!reconciling || afterLoad) && queue->engine();
-                if (started) {
-                    ++reconciling;
-                    const auto repos = pipeline().repositories();
-                    const auto round = std::make_shared<Round>(Round{repos.size()});
-                    if (repos.empty()) {
-                        --reconciling;
-                    }
-                    for (const auto& [owner, repo] : repos) {
-                        page(owner,
-                             repo,
-                             base->path + "/repos/" + gh::escape(owner) + "/" + gh::escape(repo) + "/tags?per_page=100",
-                             {},
-                             {},
-                             round);
-                    }
-                }
-                return started;
-            }
-            void page(const std::string& owner,
-                      const std::string& repo,
-                      const std::string& path,
-                      std::vector<gh::Tag> collected,
-                      std::set<std::string> visited,
-                      const std::shared_ptr<Round>& round) {
-                visited.insert(path);
-                http->request(path,
-                              token.token(),
-                              [this, owner, repo, collected = std::move(collected), visited = std::move(visited), round](
-                                  int status, std::string body, std::string linkHeader) mutable {
-                                  bool valid = status == 200;
-                                  std::string next;
-                                  const auto parsed = gh::tags(body);
-                                  valid = valid && std::holds_alternative<std::vector<gh::Tag>>(parsed);
-                                  if (valid) {
-                                      const auto& found = std::get<std::vector<gh::Tag>>(parsed);
-                                      for (const auto& tag : found) {
-                                          if (tag.sha.size() != 40 || tag.sha.find_first_not_of("0123456789abcdef") != std::string::npos) {
-                                              valid = false;
-                                          }
-                                      }
-                                      collected.insert(collected.end(), found.begin(), found.end());
-                                      if (!linkHeader.empty()) {
-                                          const auto links = gh::nextLink(linkHeader, *base);
-                                          valid = valid && !std::holds_alternative<gh::Error>(links);
-                                          if (valid) {
-                                              const auto& link = std::get<std::optional<std::string>>(links);
-                                              if (link) {
-                                                  const auto url = gh::httpsUrl(*link);
-                                                  valid = url && url->host == base->host && url->port == base->port;
-                                                  if (valid) {
-                                                      next = url->path;
-                                                      valid = !visited.contains(next);
-                                                  }
-                                              }
-                                          }
-                                      }
-                                  }
-                                  if (valid && !next.empty()) {
-                                      page(owner, repo, next, std::move(collected), std::move(visited), round);
-                                  } else {
-                                      if (valid && queue->engine()) {
-                                          for (const auto& package : pipeline().packagesForRepo(owner, repo)) {
-                                              std::optional<gh::Tag> best;
-                                              for (const auto& tag : collected) {
-                                                  const auto version = Version::parse(tag.tag);
-                                                  const auto normalized =
-                                                      ps::normalize(TagObserved{now(), package, tag.tag, tag.sha, Origin::Reconcile});
-                                                  if (version && std::holds_alternative<Event>(normalized) &&
-                                                      (!version->prerelease() || pipeline().packages().at(package).acceptPrereleases) &&
-                                                      (!best || *version > *Version::parse(best->tag) ||
-                                                       (*version == *Version::parse(best->tag) && tag.tag < best->tag))) {
-                                                      best = tag;
-                                                  }
-                                              }
-                                              if (best) {
-                                                  queue->enqueue(TagObserved{now(), package, best->tag, best->sha, Origin::Reconcile},
-                                                                 [](const auto&) {
-                                                                 });
-                                              }
-                                          }
-                                      } else {
-                                          std::cerr << "tag reconciliation aborted for " << owner << '/' << repo << '\n';
-                                      }
-                                      if (--round->remaining == 0) {
-                                          --reconciling;
-                                      }
-                                  }
-                              });
             }
             const Pipeline& pipeline() const {
                 return queue->engine()->pipeline();
             }
             void finishLoad(bool success) {
                 loading = false;
-                reconcile(true);
                 if (reloadPending) {
                     reloadPending = false;
                     reload();
@@ -737,23 +571,44 @@ namespace coreci::app {
                     loading = true;
                     gh::loadDeclarations(
                         registryDefinition,
-                        base->path,
+                        get("workflow-repository"),
+                        get("target-catalog"),
+                        *base,
                         [this](std::string path, bool raw, auto done) {
-                            http->request(std::move(path), token.token(), std::move(done), {}, raw);
+                            github->request(std::move(path), std::move(done), {}, raw);
                         },
                         [this](auto result) {
+                            if (std::holds_alternative<gh::LoadedDeclarations>(result) && queue->engine()) {
+                                const auto& loaded = std::get<gh::LoadedDeclarations>(result);
+                                bool compatible = true;
+                                for (const auto& [package, release] : queue->engine()->releases()) {
+                                    if (release && loaded.pipeline.packages().contains(package) &&
+                                        queue->engine()->sameSource(package, loaded.pipeline.packages().at(package).sourceRepo)) {
+                                        const auto selected = loaded.releases.find(package);
+                                        compatible = compatible && selected != loaded.releases.end() &&
+                                                     (*Version::parse(selected->second.tag) > release->version ||
+                                                      selected->second.tag == release->tag);
+                                    }
+                                }
+                                if (!compatible) {
+                                    result = gh::Error{"tag-bound load would regress a recorded release"};
+                                }
+                            }
                             if (std::holds_alternative<gh::Error>(result)) {
-                                loadError = std::get<gh::Error>(result).reason;
-                                std::cerr << loadError << '\n';
+                                const auto message = std::get<gh::Error>(result).reason;
+                                std::cerr << message << '\n';
+                                dashboard->failed(message);
                                 finishLoad(false);
                             } else {
-                                loadError.clear();
                                 const auto loaded = std::get<gh::LoadedDeclarations>(result);
-                                queue->enqueue(GraphChanged{now(), loaded.pipeline}, [this, loaded](const auto&) {
+                                std::vector<TagObserved> tags;
+                                const auto at = now();
+                                for (const auto& [package, tag] : loaded.releases) {
+                                    tags.push_back({at, package, tag.tag, tag.sha, Origin::Reconcile});
+                                }
+                                queue->enqueue(GraphChanged{at, loaded.pipeline, tags}, [this, loaded](const auto&) {
                                     if (queue->engine() && pipeline() == loaded.pipeline) {
-                                        presentations = loaded.presentations;
                                         dashboard->loaded(loaded);
-                                        observePresentation(*queue->engine());
                                     }
                                     finishLoad(queue->engine() && pipeline() == loaded.pipeline);
                                 });
@@ -762,11 +617,7 @@ namespace coreci::app {
                 }
             }
             std::uint64_t generation = 0;
-            std::int64_t statusInterval = 60;
-            Presentation presentation;
-            std::map<std::string, Workflow> presentations;
             gh::DeclarationFile registryDefinition;
-            std::string loadError;
             bool loading = false, reloadPending = false;
             Server server;
             express::legacy::in::WebApp redirect{"coreci-redirect"};
@@ -774,7 +625,7 @@ namespace coreci::app {
             std::vector<std::function<void(bool)>> loadReplies;
             std::map<std::string, CLI::Option*> options;
             std::optional<gh::Url> base;
-            gh::EnvironmentTokenProvider token;
+            std::unique_ptr<gh::AppToken> github;
             std::unique_ptr<gh::HttpClient> http;
             std::unique_ptr<mariadb::MariaDBEventStore> store;
             std::unique_ptr<ps::EventQueue> queue;
@@ -782,7 +633,6 @@ namespace coreci::app {
             std::deque<std::string> deliveries;
             std::int64_t buildTimeout = 0, publishTimeout = 0, attempts = 0, concurrent = 0, interval = 0, retryDelay = 0;
             double recoveryDelay = 1;
-            std::size_t reconciling = 0;
             bool listening = false, fatal = false, tickPending = false;
         };
     } // namespace

@@ -41,41 +41,33 @@ namespace coreci::app {
             return value ? std::to_string(*value) : "null";
         }
     } // namespace
-    StatusSnapshot statusSnapshot(const Engine& engine, const std::string& feed) {
+    StatusSnapshot statusSnapshot(const Engine& engine) {
         StatusSnapshot result;
         for (const auto& [name, package] : engine.pipeline().packages()) {
-            bool included = feed.empty();
-            for (const auto& target : package.targets) {
-                included = included || engine.pipeline().targets().at(target).feed == feed;
-            }
-            if (included) {
-                result.packages.emplace(name, PackageView{package.sourceRepo, engine.releases().at(name)});
-            }
+            result.packages.emplace(name, PackageView{package.sourceRepo, engine.releases().at(name)});
         }
         for (const auto& [unit, status] : statuses(engine)) {
             const auto& targetFeed = engine.pipeline().targets().at(unit.target).feed;
-            if (feed.empty() || targetFeed == feed) {
-                UnitView view;
-                view.feed = targetFeed;
-                view.status = status;
-                const auto& state = engine.units().at(unit);
-                if (state.inflight) {
-                    const auto& f = *state.inflight;
-                    view.inflight = BuildView{{f.version.text(), f.revision}, f.buildId, f.phase, f.runId, f.attempt};
-                }
-                if (state.published) {
-                    const auto& p = *state.published;
-                    view.published = PublicationView{{p.version.text(), p.revision}, p.runId, p.at, p.feedCommit};
-                }
-                if (state.failure) {
-                    const auto& f = *state.failure;
-                    view.failure = FailureView{{f.version.text(), f.revision}, f.runId, f.at, f.reason};
-                }
-                if (!state.inflight && status != "Settled" && engine.releases().at(unit.package)) {
-                    view.next = VersionView{engine.releases().at(unit.package)->version.text(), engine.nextRevision(unit)};
-                }
-                result.units.emplace(unit, std::move(view));
+            UnitView view;
+            view.feed = targetFeed;
+            view.status = status;
+            const auto& state = engine.units().at(unit);
+            if (state.inflight) {
+                const auto& f = *state.inflight;
+                view.inflight = BuildView{{f.version.text(), f.revision}, f.buildId, f.phase, state.build.runId, f.attempt};
             }
+            if (state.published) {
+                const auto& p = *state.published;
+                view.published = PublicationView{{p.version.text(), p.revision}, p.runId, p.at, p.feedCommit};
+            }
+            if (state.failure) {
+                const auto& f = *state.failure;
+                view.failure = FailureView{{f.version.text(), f.revision}, f.runId, f.at, f.reason};
+            }
+            if (!state.inflight && status != "Settled" && engine.releases().at(unit.package)) {
+                view.next = VersionView{engine.releases().at(unit.package)->version.text(), engine.nextRevision(unit)};
+            }
+            result.units.emplace(unit, std::move(view));
         }
         return result;
     }

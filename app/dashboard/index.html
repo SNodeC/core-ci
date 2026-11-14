@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>core-ci</title><link rel="stylesheet" href="/style.css"><script src="/app.js?v=19bb541d" defer></script>
+<title>core-ci</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
 </head>
 <body>
 <header><strong>core-ci</strong><span id="owner">Local administration</span><span id="connection" role="status">Connecting…</span>
@@ -12,17 +12,18 @@
 <main>
 <section id="work-panel" aria-labelledby="work-heading">
 <div class="heading"><div><h1 id="work-heading">Package work</h1><p id="counts"></p></div>
+<button id="reload">Reload</button>
 </div>
 <div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
 <label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
 <option value="failed">Failed</option><option value="published">Published</option></select></label></div>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Package executions; scroll horizontally for all timing columns">
 <table class="work-table"><colgroup><col class="work-toggle"><col class="work-package"><col class="work-target"><col class="work-state">
-<col class="work-job"><col class="work-job"><col class="work-verified"></colgroup><thead><tr>
+<col class="work-phase"><col class="work-phase"><col class="work-recorded"></colgroup><thead><tr>
 <th scope="col" aria-label="Build details"></th><th scope="col">Package</th><th scope="col">Target</th><th scope="col">State</th>
-<th scope="col" class="work-job"><strong>Build</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
-<th scope="col" class="work-job"><strong>Publisher job</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
-<th scope="col" class="work-verified"><strong>Publication recorded</strong><span class="job-pair"><span>Started</span><span>Finished</span></span></th>
+<th scope="col" class="work-phase"><strong>Build</strong><span class="phase-pair"><span>Started</span><span>Finished</span></span></th>
+<th scope="col" class="work-phase"><strong>Publish</strong><span class="phase-pair"><span>Started</span><span>Finished</span></span></th>
+<th scope="col" class="work-recorded"><strong>Publication recorded</strong><span class="phase-pair"><span>Started</span><span>Finished</span></span></th>
 </tr></thead><tbody id="graph"></tbody></table></div>
 <p id="visible-count"></p>
 </section>

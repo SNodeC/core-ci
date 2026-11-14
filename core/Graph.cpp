@@ -78,14 +78,6 @@ namespace coreci {
             throw std::invalid_argument("invalid workflow: " + file);
         }
     }
-    std::set<std::pair<std::string, std::string>> Pipeline::repositories() const {
-        std::set<std::pair<std::string, std::string>> result;
-        for (const auto& [name, pkg] : packageMap) {
-            result.emplace(pkg.sourceRepo.owner, pkg.sourceRepo.repo);
-        }
-        return result;
-    }
-
     Pipeline::Builder& Pipeline::Builder::feed(Feed value) {
         feedList.push_back(std::move(value));
         return *this;

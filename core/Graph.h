@@ -50,7 +50,6 @@ namespace coreci {
         class Builder;
         Pipeline() = default;
         bool operator==(const Pipeline&) const = default;
-        std::set<std::pair<std::string, std::string>> repositories() const;
         const std::map<std::string, Feed>& feeds() const;
         const std::map<std::string, Target>& targets() const;
         const std::map<std::string, Package>& packages() const;

@@ -25,9 +25,10 @@ int main() {
     }
     CHECK_EQ(std::get<Form>(form("x=a+b%2Bc%26d%3D%C3%A9")).at("x"), "a b+c&d=é");
     CHECK(std::holds_alternative<Error>(report("id", {{"phase", "build"}, {"status", "failed"}, {"run_id", "1"}}, 1)));
-    CHECK(std::holds_alternative<std::monostate>(report("id", {{"phase", "publish"}, {"status", "started"}}, 1)));
+    CHECK(std::holds_alternative<Error>(report("id", {{"phase", "publish"}, {"status", "started"}}, 1)));
     for (const auto& data :
-         std::vector<Form>{{{"phase", "build"}, {"status", "succeeded"}, {"run_id", "1"}, {"artifact", "artifact"}},
+         std::vector<Form>{{{"phase", "publish"}, {"status", "started"}, {"run_id", "2"}, {"run_attempt", "3"}},
+                           {{"phase", "build"}, {"status", "succeeded"}, {"run_id", "1"}, {"artifact", "artifact"}},
                            {{"phase", "build"}, {"status", "failed"}, {"run_id", "1"}, {"reason", "cancelled"}},
                            {{"phase", "publish"}, {"status", "succeeded"}, {"run_id", "1"}, {"feed_commit", std::string(40, 'a')}},
                            {{"phase", "publish"}, {"status", "failed"}, {"run_id", "1"}, {"reason", "failed"}}}) {

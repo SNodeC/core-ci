@@ -37,6 +37,13 @@ namespace coreci {
         unsigned runAttempt;
         bool operator==(const BuildStarted&) const = default;
     };
+    struct PublishStarted {
+        std::int64_t at;
+        std::string buildId;
+        std::uint64_t runId;
+        unsigned runAttempt;
+        bool operator==(const PublishStarted&) const = default;
+    };
     struct BuildSucceeded {
         std::int64_t at;
         std::string buildId;
@@ -86,6 +93,7 @@ namespace coreci {
     struct GraphChanged {
         std::int64_t at;
         Pipeline pipeline;
+        std::vector<TagObserved> tags = {};
         bool operator==(const GraphChanged&) const = default;
     };
     using Event = std::variant<TagObserved,
@@ -94,6 +102,7 @@ namespace coreci {
                                BuildStarted,
                                BuildSucceeded,
                                BuildFailed,
+                               PublishStarted,
                                PublishSucceeded,
                                PublishFailed,
                                RetryRequested,

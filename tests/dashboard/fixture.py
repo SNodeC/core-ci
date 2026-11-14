@@ -51,6 +51,7 @@ class Provider(BaseHTTPRequestHandler):
         query = urllib.parse.urlsplit(self.path)
         path = urllib.parse.unquote(query.path)
         state = self.server.state
+        state.api_requests.append(path)
         if path == '/oauth2/authorize':
             values = {k: v[0] for k, v in urllib.parse.parse_qs(query.query).items()}
             assert values['code_challenge_method'] == 'S256'
@@ -69,25 +70,18 @@ class Provider(BaseHTTPRequestHandler):
                 data = state.catalog
             else:
                 repo = path.split('/repos/', 1)[1].split('/contents/', 1)[0]
+                ref = urllib.parse.parse_qs(query.query)['ref'][0]
+                assert ref == 'a' * 40 or ref in state.tags.get(repo, {}).values(), 'declaration not read at a tag commit'
+                state.contents.append((repo, ref))
                 data = state.sources[repo]
             self.respond(200, data)
         elif '/commits/' in path:
             self.respond(200, dict(sha='a' * 40))
         elif path.endswith('/tags'):
-            self.respond(200, [])
+            repo = path.removeprefix('/repos/').removesuffix('/tags')
+            self.respond(200, [dict(name=tag, commit=dict(sha=sha)) for tag, sha in state.tags.get(repo, {}).items()])
         elif '/actions/runs' in path:
-            parts = path.split('/actions/runs', 1)
-            if path.endswith('/jobs'):
-                rid = int(parts[1].split('/')[1])
-                run = state.runs[rid]
-                self.respond(200, dict(jobs=[dict(name=run['main'], html_url=run['html_url'] + '/job/1',
-                    status=run['status'], conclusion=run['conclusion'], started_at='2026-01-01T00:00:00Z',
-                    completed_at='2026-01-01T00:01:00Z' if run['status'] == 'completed' else None)]))
-            elif parts[1]:
-                rid = int(parts[1].strip('/'))
-                self.respond(200 if rid in state.runs else 404, state.runs.get(rid, {}))
-            else:
-                self.respond(200, dict(workflow_runs=list(state.runs.values())))
+            raise AssertionError('controller attempted removed job lookup')
         elif path.startswith('/repos/'):
             repo = path.removeprefix('/repos/')
             self.respond(200, dict(full_name=repo, default_branch='master' if repo in ('SNodeC/snode.c', 'SNodeC/mqttsuite') else 'main'))
@@ -98,7 +92,16 @@ class Provider(BaseHTTPRequestHandler):
         state = self.server.state
         raw = self.rfile.read(int(self.headers.get('Content-Length', '0')))
         fields = {k: v[0] for k, v in urllib.parse.parse_qs(raw.decode()).items()}
-        if self.path == '/oauth2/token':
+        if self.path == '/app/installations/42/access_tokens':
+            credential = self.headers['Authorization'].removeprefix('Bearer ')
+            first, second, signature = credential.split('.')
+            state.key.public_key().verify(base64.urlsafe_b64decode(signature + '=' * (-len(signature) % 4)),
+                                          (first + '.' + second).encode(), padding.PKCS1v15(), hashes.SHA256())
+            claims = json.loads(base64.urlsafe_b64decode(second + '=' * (-len(second) % 4)))
+            assert claims['iss'] == '123' and abs(claims['iat'] - (int(time.time()) - 60)) <= 3
+            state.mints += 1
+            self.respond(201, dict(token='fixture-installation', expires_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))))
+        elif self.path == '/oauth2/token':
             data = state.codes.pop(fields['code'])
             assert b64(hashlib.sha256(fields['code_verifier'].encode()).digest()) == data['code_challenge']
             assert fields['redirect_uri'] == data['redirect_uri']
@@ -123,22 +126,25 @@ class Provider(BaseHTTPRequestHandler):
         elif self.path.endswith('/dispatches'):
             values = json.loads(raw)['inputs']
             if 'build_id' in values:
-                rid = len(state.runs) + 100
+                rid = state.next_run
+                state.next_run += 1
                 main = 'publish' if 'publish.yml' in self.path else 'build'
-                repo = self.path.split('/repos/', 1)[1].split('/actions/', 1)[0]
-                state.runs[rid] = dict(id=rid, run_attempt=1, path='.github/workflows/coreci-' + main + '.yml',
-                    display_title=values['build_id'], html_url='https://github.com/' + repo + '/actions/runs/' + str(rid),
-                    status='in_progress', conclusion=None, main=main)
                 state.dispatches.put((rid, values, main))
+            held = state.holds.get((values.get('build_id'), main))
+            if held:
+                held.wait(20)
             self.respond(204)
         else:
             self.respond(404)
 
 
 class Fixture:
-    def __init__(self, build, work):
+    def __init__(self, build, work, small=False, wrong_host=False, parser=()):
         self.build, self.work = Path(build), Path(work)
-        self.codes, self.tokens, self.runs = {}, {}, {}
+        self.codes, self.tokens = {}, {}
+        self.next_run = 100
+        self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
+        self.holds = {}
         self.subject, self.revoked = 'owner', set()
         self.token_lifetime = 3600
         self.dispatches = queue.Queue()
@@ -158,8 +164,15 @@ class Fixture:
         self.catalog = json.loads((data / 'targets.json').read_bytes())
         self.sources = {repo: json.loads((data / (name + '.json')).read_bytes()) for repo, name in
                         [('SNodeC/snode.c', 'snodec'), ('SNodeC/mqttsuite', 'mqttsuite'), ('SNodeC/snode.c-idp', 'snodec-idp')]}
-        self.env = dict(os.environ, SSL_CERT_FILE=str(self.cert), CORECI_GITHUB_TOKEN='fixture-github', CORECI_WEBHOOK_SECRET='fixture-webhook',
-                        CORECI_CALLBACK_SECRET='fixture-callback', CORECI_ADMIN_TOKEN='fixture-admin',
+        if small:
+            self.registry = dict(feeds={f: dict(publisher='coreci-publish.yml') for f in ('f1', 'f2')},
+                                 default_feed='f1', build='coreci-build.yml', repositories=['owner/' + p for p in 'abcde'])
+            self.catalog = dict(targets=[dict(id=t, distribution='test', suite='stable', arch='test', build=dict(format='deb')) for t in ('t1', 't2')])
+            self.sources = {'owner/' + p: dict(package=p, depends_on=q, matrix=[dict(id='t1', feed='f1')] +
+                                           ([] if p == 'e' else [dict(id='t2', feed='f2')]))
+                            for p, q in [('a', []), ('b', ['a']), ('c', ['a']), ('d', ['b', 'c']), ('e', ['d'])]}
+        self.env = dict(os.environ, SSL_CERT_FILE=str(self.cert), CORECI_WEBHOOK_SECRET='fixture-webhook',
+                        CORECI_CALLBACK_SECRET='fixture-callback',
                         CORECI_DB_PASSWORD=os.environ.get('CORECI_TEST_DB_PASSWORD', ''))
         subprocess.run([self.build / 'coreci-reset-store'], env=self.env, check=True, stdout=subprocess.DEVNULL)
         self.context = ssl.create_default_context(cafile=str(self.cert))
@@ -171,15 +184,20 @@ class Fixture:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.log = (self.work / 'daemon.log').open('w')
-        command = [self.build / 'core-ci', '--registry', 'SNodeC/DistributionPackages:ci/registry.json',
+        command = [self.build / 'core-ci', '--registry', 'Fixture/Registry:ci/registry.json',
+                   '--workflow-repository', 'Fixture/Workflows', '--target-catalog', 'ci/targets.json',
+                   '--github-app-id', '123', '--github-installation-id', '42', '--github-app-key-file', self.key_path,
                    '--db-host', self.env['CORECI_TEST_DB_HOST'], '--db-port', self.env.get('CORECI_TEST_DB_PORT', '0'),
                    '--db-user', self.env['CORECI_TEST_DB_USER'], '--db-name', self.env['CORECI_TEST_DB_NAME'],
-                   '--callback-base-url', self.app, '--github-api-url', self.api, '--github-ca-cert', self.cert,
+                   '--callback-base-url', self.app, '--github-api-url', self.api.replace('localhost', '127.0.0.1') if wrong_host else self.api, '--github-ca-cert', self.cert,
                    '--tls-cert', self.cert, '--tls-key', self.key_path, '--listen-address', '127.0.0.1', '--listen-port', str(self.app_port),
                    '--idp-base-url', self.api, '--idp-client-id', 'coreci-test', '--idp-public-key-path', self.public,
                    '--dashboard-users', 'owner', '--dashboard-redirect-port', str(self.redirect_port), '--max-concurrent-builds', '0', 'coreci']
-        self.process = subprocess.Popen([str(x) for x in command], env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
-        if not self.requested.wait(10):
+        if parser:
+            command += ['http', 'parser', *parser]
+        self.command = [str(x) for x in command]
+        self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
+        if not wrong_host and not self.requested.wait(10):
             self.log.flush()
             (self.build / 'fixture-startup.log').write_bytes((self.work / 'daemon.log').read_bytes())
             self.close()
@@ -206,22 +224,22 @@ class Fixture:
         self.release.set()
         deadline = time.monotonic() + 10
         ready = False
+        count = sum(len(p['matrix']) for p in self.sources.values())
         while not ready and time.monotonic() < deadline:
             value = json.loads(self.request('/api/v1/status.json').read())
-            ready = len(value['units']) == 178
+            ready = len(value['units']) == count
             if not ready:
                 time.sleep(.05)
         assert ready
 
     def webhook(self, repo, tag='v1.0.0'):
+        self.tags.setdefault(repo, {})[tag] = 'b' * 40
         raw = json.dumps(dict(ref='refs/tags/' + tag, created=True, deleted=False, after='a' * 40, repository=dict(full_name=repo))).encode()
         response = self.request('/api/v1/github/webhook', raw, {'Content-Type': 'application/json', 'X-GitHub-Event': 'push',
             'X-GitHub-Delivery': repo + tag, 'X-Hub-Signature-256': 'sha256=' + hmac.new(b'fixture-webhook', raw, hashlib.sha256).hexdigest()})
         return response.status
 
     def report(self, rid, values, phase, outcome):
-        self.runs[rid].update(status='in_progress' if outcome == 'started' else 'completed',
-                              conclusion=None if outcome == 'started' else 'success' if outcome == 'succeeded' else 'failure')
         fields = dict(phase=phase, status=outcome, run_id=str(rid), run_attempt='1', artifact='artifact', feed_commit='b' * 40, reason='fixture failure')
         raw = urllib.parse.urlencode(fields).encode()
         stamp = str(int(time.time()))
@@ -240,16 +258,20 @@ class Fixture:
         self.thread.join(timeout=5)
         log = (self.work / 'daemon.log').read_text(errors='replace')
         assert not any(token in log for token in self.tokens), 'credential appeared in fixture log'
-        assert not any(secret in log for secret in ('fixture-admin', 'fixture-github', 'fixture-webhook', 'fixture-callback')), 'credential appeared in fixture log'
+        assert not any(secret in log for secret in ('fixture-installation', 'fixture-webhook', 'fixture-callback')), 'credential appeared in fixture log'
 
 
 @contextmanager
-def fixture(build):
+def fixture(build, **options):
     root = Path(build) / 'tmp'
     root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='dashboard-', dir=root) as directory:
-        value = Fixture(build, directory)
+        value = Fixture(build, directory, **options)
         try:
             yield value
+        except Exception:
+            value.log.flush()
+            (value.build / 'fixture-failure.log').write_bytes((value.work / 'daemon.log').read_bytes())
+            raise
         finally:
             value.close()

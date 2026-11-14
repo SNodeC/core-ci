@@ -1,6 +1,7 @@
 #include "Check.h"
 #include "Fixture.h"
 #include "core/Status.h"
+#include "tests/Status.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -67,7 +68,7 @@ int main() {
     const auto feeds = e.feeds();
     const auto releases = e.releases();
     const auto time = e.time();
-    const auto text = statusText(e);
+    const auto text = recordedStatus(e);
     for (const Event& event : std::vector<Event>{BuildStarted{999, id("a", "t1"), 101, 2},
                                                  BuildSucceeded{999, id("a", "t1"), 102, "wrong"},
                                                  BuildFailed{999, "unknown", 101, "wrong"},
@@ -79,7 +80,7 @@ int main() {
         CHECK(e.feeds() == feeds);
         CHECK(e.releases() == releases);
         CHECK(e.time() == time);
-        CHECK_EQ(statusText(e), text);
+        CHECK_EQ(recordedStatus(e), text);
     }
     apply(e, BuildSucceeded{102, id("a", "t1"), 101, "artifact"}, {publishCommand("a", "t1")});
     apply(e, BuildSucceeded{999, id("a", "t1"), 101, "artifact"});

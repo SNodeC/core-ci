@@ -60,6 +60,13 @@ namespace coreci {
         }
         return result;
     }
+    bool Engine::newerTag(const TagObserved& event, const Pipeline& candidate) const {
+        const auto version = Version::parse(event.tag);
+        const auto release = released.find(event.package);
+        return candidate.packages().contains(event.package) && version &&
+               (!version->prerelease() || candidate.packages().at(event.package).acceptPrereleases) &&
+               (release == released.end() || !release->second || *version > release->second->version);
+    }
     Classification Engine::classify(const Event& event) const {
         return std::visit(
             [&](const auto& e) -> Classification {
@@ -67,10 +74,7 @@ namespace coreci {
                 Classification result = Ignore{"event not applicable"};
                 if constexpr (std::is_same_v<E, TagObserved>) {
                     if (graph.packages().contains(e.package)) {
-                        const auto version = Version::parse(e.tag);
-                        const auto& current = released.at(e.package);
-                        if (version && (!version->prerelease() || graph.packages().at(e.package).acceptPrereleases) &&
-                            (!current || *version > current->version)) {
+                        if (newerTag(e, graph)) {
                             result = Accept{};
                         } else {
                             result = Ignore{"tag is not a newer accepted version"};
@@ -80,6 +84,9 @@ namespace coreci {
                     }
                 } else if constexpr (std::is_same_v<E, GraphChanged>) {
                     bool allowed = graph != e.pipeline;
+                    for (const auto& tag : e.tags) {
+                        allowed = allowed || newerTag(tag, e.pipeline);
+                    }
                     for (const auto& [unit, state] : unitStates) {
                         if (active(unit) && state.inflight && state.inflight->phase != Phase::Dispatching &&
                             state.inflight->phase != Phase::Building) {
@@ -118,10 +125,10 @@ namespace coreci {
                     }
                 } else if constexpr (std::is_same_v<E, RebuildRequested>) {
                     const Unit unit{e.package, e.target};
-                    if (active(unit) && derive().at(unit).satisfied && !unitStates.at(unit).inflight) {
+                    if (active(unit) && derive().at(unit).settled && !unitStates.at(unit).inflight) {
                         result = Accept{};
                     } else {
-                        result = Ignore{"unit is not satisfied or has an in-flight build"};
+                        result = Ignore{"unit is not settled or has an in-flight build"};
                     }
                 } else {
                     const auto unit = find(e.buildId);
@@ -135,11 +142,14 @@ namespace coreci {
                             accepted = (e.kind == Kind::Build ? f.phase == Phase::Dispatching : f.phase == Phase::PublishDispatching) &&
                                        e.attempt == f.attempt && !f.retryAt;
                         } else if constexpr (std::is_same_v<E, BuildStarted>) {
-                            accepted = buildPhase && !f.runId;
+                            accepted = buildPhase && !unitStates.at(*unit).build.runId;
                         } else if constexpr (std::is_same_v<E, BuildSucceeded> || std::is_same_v<E, BuildFailed>) {
-                            accepted = buildPhase && (!f.runId || *f.runId == e.runId);
+                            accepted = buildPhase && (!unitStates.at(*unit).build.runId || *unitStates.at(*unit).build.runId == e.runId);
+                        } else if constexpr (std::is_same_v<E, PublishStarted>) {
+                            accepted = publishPhase && !unitStates.at(*unit).publish.runId;
                         } else {
-                            accepted = publishPhase;
+                            accepted =
+                                publishPhase && (!unitStates.at(*unit).publish.runId || *unitStates.at(*unit).publish.runId == e.runId);
                         }
                         result = accepted ? Classification{Accept{}} : Classification{Ignore{"wrong phase, attempt or runId"}};
                     }
@@ -208,7 +218,7 @@ namespace coreci {
                                       unit.target,
                                       feed.id,
                                       {pkg.buildWorkflow.owner, pkg.buildWorkflow.repo},
-                                      *f.runId,
+                                      *unitStates.at(unit).build.runId,
                                       f.artifact,
                                       feed.workflow};
         }
@@ -224,8 +234,10 @@ namespace coreci {
     }
     void Engine::fail(const Unit& unit, const std::string& reason, std::int64_t at, bool automatic) {
         auto& state = unitStates.at(unit);
-        state.failure =
-            Failure{state.inflight->version, state.inflight->inputs, reason, state.inflight->revision, state.inflight->runId, at};
+        auto& phase = state.inflight->phase == Phase::Dispatching || state.inflight->phase == Phase::Building ? state.build : state.publish;
+        phase.state = "failed";
+        phase.end = *engineTime;
+        state.failure = Failure{state.inflight->version, state.inflight->inputs, reason, state.inflight->revision, state.build.runId, at};
         state.retryAfter.reset();
         if (automatic && options.retryDelay > 0 && state.autoRetried != std::pair{state.failure->version, state.failure->inputs}) {
             state.retryAfter = *engineTime + options.retryDelay;
@@ -266,12 +278,12 @@ namespace coreci {
                     auto& revision = state.lastRevision[release.version];
                     revision = nextRevision(unit);
                     state.order = seq;
-                    state.buildAssigned = false;
-                    state.publishDispatchedAt.reset();
-                    state.publishedAt.reset();
+                    state.build = WorkflowPhase{};
+                    state.publish = WorkflowPhase{};
+                    state.build.state = "dispatching";
                     const auto id = package + "~" + target + "~" + release.version.text() + "~r" + std::to_string(revision);
-                    state.inflight = Inflight{
-                        id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}, {}};
+                    state.inflight =
+                        Inflight{id, release.version, release.tag, revision, *derived.at(unit).inputs, Phase::Dispatching, 1, {}, {}, {}};
                     commands.push_back(dispatch(unit));
                     ++running;
                 }
@@ -283,6 +295,7 @@ namespace coreci {
                 feed.queue.pop_front();
                 feed.active = unit;
                 auto& f = *unitStates.at(unit).inflight;
+                unitStates.at(unit).publish.state = "dispatching";
                 f.phase = Phase::PublishDispatching;
                 f.attempt = 1;
                 commands.push_back(dispatch(unit));
@@ -298,6 +311,11 @@ namespace coreci {
                     engineTime = std::max(engineTime.value_or(e.at), e.at);
                     if constexpr (std::is_same_v<E, GraphChanged>) {
                         changeGraph(e.pipeline);
+                        for (const auto& tag : e.tags) {
+                            if (newerTag(tag, graph)) {
+                                released[tag.package] = Released{*Version::parse(tag.tag), tag.tag};
+                            }
+                        }
                     } else if constexpr (std::is_same_v<E, TagObserved>) {
                         released.at(e.package) = Released{*Version::parse(e.tag), e.tag};
                     } else if constexpr (std::is_same_v<E, RetryRequested>) {
@@ -352,11 +370,9 @@ namespace coreci {
                             }
                         } else {
                             if constexpr (std::is_same_v<E, DispatchAccepted>) {
-                                if (e.kind == Kind::Build) {
-                                    state.buildAssigned = true;
-                                } else {
-                                    state.publishDispatchedAt = *engineTime;
-                                }
+                                auto& phase = e.kind == Kind::Build ? state.build : state.publish;
+                                phase.dispatchedAt = *engineTime;
+                                phase.state = "dispatched";
                             }
                             if (f.phase == Phase::Dispatching || f.phase == Phase::PublishDispatching) {
                                 const bool build = f.phase == Phase::Dispatching;
@@ -364,10 +380,23 @@ namespace coreci {
                                 f.retryAt.reset();
                                 f.deadline = *engineTime + (build ? options.buildTimeout : options.publishTimeout);
                             }
-                            if constexpr (std::is_same_v<E, BuildStarted>) {
-                                f.runId = e.runId;
-                            } else if constexpr (std::is_same_v<E, BuildSucceeded>) {
-                                f.runId = e.runId;
+                            if constexpr (requires { e.runId; }) {
+                                auto& phase =
+                                    (std::is_same_v<E, BuildStarted> || std::is_same_v<E, BuildSucceeded> || std::is_same_v<E, BuildFailed>)
+                                        ? state.build
+                                        : state.publish;
+                                phase.runId = e.runId;
+                                if constexpr (requires { e.runAttempt; }) {
+                                    phase.runAttempt = e.runAttempt;
+                                    phase.start = *engineTime;
+                                    phase.state = "running";
+                                } else {
+                                    phase.end = *engineTime;
+                                    phase.state =
+                                        (std::is_same_v<E, BuildSucceeded> || std::is_same_v<E, PublishSucceeded>) ? "succeeded" : "failed";
+                                }
+                            }
+                            if constexpr (std::is_same_v<E, BuildSucceeded>) {
                                 f.artifact = e.artifact;
                                 const auto d = derive().at(unit);
                                 if (f.version == released.at(unit.package)->version && d.inputs && f.inputs == *d.inputs) {
@@ -378,15 +407,11 @@ namespace coreci {
                                     clear(unit);
                                 }
                             } else if constexpr (std::is_same_v<E, PublishSucceeded>) {
-                                state.publishedAt = *engineTime;
-                                state.published = Published{f.version, f.revision, f.inputs, f.runId, e.at, e.feedCommit};
+                                state.published = Published{f.version, f.revision, f.inputs, state.build.runId, e.at, e.feedCommit};
                                 state.failure.reset();
                                 state.rebuild = false;
                                 clear(unit);
                             } else if constexpr (std::is_same_v<E, BuildFailed> || std::is_same_v<E, PublishFailed>) {
-                                if constexpr (std::is_same_v<E, BuildFailed>) {
-                                    f.runId = e.runId;
-                                }
                                 fail(unit, e.reason, e.at);
                             }
                         }
@@ -413,6 +438,9 @@ namespace coreci {
             }
         }
         return result;
+    }
+    bool Engine::sameSource(const std::string& package, const Repo& source) const {
+        return lastIdentity.contains(package) && sameIdentity(lastIdentity.at(package).first, source);
     }
     const Pipeline& Engine::pipeline() const {
         return graph;

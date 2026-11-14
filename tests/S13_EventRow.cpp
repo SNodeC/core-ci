@@ -1,6 +1,6 @@
 #include "Check.h"
 #include "Fixture.h"
-#include "persistence/InMemoryEventStore.h"
+#include "tests/InMemoryEventStore.h"
 
 #include <limits>
 #include <tuple>
@@ -72,6 +72,7 @@ int main() {
                                     BuildStarted{3, "id", std::numeric_limits<std::uint64_t>::max(), 1},
                                     BuildSucceeded{4, "id", 7, "artifact"},
                                     BuildFailed{5, "id", 7, text},
+                                    PublishStarted{5, "id", 8, 2},
                                     PublishSucceeded{6, "id", 8, hash},
                                     PublishFailed{7, "id", 8, text},
                                     RetryRequested{8, "p", "t"},
@@ -161,7 +162,7 @@ int main() {
         255,
         &EventRow::tag);
     identifiers(
-        events[8],
+        Event{RetryRequested{8, "p", "t"}},
         [](Event& e, const auto& s) {
             std::get<RetryRequested>(e).target = s;
         },
@@ -187,7 +188,7 @@ int main() {
         bad = std::get<EventRow>(encode(events[0], 73));
         bad.sourceSha = s;
         fatal(bad);
-        bad = std::get<EventRow>(encode(events[6], 73));
+        bad = std::get<EventRow>(encode(Event{PublishSucceeded{6, "id", 8, hash}}, 73));
         bad.feedCommit = s;
         fatal(bad);
     }

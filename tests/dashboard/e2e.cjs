@@ -42,7 +42,7 @@ async function run() {
                     await page.waitForFunction(() => document.querySelector('#connection')?.textContent.startsWith('Live'));
                     expiredStream = false;
                 } else if (command.action === 'wait') {
-                    await page.waitForFunction(({target, state, job}) => Object.values(graph.executions).some(work => work.target.id === target && work.active.state === state && (!job || work.build?.job?.status === job)), command, {timeout: 40000});
+                    await page.waitForFunction(({target, state, phaseState}) => Object.values(graph.executions).some(work => work.target.id === target && work.active.state === state && (!phaseState || work.build?.state === phaseState)), command, {timeout: 40000});
                 } else if (command.action === 'focus') {
                     await page.evaluate(target => {
                         const work = Object.values(graph.executions).find(item => item.target.id === target);
@@ -51,7 +51,7 @@ async function run() {
                     }, command.target);
                     await page.locator('[data-expand]').first().click();
                 } else if (command.action === 'retry') {
-                    await page.getByRole('button', {name: 'Retry definite failure'}).click();
+                    await page.getByRole('button', {name: 'Retry failure'}).click();
                 } else if (command.action === 'refresh') {
                     await page.locator('#repositories-tab').click();
                     await page.locator('#repositories button').first().click();

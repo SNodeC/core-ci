@@ -65,3 +65,12 @@ CREATE TABLE IF NOT EXISTS coreci_graph_prerequisites (
   prerequisite VARCHAR(64) NOT NULL,
   PRIMARY KEY (event_seq, package, prerequisite)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS coreci_graph_releases (
+  event_seq BIGINT UNSIGNED NOT NULL,
+  package VARCHAR(128) NOT NULL,
+  tag VARCHAR(255) NOT NULL,
+  source_sha CHAR(40) NOT NULL,
+  origin VARCHAR(16) NOT NULL,
+  PRIMARY KEY (event_seq,package)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

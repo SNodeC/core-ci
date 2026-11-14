@@ -1,7 +1,8 @@
 #include "Check.h"
 #include "Fixture.h"
 #include "core/Status.h"
-#include "persistence/InMemoryEventStore.h"
+#include "tests/InMemoryEventStore.h"
+#include "tests/Status.h"
 
 #include <cstdlib>
 #include <random>
@@ -138,7 +139,7 @@ int verifyReplay(const Engine& live, InMemoryEventStore& store, Options options)
             CHECK(false);
         });
     CHECK(done);
-    CHECK_EQ(statusText(replay), statusText(live));
+    CHECK_EQ(recordedStatus(replay), recordedStatus(live));
     CHECK(replay.units() == live.units());
     CHECK(replay.feeds() == live.feeds());
     CHECK(replay.releases() == live.releases());
@@ -198,7 +199,7 @@ int main() {
                 event = BuildSucceeded{now, "unknown", 999, "artifact"};
             } else if (state.inflight) {
                 const auto& f = *state.inflight;
-                const auto runId = f.runId.value_or(101);
+                const auto runId = state.build.runId.value_or(101);
                 if (f.phase == Phase::Dispatching || f.phase == Phase::PublishDispatching) {
                     const auto kind = f.phase == Phase::Dispatching ? Kind::Build : Kind::Publish;
                     event = choice == 4 ? Event{DispatchRejected{now, f.buildId, kind, f.attempt, 503, "busy"}}
@@ -211,6 +212,8 @@ int main() {
                     } else {
                         event = BuildSucceeded{now, f.buildId, runId, "artifact"};
                     }
+                } else if (f.phase == Phase::Publishing && choice == 5 && !state.publish.runId) {
+                    event = PublishStarted{now, f.buildId, 201, 1};
                 } else if (f.phase == Phase::Publishing) {
                     event = choice == 4 ? Event{PublishFailed{now, f.buildId, 201, "failure"}}
                                         : Event{PublishSucceeded{now, f.buildId, 201, std::string(40, 'c')}};
@@ -232,7 +235,7 @@ int main() {
                     if (f.retryAt) {
                         event = Tick{*f.retryAt};
                     } else if (f.phase == Phase::Dispatching || f.phase == Phase::Building) {
-                        event = BuildSucceeded{now, f.buildId, f.runId.value_or(101), "artifact"};
+                        event = BuildSucceeded{now, f.buildId, state.build.runId.value_or(101), "artifact"};
                     } else if (f.phase == Phase::PublishDispatching || f.phase == Phase::Publishing) {
                         event = PublishSucceeded{now, f.buildId, 201, std::string(40, 'c')};
                     }

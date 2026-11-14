@@ -1,6 +1,6 @@
 #pragma once
-#include "EventRow.h"
-#include "EventStore.h"
+#include "persistence/EventRow.h"
+#include "persistence/EventStore.h"
 
 #include <deque>
 #include <vector>

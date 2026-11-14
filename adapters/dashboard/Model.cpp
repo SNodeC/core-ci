@@ -3,70 +3,35 @@
 #include <nlohmann/json.hpp>
 namespace coreci::dashboard {
     namespace {
-        using Json = nlohmann::json;
-        std::optional<app::VersionView> selection(const app::UnitView& unit) {
-            std::optional<app::VersionView> value;
-            if (unit.inflight) {
-                value = unit.inflight->selection;
-            } else if (unit.status == "Failed" && unit.failure) {
-                value = unit.failure->selection;
-            } else if (unit.next) {
-                value = unit.next;
-            } else if (unit.published) {
-                value = unit.published->selection;
-            }
-            return value;
-        }
-        Json run(const github::JobRequest& request, const app::JobCache& jobs) {
-            Json result = Json::object();
-            if (request.runId) {
-                result["runId"] = *request.runId;
-                result["html_url"] = "https://github.com/" + request.workflow.owner + "/" + request.workflow.repo + "/actions/runs/" +
-                                     std::to_string(*request.runId);
-            }
-            const auto value = jobs.get(request);
-            if (value) {
-                result.update(
-                    {{"runId", value->runId}, {"html_url", value->htmlUrl}, {"status", value->status}, {"conclusion", value->conclusion}});
-                if (value->job) {
-                    const auto& job = *value->job;
-                    result["job"] = {{"html_url", job.htmlUrl},
-                                     {"started_at", job.startedAt},
-                                     {"completed_at", job.completedAt},
-                                     {"status", job.status},
-                                     {"conclusion", job.conclusion}};
+        nlohmann::json phase(const WorkflowPhase& value, const Workflow& workflow) {
+            using Json = nlohmann::json;
+            Json result{{"state", value.state},
+                        {"start", value.start ? Json(*value.start) : Json()},
+                        {"end", value.end ? Json(*value.end) : Json()},
+                        {"duration", value.start && value.end ? Json(*value.end - *value.start) : Json()}};
+            if (value.runId) {
+                result["runId"] = *value.runId;
+                result["html_url"] =
+                    "https://github.com/" + workflow.owner + "/" + workflow.repo + "/actions/runs/" + std::to_string(*value.runId);
+                if (value.runAttempt) {
+                    result["runAttempt"] = *value.runAttempt;
+                    result["html_url"] = result["html_url"].get<std::string>() + "/attempts/" + std::to_string(*value.runAttempt);
                 }
             }
             return result;
         }
     } // namespace
-    std::vector<github::JobRequest> jobRequests(const Engine& engine) {
-        std::vector<github::JobRequest> result;
-        for (const auto& [unit, view] : app::statusSnapshot(engine).units) {
-            const auto current = selection(view);
-            if (current && (view.inflight || (view.status == "Failed" && view.failure) || (view.status == "Settled" && view.published))) {
-                const auto id = unit.package + "~" + unit.target + "~" + current->version + "~r" + std::to_string(current->revision);
-                const auto runId = view.inflight                                ? view.inflight->runId
-                                   : view.status == "Failed" && view.failure    ? view.failure->runId
-                                   : view.status == "Settled" && view.published ? view.published->runId
-                                                                                : std::nullopt;
-                result.push_back({engine.pipeline().packages().at(unit.package).buildWorkflow, id, "build", runId});
-                if (!view.inflight || view.inflight->phase == Phase::PublishDispatching || view.inflight->phase == Phase::Publishing) {
-                    result.push_back({engine.pipeline().feeds().at(view.feed).workflow, id, "publish", {}});
-                }
-            }
-        }
-        return result;
-    }
     std::string model(const Engine& engine,
                       const github::LoadedDeclarations& declarations,
-                      const app::JobCache& jobs,
                       std::uint64_t generation,
                       bool ready,
-                      const std::string& email) {
+                      const std::string& email,
+                      const std::string& loadError) {
+        using Json = nlohmann::json;
         auto value = Json::parse(app::statusJson(app::statusSnapshot(engine), generation));
         ready = ready && engine.pipeline() == declarations.pipeline;
         value["ready"] = ready;
+        value["loadError"] = loadError;
         value["userEmail"] = email;
         for (auto& package : value["packages"]) {
             const auto name = package.at("name").get<std::string>();
@@ -78,25 +43,21 @@ namespace coreci::dashboard {
         if (!ready) {
             value["units"] = Json::array();
         }
-        const auto requests = jobRequests(engine);
         for (auto& unit : value["units"]) {
             const Unit key{unit.at("package"), unit.at("target")};
             const auto& state = engine.units().at(key);
             unit["order"] = state.order;
-            unit["assigned"] = state.buildAssigned;
-            unit["publishDispatchedAt"] = state.publishDispatchedAt ? Json(*state.publishDispatchedAt) : Json();
-            unit["publishedAt"] = state.publishedAt ? Json(*state.publishedAt) : Json();
+            unit["assigned"] = state.build.dispatchedAt.has_value() || state.build.runId.has_value();
+            unit["publishDispatchedAt"] = state.publish.dispatchedAt ? Json(*state.publish.dispatchedAt) : Json();
+            unit["publishedAt"] = state.publish.end ? Json(*state.publish.end) : Json();
             const auto& target = declarations.catalog.at(key.target);
             unit.update({{"distribution", target.distribution},
                          {"suite", target.suite},
                          {"arch", target.arch},
                          {"format", target.format},
                          {"prerequisites", declarations.packages.at(key.package).prerequisites}});
-            for (const auto& request : requests) {
-                if (request.buildId.starts_with(key.package + "~" + key.target + "~")) {
-                    unit[request.mainJob] = run(request, jobs);
-                }
-            }
+            unit["build"] = phase(state.build, engine.pipeline().packages().at(key.package).buildWorkflow);
+            unit["publish"] = phase(state.publish, engine.pipeline().feeds().at(unit.at("feed").get<std::string>()).workflow);
             const auto& inflight = engine.units().at(key).inflight;
             if (inflight) {
                 unit["tag"] = inflight->tag;
@@ -104,17 +65,17 @@ namespace coreci::dashboard {
         }
         return value.dump();
     }
-    std::variant<Unit, github::Error> retry(const std::string& body) {
+    std::variant<Unit, github::Error> unit(const std::string& body) {
         std::variant<Unit, github::Error> result;
         try {
-            const auto value = Json::parse(body);
+            const auto value = nlohmann::json::parse(body);
             result = Unit{value.at("package").get<std::string>(), value.at("target").get<std::string>()};
         } catch (const std::exception&) {
-            result = github::Error{"invalid retry body"};
+            result = github::Error{"invalid unit body"};
         }
         return result;
     }
     std::string result(const std::string& text, bool error) {
-        return Json{{error ? "error" : "result", text}}.dump();
+        return nlohmann::json{{error ? "error" : "result", text}}.dump();
     }
 } // namespace coreci::dashboard

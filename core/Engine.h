@@ -30,7 +30,6 @@ namespace coreci {
         Phase phase = Phase::Dispatching;
         unsigned attempt = 1;
         std::optional<std::int64_t> retryAt, deadline;
-        std::optional<std::uint64_t> runId;
         std::string artifact;
         bool operator==(const Inflight&) const = default;
     };
@@ -43,10 +42,16 @@ namespace coreci {
         std::int64_t at = 0;
         bool operator==(const Failure&) const = default;
     };
+    struct WorkflowPhase {
+        std::string state = "pending";
+        std::optional<std::uint64_t> runId;
+        std::optional<unsigned> runAttempt;
+        std::optional<std::int64_t> start, end, dispatchedAt;
+        bool operator==(const WorkflowPhase&) const = default;
+    };
     struct UnitState {
         std::uint64_t order = 0;
-        bool buildAssigned = false;
-        std::optional<std::int64_t> publishDispatchedAt, publishedAt;
+        WorkflowPhase build, publish;
         std::optional<Published> published;
         std::optional<Inflight> inflight;
         std::optional<Failure> failure;
@@ -90,12 +95,14 @@ namespace coreci {
         std::uint64_t nextRevision(const Unit& unit) const;
         std::map<Unit, Derived> derive() const;
         const Pipeline& pipeline() const;
+        bool sameSource(const std::string& package, const Repo& source) const;
         const std::map<std::string, std::optional<Released>>& releases() const;
         const std::map<Unit, UnitState>& units() const;
         const std::map<std::string, FeedState>& feeds() const;
         std::optional<std::int64_t> time() const;
 
     private:
+        bool newerTag(const TagObserved& event, const Pipeline& candidate) const;
         void changeGraph(const Pipeline& pipeline);
         bool active(const Unit& unit) const;
         std::optional<Unit> find(const std::string& buildId) const;

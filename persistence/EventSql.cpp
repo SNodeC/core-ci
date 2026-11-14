@@ -47,6 +47,11 @@ namespace coreci::persistence {
         const auto workflow = [](const Workflow& w) {
             return literal(w.owner) + "," + literal(w.repo) + "," + literal(w.workflowFile) + "," + literal(w.branch);
         };
+        for (const auto& tag : rows.releases) {
+            result.push_back("INSERT INTO coreci_graph_releases (event_seq,package,tag,source_sha,origin) VALUES (LAST_INSERT_ID()," +
+                             literal(tag.package) + "," + literal(tag.tag) + "," + literal(tag.sourceSha) + "," +
+                             literal(tag.origin == Origin::Webhook ? std::string("webhook") : std::string("reconcile")) + ")");
+        }
         for (const auto& feed : rows.feeds) {
             result.push_back("INSERT INTO coreci_graph_feeds (event_seq,feed,owner,repo,workflow_file,branch) VALUES (LAST_INSERT_ID()," +
                              literal(feed.id) + "," + workflow(feed.workflow) + ")");
@@ -76,7 +81,8 @@ namespace coreci::persistence {
                 "HEX(build_workflow_file),HEX(build_branch),accept_prereleases,revision_base FROM coreci_graph_packages ORDER BY "
                 "event_seq,package",
                 "SELECT event_seq,HEX(package),HEX(target),HEX(feed) FROM coreci_graph_targets ORDER BY event_seq,package,target",
-                "SELECT event_seq,HEX(package),HEX(prerequisite) FROM coreci_graph_prerequisites ORDER BY event_seq,package,prerequisite"};
+                "SELECT event_seq,HEX(package),HEX(prerequisite) FROM coreci_graph_prerequisites ORDER BY event_seq,package,prerequisite",
+                "SELECT event_seq,HEX(package),HEX(tag),HEX(source_sha),HEX(origin) FROM coreci_graph_releases ORDER BY event_seq,package"};
     }
     std::string selectSql() {
         return "SELECT seq,HEX(event_type) AS event_type,HEX(package) AS package,HEX(target) AS target,HEX(tag) AS tag,"

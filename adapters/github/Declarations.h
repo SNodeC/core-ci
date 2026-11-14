@@ -14,13 +14,15 @@ namespace coreci::github {
     };
     struct LoadedDeclarations {
         Pipeline pipeline;
-        std::map<std::string, Workflow> presentations = {};
+        std::map<std::string, Tag> releases = {};
         std::map<std::string, CatalogTarget> catalog = {};
         std::map<std::string, PackageDetails> packages = {};
     };
     using Fetch = std::function<void(std::string path, bool raw, Completion)>;
     void loadDeclarations(const DeclarationFile& registry,
-                          const std::string& apiPath,
+                          const std::string& workflowRepository,
+                          const std::string& catalogPath,
+                          const Url& base,
                           Fetch fetch,
                           std::function<void(std::variant<LoadedDeclarations, Error>)> done);
 } // namespace coreci::github

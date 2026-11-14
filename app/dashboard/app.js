@@ -15,7 +15,7 @@ function button(text, action, className = '') {
 }
 function state(work) {
     const {active} = work, result = node('span', '', 'execution-state');
-    result.append(node('span', active.state === 'building' && work.build?.conclusion === 'cancelled' ? 'cancelled' : active.state, 'state ' + active.state));
+    result.append(node('span', active.state, 'state ' + active.state));
     return result;
 }
 function feedback(value, failed = false) {
@@ -26,10 +26,10 @@ function feedback(value, failed = false) {
 }
 async function api(operation, body) {
     let result;
-    if (operation === 'retry') {
+    if (operation === 'retry' || operation === 'rebuild') {
         const work = graph.executions[body.execution];
         body = {package: work.source.package, target: work.target.id};
-    } else if (operation === 'refresh') {
+    } else if (operation === 'reload' || operation === 'reconcile') {
         body = {};
     }
     try {
@@ -91,25 +91,11 @@ function timestamp(value, message = 'Not recorded') {
     return result;
 }
 function phases(work) {
-    const {active, build, publish} = work;
-    const buildJob = build?.job, publishJob = publish?.job;
-    const terminal = ['published', 'failed'].includes(active.state);
-    const verification = {completed_at: active.proof?.verified_at};
-    const verifying = publishJob?.conclusion === 'success';
-    const uncertaintyStage = active.uncertainty?.stage || (active.publish_assigned ? 'publish' : 'build');
-    const rows = [['Build', buildJob, build, null, active.state === 'waiting' || active.state === 'building'],
-        ['Publisher job', publishJob, publish, buildJob, active.state === 'publishing' && !verifying],
-        ['Publication recorded', verification, publish, publishJob, active.state === 'publishing' && verifying]];
-    return rows.map(([label, job, run, previous, current], index) => {
-        const waiting = ['requested', 'queued', 'pending', 'waiting'].includes(job?.status);
-        const start = waiting ? null : job?.started_at, finish = job?.completed_at;
-        const unresolved = active.uncertainty && uncertaintyStage === (index === 0 ? 'build' : 'publish');
-        const message = !terminal && current ? unresolved ? active.uncertainty.reason
-            : active.state === 'waiting' ? 'Waiting for prerequisites'
-            : run?.step || (job?.status && job.status !== 'completed' ? job.status : '')
-                || (run?.status && run.status !== 'completed' ? run.status : '')
-                || (index === 2 ? 'Awaiting publisher receipt'
-                    : run?.send === 'accepted' ? 'Awaiting GitHub evidence' : 'Dispatch unconfirmed') : '—';
+    const rows = [['Build', work.build, null], ['Publish', work.publish, work.build],
+        ['Publication recorded', work.recorded, work.build]];
+    return rows.map(([label, phase, previous]) => {
+        const start = phase?.start, finish = phase?.end;
+        const message = phase?.state || 'pending';
         return {label, start, finish, previous, message, cells: [timestamp(start, start ? '—' : message),
             timestamp(finish, start && !finish ? message : '—')]};
     });
@@ -118,35 +104,26 @@ function link(label, url) {
     const allowed = typeof url === 'string' && url.startsWith('https://github.com/');
     return allowed ? Object.assign(node('a', label + ' ↗'), {href: url, target: '_blank', rel: 'noopener noreferrer'}) : node('span');
 }
-function attemptDetail(attempt) {
-    const u = attempt.uncertainty, retirement = attempt.retirement;
-    const stage = u?.stage || (attempt.publish_assigned === undefined ? 'stage not recorded' : attempt.publish_assigned ? 'publish' : 'build');
-    return [attempt.failure_kind, attempt.failure, u ? `Unresolved ${stage} ${u.kind || 'evidence'}: ${u.reason}`
-        + ` — First recorded for this reason: ${fullDateFormat.format(new Date(u.at))}` : '', retirement
-        ? `${retirement.acknowledgement} · ${fullDateFormat.format(new Date(retirement.at))} · Remote outcome: ${retirement.remote_outcome}`
-        : ''].filter(Boolean).join(' · ');
-}
 function renderExecution(work, panel) {
     const {active, build, publish} = work, phaseRows = phases(work);
-    const buildJob = build?.job, publishJob = publish?.job;
-    const activity = active.uncertainty?.reason || phaseRows.find(phase => phase.message !== '—')?.message || active.state;
+    const activity = phaseRows.find(phase => phase.message !== '—')?.message || active.state;
     const columns = node('div', '', 'detail-grid'), facts = node('div'), values = node('dl'), timings = node('table', '', 'timings');
     values.append(node('dt', 'Activity'), node('dd', ['published', 'failed'].includes(active.state) ? active.state : activity));
     values.append(node('dt', 'Attempt'), node('dd', active.id));
     const heading = timings.createTHead().insertRow();
-    for (const label of ['Job', 'Started', 'Finished', 'Duration', 'Delay']) {
+    for (const label of ['Phase', 'State', 'Started', 'Finished', 'Duration', 'Delay']) {
         const cell = node('th', label);
         cell.scope = 'col';
         heading.append(cell);
     }
     const body = timings.createTBody();
-    for (const {label, start, finish, previous, cells} of phaseRows) {
+    for (const {label, start, finish, previous, cells, message} of phaseRows) {
         const row = body.insertRow(), title = node('th', label);
         title.scope = 'row';
         row.append(title);
         const elapsed = [Date.parse(finish) - Date.parse(start),
-            label === 'Build' ? null : Date.parse(start) - Date.parse(previous?.completed_at)];
-        for (const value of [...cells, ...elapsed.map((ms, column) =>
+            label === 'Build' ? null : Date.parse(start) - Date.parse(previous?.end)];
+        for (const value of [node('span', message), ...cells, ...elapsed.map((ms, column) =>
             node('span', ms === null ? '' : Number.isFinite(ms) && (column > 0 || ms >= 0)
                 ? `${ms < 0 ? '−' : ''}${Math.floor(Math.abs(ms) / 60000)} min ${Math.floor(Math.abs(ms) / 1000) % 60} s`
                 : 'Not recorded'))]) {
@@ -156,8 +133,8 @@ function renderExecution(work, panel) {
         }
     }
     facts.append(values, timings);
-    if (active.failure || active.uncertainty || active.retirement) {
-        facts.append(node('p', attemptDetail(active), active.failure ? 'error' : 'secondary'));
+    if (active.failure) {
+        facts.append(node('p', active.failure, 'error'));
     }
     const dependencies = node('div'), list = node('ul', '', 'dependencies');
     for (const id of work.prerequisites) {
@@ -177,26 +154,19 @@ function renderExecution(work, panel) {
     }
     columns.append(facts, dependencies);
     const actions = node('div', '', 'actions');
-    actions.append(link('GitHub build run', build?.identity?.html_url), link('Build logs', buildJob?.html_url),
-        link('GitHub publication run', publish?.identity?.html_url), link('Publisher logs', publishJob?.html_url));
+    actions.append(link('GitHub build run', build?.html_url), link('GitHub publication run', publish?.html_url));
     if (active.state === 'published') {
         actions.append(link('Packages', work.packages));
     }
     for (const [name, label, enabled] of [
-        ['reconcile', 'Reconcile', active.assigned],
-        ['retry', 'Retry definite failure', active.state === 'failed' && active.failure_kind === 'definite'],
-        ['retire', 'Acknowledge publication retirement', active.state === 'publishing' && !active.publish_run_bound]
+        ['reconcile', 'Reconcile', true],
+        ['rebuild', 'Rebuild', active.state === 'published'],
+        ['retry', 'Retry failure', active.state === 'failed']
     ]) {
         if (enabled) {
             const control = button(label, () => operation(async () => {
                 const body = {execution: work.id};
-                if (name === 'retire') {
-                    body.acknowledgement = prompt('Acknowledge the unknown remote publication outcome. '
-                        + 'This does not cancel remote work, permit retry or dispatch a replacement. Record your acknowledgement:');
-                }
-                if (name !== 'retire' || body.acknowledgement) {
-                    feedback(await api(name, body));
-                }
+                feedback(await api(name, body));
             }));
             control.dataset.operation = name;
             control.dataset.id = work.id;
@@ -206,32 +176,20 @@ function renderExecution(work, panel) {
     }
     const content = panel.appendChild(node('div', '', 'execution-content'));
     content.append(columns, actions);
-    for (const prior of work.previous) {
-        content.append(node('p', `Attempt ${prior.id} · r${prior.revision} · ${prior.state} · ${attemptDetail(prior)}`, 'secondary'));
-    }
+
 }
 function renderWork() {
-    const query = element('search').value.toLowerCase(), filter = element('state-filter').value, levels = new Map(), groups = new Map(), created = new Map();
+    const query = element('search').value.toLowerCase(), filter = element('state-filter').value, levels = new Map();
     const items = Object.values(graph.executions).sort((a, b) => a.index - b.index);
     for (const work of items) {
-        const time = work.created, index = work.index;
-        if (!created.has(time)) {
-            created.set(time, index);
-        }
-        groups.set(work.id, work.selection ?? created.get(time));
         levels.set(work.id, 1 + Math.max(-1, ...work.prerequisites.map(id => levels.get(id))));
-    }
-    for (const work of [...items].reverse()) {
-        for (const id of work.prerequisites) {
-            groups.set(id, Math.max(groups.get(id), groups.get(work.id)));
-        }
     }
     const visible = items.filter(work => {
         const active = work.active, target = work.target;
         const matches = filter === 'all' || (filter === 'active' && active.state !== 'published') || active.state === filter;
         return matches && [work.source.repository, work.source.tag, target.distribution, target.suite, target.arch, target.build.format]
             .join(' ').toLowerCase().includes(query);
-    }).reverse().sort((a, b) => groups.get(b.id) - groups.get(a.id) || levels.get(b.id) - levels.get(a.id));
+    }).reverse().sort((a, b) => levels.get(b.id) - levels.get(a.id) || b.order - a.order);
     element('graph').replaceChildren();
     for (const work of visible) {
         const {active, target} = work;
@@ -260,7 +218,7 @@ function renderWork() {
         status.append(state(work));
         row.append(control, repository, distribution, status);
         for (const {label: phase, cells} of phases(work)) {
-            const cell = node('td', '', phase === 'Publication recorded' ? 'work-verified' : 'work-job'), pair = node('span', '', 'job-pair');
+            const cell = node('td', '', phase === 'Publication recorded' ? 'work-recorded' : 'work-phase'), pair = node('span', '', 'phase-pair');
             for (const [index, stamp] of cells.entries()) {
                 const label = index === 0 ? 'started' : 'finished';
                 stamp.setAttribute('aria-label', phase + ' ' + label + ': ' + (stamp.getAttribute('aria-label') || stamp.textContent));
@@ -327,20 +285,20 @@ function mapModel(model) {
     const states = {Waiting: 'waiting', Blocked: 'waiting', Ready: 'building', Dispatching: 'building',
         Building: 'building', AwaitingPublish: 'publishing', PublishDispatching: 'publishing',
         Publishing: 'publishing', Settled: 'published', Failed: 'failed'};
-    const run = value => value ? {...value, identity: {html_url: value.html_url}} : undefined;
+    const time = value => value == null ? undefined : new Date(value * 1000).toISOString();
+    const run = value => value ? {...value, start: time(value.start), end: time(value.end)} : undefined;
     for (const [index, unit] of units.entries()) {
         const item = packages.get(unit.package), chosen = current(unit), id = identity(unit);
         const tag = unit.tag || (item.released?.version === chosen.version ? item.released.tag : chosen.version);
         const buildId = `${unit.package}~${unit.target}~${chosen.version || ''}~r${chosen.revision}`;
-        const time = value => value == null ? undefined : new Date(value * 1000).toISOString();
-        executions[id] = {id, index, selection: 0,
+        executions[id] = {id, index, order: unit.order,
             source: {package: unit.package, repository: item.sourceRepo.owner + '/' + item.sourceRepo.repo, tag},
             target: {id: unit.target, distribution: unit.distribution, suite: unit.suite, arch: unit.arch, build: {format: unit.format}},
             active: {id: buildId, revision: chosen.revision, state: states[unit.status],
                 assigned: unit.assigned,
-                ...(unit.status === 'Failed' ? {failure: unit.failure?.reason, failure_kind: 'definite'} : {}),
-                ...(unit.publishedAt == null ? {} : {proof: {verified_at: time(unit.publishedAt)}})},
-            previous: [], prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
+                ...(unit.status === 'Failed' ? {failure: unit.failure?.reason} : {})},
+            recorded: {start: time(unit.publishDispatchedAt), end: time(unit.publishedAt), state: unit.publish?.state},
+            prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
             build: run(unit.build), publish: run(unit.publish)};
     }
     return {ready: model.ready, repositories, executions};
@@ -356,11 +314,14 @@ function connect() {
         const model = JSON.parse(event.data);
         document.querySelector('header strong').title = model.userEmail || '';
         graph = mapModel(model);
+        if (model.loadError) {
+            feedback(model.loadError, true);
+        }
         if (!renderPending) {
             renderPending = true;
             requestAnimationFrame(() => {
                 renderPending = false;
-                element('connection').textContent = graph.ready ? 'Live · GitHub job events' : 'Loading…';
+                element('connection').textContent = graph.ready ? 'Live · Workflow events' : 'Loading…';
                 element('reconnect').hidden = true;
                 renderRepositories();
                 renderWork();
@@ -380,12 +341,15 @@ for (const name of ['work', 'repositories']) {
 element('reconnect').addEventListener('click', () => events?.readyState === EventSource.CLOSED ? location.reload() : connect());
 element('search').addEventListener('input', renderWork);
 element('state-filter').addEventListener('change', renderWork);
+element('reload').addEventListener('click', () => operation(async () => {
+    feedback(await api('reload', {}));
+}));
 element('enroll').addEventListener('click', () => selectRepository());
 element('editor').addEventListener('submit', event => {
     event.preventDefault();
     operation(async () => {
         const name = element('repository').value.trim(), ref = element('branch').value.trim();
-        feedback(await api(graph.repositories[name] ? 'refresh' : 'enroll', {repository: name, ref}));
+        feedback(await api(graph.repositories[name] ? 'reload' : 'enroll', {repository: name, ref}));
         selected = name;
     });
 });

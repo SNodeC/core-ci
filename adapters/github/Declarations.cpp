@@ -1,5 +1,6 @@
 #include "Declarations.h"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <stdexcept>
@@ -32,29 +33,20 @@ namespace coreci::github {
             validateRepository(result.owner, result.repo);
             return result;
         }
-        Workflow workflow(const std::string& value) {
-            const std::string marker = "/.github/workflows/";
-            const auto at = value.find(marker);
-            if (at == std::string::npos) {
-                throw std::invalid_argument("invalid workflow reference");
-            }
-            const auto source = repo(value.substr(0, at));
-            Workflow result{source.owner, source.repo, value.substr(at + marker.size()), {}};
-            validateWorkflowFile(result.workflowFile);
-            return result;
-        }
         std::string key(const Repo& value) {
             return repoKey(value.owner + "/" + value.repo);
         }
         struct Load : std::enable_shared_from_this<Load> {
             DeclarationFile file;
-            std::string apiPath;
+            Url base;
+            std::string catalogPath;
+            Repo workflowRepository;
             Fetch fetch;
             std::function<void(std::variant<LoadedDeclarations, Error>)> done;
             std::map<std::string, Repo> repositories;
             std::vector<Repo> sources;
             std::vector<Feed> feeds;
-            std::map<std::string, Workflow> presentations;
+            std::map<std::string, Tag> releases;
             std::map<std::string, CatalogTarget> catalog;
             std::map<std::string, PackageDetails> details;
             std::map<std::string, std::string> commits;
@@ -75,7 +67,7 @@ namespace coreci::github {
             void get(const Repo& source, const std::string& path, std::function<void(Json)> callback, bool info = false) {
                 const auto self = shared_from_this();
                 const auto& target = info ? source : repositories.at(key(source));
-                std::string url = apiPath + "/repos/" + escape(target.owner) + "/" + escape(target.repo);
+                std::string url = base.path + "/repos/" + escape(target.owner) + "/" + escape(target.repo);
                 if (!info) {
                     url += "/contents/" + escape(path) + "?ref=" + escape(commits.at(key(source)));
                 }
@@ -108,24 +100,7 @@ namespace coreci::github {
                                 throw std::invalid_argument("invalid default branch");
                             }
                             self->repositories[key(source)] = std::move(canonical);
-                            const auto& target = self->repositories.at(key(source));
-                            self->fetch(self->apiPath + "/repos/" + escape(target.owner) + "/" + escape(target.repo) + "/commits/" +
-                                            escape(target.branch),
-                                        false,
-                                        [self, source, next](int status, std::string body, std::string) {
-                                            if (self->done) {
-                                                try {
-                                                    const auto sha = Json::parse(body).at("sha").get<std::string>();
-                                                    if (status != 200 || !std::regex_match(sha, std::regex("[a-f0-9]{40}"))) {
-                                                        throw std::invalid_argument("invalid HEAD commit");
-                                                    }
-                                                    self->commits[key(source)] = sha;
-                                                    next();
-                                                } catch (const std::exception& error) {
-                                                    self->fail(source.owner + "/" + source.repo, "<commit>", error.what());
-                                                }
-                                            }
-                                        });
+                            next();
                         },
                         true);
                 }
@@ -134,54 +109,50 @@ namespace coreci::github {
                 const auto self = shared_from_this();
                 const Repo registry{file.owner, file.repo, {}};
                 branch(registry, [self, registry] {
-                    self->get(registry, self->file.path, [self, registry](Json value) {
-                        const auto& feeds = value.at("feeds");
-                        if (!feeds.is_object()) {
-                            throw std::invalid_argument("feeds must be an object");
-                        }
-                        self->defaultFeed = value.at("default_feed").get<std::string>();
-                        self->build = workflow(value.at("build").get<std::string>());
-                        for (const auto& [id, definition] : feeds.items()) {
-                            self->feeds.push_back({id, workflow(definition.at("publisher").get<std::string>())});
-                            if (definition.contains("presentation")) {
-                                self->presentations.emplace(id, workflow(definition.at("presentation").get<std::string>()));
-                                if (!httpsUrl(value.at("status_url").get<std::string>())) {
-                                    throw std::invalid_argument("invalid status_url");
+                    self->head(registry, [self, registry] {
+                        self->get(registry, self->file.path, [self, registry](Json value) {
+                            const auto& feeds = value.at("feeds");
+                            if (!feeds.is_object()) {
+                                throw std::invalid_argument("feeds must be an object");
+                            }
+                            self->defaultFeed = value.at("default_feed").get<std::string>();
+                            self->build = self->workflow(value.at("build").get<std::string>());
+                            for (const auto& [id, definition] : feeds.items()) {
+                                self->feeds.push_back({id, self->workflow(definition.at("publisher").get<std::string>())});
+                            }
+                            if (!feeds.contains(self->defaultFeed)) {
+                                throw std::invalid_argument("unknown default_feed");
+                            }
+                            const auto& sources = value.at("repositories");
+                            if (!sources.is_array()) {
+                                throw std::invalid_argument("repositories must be an array");
+                            }
+                            for (const auto& source : sources) {
+                                self->sources.push_back(repo(source.get<std::string>()));
+                            }
+                            const auto path = self->catalogPath;
+                            const auto checked = registryFile(registry.owner + "/" + registry.repo + ":" + path);
+                            if (std::holds_alternative<Error>(checked)) {
+                                throw std::invalid_argument("invalid catalog path");
+                            }
+                            self->get(registry, path, [self](Json data) {
+                                const auto& targets = data.at("targets");
+                                if (!targets.is_array()) {
+                                    throw std::invalid_argument("catalog targets must be an array");
                                 }
-                            }
-                        }
-                        if (!feeds.contains(self->defaultFeed)) {
-                            throw std::invalid_argument("unknown default_feed");
-                        }
-                        const auto& sources = value.at("repositories");
-                        if (!sources.is_array()) {
-                            throw std::invalid_argument("repositories must be an array");
-                        }
-                        for (const auto& source : sources) {
-                            self->sources.push_back(repo(source.get<std::string>()));
-                        }
-                        const auto path = value.at("targets").get<std::string>();
-                        const auto checked = registryFile(registry.owner + "/" + registry.repo + ":" + path);
-                        if (std::holds_alternative<Error>(checked)) {
-                            throw std::invalid_argument("invalid catalog path");
-                        }
-                        self->get(registry, path, [self](Json data) {
-                            const auto& targets = data.at("targets");
-                            if (!targets.is_array()) {
-                                throw std::invalid_argument("catalog targets must be an array");
-                            }
-                            for (const auto& entry : targets) {
-                                const auto id = entry.at("id").get<std::string>();
-                                validateIdentifier(id, "catalog target");
-                                CatalogTarget coordinates{entry.at("distribution").get<std::string>(),
-                                                          entry.at("suite").get<std::string>(),
-                                                          entry.at("arch").get<std::string>(),
-                                                          entry.at("build").at("format").get<std::string>()};
-                                if (!self->catalog.emplace(id, std::move(coordinates)).second) {
-                                    throw std::invalid_argument("duplicate catalog id: " + id);
+                                for (const auto& entry : targets) {
+                                    const auto id = entry.at("id").get<std::string>();
+                                    validateIdentifier(id, "catalog target");
+                                    CatalogTarget coordinates{entry.at("distribution").get<std::string>(),
+                                                              entry.at("suite").get<std::string>(),
+                                                              entry.at("arch").get<std::string>(),
+                                                              entry.at("build").at("format").get<std::string>()};
+                                    if (!self->catalog.emplace(id, std::move(coordinates)).second) {
+                                        throw std::invalid_argument("duplicate catalog id: " + id);
+                                    }
                                 }
-                            }
-                            self->resolve();
+                                self->resolve();
+                            });
                         });
                     });
                 });
@@ -195,9 +166,7 @@ namespace coreci::github {
                 for (const auto& feed : feeds) {
                     repositories.emplace(key({feed.workflow.owner, feed.workflow.repo}), Repo{feed.workflow.owner, feed.workflow.repo, {}});
                 }
-                for (const auto& [id, presentation] : presentations) {
-                    repositories.emplace(key({presentation.owner, presentation.repo}), Repo{presentation.owner, presentation.repo, {}});
-                }
+
                 remaining = repositories.size();
                 const auto self = shared_from_this();
                 for (const auto& [name, source] : repositories) {
@@ -211,12 +180,7 @@ namespace coreci::github {
             void finish() {
                 const auto pipeline = builder.build();
                 auto callback = std::move(done);
-                auto writers = presentations;
-                for (auto& [id, writer] : writers) {
-                    writer = resolved(writer);
-                    writer.branch = repositories.at(key({file.owner, file.repo})).branch;
-                }
-                callback(LoadedDeclarations{pipeline, writers, catalog, details});
+                callback(LoadedDeclarations{pipeline, releases, catalog, details});
             }
             Workflow resolved(const Workflow& workflow) const {
                 const auto& canonical = repositories.at(key({workflow.owner, workflow.repo}));
@@ -234,7 +198,97 @@ namespace coreci::github {
                 } else {
                     const auto self = shared_from_this();
                     for (const auto& source : sources) {
-                        get(source, "ci/packages.json", [self, source](Json value) {
+                        const auto target = repositories.at(key(source));
+                        tags(source,
+                             base.path + "/repos/" + escape(target.owner) + "/" + escape(target.repo) + "/tags?per_page=100",
+                             {},
+                             {});
+                    }
+                }
+            }
+            Workflow workflow(const std::string& file) const {
+                validateWorkflowFile(file);
+                return {workflowRepository.owner, workflowRepository.repo, file, {}};
+            }
+            void head(const Repo& source, std::function<void()> next) {
+                const auto self = shared_from_this();
+                const auto target = repositories.at(key(source));
+                fetch(base.path + "/repos/" + escape(target.owner) + "/" + escape(target.repo) + "/commits/" + escape(target.branch),
+                      false,
+                      [self, source, next](int status, std::string body, std::string) {
+                          if (self->done) {
+                              try {
+                                  const auto sha = Json::parse(body).at("sha").get<std::string>();
+                                  if (status != 200 || !std::regex_match(sha, std::regex("[a-f0-9]{40}"))) {
+                                      throw std::invalid_argument("invalid HEAD commit");
+                                  }
+                                  self->commits[key(source)] = sha;
+                                  next();
+                              } catch (const std::exception& error) {
+                                  self->fail(source.owner + "/" + source.repo, "<commit>", error.what());
+                              }
+                          }
+                      });
+            }
+            void tags(const Repo& source, const std::string& path, std::vector<Tag> collected, std::set<std::string> visited) {
+                const auto self = shared_from_this();
+                visited.insert(path);
+                fetch(path,
+                      false,
+                      [self, source, collected = std::move(collected), visited = std::move(visited)](
+                          int status, std::string body, std::string link) mutable {
+                          if (self->done) {
+                              try {
+                                  const auto parsed = github::tags(body);
+                                  if (status != 200 || std::holds_alternative<Error>(parsed)) {
+                                      throw std::invalid_argument("invalid tag page");
+                                  }
+                                  for (const auto& tag : std::get<std::vector<Tag>>(parsed)) {
+                                      if (!std::regex_match(tag.sha, std::regex("[a-f0-9]{40}"))) {
+                                          throw std::invalid_argument("invalid tag commit");
+                                      }
+                                      if (Version::parse(tag.tag)) {
+                                          collected.push_back(tag);
+                                      }
+                                  }
+                                  const auto next = link.empty()
+                                                        ? std::variant<std::optional<std::string>, Error>{std::optional<std::string>{}}
+                                                        : nextLink(link, self->base);
+                                  if (std::holds_alternative<Error>(next)) {
+                                      throw std::invalid_argument("invalid pagination link");
+                                  }
+                                  const auto url = std::get<std::optional<std::string>>(next);
+                                  if (url) {
+                                      const auto parsedUrl = httpsUrl(*url);
+                                      if (!parsedUrl || visited.contains(parsedUrl->path)) {
+                                          throw std::invalid_argument("pagination loop");
+                                      }
+                                      self->tags(source, parsedUrl->path, std::move(collected), std::move(visited));
+                                  } else {
+                                      std::sort(collected.begin(), collected.end(), [](const auto& a, const auto& b) {
+                                          const auto av = *Version::parse(a.tag), bv = *Version::parse(b.tag);
+                                          return av == bv ? a.tag < b.tag : av > bv;
+                                      });
+                                      self->package(source, std::move(collected), 0);
+                                  }
+                              } catch (const std::exception& error) {
+                                  self->fail(source.owner + "/" + source.repo, "<tags>", error.what());
+                              }
+                          }
+                      });
+            }
+            void package(const Repo& source, std::vector<Tag> candidates, std::size_t index) {
+                const auto self = shared_from_this();
+                const bool bootstrap = index >= candidates.size();
+                const auto read = [self, source, candidates = std::move(candidates), index] {
+                    if (index < candidates.size()) {
+                        self->commits[key(source)] = candidates[index].sha;
+                    }
+                    self->get(source, "ci/packages.json", [self, source, candidates, index](Json value) {
+                        const bool prereleases = value.value("accept_prereleases", false);
+                        if (index < candidates.size() && Version::parse(candidates[index].tag)->prerelease() && !prereleases) {
+                            self->package(source, candidates, index + 1);
+                        } else {
                             Package pkg;
                             pkg.name = value.at("package").get<std::string>();
                             pkg.sourceRepo = self->repositories.at(key(source));
@@ -271,11 +325,19 @@ namespace coreci::github {
                                 self->builder.target({id, target.value("feed", self->defaultFeed)});
                             }
                             self->builder.package(pkg);
+                            if (index < candidates.size()) {
+                                self->releases.emplace(pkg.name, candidates[index]);
+                            }
                             if (--self->remaining == 0) {
                                 self->finish();
                             }
-                        });
-                    }
+                        }
+                    });
+                };
+                if (bootstrap) {
+                    head(source, read);
+                } else {
+                    read();
                 }
             }
         };
@@ -309,12 +371,16 @@ namespace coreci::github {
         return result;
     }
     void loadDeclarations(const DeclarationFile& registry,
-                          const std::string& apiPath,
+                          const std::string& workflowRepository,
+                          const std::string& catalogPath,
+                          const Url& base,
                           Fetch fetch,
                           std::function<void(std::variant<LoadedDeclarations, Error>)> done) {
         auto load = std::make_shared<Load>();
         load->file = registry;
-        load->apiPath = apiPath;
+        load->base = base;
+        load->catalogPath = catalogPath;
+        load->workflowRepository = repo(workflowRepository);
         load->fetch = std::move(fetch);
         load->done = std::move(done);
         load->start();
