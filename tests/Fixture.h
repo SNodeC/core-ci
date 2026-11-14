@@ -1,22 +1,90 @@
 #pragma once
-#include "core/Engine.h"
+#include "Check.h"
+#include "app/StatusJson.h"
+#include "persistence/EventRow.h"
+
+#include <algorithm>
+#include <stdexcept>
+
 namespace coreci {
-    inline Pipeline testPipeline() {
+    inline Pipeline testPipeline(unsigned base = 0) {
         Pipeline::Builder b;
-        b.feed({"f1", {"owner", "feeds", "publish.yml", "stable"}})
-            .feed({"f2", {"owner", "feeds", "publish.yml", "stable"}})
-            .target({"t1", "f1"})
-            .target({"t2", "f2"});
-        b.package({"a", {"owner", "a", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {}})
-            .package({"b", {"owner", "b", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-            .package({"c", {"owner", "c", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"a"}})
-            .package({"d", {"owner", "d", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1", "t2"}, {"b", "c"}})
-            .package({"e", {"owner", "e", "trunk"}, {"owner", "recipes", "build.yml", "trunk"}, {"t1"}, {"d"}});
+        b.target({"t1"}).target({"t2"});
+        for (const auto& name : {"a", "b", "c", "d", "e", "z"}) {
+            const std::map<std::string, std::vector<std::string>> prerequisites{
+                {"a", {}}, {"b", {"a"}}, {"c", {"a"}}, {"d", {"b", "c"}}, {"e", {"d"}}, {"z", {}}};
+            b.package({name,
+                       {"owner", name, "trunk"},
+                       name == std::string("e") ? std::set<std::string>{"t1"} : std::set<std::string>{"t1", "t2"},
+                       prerequisites.at(name),
+                       base});
+        }
         return b.build();
     }
-    inline Engine fixtureEngine(Pipeline pipeline, Options options) {
-        Engine result(options);
-        result.handle(GraphChanged{100, std::move(pipeline)});
-        return result;
+    inline std::string hash(char value = 'a') {
+        return std::string(40, value);
     }
+    struct History {
+        Options options;
+        Engine engine;
+        std::vector<Event> events;
+        explicit History(Options options = {5, 100, 3, 0})
+            : options(options)
+            , engine(options) {
+        }
+        std::vector<Command> apply(Event event) {
+            std::vector<Command> commands;
+            const auto normalized = persistence::normalize(event);
+            CHECK(std::holds_alternative<Event>(normalized));
+            if (std::holds_alternative<Event>(normalized)) {
+                event = std::get<Event>(normalized);
+                if (std::holds_alternative<Accept>(engine.classify(event))) {
+                    events.push_back(event);
+                    const auto row = std::get<persistence::EventRow>(persistence::encode(event, events.size()));
+                    CHECK(std::get<Event>(persistence::decode(row)) == event);
+                    commands = engine.handle(event, events.size());
+                } else {
+                    CHECK(engine.handle(event, events.size() + 1).empty());
+                }
+                Engine replay(options);
+                for (std::size_t n = 0; n < events.size(); ++n) {
+                    replay.handle(events[n], n + 1);
+                }
+                CHECK(replay.units() == engine.units());
+                CHECK(replay.waves() == engine.waves());
+                CHECK(replay.releases() == engine.releases());
+                CHECK(replay.nextDeadline() == engine.nextDeadline());
+                CHECK(app::statusSnapshot(replay) == app::statusSnapshot(engine));
+            }
+            return commands;
+        }
+        void load(unsigned base = 0, std::int64_t at = 100) {
+            const auto graph = testPipeline(base);
+            std::vector<TagObserved> tags;
+            for (const auto& [name, pkg] : graph.packages()) {
+                tags.push_back({at, name, "v1.0.0", hash(), Origin::Reconcile});
+            }
+            apply(GraphChanged{at, graph, tags});
+        }
+        const Wave& wave() const {
+            if (!engine.latestWave()) {
+                throw std::runtime_error("test expected a wave");
+            }
+            return *engine.latestWave();
+        }
+        void complete(std::int64_t at = 110) {
+            const auto active = wave();
+            apply(WaveStarted{at, active.id, 42, 2});
+            for (const auto& [target, entries] : active.plan) {
+                for (const auto& entry : entries) {
+                    if (entry.build) {
+                        apply(UnitBuildStarted{at, active.id, entry.buildId});
+                        apply(UnitBuildSucceeded{at + 1, active.id, entry.buildId, "artifact"});
+                        apply(UnitPublishSucceeded{at + 2, active.id, entry.buildId, hash('b')});
+                    }
+                }
+            }
+            apply(WaveFinished{at + 3, active.id, 42, "success"});
+        }
+    };
 } // namespace coreci

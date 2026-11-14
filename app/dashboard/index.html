@@ -10,13 +10,14 @@
 <nav aria-label="Management"><button id="work-tab" aria-controls="work-panel" aria-pressed="true">Work</button>
 <button id="repositories-tab" aria-controls="repositories-panel" aria-pressed="false">Repositories</button></nav>
 <main>
+<section id="wave-panel" aria-label="Current wave"></section>
 <section id="work-panel" aria-labelledby="work-heading">
 <div class="heading"><div><h1 id="work-heading">Package work</h1><p id="counts"></p></div>
 <button id="reload">Reload</button>
 </div>
 <div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
 <label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
-<option value="failed">Failed</option><option value="published">Published</option></select></label></div>
+<option value="failed">Failed</option><option value="blocked">Blocked</option><option value="published">Published</option></select></label></div>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Package executions; scroll horizontally for all timing columns">
 <table class="work-table"><colgroup><col class="work-toggle"><col class="work-package"><col class="work-target"><col class="work-state">
 <col class="work-phase"><col class="work-phase"><col class="work-recorded"></colgroup><thead><tr>

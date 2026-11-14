@@ -48,9 +48,9 @@ namespace coreci::app {
         public:
             Application()
                 : server("coreci") {
-                const std::map<std::string, std::string> defaults{{"registry", ""},
-                                                                  {"target-catalog", ""},
-                                                                  {"workflow-repository", ""},
+                const std::map<std::string, std::string> defaults{{"registry", "SNodeC/Packages:ci/registry.json"},
+                                                                  {"target-catalog", "ci/targets.json"},
+                                                                  {"workflow-repository", "SNodeC/Packages"},
                                                                   {"github-app-id", ""},
                                                                   {"github-installation-id", ""},
                                                                   {"github-app-key-file", ""},
@@ -62,11 +62,11 @@ namespace coreci::app {
                                                                   {"db-socket", ""},
                                                                   {"db-user", ""},
                                                                   {"db-name", ""},
-                                                                  {"build-timeout", "21600"},
-                                                                  {"publish-timeout", "3600"},
+                                                                  {"wave-delay", "120"},
+                                                                  {"wave-deadline", "23400"},
                                                                   {"retry-delay", "600"},
                                                                   {"max-dispatch-attempts", "8"},
-                                                                  {"max-concurrent-builds", "0"},
+                                                                  {"feed-branch", "feed"},
                                                                   {"reconcile-interval", "900"},
                                                                   {"listen-address", "0.0.0.0"},
                                                                   {"listen-port", "8443"},
@@ -166,11 +166,13 @@ namespace coreci::app {
                         invalid(key, valid);
                     }
                 }
-                buildTimeout = number("build-timeout", 60, 86400, valid);
-                publishTimeout = number("publish-timeout", 60, 86400, valid);
+                waveDelay = number("wave-delay", 0, 86400, valid);
+                waveDeadline = number("wave-deadline", 60, 86400, valid);
                 retryDelay = number("retry-delay", 0, 86400, valid);
                 attempts = number("max-dispatch-attempts", 1, 20, valid);
-                concurrent = number("max-concurrent-builds", 0, 1000, valid);
+                if (get("feed-branch") != "feed" && get("feed-branch") != "feed-staging") {
+                    invalid("feed-branch", valid);
+                }
                 interval = number("reconcile-interval", 60, 86400, valid);
                 const auto port = number("listen-port", 1, 65535, valid), dbPort = number("db-port", 0, 65535, valid);
                 const auto redirectPort = number("dashboard-redirect-port", 0, 65535, valid);
@@ -224,11 +226,14 @@ namespace coreci::app {
                     queue = std::make_unique<ps::EventQueue>(
                         *store,
                         [this] {
-                            return Engine({buildTimeout,
-                                           publishTimeout,
+                            const auto repository = get("workflow-repository");
+                            const auto slash = repository.find('/');
+                            return Engine({waveDelay,
+                                           waveDeadline,
                                            static_cast<unsigned>(attempts),
-                                           concurrent == 0 ? std::nullopt : std::optional<std::size_t>(concurrent),
-                                           retryDelay});
+                                           retryDelay,
+                                           get("feed-branch"),
+                                           {repository.substr(0, slash), repository.substr(slash + 1), "main"}});
                         },
                         [] {
                             return Resumed{now()};
@@ -326,7 +331,7 @@ namespace coreci::app {
                                         [this] {
                                             tick();
                                         },
-                                        30));
+                                        1));
                                     reconcileTimer = std::make_unique<core::timer::Timer>(core::timer::Timer::intervalTimer(
                                         [this] {
                                             reload();
@@ -366,30 +371,20 @@ namespace coreci::app {
                 }
             }
             void dispatch(const Command& command) {
-                const auto classification = std::visit(
-                    [this](const auto& c) -> Classification {
-                        constexpr auto kind = std::is_same_v<std::decay_t<decltype(c)>, DispatchBuild> ? Kind::Build : Kind::Publish;
-                        return queue->engine() ? queue->engine()->classify(DispatchAccepted{0, c.buildId, kind, c.attempt})
-                                               : Classification{Ignore{"recovering"}};
-                    },
-                    command);
+                const auto classification = queue->engine()
+                                                ? queue->engine()->classify(WaveDispatchAccepted{0, command.waveId, command.attempt})
+                                                : Classification{Ignore{"recovering"}};
                 if (std::holds_alternative<Accept>(classification)) {
                     github->request(
                         base->path + gh::dispatchPath(command),
                         [this, command](int status, std::string body, std::string) {
                             if (queue->engine()) {
-                                std::visit(
-                                    [&](const auto& c) {
-                                        constexpr auto kind =
-                                            std::is_same_v<std::decay_t<decltype(c)>, DispatchBuild> ? Kind::Build : Kind::Publish;
-                                        Event event = DispatchAccepted{now(), c.buildId, kind, c.attempt};
-                                        if (status != 204) {
-                                            event = DispatchRejected{now(), c.buildId, kind, c.attempt, status, body};
-                                        }
-                                        queue->enqueue(std::move(event), [](const auto&) {
-                                        });
-                                    },
-                                    command);
+                                Event event = WaveDispatchAccepted{now(), command.waveId, command.attempt};
+                                if (status != 204) {
+                                    event = WaveDispatchRejected{now(), command.waveId, command.attempt, status, body};
+                                }
+                                queue->enqueue(std::move(event), [](const auto&) {
+                                });
                             } else {
                                 std::cerr << "dispatch result dropped during recovery\n";
                             }
@@ -446,10 +441,25 @@ namespace coreci::app {
                     webhook(req, res, std::string(req->body.begin(), req->body.end()));
                 });
                 server.all("/api/v1/github/webhook", method);
-                server.post("/api/v1/builds/:buildId/report", callbackAuth, [this](const Req& req, const Res& res) {
+                server.post("/api/v1/waves/:waveId/report", callbackAuth, [this](const Req& req, const Res& res) {
                     report(req, res);
                 });
-                server.all("/api/v1/builds/:buildId/report", method);
+                server.all("/api/v1/waves/:waveId/report", method);
+                server.head("/api/v1/waves/:waveId/plan.json", method);
+                server.get("/api/v1/waves/:waveId/plan.json", [this](const Req& req, const Res& res) {
+                    const auto* engine = queue->engine();
+                    if (!engine) {
+                        answer(res, 503, "unavailable");
+                    } else if (const auto wave = engine->waves().find(req->param("waveId")); wave != engine->waves().end()) {
+                        res->status(200)
+                            .set("Content-Type", "application/json")
+                            .set("Cache-Control", "no-store")
+                            .send(planJson(wave->second));
+                    } else {
+                        answer(res, 404, "not found");
+                    }
+                });
+                server.all("/api/v1/waves/:waveId/plan.json", method);
                 server.head("/api/v1/status.json", method);
                 server.get("/api/v1/status.json", [this](const Req&, const Res& res) {
                     if (queue->engine()) {
@@ -483,10 +493,12 @@ namespace coreci::app {
                     if (std::holds_alternative<gh::Error>(decoded)) {
                         answer(res, 400, "invalid: " + std::get<gh::Error>(decoded).reason);
                     } else {
-                        const auto event = gh::report(req->param("buildId"), std::get<gh::Form>(decoded), now());
+                        const auto event = gh::report(req->param("waveId"), std::get<gh::Form>(decoded), now());
                         if (std::holds_alternative<gh::Error>(event)) {
                             answer(res, 400, "invalid: " + std::get<gh::Error>(event).reason);
 
+                        } else if (std::holds_alternative<std::monostate>(event)) {
+                            answer(res, 200, "acknowledged");
                         } else {
                             submit(std::get<Event>(event), res);
                         }
@@ -571,7 +583,6 @@ namespace coreci::app {
                     loading = true;
                     gh::loadDeclarations(
                         registryDefinition,
-                        get("workflow-repository"),
                         get("target-catalog"),
                         *base,
                         [this](std::string path, bool raw, auto done) {
@@ -587,7 +598,7 @@ namespace coreci::app {
                                         const auto selected = loaded.releases.find(package);
                                         compatible = compatible && selected != loaded.releases.end() &&
                                                      (*Version::parse(selected->second.tag) > release->version ||
-                                                      selected->second.tag == release->tag);
+                                                      (selected->second.tag == release->tag && selected->second.sha == release->sourceSha));
                                     }
                                 }
                                 if (!compatible) {
@@ -631,7 +642,7 @@ namespace coreci::app {
             std::unique_ptr<ps::EventQueue> queue;
             std::unique_ptr<core::timer::Timer> retry, ticks, reconcileTimer;
             std::deque<std::string> deliveries;
-            std::int64_t buildTimeout = 0, publishTimeout = 0, attempts = 0, concurrent = 0, interval = 0, retryDelay = 0;
+            std::int64_t waveDelay = 0, waveDeadline = 0, attempts = 0, interval = 0, retryDelay = 0;
             double recoveryDelay = 1;
             bool listening = false, fatal = false, tickPending = false;
         };

@@ -125,14 +125,14 @@ class Provider(BaseHTTPRequestHandler):
             self.respond(200, dict(active=active, sub=claims['sub'], sid=claims['sid'], mfa_verified=True) if active else dict(active=False))
         elif self.path.endswith('/dispatches'):
             values = json.loads(raw)['inputs']
-            if 'build_id' in values:
-                rid = state.next_run
-                state.next_run += 1
-                main = 'publish' if 'publish.yml' in self.path else 'build'
-                state.dispatches.put((rid, values, main))
-            held = state.holds.get((values.get('build_id'), main))
-            if held:
-                held.wait(20)
+            assert self.path.endswith('/actions/workflows/wave.yml/dispatches')
+            assert json.loads(raw)['ref'] == 'main'
+            assert set(values) == {'wave_id', 'plan_url', 'callback_url', 'feed_branch'}
+            assert all(isinstance(value, str) for value in values.values())
+            assert values['feed_branch'] in ('feed', 'feed-staging')
+            rid = state.next_run
+            state.next_run += 1
+            state.dispatches.put((rid, values))
             self.respond(204)
         else:
             self.respond(404)
@@ -144,7 +144,6 @@ class Fixture:
         self.codes, self.tokens = {}, {}
         self.next_run = 100
         self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
-        self.holds = {}
         self.subject, self.revoked = 'owner', set()
         self.token_lifetime = 3600
         self.dispatches = queue.Queue()
@@ -165,12 +164,15 @@ class Fixture:
         self.sources = {repo: json.loads((data / (name + '.json')).read_bytes()) for repo, name in
                         [('SNodeC/snode.c', 'snodec'), ('SNodeC/mqttsuite', 'mqttsuite'), ('SNodeC/snode.c-idp', 'snodec-idp')]}
         if small:
-            self.registry = dict(feeds={f: dict(publisher='coreci-publish.yml') for f in ('f1', 'f2')},
-                                 default_feed='f1', build='coreci-build.yml', repositories=['owner/' + p for p in 'abcde'])
-            self.catalog = dict(targets=[dict(id=t, distribution='test', suite='stable', arch='test', build=dict(format='deb')) for t in ('t1', 't2')])
-            self.sources = {'owner/' + p: dict(package=p, depends_on=q, matrix=[dict(id='t1', feed='f1')] +
-                                           ([] if p == 'e' else [dict(id='t2', feed='f2')]))
-                            for p, q in [('a', []), ('b', ['a']), ('c', ['a']), ('d', ['b', 'c']), ('e', ['d'])]}
+            self.registry = dict(schema=1, repositories=['owner/' + p for p in 'abcde'])
+            self.catalog = dict(targets=[dict(id=t, family='deb', distribution='test', release='stable',
+                                            codename='stable', arch='test', image='fixture:test', runner='ubuntu-latest',
+                                            platform='linux/amd64', emulated=False) for t in ('t1', 't2')])
+            self.sources = {'owner/' + p: dict(schema=1, package=p, title=p, depends_on=q,
+                build=dict(deb='ci/deb.sh', rpm='ci/rpm.sh'),
+                build_dependencies=dict(deb=[], rpm=[], openwrt=[]),
+                targets=['t1'] + ([] if p == 'e' else ['t2']))
+                for p, q in [('a', []), ('b', ['a']), ('c', ['a']), ('d', ['b', 'c']), ('e', ['d'])]}
         self.env = dict(os.environ, SSL_CERT_FILE=str(self.cert), CORECI_WEBHOOK_SECRET='fixture-webhook',
                         CORECI_CALLBACK_SECRET='fixture-callback',
                         CORECI_DB_PASSWORD=os.environ.get('CORECI_TEST_DB_PASSWORD', ''))
@@ -192,7 +194,7 @@ class Fixture:
                    '--callback-base-url', self.app, '--github-api-url', self.api.replace('localhost', '127.0.0.1') if wrong_host else self.api, '--github-ca-cert', self.cert,
                    '--tls-cert', self.cert, '--tls-key', self.key_path, '--listen-address', '127.0.0.1', '--listen-port', str(self.app_port),
                    '--idp-base-url', self.api, '--idp-client-id', 'coreci-test', '--idp-public-key-path', self.public,
-                   '--dashboard-users', 'owner', '--dashboard-redirect-port', str(self.redirect_port), '--max-concurrent-builds', '0', 'coreci']
+                   '--dashboard-users', 'owner', '--dashboard-redirect-port', str(self.redirect_port), '--wave-delay', '1', '--wave-deadline', '120', '--retry-delay', '0', 'coreci']
         if parser:
             command += ['http', 'parser', *parser]
         self.command = [str(x) for x in command]
@@ -224,7 +226,7 @@ class Fixture:
         self.release.set()
         deadline = time.monotonic() + 10
         ready = False
-        count = sum(len(p['matrix']) for p in self.sources.values())
+        count = sum(len(p['targets']) for p in self.sources.values())
         while not ready and time.monotonic() < deadline:
             value = json.loads(self.request('/api/v1/status.json').read())
             ready = len(value['units']) == count
@@ -239,14 +241,41 @@ class Fixture:
             'X-GitHub-Delivery': repo + tag, 'X-Hub-Signature-256': 'sha256=' + hmac.new(b'fixture-webhook', raw, hashlib.sha256).hexdigest()})
         return response.status
 
-    def report(self, rid, values, phase, outcome):
-        fields = dict(phase=phase, status=outcome, run_id=str(rid), run_attempt='1', artifact='artifact', feed_commit='b' * 40, reason='fixture failure')
+    def plan(self, values):
+        assert values['plan_url'] == self.app + '/api/v1/waves/' + values['wave_id'] + '/plan.json'
+        response = self.request('/api/v1/waves/' + values['wave_id'] + '/plan.json', browser=False)
+        assert response.status == 200 and response.headers['Cache-Control'] == 'no-store'
+        return json.loads(response.read())
+
+    def report(self, values, **fields):
         raw = urllib.parse.urlencode(fields).encode()
         stamp = str(int(time.time()))
         signature = hmac.new(b'fixture-callback', stamp.encode() + b'.' + raw, hashlib.sha256).hexdigest()
-        response = self.request('/api/v1/builds/' + urllib.parse.quote(values['build_id'], safe='') + '/report', raw,
-            {'Content-Type': 'application/x-www-form-urlencoded', 'X-CoreCI-Timestamp': stamp, 'X-CoreCI-Signature-256': 'sha256=' + signature})
+        response = self.request('/api/v1/waves/' + values['wave_id'] + '/report', raw,
+            {'Content-Type': 'application/x-www-form-urlencoded', 'X-CoreCI-Timestamp': stamp,
+             'X-CoreCI-Signature-256': 'sha256=' + signature}, browser=False)
         assert response.status == 200
+        return response.read()
+
+    def started(self, rid, values):
+        self.report(values, scope='wave', status='started', run_id=rid, run_attempt=2)
+
+    def finished(self, rid, values, conclusion='success'):
+        self.report(values, scope='wave', status='finished', run_id=rid, conclusion=conclusion)
+
+    def unit(self, values, entry, phase='build', status='succeeded'):
+        self.report(values, scope='unit', build_id=entry['build_id'], phase=phase, status=status,
+                    artifact='fixture-artifact', feed_commit='b' * 40, reason='fixture failure')
+
+    def complete(self, rid, values):
+        self.started(rid, values)
+        for target in self.plan(values)['targets']:
+            for entry in target['units']:
+                if entry['action'] == 'build':
+                    self.unit(values, entry, status='started')
+                    self.unit(values, entry)
+                    self.unit(values, entry, 'publish', 'succeeded')
+        self.finished(rid, values)
 
     def close(self):
         self.release.set()

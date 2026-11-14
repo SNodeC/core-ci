@@ -57,9 +57,9 @@ namespace coreci {
         if (states.contains(unit)) {
             const auto& status = states.at(unit);
             const auto& state = engine.units().at(unit);
-            if (status == "NoRelease") {
+            if (!engine.releases().at(unit.package)) {
                 message = "no release";
-            } else if (status == "Settled") {
+            } else if (status == "Published") {
                 message = state.published->version.text() + "-" + std::to_string(state.published->revision);
                 colour = "#2ea44f";
             } else if (status.starts_with("Blocked")) {

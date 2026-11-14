@@ -218,29 +218,35 @@ namespace coreci::github {
         }
         return output;
     }
-    std::variant<Event, Error> report(const std::string& buildId, const Form& values, std::int64_t at) {
+    std::variant<Event, Error, std::monostate> report(const std::string& waveId, const Form& values, std::int64_t at) {
         const auto get = [&](const std::string& key) {
             const auto i = values.find(key);
             return i == values.end() ? std::string{} : i->second;
         };
-        const auto phase = get("phase"), status = get("status");
+        const auto scope = get("scope"), phase = get("phase"), status = get("status"), id = get("build_id");
         std::uint64_t run = 0;
         unsigned attempt = 0;
-        std::variant<Event, Error> output = Error{"invalid callback fields"};
-        if (!buildId.empty()) {
-            if (number(get("run_id"), run)) {
-                if (phase == "publish" && status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
-                    output = Event{PublishStarted{at, buildId, run, attempt}};
-                } else if (phase == "build" && status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
-                    output = Event{BuildStarted{at, buildId, run, attempt}};
+        std::variant<Event, Error, std::monostate> output = Error{"invalid callback fields"};
+        if (!waveId.empty()) {
+            if (scope == "wave" && number(get("run_id"), run) && run > 0) {
+                if (status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
+                    output = Event{WaveStarted{at, waveId, run, attempt}};
+                } else if (status == "finished" && !get("conclusion").empty()) {
+                    output = Event{WaveFinished{at, waveId, run, get("conclusion")}};
+                }
+            } else if (scope == "unit" && !id.empty()) {
+                if (phase == "build" && status == "started") {
+                    output = Event{UnitBuildStarted{at, waveId, id}};
                 } else if (phase == "build" && status == "succeeded" && !get("artifact").empty()) {
-                    output = Event{BuildSucceeded{at, buildId, run, get("artifact")}};
+                    output = Event{UnitBuildSucceeded{at, waveId, id, get("artifact")}};
                 } else if (phase == "build" && status == "failed" && !get("reason").empty()) {
-                    output = Event{BuildFailed{at, buildId, run, get("reason")}};
+                    output = Event{UnitBuildFailed{at, waveId, id, get("reason")}};
                 } else if (phase == "publish" && status == "succeeded" && !get("feed_commit").empty()) {
-                    output = Event{PublishSucceeded{at, buildId, run, get("feed_commit")}};
+                    output = Event{UnitPublishSucceeded{at, waveId, id, get("feed_commit")}};
                 } else if (phase == "publish" && status == "failed" && !get("reason").empty()) {
-                    output = Event{PublishFailed{at, buildId, run, get("reason")}};
+                    output = Event{UnitPublishFailed{at, waveId, id, get("reason")}};
+                } else if (phase == "publish" && status == "started") {
+                    output = std::monostate{};
                 }
             }
         }
@@ -286,46 +292,18 @@ namespace coreci::github {
         return result;
     }
     std::string dispatchBody(const Command& command, const std::string& callbackBase) {
-        std::string body;
-        std::visit(
-            [&](const auto& c) {
-                auto base = callbackBase;
-                while (!base.empty() && base.back() == '/') {
-                    base.pop_back();
-                }
-                nlohmann::json inputs = {{"build_id", c.buildId},
-                                         {"package", c.package},
-                                         {"version", c.version.text()},
-                                         {"revision", std::to_string(c.revision)},
-                                         {"target", c.target},
-                                         {"callback_url", base + "/api/v1/builds/" + escape(c.buildId) + "/report"}};
-                if constexpr (std::is_same_v<std::decay_t<decltype(c)>, DispatchBuild>) {
-                    std::string prerequisites;
-                    for (const auto& [name, version] : c.inputs) {
-                        if (!prerequisites.empty()) {
-                            prerequisites += ',';
-                        }
-                        prerequisites += name + "=" + version.version.text() + "-" + std::to_string(version.revision);
-                    }
-                    inputs["source_repo"] = c.sourceRepo.owner + "/" + c.sourceRepo.repo;
-                    inputs["tag"] = c.tag;
-                    inputs["prerequisites"] = prerequisites;
-                } else {
-                    inputs["build_repo"] = c.buildRepo.owner + "/" + c.buildRepo.repo;
-                    inputs["build_run_id"] = std::to_string(c.runId);
-                    inputs["artifact"] = c.artifact;
-                }
-                body = nlohmann::json{{"ref", c.workflow.branch}, {"inputs", inputs}}.dump();
-            },
-            command);
-        return body;
+        auto base = callbackBase;
+        while (!base.empty() && base.back() == '/') {
+            base.pop_back();
+        }
+        const auto prefix = base + "/api/v1/waves/" + escape(command.waveId);
+        const nlohmann::json inputs{{"wave_id", command.waveId},
+                                    {"plan_url", prefix + "/plan.json"},
+                                    {"callback_url", prefix + "/report"},
+                                    {"feed_branch", command.feedBranch}};
+        return nlohmann::json{{"ref", "main"}, {"inputs", inputs}}.dump();
     }
     std::string dispatchPath(const Command& command) {
-        return std::visit(
-            [](const auto& c) {
-                return "/repos/" + escape(c.workflow.owner) + "/" + escape(c.workflow.repo) + "/actions/workflows/" +
-                       escape(c.workflow.workflowFile) + "/dispatches";
-            },
-            command);
+        return "/repos/" + escape(command.workflow.owner) + "/" + escape(command.workflow.repo) + "/actions/workflows/wave.yml/dispatches";
     }
 } // namespace coreci::github

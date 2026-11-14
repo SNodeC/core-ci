@@ -5,7 +5,9 @@ root = Path(__file__).resolve().parents[1]
 production = [p for directory in ('core', 'persistence', 'adapters', 'app', 'packaging')
               for p in (root / directory).rglob('*') if p.is_file()]
 forbidden = ('CORECI_' + 'GITHUB_TOKEN', 'CORECI_' + 'ADMIN_TOKEN', 'Environment' + 'TokenProvider',
-             'Job' + 'Cache', 'presentation' + 'Body', 'status' + 'Interval')
+             'Job' + 'Cache', 'presentation' + 'Body', 'status' + 'Interval',
+             'Dispatch' + 'Build', 'Dispatch' + 'Publish', 'Feed' + 'State', 'maxConcurrent' + 'Builds',
+             'build-' + 'timeout', 'publish-' + 'timeout', 'max-concurrent-' + 'builds', 'coreci_graph_' + 'feeds')
 for path in production:
     text = path.read_text()
     assert all(word not in text for word in forbidden), str(path)

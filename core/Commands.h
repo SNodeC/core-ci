@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <map>
-#include <variant>
 
 namespace coreci {
     struct Input {
@@ -13,31 +12,12 @@ namespace coreci {
         bool operator==(const Input&) const = default;
     };
     using Inputs = std::map<std::string, Input>;
-    struct DispatchBuild {
-        std::string buildId;
+    struct DispatchWave {
+        std::string waveId;
         unsigned attempt;
-        std::string package;
-        Repo sourceRepo;
-        std::string tag;
-        Version version;
-        std::uint64_t revision;
-        std::string target;
-        Inputs inputs;
-        Workflow workflow;
-        bool operator==(const DispatchBuild&) const = default;
+        Repo workflow;
+        std::string feedBranch;
+        bool operator==(const DispatchWave&) const = default;
     };
-    struct DispatchPublish {
-        std::string buildId;
-        unsigned attempt;
-        std::string package;
-        Version version;
-        std::uint64_t revision;
-        std::string target, feed;
-        Repo buildRepo;
-        std::uint64_t runId;
-        std::string artifact;
-        Workflow workflow;
-        bool operator==(const DispatchPublish&) const = default;
-    };
-    using Command = std::variant<DispatchBuild, DispatchPublish>;
+    using Command = DispatchWave;
 } // namespace coreci

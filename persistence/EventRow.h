@@ -10,7 +10,7 @@ namespace coreci::persistence {
     };
     using Normalized = std::variant<Event, Invalid>;
     struct GraphTargetRow {
-        std::string package, target, feed;
+        std::string package, target;
         bool operator==(const GraphTargetRow&) const = default;
     };
     struct GraphPrerequisiteRow {
@@ -19,7 +19,6 @@ namespace coreci::persistence {
     };
     struct GraphRows {
         std::vector<TagObserved> releases;
-        std::vector<Feed> feeds;
         std::vector<Package> packages;
         std::vector<GraphTargetRow> targets;
         std::vector<GraphPrerequisiteRow> prerequisites;
@@ -28,7 +27,8 @@ namespace coreci::persistence {
     struct EventRow {
         std::uint64_t seq = 0;
         std::string eventType;
-        std::optional<std::string> package, target, tag, sourceSha, origin, buildId, kind, message, artifact, feedCommit, reason;
+        std::optional<std::string> package, target, tag, sourceSha, origin, buildId, waveId, message, artifact, feedCommit, reason,
+            conclusion;
         std::optional<std::int64_t> httpStatus, runAttempt, attempt, eventAt;
         std::optional<std::uint64_t> runId;
         std::optional<GraphRows> graph;

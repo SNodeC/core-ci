@@ -2,81 +2,82 @@
 #include "Commands.h"
 #include "Events.h"
 
-#include <deque>
 #include <optional>
 
 namespace coreci {
-    enum class Phase { Dispatching, Building, AwaitingPublish, PublishDispatching, Publishing };
+    enum class State { Idle, Planned, Building, Built, Published, Failed, Blocked };
+    std::string stateName(State state);
+    enum class WavePhase { Dispatching, Running, Finished };
+    std::string phaseName(WavePhase phase);
     struct Released {
         Version version;
-        std::string tag;
+        std::string tag, sourceSha;
         bool operator==(const Released&) const = default;
+    };
+    struct PlanUnit {
+        Unit unit;
+        Repo repo;
+        Released release;
+        std::uint64_t revision;
+        Inputs inputs;
+        std::string buildId;
+        bool build;
+        bool operator==(const PlanUnit&) const = default;
+    };
+    using Plan = std::map<std::string, std::vector<PlanUnit>>;
+    struct Wave {
+        std::string id;
+        Plan plan;
+        std::string feedBranch;
+        Repo workflow;
+        WavePhase phase = WavePhase::Dispatching;
+        std::optional<std::uint64_t> runId;
+        std::optional<unsigned> runAttempt;
+        unsigned attempt = 1;
+        std::optional<std::int64_t> retryAt;
+        std::int64_t dispatchedAt = 0, deadline = 0;
+        std::optional<std::int64_t> started, finished;
+        std::string conclusion;
+        bool operator==(const Wave&) const = default;
     };
     struct Published {
         Version version;
         std::uint64_t revision;
         Inputs inputs;
-        std::optional<std::uint64_t> runId = {};
-        std::int64_t at = 0;
-        std::string feedCommit = {};
+        Repo source;
+        std::string waveId;
+        std::int64_t at;
+        std::string feedCommit;
         bool operator==(const Published&) const = default;
-    };
-    struct Inflight {
-        std::string buildId;
-        Version version;
-        std::string tag;
-        std::uint64_t revision;
-        Inputs inputs;
-        Phase phase = Phase::Dispatching;
-        unsigned attempt = 1;
-        std::optional<std::int64_t> retryAt, deadline;
-        std::string artifact;
-        bool operator==(const Inflight&) const = default;
     };
     struct Failure {
         Version version;
         Inputs inputs;
         std::string reason;
-        std::uint64_t revision = 0;
-        std::optional<std::uint64_t> runId = {};
-        std::int64_t at = 0;
+        std::uint64_t revision;
+        std::int64_t at;
+        bool buildFailed = false;
         bool operator==(const Failure&) const = default;
     };
-    struct WorkflowPhase {
-        std::string state = "pending";
-        std::optional<std::uint64_t> runId;
-        std::optional<unsigned> runAttempt;
-        std::optional<std::int64_t> start, end, dispatchedAt;
-        bool operator==(const WorkflowPhase&) const = default;
-    };
     struct UnitState {
+        State state = State::Idle;
+        std::string waveId, artifact;
         std::uint64_t order = 0;
-        WorkflowPhase build, publish;
+        std::optional<std::int64_t> buildStart, buildEnd, publishEnd;
         std::optional<Published> published;
-        std::optional<Inflight> inflight;
         std::optional<Failure> failure;
         std::optional<std::int64_t> retryAfter;
         std::optional<std::pair<Version, Inputs>> autoRetried;
         std::map<Version, std::uint64_t> lastRevision;
-        std::string lastFeed;
-        bool rebuild = false;
+        bool requested = false;
         bool operator==(const UnitState&) const = default;
     };
-    struct FeedState {
-        std::deque<Unit> queue;
-        std::optional<Unit> active;
-        bool operator==(const FeedState&) const = default;
-    };
-    struct Derived {
-        std::optional<Inputs> inputs;
-        bool satisfied = false, settled = false, ready = false, failed = false;
-        std::optional<Unit> waiting, blocker;
-    };
     struct Options {
-        std::int64_t buildTimeout, publishTimeout;
+        std::int64_t waveDelay = 120, waveDeadline = 23400;
         unsigned maxDispatchAttempts = 8;
-        std::optional<std::size_t> maxConcurrentBuilds;
         std::int64_t retryDelay = 600;
+        std::string feedBranch = "feed";
+        Repo workflow{"SNodeC", "Packages", "main"};
     };
     struct Accept {
         bool operator==(const Accept&) const = default;
@@ -88,34 +89,37 @@ namespace coreci {
     using Classification = std::variant<Accept, Ignore>;
     class Engine {
     public:
-        explicit Engine(Options options);
+        explicit Engine(Options options = {});
         Classification classify(const Event& event) const;
         std::vector<Command> handle(const Event& event, std::uint64_t seq = 0);
         std::optional<std::int64_t> nextDeadline() const;
         std::uint64_t nextRevision(const Unit& unit) const;
-        std::map<Unit, Derived> derive() const;
-        const Pipeline& pipeline() const;
         bool sameSource(const std::string& package, const Repo& source) const;
+        const Pipeline& pipeline() const;
         const std::map<std::string, std::optional<Released>>& releases() const;
         const std::map<Unit, UnitState>& units() const;
-        const std::map<std::string, FeedState>& feeds() const;
+        const std::map<std::string, Wave>& waves() const;
+        const Wave* activeWave() const;
+        const Wave* latestWave() const;
+        const PlanUnit* selection(const Unit& unit) const;
         std::optional<std::int64_t> time() const;
 
     private:
-        bool newerTag(const TagObserved& event, const Pipeline& candidate) const;
-        void changeGraph(const Pipeline& pipeline);
-        bool active(const Unit& unit) const;
-        std::optional<Unit> find(const std::string& buildId) const;
-        Command dispatch(const Unit& unit) const;
-        void clear(const Unit& unit);
-        void fail(const Unit& unit, const std::string& reason, std::int64_t at, bool automatic = true);
-        void schedule(std::vector<Command>& commands, std::uint64_t seq);
+        bool newerTag(const TagObserved& tag, const Pipeline& candidate) const;
+        void changeGraph(const GraphChanged& event);
+        Plan plan() const;
+        void dirty();
+        void request(const Unit& unit);
+        void fail(const PlanUnit& unit, const std::string& reason, bool buildFailed = false, bool automatic = true);
+        void finish(Wave& wave, const std::string& conclusion);
+        DispatchWave dispatch(const Wave& wave) const;
         Pipeline graph;
         Options options;
         std::map<std::string, std::optional<Released>> released;
+        std::map<std::string, Repo> sources;
         std::map<Unit, UnitState> unitStates;
-        std::map<std::string, std::pair<Repo, Workflow>> lastIdentity;
-        std::map<std::string, FeedState> feedStates;
-        std::optional<std::int64_t> engineTime;
+        std::map<std::string, Wave> waveStates;
+        std::string latest;
+        std::optional<std::int64_t> engineTime, quietUntil;
     };
 } // namespace coreci

@@ -12,19 +12,20 @@
 namespace coreci::persistence {
     namespace {
         constexpr std::array<std::string_view, std::variant_size_v<Event>> names{"TagObserved",
-                                                                                 "DispatchAccepted",
-                                                                                 "DispatchRejected",
-                                                                                 "BuildStarted",
-                                                                                 "BuildSucceeded",
-                                                                                 "BuildFailed",
-                                                                                 "PublishStarted",
-                                                                                 "PublishSucceeded",
-                                                                                 "PublishFailed",
+                                                                                 "GraphChanged",
+                                                                                 "WaveDispatchAccepted",
+                                                                                 "WaveDispatchRejected",
+                                                                                 "WaveStarted",
+                                                                                 "WaveFinished",
+                                                                                 "UnitBuildStarted",
+                                                                                 "UnitBuildSucceeded",
+                                                                                 "UnitBuildFailed",
+                                                                                 "UnitPublishSucceeded",
+                                                                                 "UnitPublishFailed",
                                                                                  "RetryRequested",
                                                                                  "RebuildRequested",
                                                                                  "Tick",
-                                                                                 "Resumed",
-                                                                                 "GraphChanged"};
+                                                                                 "Resumed"};
         struct Character {
             std::size_t bytes;
             bool valid;
@@ -96,16 +97,13 @@ namespace coreci::persistence {
                     if constexpr (requires { e.pipeline; }) {
                         row.graph = GraphRows{};
                         row.graph->releases = e.tags;
-                        for (const auto& [id, feed] : e.pipeline.feeds()) {
-                            row.graph->feeds.push_back(feed);
-                        }
                         for (const auto& [name, pkg] : e.pipeline.packages()) {
                             auto package = pkg;
                             package.targets.clear();
                             package.prerequisites.clear();
                             row.graph->packages.push_back(package);
                             for (const auto& target : pkg.targets) {
-                                row.graph->targets.push_back({name, target, e.pipeline.targets().at(target).feed});
+                                row.graph->targets.push_back({name, target});
                             }
                             for (const auto& q : pkg.prerequisites) {
                                 row.graph->prerequisites.push_back({name, q});
@@ -128,9 +126,14 @@ namespace coreci::persistence {
                     if constexpr (requires { e.buildId; }) {
                         row.buildId = e.buildId;
                     }
-                    if constexpr (requires { e.kind; }) {
-                        row.kind = e.kind == Kind::Build ? "build" : "publish";
+                    if constexpr (requires { e.waveId; }) {
+                        row.waveId = e.waveId;
+                    }
+                    if constexpr (requires { e.attempt; }) {
                         row.attempt = e.attempt;
+                    }
+                    if constexpr (requires { e.conclusion; }) {
+                        row.conclusion = e.conclusion;
                     }
                     if constexpr (requires { e.httpStatus; }) {
                         row.httpStatus = e.httpStatus;
@@ -169,13 +172,6 @@ namespace coreci::persistence {
             }
             return static_cast<unsigned>(n);
         }
-        Kind kind(const EventRow& row) {
-            const auto& k = required(row.kind, "kind");
-            if (k != "build" && k != "publish") {
-                throw std::invalid_argument("invalid kind");
-            }
-            return k == "build" ? Kind::Build : Kind::Publish;
-        }
     } // namespace
     Normalized normalize(Event event) {
         std::string error;
@@ -198,12 +194,8 @@ namespace coreci::persistence {
                     std::sort(e.tags.begin(), e.tags.end(), [](const auto& a, const auto& b) {
                         return a.package < b.package;
                     });
-                    for (const auto& [id, feed] : e.pipeline.feeds()) {
-                        check(feed.workflow.branch, 255, "branch");
-                    }
                     for (const auto& [name, pkg] : e.pipeline.packages()) {
                         check(pkg.sourceRepo.branch, 255, "source_branch");
-                        check(pkg.buildWorkflow.branch, 255, "build_branch");
                     }
                 }
                 if constexpr (requires { e.package; }) {
@@ -217,6 +209,17 @@ namespace coreci::persistence {
                 }
                 if constexpr (requires { e.buildId; }) {
                     check(e.buildId, 255, "build_id");
+                }
+                if constexpr (requires { e.waveId; }) {
+                    check(e.waveId, 64, "wave_id");
+                }
+                if constexpr (requires { e.conclusion; }) {
+                    check(e.conclusion, 64, "conclusion");
+                }
+                if constexpr (requires { e.runId; }) {
+                    if (e.runId == 0) {
+                        error = "run_id: must be positive";
+                    }
                 }
                 if constexpr (requires { e.artifact; }) {
                     check(e.artifact, 255, "artifact");
@@ -234,10 +237,7 @@ namespace coreci::persistence {
                         error = "feed_commit: expected 40 lowercase hex characters";
                     }
                 }
-                if constexpr (requires { e.kind; }) {
-                    if (e.kind != Kind::Build && e.kind != Kind::Publish) {
-                        error = "invalid kind";
-                    }
+                if constexpr (requires { e.attempt; }) {
                     if (e.attempt < 1 || e.attempt > static_cast<unsigned>(std::numeric_limits<std::int32_t>::max())) {
                         error = "attempt: outside INT range or less than 1";
                     }
@@ -279,37 +279,38 @@ namespace coreci::persistence {
                                            required(row.tag, "tag"),
                                            required(row.sourceSha, "source_sha"),
                                            origin == "webhook" ? Origin::Webhook : Origin::Reconcile}};
-            } else if (row.eventType == "DispatchAccepted" || row.eventType == "DispatchRejected") {
-                const auto& id = required(row.buildId, "build_id");
-                const auto k = kind(row);
-                const auto n = attempt(row.attempt, "attempt");
-                if (row.eventType == "DispatchAccepted") {
-                    result = Event{DispatchAccepted{at, id, k, n}};
-                } else {
-                    const auto status = required(row.httpStatus, "http_status");
-                    if (status < 0 || status > 999) {
-                        throw std::invalid_argument("invalid http_status");
-                    }
-                    result = Event{DispatchRejected{at, id, k, n, static_cast<int>(status), required(row.message, "message")}};
+            } else if (row.eventType == "WaveDispatchAccepted") {
+                result = Event{WaveDispatchAccepted{at, required(row.waveId, "wave_id"), attempt(row.attempt, "attempt")}};
+            } else if (row.eventType == "WaveDispatchRejected") {
+                const auto status = required(row.httpStatus, "http_status");
+                if (status < 0 || status > 999) {
+                    throw std::invalid_argument("invalid http_status");
                 }
-            } else if (row.eventType == "BuildStarted") {
-                result = Event{BuildStarted{
-                    at, required(row.buildId, "build_id"), required(row.runId, "run_id"), attempt(row.runAttempt, "run_attempt")}};
-            } else if (row.eventType == "BuildSucceeded") {
-                result = Event{BuildSucceeded{
-                    at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.artifact, "artifact")}};
-            } else if (row.eventType == "BuildFailed") {
-                result = Event{
-                    BuildFailed{at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.reason, "reason")}};
-            } else if (row.eventType == "PublishStarted") {
-                result = Event{PublishStarted{
-                    at, required(row.buildId, "build_id"), required(row.runId, "run_id"), attempt(row.runAttempt, "run_attempt")}};
-            } else if (row.eventType == "PublishSucceeded") {
-                result = Event{PublishSucceeded{
-                    at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.feedCommit, "feed_commit")}};
-            } else if (row.eventType == "PublishFailed") {
-                result = Event{
-                    PublishFailed{at, required(row.buildId, "build_id"), required(row.runId, "run_id"), required(row.reason, "reason")}};
+                result = Event{WaveDispatchRejected{at,
+                                                    required(row.waveId, "wave_id"),
+                                                    attempt(row.attempt, "attempt"),
+                                                    static_cast<int>(status),
+                                                    required(row.message, "message")}};
+            } else if (row.eventType == "WaveStarted") {
+                result = Event{WaveStarted{
+                    at, required(row.waveId, "wave_id"), required(row.runId, "run_id"), attempt(row.runAttempt, "run_attempt")}};
+            } else if (row.eventType == "WaveFinished") {
+                result = Event{WaveFinished{
+                    at, required(row.waveId, "wave_id"), required(row.runId, "run_id"), required(row.conclusion, "conclusion")}};
+            } else if (row.eventType == "UnitBuildStarted") {
+                result = Event{UnitBuildStarted{at, required(row.waveId, "wave_id"), required(row.buildId, "build_id")}};
+            } else if (row.eventType == "UnitBuildSucceeded") {
+                result = Event{UnitBuildSucceeded{
+                    at, required(row.waveId, "wave_id"), required(row.buildId, "build_id"), required(row.artifact, "artifact")}};
+            } else if (row.eventType == "UnitBuildFailed") {
+                result = Event{UnitBuildFailed{
+                    at, required(row.waveId, "wave_id"), required(row.buildId, "build_id"), required(row.reason, "reason")}};
+            } else if (row.eventType == "UnitPublishSucceeded") {
+                result = Event{UnitPublishSucceeded{
+                    at, required(row.waveId, "wave_id"), required(row.buildId, "build_id"), required(row.feedCommit, "feed_commit")}};
+            } else if (row.eventType == "UnitPublishFailed") {
+                result = Event{UnitPublishFailed{
+                    at, required(row.waveId, "wave_id"), required(row.buildId, "build_id"), required(row.reason, "reason")}};
             } else if (row.eventType == "RetryRequested") {
                 result = Event{RetryRequested{at, required(row.package, "package"), required(row.target, "target")}};
             } else if (row.eventType == "RebuildRequested") {
@@ -320,9 +321,6 @@ namespace coreci::persistence {
                 Pipeline::Builder builder;
                 const auto& graph = required(row.graph, "graph");
                 std::map<std::string, Package> packages;
-                for (const auto& feed : graph.feeds) {
-                    builder.feed(feed);
-                }
                 for (const auto& pkg : graph.packages) {
                     if (!pkg.targets.empty() || !pkg.prerequisites.empty() || !packages.emplace(pkg.name, pkg).second) {
                         throw std::invalid_argument("invalid graph package row");
@@ -332,7 +330,7 @@ namespace coreci::persistence {
                     if (!packages.contains(target.package) || !packages.at(target.package).targets.insert(target.target).second) {
                         throw std::invalid_argument("unknown package or duplicate graph target");
                     }
-                    builder.target({target.target, target.feed});
+                    builder.target({target.target});
                 }
                 for (const auto& q : graph.prerequisites) {
                     if (!packages.contains(q.package)) {

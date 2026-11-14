@@ -4,7 +4,7 @@
 using namespace coreci;
 using namespace coreci::github;
 int main() {
-    const std::string body = "phase=build&status=started&run_id=1&run_attempt=1";
+    const std::string body = "scope=unit&build_id=a%7Et&phase=build&status=started";
     const auto signature = hmac("key", "1000." + body);
     CHECK(verifyCallback("key", body, "1000", signature, 1300));
     CHECK(verifyCallback("key", body, "1000", signature, 700));
@@ -16,9 +16,9 @@ int main() {
     CHECK(!verifyCallback("key", body, "-9223372036854775808", signature, 1000));
     const auto decoded = form(body);
     REQUIRE(std::holds_alternative<Form>(decoded));
-    const auto event = report("a~t~1.0.0+meta~r1", std::get<Form>(decoded), 1000);
+    const auto event = report("w1", std::get<Form>(decoded), 1000);
     REQUIRE(std::holds_alternative<Event>(event));
-    CHECK_EQ(std::get<BuildStarted>(std::get<Event>(event)).buildId, "a~t~1.0.0+meta~r1");
+    CHECK_EQ(std::get<UnitBuildStarted>(std::get<Event>(event)).buildId, "a~t");
     CHECK(std::holds_alternative<Event>(persistence::normalize(std::get<Event>(event))));
     for (const auto& s : {"x=%", "x=%xx", "x=1&x=2", "x", "=value"}) {
         CHECK(std::holds_alternative<Error>(form(s)));
@@ -26,13 +26,27 @@ int main() {
     CHECK_EQ(std::get<Form>(form("x=a+b%2Bc%26d%3D%C3%A9")).at("x"), "a b+c&d=é");
     CHECK(std::holds_alternative<Error>(report("id", {{"phase", "build"}, {"status", "failed"}, {"run_id", "1"}}, 1)));
     CHECK(std::holds_alternative<Error>(report("id", {{"phase", "publish"}, {"status", "started"}}, 1)));
-    for (const auto& data :
-         std::vector<Form>{{{"phase", "publish"}, {"status", "started"}, {"run_id", "2"}, {"run_attempt", "3"}},
-                           {{"phase", "build"}, {"status", "succeeded"}, {"run_id", "1"}, {"artifact", "artifact"}},
-                           {{"phase", "build"}, {"status", "failed"}, {"run_id", "1"}, {"reason", "cancelled"}},
-                           {{"phase", "publish"}, {"status", "succeeded"}, {"run_id", "1"}, {"feed_commit", std::string(40, 'a')}},
-                           {{"phase", "publish"}, {"status", "failed"}, {"run_id", "1"}, {"reason", "failed"}}}) {
+    for (const auto& data : std::vector<Form>{
+             {{"scope", "wave"}, {"status", "started"}, {"run_id", "2"}, {"run_attempt", "3"}},
+             {{"scope", "unit"},
+              {"build_id", "id"},
+              {"phase", "build"},
+              {"status", "succeeded"},
+              {"run_id", "1"},
+              {"artifact", "artifact"}},
+             {{"scope", "unit"}, {"build_id", "id"}, {"phase", "build"}, {"status", "failed"}, {"reason", "cancelled"}},
+             {{"scope", "unit"},
+              {"build_id", "id"},
+              {"phase", "publish"},
+              {"status", "succeeded"},
+              {"run_id", "1"},
+              {"feed_commit", std::string(40, 'a')}},
+             {{"scope", "unit"}, {"build_id", "id"}, {"phase", "publish"}, {"status", "failed"}, {"run_id", "1"}, {"reason", "failed"}}}) {
         CHECK(std::holds_alternative<Event>(report("id", data, 1)));
     }
+    CHECK(std::holds_alternative<std::monostate>(
+        report("w1", {{"scope", "unit"}, {"build_id", "id"}, {"phase", "publish"}, {"status", "started"}}, 1)));
+    CHECK(std::holds_alternative<Event>(
+        report("w1", {{"scope", "wave"}, {"status", "finished"}, {"run_id", "2"}, {"conclusion", "success"}}, 1)));
     return checkResult();
 }
