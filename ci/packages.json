@@ -40,7 +40,8 @@
       "ncurses-devel",
       "python3",
       "python3-cryptography"
-    ]
+    ],
+    "openwrt": []
   },
   "targets": [
     "debian-trixie-amd64",
