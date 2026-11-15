@@ -139,16 +139,9 @@ namespace coreci::github {
                                         coordinates.family != "apk") {
                                         throw std::invalid_argument("unknown target family");
                                     }
-                                    for (const auto& field :
-                                         {"distribution", "release", "codename", "arch", "image", "runner", "platform"}) {
+                                    for (const auto& field : {"distribution", "release", "codename", "arch"}) {
                                         if (entry.at(field).get<std::string>().empty()) {
                                             throw std::invalid_argument("empty catalog field");
-                                        }
-                                    }
-                                    entry.at("emulated").get<bool>();
-                                    for (const auto& field : {"disttag", "sdk"}) {
-                                        if (entry.contains(field)) {
-                                            entry.at(field).get<std::string>();
                                         }
                                     }
                                     if (!self->catalog.emplace(id, std::move(coordinates)).second) {

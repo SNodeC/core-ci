@@ -162,10 +162,20 @@ int main() {
     auto cat = Json::parse(catalog);
     cat["targets"].push_back(cat["targets"][0]);
     bad(registry.dump(), source("a").dump(), cat.dump());
-    for (const auto& field : {"id", "family", "distribution", "release", "codename", "arch", "image", "runner", "platform", "emulated"}) {
+    for (const auto& field : {"id", "family", "distribution", "release", "codename", "arch"}) {
         cat = Json::parse(catalog);
         cat["targets"][0].erase(field);
         bad(registry.dump(), source("a").dump(), cat.dump());
+    }
+    for (const auto& field : {"image", "runner", "platform", "emulated", "disttag", "sdk", "future"}) {
+        cat = Json::parse(catalog);
+        cat["targets"][0].erase(field);
+        CHECK(std::holds_alternative<LoadedDeclarations>(load(registry.dump(), source("a").dump(), source("b").dump(), cat.dump()).value));
+        for (const auto& value : std::vector<Json>{nullptr, false, 42, 1.5, "opaque", Json::array({1}), Json{{"url", "sdk"}}}) {
+            cat["targets"][0][field] = value;
+            CHECK(std::holds_alternative<LoadedDeclarations>(
+                load(registry.dump(), source("a").dump(), source("b").dump(), cat.dump()).value));
+        }
     }
     bad(registry.dump(), std::string(1024U * 1024U + 1, ' '));
     CHECK(std::holds_alternative<Error>(load(registry.dump(), source("a").dump(), source("b").dump(), catalog, "normal", 404).value));

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "repositories": [
+    "SNodeC/snode.c",
+    "SNodeC/mqttsuite",
+    "SNodeC/snode.c-idp",
+    "SNodeC/core-ci",
+    "SNodeC/AISuite",
+    "SNodeC/CodexUI"
+  ]
+}
