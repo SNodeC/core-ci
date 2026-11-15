@@ -98,31 +98,46 @@ class Provider(BaseHTTPRequestHandler):
             state.key.public_key().verify(base64.urlsafe_b64decode(signature + '=' * (-len(signature) % 4)),
                                           (first + '.' + second).encode(), padding.PKCS1v15(), hashes.SHA256())
             claims = json.loads(base64.urlsafe_b64decode(second + '=' * (-len(second) % 4)))
-            assert claims['iss'] == '123' and abs(claims['iat'] - (int(time.time()) - 60)) <= 3
+            assert claims['iss'] == '123' and abs(claims['iat'] - (state.now() - 60)) <= 3
             state.mints += 1
-            self.respond(201, dict(token='fixture-installation', expires_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))))
+            self.respond(201, dict(token='fixture-installation', expires_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(state.now() + 3600))))
         elif self.path == '/oauth2/token':
-            data = state.codes.pop(fields['code'])
-            assert b64(hashlib.sha256(fields['code_verifier'].encode()).digest()) == data['code_challenge']
-            assert fields['redirect_uri'] == data['redirect_uri']
-            now = int(time.time())
-            claims = dict(iss=state.api, aud='coreci-test', sub=data['subject'], sid='session-' + data['subject'],
-                          email='same@example.invalid', username='Fixture', scope=['openid', 'profile', 'email'],
-                          exp=now + state.token_lifetime, iat=now, nbf=now, mfa_verified=True)
-            def sign(kind):
-                payload = dict(claims, token_use=kind)
-                if kind == 'id':
-                    payload.update(nonce=data['nonce'], acr='urn:snodec:acr:mfa')
-                message = b64(json.dumps(dict(alg='RS256', typ='JWT' if kind == 'id' else 'at+jwt')).encode()) + '.' + b64(json.dumps(payload).encode())
-                result = message + '.' + b64(state.key.sign(message.encode(), padding.PKCS1v15(), hashes.SHA256()))
-                return result
-            access = sign('access')
-            state.tokens[access] = claims
-            self.respond(200, dict(access_token=access, id_token=sign('id')))
+            if fields['grant_type'] == 'authorization_code':
+                data = state.codes.pop(fields['code'])
+                assert b64(hashlib.sha256(fields['code_verifier'].encode()).digest()) == data['code_challenge']
+                assert fields['redirect_uri'] == data['redirect_uri']
+            else:
+                assert fields['grant_type'] == 'refresh_token'
+                data = state.refresh_tokens.pop(fields['refresh_token'])
+                if data['subject'] not in state.revoked:
+                    state.renewals.append((state.now(), data['expiry']))
+            if data['subject'] in state.revoked:
+                self.respond(400, dict(error='invalid_grant'))
+            else:
+                now = state.now()
+                claims = dict(iss=state.api, aud='coreci-test', sub=data['subject'], sid='session-' + data['subject'],
+                              email='same@example.invalid', username='Fixture', scope=['openid', 'profile', 'email'],
+                              exp=now + state.token_lifetime, iat=now, nbf=now, mfa_verified=True)
+                def sign(kind):
+                    payload = dict(claims, token_use=kind)
+                    if kind == 'id':
+                        payload.update(nonce=data['nonce'], acr='urn:snodec:acr:mfa')
+                    message = b64(json.dumps(dict(alg='RS256', typ='JWT' if kind == 'id' else 'at+jwt')).encode()) + '.' + b64(json.dumps(payload).encode())
+                    result = message + '.' + b64(state.key.sign(message.encode(), padding.PKCS1v15(), hashes.SHA256()))
+                    return result
+                access = sign('access')
+                state.tokens[access] = claims
+                state.refresh_sequence += 1
+                refresh = 'fixture-refresh-' + str(state.refresh_sequence)
+                state.refresh_tokens[refresh] = dict(data, expiry=claims['exp'])
+                self.respond(200, dict(access_token=access, id_token=sign('id'), refresh_token=refresh, refresh_retry=True))
         elif self.path == '/oauth2/introspect':
             claims = state.tokens.get(fields.get('token'))
-            active = bool(claims) and claims['sub'] not in state.revoked
-            self.respond(200, dict(active=active, sub=claims['sub'], sid=claims['sid'], mfa_verified=True) if active else dict(active=False))
+            active = bool(claims) and claims['sub'] not in state.revoked and claims['exp'] > state.now()
+            if state.unavailable:
+                self.respond(503, dict(error='temporarily_unavailable'))
+            else:
+                self.respond(200, dict(active=active, sub=claims['sub'], sid=claims['sid'], mfa_verified=True) if active else dict(active=False))
         elif self.path.endswith('/dispatches'):
             values = json.loads(raw)['inputs']
             assert self.path.endswith('/actions/workflows/wave.yml/dispatches')
@@ -139,12 +154,16 @@ class Provider(BaseHTTPRequestHandler):
 
 
 class Fixture:
-    def __init__(self, build, work, small=False, wrong_host=False, parser=()):
+    def __init__(self, build, work, small=False, wrong_host=False, parser=(), virtual_clock=False, wave_deadline=120):
         self.build, self.work = Path(build), Path(work)
         self.codes, self.tokens = {}, {}
+        self.refresh_tokens, self.renewals = {}, []
+        self.refresh_sequence = 0
+        self.offset = 0
         self.next_run = 100
         self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
         self.subject, self.revoked = 'owner', set()
+        self.unavailable = False
         self.token_lifetime = 3600
         self.dispatches = queue.Queue()
         self.requested, self.release = threading.Event(), threading.Event()
@@ -176,6 +195,10 @@ class Fixture:
         self.env = dict(os.environ, SSL_CERT_FILE=str(self.cert), CORECI_WEBHOOK_SECRET='fixture-webhook',
                         CORECI_CALLBACK_SECRET='fixture-callback',
                         CORECI_DB_PASSWORD=os.environ.get('CORECI_TEST_DB_PASSWORD', ''))
+        if virtual_clock:
+            self.clock_path = self.work / 'clock-offset'
+            self.clock_path.write_text('0')
+            self.env.update(LD_PRELOAD=str(self.build / 'libcoreci-test-clock.so'), CORECI_TEST_CLOCK_FILE=str(self.clock_path))
         subprocess.run([self.build / 'coreci-reset-store'], env=self.env, check=True, stdout=subprocess.DEVNULL)
         self.context = ssl.create_default_context(cafile=str(self.cert))
         self.server = ThreadingHTTPServer(('127.0.0.1', self.api_port), Provider)
@@ -194,7 +217,7 @@ class Fixture:
                    '--callback-base-url', self.app, '--github-api-url', self.api.replace('localhost', '127.0.0.1') if wrong_host else self.api, '--github-ca-cert', self.cert,
                    '--tls-cert', self.cert, '--tls-key', self.key_path, '--listen-address', '127.0.0.1', '--listen-port', str(self.app_port),
                    '--idp-base-url', self.api, '--idp-client-id', 'coreci-test', '--idp-public-key-path', self.public,
-                   '--dashboard-users', 'owner', '--dashboard-redirect-port', str(self.redirect_port), '--wave-delay', '1', '--wave-deadline', '120', '--retry-delay', '0', 'coreci']
+                   '--dashboard-users', 'owner', '--dashboard-redirect-port', str(self.redirect_port), '--wave-delay', '1', '--wave-deadline', str(wave_deadline), '--retry-delay', '0', 'coreci']
         if parser:
             command += ['http', 'parser', *parser]
         self.command = [str(x) for x in command]
@@ -206,6 +229,15 @@ class Fixture:
             raise AssertionError('controller did not start declaration load; startup log saved')
         self.jar = http.cookiejar.CookieJar()
         self.browser = urllib.request.build_opener(urllib.request.HTTPSHandler(context=self.context), urllib.request.HTTPCookieProcessor(self.jar))
+
+    def now(self):
+        return int(time.time()) + self.offset
+
+    def advance(self, seconds):
+        self.offset += seconds
+        temporary = self.clock_path.with_suffix('.next')
+        temporary.write_text(str(self.offset))
+        temporary.replace(self.clock_path)
 
     def request(self, path, body=None, headers=None, browser=True):
         request = urllib.request.Request(self.app + path, data=body, headers=headers or {})
@@ -249,7 +281,7 @@ class Fixture:
 
     def report(self, values, **fields):
         raw = urllib.parse.urlencode(fields).encode()
-        stamp = str(int(time.time()))
+        stamp = str(self.now())
         signature = hmac.new(b'fixture-callback', stamp.encode() + b'.' + raw, hashlib.sha256).hexdigest()
         response = self.request('/api/v1/waves/' + values['wave_id'] + '/report', raw,
             {'Content-Type': 'application/x-www-form-urlencoded', 'X-CoreCI-Timestamp': stamp,
@@ -287,6 +319,7 @@ class Fixture:
         self.thread.join(timeout=5)
         log = (self.work / 'daemon.log').read_text(errors='replace')
         assert not any(token in log for token in self.tokens), 'credential appeared in fixture log'
+        assert not any(cookie.value in log for cookie in getattr(self, 'jar', ()) if cookie.value), 'browser credential appeared in fixture log'
         assert not any(secret in log for secret in ('fixture-installation', 'fixture-webhook', 'fixture-callback')), 'credential appeared in fixture log'
 
 
