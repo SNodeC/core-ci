@@ -383,6 +383,7 @@ W2 Source declaration, read at the tag: ci/packages.json {"schema":1, "package",
    "revision_base":N?}.
 W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release",
    "codename","arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?}.
+   Fields other than id, family, distribution, release, codename and arch are opaque to core-ci; sdk is an object used only by wave.yml.
 W4 Dispatch: core-ci → workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
    callback_url, feed_branch ("feed" | "feed-staging"). wave.yml additionally accepts
    plan_json (base64) for manual runs; empty callback_url = no callbacks.

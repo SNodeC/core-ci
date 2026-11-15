@@ -161,8 +161,15 @@ if(CORECI_WITH_SNODEC)
                    RUN_SERIAL
                    TRUE
     )
-    foreach(scenario A_WebhookHmac A_CallbackHmac A_DispatchRequest A_TagPages
-                     S16_Declarations A_AppToken
+    foreach(
+        scenario
+        A_WebhookHmac
+        A_CallbackHmac
+        A_DispatchRequest
+        A_TagPages
+        S16_Declarations
+        S17_ProductionContract
+        A_AppToken
     )
         add_executable(${scenario} tests/${scenario}.cpp)
         target_link_libraries(${scenario} PRIVATE coreci_github coreci_test)
@@ -172,6 +179,11 @@ if(CORECI_WITH_SNODEC)
     target_compile_definitions(
         S16_Declarations
         PRIVATE CORECI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+    )
+    target_compile_definitions(
+        S17_ProductionContract
+        PRIVATE
+            CORECI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/production"
     )
     set_property(
         DIRECTORY

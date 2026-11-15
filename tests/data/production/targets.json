@@ -1,0 +1,562 @@
+{
+  "targets": [
+    {
+      "id": "debian-trixie-amd64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "trixie",
+      "codename": "trixie",
+      "arch": "amd64",
+      "image": "debian:trixie",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false
+    },
+    {
+      "id": "debian-trixie-arm64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "trixie",
+      "codename": "trixie",
+      "arch": "arm64",
+      "image": "debian:trixie",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "debian-trixie-armhf",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "trixie",
+      "codename": "trixie",
+      "arch": "armhf",
+      "image": "debian:trixie",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm/v7",
+      "emulated": false
+    },
+    {
+      "id": "debian-trixie-riscv64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "trixie",
+      "codename": "trixie",
+      "arch": "riscv64",
+      "image": "debian:trixie",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/riscv64",
+      "emulated": true
+    },
+    {
+      "id": "debian-forky-amd64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "forky",
+      "codename": "forky",
+      "arch": "amd64",
+      "image": "debian:forky",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false
+    },
+    {
+      "id": "debian-forky-arm64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "forky",
+      "codename": "forky",
+      "arch": "arm64",
+      "image": "debian:forky",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "debian-forky-armhf",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "forky",
+      "codename": "forky",
+      "arch": "armhf",
+      "image": "debian:forky",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm/v7",
+      "emulated": false
+    },
+    {
+      "id": "debian-forky-riscv64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "forky",
+      "codename": "forky",
+      "arch": "riscv64",
+      "image": "debian:forky",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/riscv64",
+      "emulated": true
+    },
+    {
+      "id": "debian-sid-amd64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "sid",
+      "codename": "sid",
+      "arch": "amd64",
+      "image": "debian:sid",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false
+    },
+    {
+      "id": "debian-sid-arm64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "sid",
+      "codename": "sid",
+      "arch": "arm64",
+      "image": "debian:sid",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "debian-sid-armhf",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "sid",
+      "codename": "sid",
+      "arch": "armhf",
+      "image": "debian:sid",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm/v7",
+      "emulated": false
+    },
+    {
+      "id": "debian-sid-riscv64",
+      "family": "deb",
+      "distribution": "debian",
+      "release": "sid",
+      "codename": "sid",
+      "arch": "riscv64",
+      "image": "debian:sid",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/riscv64",
+      "emulated": true
+    },
+    {
+      "id": "ubuntu-noble-amd64",
+      "family": "deb",
+      "distribution": "ubuntu",
+      "release": "noble",
+      "codename": "noble",
+      "arch": "amd64",
+      "image": "ubuntu:noble",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false
+    },
+    {
+      "id": "ubuntu-noble-arm64",
+      "family": "deb",
+      "distribution": "ubuntu",
+      "release": "noble",
+      "codename": "noble",
+      "arch": "arm64",
+      "image": "ubuntu:noble",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "ubuntu-resolute-amd64",
+      "family": "deb",
+      "distribution": "ubuntu",
+      "release": "resolute",
+      "codename": "resolute",
+      "arch": "amd64",
+      "image": "ubuntu:resolute",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false
+    },
+    {
+      "id": "ubuntu-resolute-arm64",
+      "family": "deb",
+      "distribution": "ubuntu",
+      "release": "resolute",
+      "codename": "resolute",
+      "arch": "arm64",
+      "image": "ubuntu:resolute",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "fedora-43-x86_64",
+      "family": "rpm",
+      "distribution": "fedora",
+      "release": "43",
+      "codename": "43",
+      "arch": "x86_64",
+      "image": "fedora:43",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "disttag": "fc43"
+    },
+    {
+      "id": "fedora-43-aarch64",
+      "family": "rpm",
+      "distribution": "fedora",
+      "release": "43",
+      "codename": "43",
+      "arch": "aarch64",
+      "image": "fedora:43",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false,
+      "disttag": "fc43"
+    },
+    {
+      "id": "fedora-44-x86_64",
+      "family": "rpm",
+      "distribution": "fedora",
+      "release": "44",
+      "codename": "44",
+      "arch": "x86_64",
+      "image": "fedora:44",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "disttag": "fc44"
+    },
+    {
+      "id": "fedora-44-aarch64",
+      "family": "rpm",
+      "distribution": "fedora",
+      "release": "44",
+      "codename": "44",
+      "arch": "aarch64",
+      "image": "fedora:44",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false,
+      "disttag": "fc44"
+    },
+    {
+      "id": "rocky-9-x86_64",
+      "family": "rpm",
+      "distribution": "rocky",
+      "release": "9",
+      "codename": "9",
+      "arch": "x86_64",
+      "image": "rockylinux:9",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "disttag": "el9"
+    },
+    {
+      "id": "rocky-9-aarch64",
+      "family": "rpm",
+      "distribution": "rocky",
+      "release": "9",
+      "codename": "9",
+      "arch": "aarch64",
+      "image": "rockylinux:9",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false,
+      "disttag": "el9"
+    },
+    {
+      "id": "rocky-10-x86_64",
+      "family": "rpm",
+      "distribution": "rocky",
+      "release": "10",
+      "codename": "10",
+      "arch": "x86_64",
+      "image": "rockylinux:10",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "disttag": "el10"
+    },
+    {
+      "id": "rocky-10-aarch64",
+      "family": "rpm",
+      "distribution": "rocky",
+      "release": "10",
+      "codename": "10",
+      "arch": "aarch64",
+      "image": "rockylinux:10",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false,
+      "disttag": "el10"
+    },
+    {
+      "id": "raspberrypios-bookworm-arm64",
+      "family": "deb",
+      "distribution": "raspberrypios",
+      "release": "bookworm",
+      "codename": "bookworm",
+      "arch": "arm64",
+      "image": "debian:bookworm",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "raspberrypios-trixie-arm64",
+      "family": "deb",
+      "distribution": "raspberrypios",
+      "release": "trixie",
+      "codename": "trixie",
+      "arch": "arm64",
+      "image": "debian:trixie",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linux/arm64",
+      "emulated": false
+    },
+    {
+      "id": "openwrt-24.10-aarch64_cortex-a53",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "aarch64_cortex-a53",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/mediatek/filogic/openwrt-sdk-24.10.8-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/mediatek/filogic/sha256sums",
+        "sha256": "d9fd074f281823a3023e8f6a73aaac598018c898ec9ac4d1c507b596930d7482"
+      }
+    },
+    {
+      "id": "openwrt-24.10-aarch64_generic",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "aarch64_generic",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/armsr/armv8/openwrt-sdk-24.10.8-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/armsr/armv8/sha256sums",
+        "sha256": "5f430f5b30c9ea6dc472710356c139abf916b7ebd5de14e108e9cc204f40a2a4"
+      }
+    },
+    {
+      "id": "openwrt-24.10-arm_cortex-a7_neon-vfpv4",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "arm_cortex-a7_neon-vfpv4",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/ipq40xx/generic/openwrt-sdk-24.10.8-ipq40xx-generic_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/ipq40xx/generic/sha256sums",
+        "sha256": "b1b6a4a0d18305431c005af5b3750bedcdc4f5578eb757c53a4ce5956337f9f2"
+      }
+    },
+    {
+      "id": "openwrt-24.10-arm_cortex-a9",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "arm_cortex-a9",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/bcm53xx/generic/openwrt-sdk-24.10.8-bcm53xx-generic_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/bcm53xx/generic/sha256sums",
+        "sha256": "cfd569aa06dd9e2023d03f0aec648c73a6ae2c95f9722493fddf2df7088e49ac"
+      }
+    },
+    {
+      "id": "openwrt-24.10-mips_24kc",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "mips_24kc",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/ath79/generic/openwrt-sdk-24.10.8-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/ath79/generic/sha256sums",
+        "sha256": "e46c4d0127061486ef4ce681f527f8a3980702011cafbf7801aff965a366dd8d"
+      }
+    },
+    {
+      "id": "openwrt-24.10-mipsel_24kc",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "mipsel_24kc",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/ramips/mt7621/openwrt-sdk-24.10.8-ramips-mt7621_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/ramips/mt7621/sha256sums",
+        "sha256": "9dd11b0517883b016ad7684f5c408a3483eec5b2455b2ffe004c9edd84063e45"
+      }
+    },
+    {
+      "id": "openwrt-24.10-x86_64",
+      "family": "ipk",
+      "distribution": "openwrt",
+      "release": "24.10",
+      "codename": "24.10",
+      "arch": "x86_64",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/sha256sums",
+        "sha256": "ac4a0405d2eea821b06f93c14ba13ffa90ad0457648903df7dde02570027ab21"
+      }
+    },
+    {
+      "id": "openwrt-25.12-aarch64_cortex-a53",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "aarch64_cortex-a53",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/openwrt-sdk-25.12.6-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/sha256sums",
+        "sha256": "1c04ac47bdfc361d6aab299eb520d570e368013dedcb8d29cf39dc7168ae642e"
+      }
+    },
+    {
+      "id": "openwrt-25.12-aarch64_generic",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "aarch64_generic",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/openwrt-sdk-25.12.6-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/sha256sums",
+        "sha256": "cbf3343bc3d6dc6180fc84077b966c13596a79904adaadbfe68409d563b0b596"
+      }
+    },
+    {
+      "id": "openwrt-25.12-arm_cortex-a7_neon-vfpv4",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "arm_cortex-a7_neon-vfpv4",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/ipq40xx/generic/openwrt-sdk-25.12.6-ipq40xx-generic_gcc-14.3.0_musl_eabi.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/ipq40xx/generic/sha256sums",
+        "sha256": "72b2a064190a46b8026e192e29b8ff357dc040850eb3309573124509acbb8a05"
+      }
+    },
+    {
+      "id": "openwrt-25.12-arm_cortex-a9",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "arm_cortex-a9",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/bcm53xx/generic/openwrt-sdk-25.12.6-bcm53xx-generic_gcc-14.3.0_musl_eabi.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/bcm53xx/generic/sha256sums",
+        "sha256": "291c0899a045a963aa5f610e885b9eb335cfeb5c8478c9c431770ba9cdbc98bf"
+      }
+    },
+    {
+      "id": "openwrt-25.12-mips_24kc",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "mips_24kc",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/ath79/generic/openwrt-sdk-25.12.6-ath79-generic_gcc-14.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/ath79/generic/sha256sums",
+        "sha256": "941c19d4787944e569bc0ca7fb4b6d0f4387ba24d188900bf0ffb6787fee31c6"
+      }
+    },
+    {
+      "id": "openwrt-25.12-mipsel_24kc",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "mipsel_24kc",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/ramips/mt7621/openwrt-sdk-25.12.6-ramips-mt7621_gcc-14.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/ramips/mt7621/sha256sums",
+        "sha256": "e4e3f25962ddf3ed55207fed456ecd1d6e55f3482c976b3183a640df6ef0adf0"
+      }
+    },
+    {
+      "id": "openwrt-25.12-x86_64",
+      "family": "apk",
+      "distribution": "openwrt",
+      "release": "25.12",
+      "codename": "25.12",
+      "arch": "x86_64",
+      "image": "ubuntu:24.04",
+      "runner": "ubuntu-24.04",
+      "platform": "linux/amd64",
+      "emulated": false,
+      "sdk": {
+        "url": "https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-sdk-25.12.6-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst",
+        "sha256sums": "https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/sha256sums",
+        "sha256": "1864152619092e781fa36a401960c8e9ae42d6a364c44ee5f0b197ca5f3c0fcc"
+      }
+    }
+  ]
+}
