@@ -26,7 +26,7 @@ namespace coreci::app {
             Res res;
             std::string token, email;
             std::chrono::steady_clock::time_point keepAlive, checked;
-            bool snapshot = true, pending = false;
+            bool snapshot = true, pending = false, bearer = false, authorized = true;
         };
         void tick();
         std::shared_ptr<snodec::auth::OAuthClient> client;

@@ -80,7 +80,8 @@ namespace coreci::app {
                 auto stream = std::make_shared<Stream>();
                 stream->res = res;
                 const auto header = req->get("Authorization");
-                stream->token = header.starts_with("Bearer ") ? header.substr(7) : req->cookie(client->cookieName());
+                stream->bearer = header.starts_with("Bearer ");
+                stream->token = stream->bearer ? header.substr(7) : req->cookie(client->cookieName());
                 req->template getAttribute<snodec::auth::UserContext>([&](const auto& user) {
                     stream->email = user.email;
                 });
@@ -137,20 +138,26 @@ namespace coreci::app {
             return !stream->res || !stream->res->isConnected();
         });
         for (const auto& stream : streams) {
-            if (!stream->pending && at - stream->checked >= std::chrono::seconds(59)) {
+            if (!stream->pending &&
+                (at - stream->checked >= std::chrono::seconds(59) || (!stream->bearer && client->renewalDue(stream->token)))) {
                 stream->pending = true;
                 stream->checked = at;
-                client->authorize(stream->token,
-                                  [allowed = users, weak = std::weak_ptr<Stream>(stream)](bool accepted, const auto& claims) {
-                                      if (const auto current = weak.lock()) {
-                                          current->pending = false;
-                                          if (!accepted || !allowed.contains(claims.subject)) {
-                                              current->res->sendFragment("");
-                                              current->res->getSocketContext()->shutdownWrite();
-                                              current->res.reset();
-                                          }
-                                      }
-                                  });
+                const auto done = [allowed = users, weak = std::weak_ptr<Stream>(stream)](auto status, const auto& claims) {
+                    if (const auto current = weak.lock()) {
+                        current->pending = false;
+                        if (status == snodec::auth::OAuthClient::Authorization::Rejected ||
+                            (status == snodec::auth::OAuthClient::Authorization::Accepted && !allowed.contains(claims.subject))) {
+                            current->res->sendFragment("");
+                            current->res->getSocketContext()->shutdownWrite();
+                            current->res.reset();
+                        } else {
+                            const bool accepted = status == snodec::auth::OAuthClient::Authorization::Accepted;
+                            current->snapshot = current->snapshot || (accepted && !current->authorized);
+                            current->authorized = accepted;
+                        }
+                    }
+                };
+                client->authenticate(stream->token, stream->bearer, done);
             }
         }
         const auto* engine = queue.engine();
@@ -159,7 +166,10 @@ namespace coreci::app {
             dirty = false;
             for (const auto& stream : streams) {
                 if (stream->res && stream->res->isConnected()) {
-                    if (stream->snapshot || update) {
+                    if (update && (stream->pending || !stream->authorized)) {
+                        stream->snapshot = true;
+                    }
+                    if (stream->authorized && !stream->pending && (stream->snapshot || update)) {
                         stream->res->sendFragment(
                             std::string("event: ") + (stream->snapshot ? "snapshot" : "update") +
                             "\ndata: " + dashboard::model(*engine, declarations, generation(), ready, stream->email, loadError) + "\n\n");

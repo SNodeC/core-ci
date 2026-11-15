@@ -11,3 +11,11 @@ CORECI_TEST_DB_NAME for the disposable database. Optional
 CORECI_TEST_DB_PASSWORD stays in the test environment. Run through CTest;
 never use a production database. The shared fixture.py and tests/data/dashboard
 files are used by these HTTP checks and smoke tests.
+
+S25 advances wall and monotonic time only inside the disposable controller through
+the test-only Clock.cpp preload library. The provider shares the same offset;
+the populated/changing HTTP stream must survive at least 30 simulated minutes
+with short-lived tokens, every renewal must precede expiry, and revocation must
+close it within 60 simulated seconds. Production has no test-clock setting or
+clock dependency. SDK tests separately cover concurrent renewal and recovery of
+an ambiguous refresh response without replaying a different grant operation.

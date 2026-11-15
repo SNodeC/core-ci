@@ -152,6 +152,71 @@ def button_checks(fx):
     print('S23: Retry commits and allocates the next revision; Refresh waits for loading; unsupported operations passed')
 
 
+def renewal_checks(fx):
+    fx.token_lifetime = 120
+    fx.ready()
+    assert fx.request('/').status == 200
+    stream = Stream(fx)
+    _, kind, value = stream.next()
+    assert kind == 'snapshot' and value['ready'] and len(value['units']) == 178
+    assert fx.webhook('SNodeC/snode.c') == 200
+    rid, values = fx.dispatches.get(timeout=12)
+    fx.started(rid, values)
+    transitions = iter((entry, phase, status) for target in fx.plan(values)['targets'] for entry in target['units']
+                       for phase, status in [('build', 'started'), ('build', 'succeeded'), ('publish', 'succeeded')])
+    def latest():
+        expected = json.loads(fx.request('/api/v1/status.json', browser=False).read())['generation']
+        _, kind, value = stream.next()
+        while value['generation'] < expected:
+            _, kind, value = stream.next()
+        assert kind in ('snapshot', 'update') and value['ready'] and len(value['units']) == 178
+        return value
+    latest()
+    started = fx.now()
+    previous_issued = started
+    for step in range(90):
+        before = len(fx.renewals)
+        fx.advance(20)
+        assert fx.request('/api/v1/status.json', browser=False).status == 200
+        if fx.now() - previous_issued >= 96:
+            deadline = time.monotonic() + 5
+            while len(fx.renewals) == before and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert len(fx.renewals) > before, 'idle SSE did not trigger its own token renewal'
+            previous_issued = fx.renewals[-1][0]
+        entry, phase, status = next(transitions)
+        fx.unit(values, entry, phase, status)
+        latest()
+        assert not stream.closed.is_set(), 'valid session disconnected'
+    assert fx.now() - started >= 1800 and len(fx.renewals) >= 18
+    assert all(at < expiry for at, expiry in fx.renewals), 'access credential expired before renewal'
+    while not stream.comments.empty():
+        stream.comments.get()
+    fx.unavailable = True
+    fx.advance(60)
+    assert fx.request('/api/v1/status.json', browser=False).status == 200
+    stream.comments.get(timeout=5)
+    assert fx.request('/').status == 503 and not stream.closed.is_set()
+    assert stream.messages.empty(), 'protected model sent during authentication outage'
+    fx.unavailable = False
+    fx.advance(5)
+    assert fx.post('/api/reload', {})[0] == 200
+    _, kind, value = stream.next()
+    assert kind == 'snapshot' and value['ready'] and len(value['units']) == 178
+    assert not stream.closed.is_set(), 'provider recovery disconnected the valid session'
+    fx.revoked.add('owner')
+    invalidated = fx.now()
+    while not stream.closed.is_set() and fx.now() - invalidated < 60:
+        fx.advance(1)
+        assert fx.request('/api/v1/status.json', browser=False).status == 200
+        stream.closed.wait(.02)
+    assert stream.closed.is_set() and stream.error is None
+    elapsed = fx.now() - invalidated
+    assert elapsed <= 60
+    stream.close()
+    print('S25: populated/changing SSE connected for >=30 simulated minutes; %d renewals before expiry; revocation closed in %ds' % (len(fx.renewals), elapsed))
+
+
 def auth_checks(fx):
     fx.ready()
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -202,7 +267,7 @@ def auth_checks(fx):
 
 result = 77
 if all(__import__('os').environ.get(key) for key in ('CORECI_TEST_DB_HOST', 'CORECI_TEST_DB_USER', 'CORECI_TEST_DB_NAME')):
-    with fixture(sys.argv[1]) as fx:
-        {'stream': stream_checks, 'buttons': button_checks, 'auth': auth_checks}[sys.argv[2]](fx)
+    with fixture(sys.argv[1], virtual_clock=sys.argv[2] == 'renewal', wave_deadline=3600 if sys.argv[2] == 'renewal' else 120) as fx:
+        {'stream': stream_checks, 'buttons': button_checks, 'auth': auth_checks, 'renewal': renewal_checks}[sys.argv[2]](fx)
     result = 0
 raise SystemExit(result)

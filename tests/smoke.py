@@ -121,6 +121,9 @@ def run(build):
         fx.finished(rid, values)
         assert state('e', 't1')['status'] == 'Published'
         assert '1.0.0-1' in fx.request('/api/v1/badge/d/t1.svg', browser=False).read().decode()
+        # SDK browser sessions are memory-owned; a process restart requires login.
+        assert fx.request('/api/rebuild', b'{}', {'Content-Type': 'application/json', 'Origin': fx.app}).status == 401
+        assert fx.request('/').status == 200
         # Second instance must not acquire this database's writer lock or listen.
         command = list(fx.command)
         command[command.index('--listen-port') + 1] = str(fx.redirect_port)
