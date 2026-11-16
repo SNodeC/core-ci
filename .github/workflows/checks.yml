@@ -48,7 +48,7 @@ jobs:
           cmake --install "${{ runner.temp }}/snodec-idp/core-ci"
       - name: Build actual daemon and run full CTest twice
         env:
-          LD_LIBRARY_PATH: "${{ runner.temp }}/core-ci/dependencies/lib"
+          LD_LIBRARY_PATH: "${{ runner.temp }}/core-ci/dependencies/lib:${{ runner.temp }}/core-ci/dependencies/lib/snode.c/web/http"
         run: |
           cmake -S . -B "${{ runner.temp }}/core-ci/integration" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCORECI_WITH_SNODEC=ON -DCMAKE_PREFIX_PATH="${{ runner.temp }}/core-ci/dependencies" -DPython3_EXECUTABLE=/usr/bin/python3
           cmake --build "${{ runner.temp }}/core-ci/integration" --parallel 2
