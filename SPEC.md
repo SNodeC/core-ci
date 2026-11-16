@@ -123,10 +123,16 @@ All carry at. Exactly these 15 types exist:
 | Resumed | — |
 
 No PublishStarted event: acknowledge signed publish-start without a state change.
-Unit callbacks require no run_id. Bind callbacks to active wave id and build_id.
-WaveStarted binds a positive run id/attempt; WaveFinished must match it if bound.
+Every unit wire callback requires a positive run_id. Admit it only when it matches
+the active wave's accepted WaveStarted owner, then persist the existing typed
+unit event bound to wave id/build_id; no event schema or historical row changes.
+The first accepted WaveStarted binds the positive owner run id/attempt; later
+WaveStarted from another run is acknowledged and ignored. WaveFinished must
+match the owner. The existing Wave.run_id is the only owner authority.
 Duplicate/stale/wrong-wave callbacks do nothing, including engine time.
-Result may precede start/dispatch acceptance but cannot reverse a terminal result.
+Unit results may precede their build-start receipt, but require the owner
+WaveStarted; they cannot reverse a terminal result. Unit callbacks without an
+owner or from another run are acknowledged and ignored without changing time.
 Callback receipt proves dispatch; set deadline if acceptance was lost.
 
 ### 4.3 Trigger and plan
@@ -151,11 +157,17 @@ including retry/rebuild; reuse retains publication revision. Freeze source repo,
 tag, commit, version, revision, inputs and direct prerequisites. Reset build/result
 timings on allocation, assign Planned, consume its request. Allocate only builds
 on included targets. The plan is the sole authority for unit callbacks. Publication records refer to
-that wave for run identity, so a later WaveStarted binds an earlier unit receipt.
+that wave for its accepted owner run identity.
 
 ### 4.4 Dispatch and lifetime
 
-Accepted dispatch → Running, deadline dispatch time + wave-deadline.
+Accepted dispatch remains Dispatching until the first accepted WaveStarted,
+which makes the wave Running. The wave deadline remains dispatch time plus
+wave-deadline. Dispatching without WaveStarted for wave-start-timeout seconds
+redispatches the same frozen wave with attempt+1, including on Resumed; measure
+from the most recent dispatch time. A recorded rejection retains its existing
+backoff and exhaustion rules. Start-timeout redispatch does not extend the wave
+deadline; expiry takes precedence. No new timer or dispatch authority is added.
 Reject → same frozen wave with 30s backoff doubling to 1800s, maxDispatchAttempts.
 401/403/404/422 or exhausted attempts finish wave and fail its builds. Permanent
 rejections never automatically retry. Ignore dispatch results after callbacks.
@@ -178,10 +190,10 @@ Automatic retry has the same effect once per failed version+inputs after retryDe
 old failure eligible again. Requests/tags during a wave affect the following plan.
 
 Deadline expiry applies WaveFinished(conclusion "timeout"), including ordinary
-no-result/blocked outcomes. Resumed waits for unfinished dispatched waves until
-their deadline; never blindly redispatch an ambiguous prior dispatch. An attempt
-with explicit rejection resumes its known backoff. nextDeadline is the earliest
-applicable debounce, wave backoff/deadline or automatic retry time; exclude
+no-result/blocked outcomes. Resumed applies the same start-timeout rule to an
+unfinished Dispatching wave; an owner-bound Running wave waits for its deadline.
+An attempt with explicit rejection resumes its known backoff. nextDeadline is the
+earliest applicable debounce, wave start-timeout, backoff/deadline or automatic retry time; exclude
 debounce while active. Tick handles these due times; no per-unit deadline exists.
 
 ## 5. Persistence — MariaDB via SNode.C's MariaDB client
@@ -220,7 +232,7 @@ All inbound events (webhook, workflow callback, dispatch result, tick, dashboard
 1. `engine.classify(event)`; if `Ignore` → answer the HTTP request (`200 ignored: <reason>`), done.
 2. `INSERT` the event row. **Wait for the commit callback.** No other event is processed meanwhile.
 3. Only after a successful commit: `engine.handle(event)` → execute the returned commands → answer the originating HTTP request (`200 accepted`).
-4. If `append` reports an error, the commit outcome is **unknown** (the row may or may not be stored): do not apply the event, answer `503`, and enter **recovery**: answer every further event `503`, discard the engine, then rebuild exactly as at startup (5.4: `loadAll`, replay, `Resumed`) and resume normal processing. If the row was in fact stored, the sender's retry is a duplicate and is answered `200 ignored`; an ambiguous dispatch waits until its wave deadline; only a recorded rejection permits redispatch.
+4. If `append` reports an error, the commit outcome is **unknown** (the row may or may not be stored): do not apply the event, answer `503`, and enter **recovery**: answer every further event `503`, discard the engine, then rebuild exactly as at startup (5.4: `loadAll`, replay, `Resumed`) and resume normal processing. If the row was in fact stored, the sender's retry is a duplicate and is answered `200 ignored`; an owner-bound wave waits until its deadline, while an unstarted Dispatching wave follows the start-timeout rule. Duplicate runs are fenced by the first accepted WaveStarted owner and the publisher ownership check.
 
 Consequence: the in-memory state only ever contains committed events, so a crash at any point loses nothing that was acknowledged.
 
@@ -294,7 +306,7 @@ Outbound TLS verifies the CA chain and hostname before sending request bytes, se
 Non-secret options use SNode.C configuration, command line overriding configuration file. Keys:
 registry, target-catalog, workflow-repository, github-app-id, github-installation-id,
 github-app-key-file, callback-base-url, github-api-url, github-ca-cert, db-host,
-db-port, db-socket, db-user, db-name, wave-delay, wave-deadline, feed-branch, retry-delay,
+db-port, db-socket, db-user, db-name, wave-delay, wave-deadline, wave-start-timeout, feed-branch, retry-delay,
 max-dispatch-attempts, reconcile-interval, listen-address,
 listen-port, tls-cert, tls-key, idp-base-url, idp-client-id, idp-public-key-path,
 dashboard-users, dashboard-redirect-port.
@@ -305,7 +317,7 @@ dashboard-users are required. App and installation ids are positive decimal ids.
 Defaults: github-api-url https://api.github.com (HTTPS only); db-host localhost,
 db-port 0, db-socket empty uses MYSQL_UNIX_ADDR; registry SNodeC/Packages:ci/registry.json, target-catalog ci/targets.json,
 workflow-repository SNodeC/Packages, wave-delay 120 (0–86400), wave-deadline 23400
-(60–86400), feed-branch feed (only feed/feed-staging); retry-delay 600 (0–86400; zero disables), max-dispatch-attempts
+(60–86400), wave-start-timeout 900 (1–86400), feed-branch feed (only feed/feed-staging); retry-delay 600 (0–86400; zero disables), max-dispatch-attempts
 8 (1–20), reconcile-interval 900 (60–86400),
 listen-address 0.0.0.0, listen-port 8443, dashboard-redirect-port 0/off.
 Missing or invalid settings fail before connecting and log only the option name.
@@ -321,7 +333,10 @@ X-CoreCI-Timestamp and X-CoreCI-Signature-256: sha256=HMAC(secret,timestamp+"."+
 W6 is the complete callback protocol. Empty required values are absent. Decode
 wave_id once. Publish-start callbacks are authenticated and validated, then
 acknowledged without a persisted event; publish completion supplies its timing.
-Unit callbacks bind build_id within the frozen wave; no unit run_id is required.
+Unit wire callbacks require run_id and bind build_id within the frozen wave.
+The authenticated callback admission boundary checks the run id against the
+accepted wave owner before queuing the existing typed unit event. Publish-start
+callbacks use the same ownership check. Non-owner callbacks receive200 ignored.
 Responses follow 5.3; duplicate/stale callbacks are ignored. Callback-before-dispatch,
 dispatch backoff/deadlines, automatic retry, startup resumption and recovery are unchanged.
 Webhooks remember the last 1000 successful delivery ids in memory. Failed loads are retryable.
@@ -387,13 +402,15 @@ W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release
 W4 Dispatch: core-ci → workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
    callback_url, feed_branch ("feed" | "feed-staging"). wave.yml additionally accepts
    plan_json (base64) for manual runs; empty callback_url = no callbacks.
-W5 Plan (GET plan_url, public, JSON): {"wave":id, "feed_branch", "targets":[{"id",
+W5 Plan (GET plan_url, public, JSON): {"wave":id, "feed_branch", "owner_run_id":id|null, "targets":[{"id",
    "units":[{"package","repo","tag","commit","version","revision","build_id",
    "action":"build"|"reuse"}]}]}; units per target in topological order; "reuse" = install
    the published version-revision from the feed; only targets with ≥1 "build" unit.
+   owner_run_id is null until the first accepted WaveStarted, then its run_id;
+   it is derived from the existing wave owner and remains fixed through finish/replay.
 W6 Callbacks: POST callback_url (https://<core-ci>/api/v1/waves/{wave_id}/report), signed with
    the existing core-ci callback HMAC wire format; form fields: scope=wave → status=started
-   (run_id, run_attempt) | finished (run_id, conclusion); scope=unit → build_id,
+   (run_id, run_attempt) | finished (run_id, conclusion); scope=unit → run_id, build_id,
    phase=build|publish, status=started|succeeded|failed, plus reason (failed), artifact (build
    succeeded), feed_commit (publish succeeded).
 W7 Workflow semantics: job plan → matrix job chain (one job per planned target, fail-fast
@@ -401,6 +418,13 @@ W7 Workflow semantics: job plan → matrix job chain (one job per planned target
    without callback) → job publish (always after chain): every unit built successfully in
    this run is published in ONE orphan-root commit to feed_branch with GITHUB_TOKEN, publish
    reported per unit, then scope=wave finished.
+   With non-empty plan_url, the publisher re-fetches that plan immediately before
+   pushing and publishes only when owner_run_id equals GITHUB_RUN_ID. A non-owner
+   publisher succeeds without a push or publisher/wave-finished callbacks. An
+   empty plan_url keeps the existing manual publication behavior. Fetch/validation
+   errors fail closed. Owner checks use one shared predicate; all publisher
+   callbacks are deferred until ownership is established. The existing serialized
+   feed mutation remains unchanged; no target-early publication is introduced.
 W8 Versions: deb <version>-<revision>~<codename>; rpm <version>-<revision>.<disttag>;
    ipk/apk <version>-r<revision>.
 W9 Feed: apt/ (dists/<codename>/main/binary-<arch>/, pool/main/; Release with Origin
