@@ -22,6 +22,7 @@
       "libmagic-dev",
       "libbluetooth-dev",
       "libmariadb-dev",
+      "mariadb-server",
       "libncurses-dev",
       "python3",
       "python3-cryptography"
@@ -37,6 +38,7 @@
       "file-devel",
       "bluez-libs-devel",
       "mariadb-connector-c-devel",
+      "mariadb-server",
       "ncurses-devel",
       "python3",
       "python3-cryptography"
