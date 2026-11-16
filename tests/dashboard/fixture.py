@@ -297,7 +297,8 @@ class Fixture:
 
     def unit(self, values, entry, phase='build', status='succeeded'):
         self.report(values, scope='unit', build_id=entry['build_id'], phase=phase, status=status,
-                    artifact='fixture-artifact', feed_commit='b' * 40, reason='fixture failure')
+                    artifact='fixture-artifact', feed_commit='b' * 40, reason='fixture failure',
+                    run_id=self.plan(values)['owner_run_id'])
 
     def complete(self, rid, values):
         self.started(rid, values)

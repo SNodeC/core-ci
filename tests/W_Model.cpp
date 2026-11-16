@@ -10,8 +10,9 @@ int main() {
     h.load();
     h.apply(Tick{105});
     const auto w = h.wave();
-    const auto plan = Json::parse(app::planJson(w));
-    CHECK_EQ(plan.size(), 3U);
+    auto plan = Json::parse(app::planJson(w));
+    CHECK_EQ(plan.size(), 4U);
+    CHECK(plan["owner_run_id"].is_null());
     CHECK_EQ(plan["wave"], w.id);
     CHECK_EQ(plan["feed_branch"], "feed");
     CHECK_EQ(plan["targets"].size(), 2U);
@@ -37,6 +38,8 @@ int main() {
     CHECK(!model["ready"].get<bool>());
     CHECK(model["units"].empty());
     h.apply(WaveStarted{106, w.id, 99, 3});
+    plan["owner_run_id"] = 99;
+    CHECK(Json::parse(app::planJson(h.wave())) == plan);
     const auto id = w.plan.at("t1")[0].buildId;
     h.apply(UnitBuildStarted{107, w.id, id});
     model = Json::parse(dashboard::model(h.engine, declarations, 3, true));

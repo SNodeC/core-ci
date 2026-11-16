@@ -81,6 +81,7 @@ void outcomes() {
     h.load();
     h.apply(Tick{105});
     const auto w = h.wave();
+    h.apply(WaveStarted{105, w.id, 42, 1});
     h.apply(UnitBuildFailed{106, w.id, w.plan.at("t1")[0].buildId, "compiler"});
     for (const auto& [target, entries] : w.plan) {
         for (const auto& entry : entries) {
@@ -110,6 +111,7 @@ void outcomes() {
     missing.load();
     missing.apply(Tick{105});
     const auto m = missing.wave();
+    missing.apply(WaveStarted{105, m.id, 42, 1});
     missing.apply(UnitBuildStarted{106, m.id, m.plan.at("t1")[0].buildId});
     missing.apply(UnitBuildSucceeded{107, m.id, m.plan.at("t1")[1].buildId, "artifact"});
     missing.apply(WaveFinished{108, m.id, 42, "failure"});
@@ -125,6 +127,7 @@ void retry() {
         h.load();
         h.apply(Tick{105});
         const auto w = h.wave();
+        h.apply(WaveStarted{105, w.id, 42, 1});
         h.apply(UnitBuildFailed{106, w.id, w.plan.at("t1")[0].buildId, "compiler"});
         for (const auto& [target, entries] : w.plan) {
             for (const auto& entry : entries) {
@@ -143,6 +146,7 @@ void retry() {
         }
         CHECK_EQ(h.apply(Tick{121}).size(), 1U);
         const auto second = h.wave();
+        h.apply(WaveStarted{121, second.id, 43, 1});
         CHECK_EQ(second.plan.size(), 1U);
         CHECK_EQ(second.plan.at("t1")[0].revision, 2U);
         h.apply(UnitBuildFailed{122, second.id, second.plan.at("t1")[0].buildId, "again"});
@@ -233,6 +237,7 @@ void graph() {
     h.load();
     h.apply(Tick{105});
     const auto w = h.wave();
+    h.apply(WaveStarted{105, w.id, 42, 1});
     Pipeline::Builder builder;
     builder.target({"t1"}).package({"a", {"owner", "a", "trunk"}, {"t1"}, {}});
     h.apply(GraphChanged{106, builder.build()});
@@ -274,6 +279,7 @@ void randomized() {
         h.load();
         h.apply(Tick{105});
         const auto w = h.wave();
+        h.apply(WaveStarted{105, w.id, 42, 1});
         for (const auto& [target, entries] : w.plan) {
             std::set<std::string> failed;
             for (const auto& entry : entries) {

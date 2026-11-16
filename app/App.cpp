@@ -64,6 +64,7 @@ namespace coreci::app {
                                                                   {"db-name", ""},
                                                                   {"wave-delay", "120"},
                                                                   {"wave-deadline", "23400"},
+                                                                  {"wave-start-timeout", "900"},
                                                                   {"retry-delay", "600"},
                                                                   {"max-dispatch-attempts", "8"},
                                                                   {"feed-branch", "feed"},
@@ -168,6 +169,7 @@ namespace coreci::app {
                 }
                 waveDelay = number("wave-delay", 0, 86400, valid);
                 waveDeadline = number("wave-deadline", 60, 86400, valid);
+                waveStartTimeout = number("wave-start-timeout", 1, 86400, valid);
                 retryDelay = number("retry-delay", 0, 86400, valid);
                 attempts = number("max-dispatch-attempts", 1, 20, valid);
                 if (get("feed-branch") != "feed" && get("feed-branch") != "feed-staging") {
@@ -233,7 +235,8 @@ namespace coreci::app {
                                            static_cast<unsigned>(attempts),
                                            retryDelay,
                                            get("feed-branch"),
-                                           {repository.substr(0, slash), repository.substr(slash + 1), "main"}});
+                                           {repository.substr(0, slash), repository.substr(slash + 1), "main"},
+                                           waveStartTimeout});
                         },
                         [] {
                             return Resumed{now()};
@@ -486,14 +489,21 @@ namespace coreci::app {
                 });
             }
             void report(const Req& req, const Res& res) {
-                if (!contentType(req, "application/x-www-form-urlencoded")) {
+                const auto* engine = queue->engine();
+                if (!engine) {
+                    answer(res, 503, "unavailable");
+                } else if (!contentType(req, "application/x-www-form-urlencoded")) {
                     answer(res, 400, "invalid: content type");
                 } else {
                     const auto decoded = gh::form(std::string(req->body.begin(), req->body.end()));
                     if (std::holds_alternative<gh::Error>(decoded)) {
                         answer(res, 400, "invalid: " + std::get<gh::Error>(decoded).reason);
                     } else {
-                        const auto event = gh::report(req->param("waveId"), std::get<gh::Form>(decoded), now());
+                        const auto wave = engine->waves().find(req->param("waveId"));
+                        const auto event = gh::report(req->param("waveId"),
+                                                      std::get<gh::Form>(decoded),
+                                                      now(),
+                                                      wave == engine->waves().end() ? std::nullopt : wave->second.runId);
                         if (std::holds_alternative<gh::Error>(event)) {
                             answer(res, 400, "invalid: " + std::get<gh::Error>(event).reason);
 
@@ -642,7 +652,7 @@ namespace coreci::app {
             std::unique_ptr<ps::EventQueue> queue;
             std::unique_ptr<core::timer::Timer> retry, ticks, reconcileTimer;
             std::deque<std::string> deliveries;
-            std::int64_t waveDelay = 0, waveDeadline = 0, attempts = 0, interval = 0, retryDelay = 0;
+            std::int64_t waveDelay = 0, waveDeadline = 0, waveStartTimeout = 0, attempts = 0, interval = 0, retryDelay = 0;
             double recoveryDelay = 1;
             bool listening = false, fatal = false, tickPending = false;
         };

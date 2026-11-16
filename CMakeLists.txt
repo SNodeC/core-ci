@@ -154,8 +154,14 @@ if(CORECI_WITH_SNODEC)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.py ${CMAKE_BINARY_DIR}
     )
+    add_test(
+        NAME S26_WaveStart
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/wave_start.py ${CMAKE_BINARY_DIR}
+    )
     set_tests_properties(
-        M_LocalSmoke
+        M_LocalSmoke S26_WaveStart
         PROPERTIES LABELS
                    integration
                    SKIP_RETURN_CODE

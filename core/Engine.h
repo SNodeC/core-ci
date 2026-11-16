@@ -36,6 +36,7 @@ namespace coreci {
         unsigned attempt = 1;
         std::optional<std::int64_t> retryAt;
         std::int64_t dispatchedAt = 0, deadline = 0;
+        bool dispatchAccepted = false;
         std::optional<std::int64_t> started, finished;
         std::string conclusion;
         bool operator==(const Wave&) const = default;
@@ -78,6 +79,7 @@ namespace coreci {
         std::int64_t retryDelay = 600;
         std::string feedBranch = "feed";
         Repo workflow{"SNodeC", "Packages", "main"};
+        std::int64_t waveStartTimeout = 900;
     };
     struct Accept {
         bool operator==(const Accept&) const = default;

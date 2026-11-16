@@ -109,11 +109,12 @@ namespace coreci {
                               state->second.state == (std::is_same_v<E, RetryRequested> ? State::Failed : State::Published);
                 } else if (wave && e.waveId == wave->id) {
                     if constexpr (std::is_same_v<E, WaveDispatchAccepted> || std::is_same_v<E, WaveDispatchRejected>) {
-                        allowed = wave->phase == WavePhase::Dispatching && !wave->retryAt && e.attempt == wave->attempt;
+                        allowed = wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted && !wave->retryAt &&
+                                  e.attempt == wave->attempt;
                     } else if constexpr (std::is_same_v<E, WaveStarted>) {
                         allowed = !wave->runId && e.runId > 0 && e.runAttempt > 0;
                     } else if constexpr (std::is_same_v<E, WaveFinished>) {
-                        allowed = e.runId > 0 && (!wave->runId || *wave->runId == e.runId);
+                        allowed = wave->runId == e.runId;
                     } else {
                         for (const auto& [target, entries] : wave->plan) {
                             for (const auto& entry : entries) {
@@ -261,11 +262,16 @@ namespace coreci {
                             auto& wave = waveStates.at(latest);
                             if (*engineTime >= wave.deadline) {
                                 finish(wave, "timeout");
-                            } else if (wave.retryAt && *engineTime >= *wave.retryAt) {
+                            } else if ((wave.retryAt && *engineTime >= *wave.retryAt) ||
+                                       (!wave.retryAt && wave.phase == WavePhase::Dispatching &&
+                                        *engineTime >= wave.dispatchedAt + options.waveStartTimeout)) {
                                 ++wave.attempt;
+                                wave.dispatchAccepted = false;
+                                if (wave.retryAt) {
+                                    wave.deadline = *engineTime + options.waveDeadline;
+                                }
                                 wave.retryAt.reset();
                                 wave.dispatchedAt = *engineTime;
-                                wave.deadline = *engineTime + options.waveDeadline;
                                 commands.push_back(dispatch(wave));
                             }
                         }
@@ -303,14 +309,17 @@ namespace coreci {
                                 wave.retryAt = *engineTime + delay;
                             }
                         } else {
-                            wave.phase = WavePhase::Running;
+                            if constexpr (std::is_same_v<E, WaveDispatchAccepted>) {
+                                wave.dispatchAccepted = true;
+                            } else {
+                                wave.phase = WavePhase::Running;
+                            }
                             wave.retryAt.reset();
                             if constexpr (std::is_same_v<E, WaveStarted>) {
                                 wave.runId = e.runId;
                                 wave.runAttempt = e.runAttempt;
                                 wave.started = *engineTime;
                             } else if constexpr (std::is_same_v<E, WaveFinished>) {
-                                wave.runId = e.runId;
                                 finish(wave, e.conclusion);
                             } else if constexpr (!std::is_same_v<E, WaveDispatchAccepted>) {
                                 for (const auto& [target, entries] : wave.plan) {
@@ -398,6 +407,9 @@ namespace coreci {
         if (const auto* wave = activeWave()) {
             add(wave->deadline);
             add(wave->retryAt);
+            if (wave->phase == WavePhase::Dispatching && !wave->retryAt) {
+                add(wave->dispatchedAt + options.waveStartTimeout);
+            }
         } else {
             add(quietUntil);
         }
