@@ -86,7 +86,8 @@ def run(build):
         assert signed_form('phase=build', skew=-301).status == 401
         assert signed_form('phase=build', content_type='application/x-www-form-urlencodedBAD').status == 400
         assert signed_form('phase=publish&status=started').status == 400
-        assert signed_form('scope=unit&build_id=id&phase=publish&status=started').status == 200
+        assert signed_form('scope=unit&build_id=id&phase=publish&status=started').status == 400
+        assert signed_form('scope=unit&build_id=id&phase=publish&status=started&run_id=1').status == 200
         for repo in 'bcde':
             assert fx.webhook('owner/' + repo) == 200
         assert fx.webhook('owner/a') == 200
@@ -94,8 +95,11 @@ def run(build):
         plan = fx.plan(values)
         assert len(plan['targets']) == 2
         assert all(unit['action'] == 'build' for target in plan['targets'] for unit in target['units'])
+        assert plan['owner_run_id'] is None
         assert fx.dispatches.empty(), 'tag pushes must coalesce into one wave'
         fx.started(rid, values)
+        plan = fx.plan(values)
+        assert plan['owner_run_id'] == rid
         first = plan['targets'][0]['units'][0]
         fx.unit(values, first, status='started')
         fx.process.kill()

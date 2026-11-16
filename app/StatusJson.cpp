@@ -156,6 +156,9 @@ namespace coreci::app {
             }
             targets.push_back(object({{"id", quote(target)}, {"units", array(units)}}));
         }
-        return object({{"wave", quote(wave.id)}, {"feed_branch", quote(wave.feedBranch)}, {"targets", array(targets)}});
+        return object({{"wave", quote(wave.id)},
+                       {"feed_branch", quote(wave.feedBranch)},
+                       {"owner_run_id", run(wave.runId)},
+                       {"targets", array(targets)}});
     }
 } // namespace coreci::app

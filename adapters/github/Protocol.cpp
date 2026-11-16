@@ -218,7 +218,8 @@ namespace coreci::github {
         }
         return output;
     }
-    std::variant<Event, Error, std::monostate> report(const std::string& waveId, const Form& values, std::int64_t at) {
+    std::variant<Event, Error, std::monostate>
+    report(const std::string& waveId, const Form& values, std::int64_t at, std::optional<std::uint64_t> owner) {
         const auto get = [&](const std::string& key) {
             const auto i = values.find(key);
             return i == values.end() ? std::string{} : i->second;
@@ -234,7 +235,7 @@ namespace coreci::github {
                 } else if (status == "finished" && !get("conclusion").empty()) {
                     output = Event{WaveFinished{at, waveId, run, get("conclusion")}};
                 }
-            } else if (scope == "unit" && !id.empty()) {
+            } else if (scope == "unit" && !id.empty() && number(get("run_id"), run) && run > 0) {
                 if (phase == "build" && status == "started") {
                     output = Event{UnitBuildStarted{at, waveId, id}};
                 } else if (phase == "build" && status == "succeeded" && !get("artifact").empty()) {
@@ -246,6 +247,9 @@ namespace coreci::github {
                 } else if (phase == "publish" && status == "failed" && !get("reason").empty()) {
                     output = Event{UnitPublishFailed{at, waveId, id, get("reason")}};
                 } else if (phase == "publish" && status == "started") {
+                    output = std::monostate{};
+                }
+                if (!std::holds_alternative<Error>(output) && owner != run) {
                     output = std::monostate{};
                 }
             }

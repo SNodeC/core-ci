@@ -207,7 +207,82 @@ int externalRecovery() {
     CHECK(!queue.engine()->releases().at("b"));
     return checkResult();
 }
+int restartDispatching() {
+    for (const auto resumeAt : {110, 115}) {
+        InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
+        std::vector<Command> emitted;
+        std::int64_t clock = 10;
+        Plan frozen;
+        const auto make = [] {
+            return Engine({0, 100, 8, 0, "feed", {"o", "Packages", "main"}, 15});
+        };
+        const auto resumed = [&] {
+            return Resumed{clock};
+        };
+        const auto commands = [&](const auto& values) {
+            emitted.insert(emitted.end(), values.begin(), values.end());
+        };
+        const auto warning = [](auto, const auto&) {
+            CHECK(false);
+        };
+        const auto ready = [] {
+        };
+        const auto error = [](const auto&) {
+            CHECK(false);
+        };
+        const auto reply = [](const auto&) {
+        };
+        {
+            EventQueue first(store, make, resumed, commands, warning);
+            first.start(ready, error);
+            first.enqueue(tag("a"), reply);
+            first.enqueue(WaveDispatchAccepted{101, "w3", 1}, reply);
+            first.enqueue(WaveDispatchAccepted{999, "w3", 1}, reply);
+            CHECK_EQ(emitted.size(), 1U);
+            if (first.engine() && first.engine()->activeWave()) {
+                CHECK(first.engine()->activeWave()->phase == WavePhase::Dispatching);
+                CHECK_EQ(*first.engine()->time(), 101);
+                frozen = first.engine()->activeWave()->plan;
+            } else {
+                CHECK(false);
+            }
+        }
+        emitted.clear();
+        clock = resumeAt;
+        EventQueue restarted(store, make, resumed, commands, warning);
+        restarted.start(ready, error);
+        CHECK_EQ(emitted.size(), resumeAt == 115 ? 1U : 0U);
+        if (resumeAt < 115) {
+            CHECK_EQ(*restarted.engine()->nextDeadline(), 115);
+            restarted.enqueue(Tick{114}, reply);
+            CHECK(emitted.empty());
+            restarted.enqueue(Tick{115}, reply);
+        }
+        CHECK_EQ(emitted.size(), 1U);
+        if (!emitted.empty() && restarted.engine() && restarted.engine()->activeWave()) {
+            CHECK_EQ(emitted.front().waveId, "w3");
+            CHECK_EQ(emitted.front().attempt, 2U);
+            CHECK(restarted.engine()->activeWave()->plan == frozen);
+            CHECK_EQ(restarted.engine()->activeWave()->deadline, 200);
+            restarted.enqueue(WaveFinished{115, "w3", 42, "success"}, reply);
+            CHECK(!restarted.engine()->activeWave()->runId);
+            restarted.enqueue(WaveDispatchAccepted{116, "w3", 2}, reply);
+            restarted.enqueue(WaveDispatchRejected{999, "w3", 2, 503, "late duplicate"}, reply);
+            CHECK_EQ(*restarted.engine()->time(), 116);
+            CHECK(restarted.engine()->activeWave()->phase == WavePhase::Dispatching);
+            restarted.enqueue(WaveStarted{117, "w3", 42, 1}, reply);
+            restarted.enqueue(Resumed{132}, reply);
+            CHECK_EQ(emitted.size(), 1U);
+            CHECK_EQ(*restarted.engine()->activeWave()->runId, 42U);
+            restarted.enqueue(Resumed{200}, reply);
+            CHECK(!restarted.engine()->activeWave());
+            CHECK_EQ(restarted.engine()->latestWave()->conclusion, "timeout");
+        }
+    }
+    return checkResult();
+}
 int main() {
+    restartDispatching();
     InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<Result> replies;
     std::vector<Command> emitted;
@@ -276,7 +351,7 @@ int main() {
     CHECK(std::holds_alternative<Ignored>(replies[2]));
     CHECK_EQ(store.rows().size(), rows + 2);
     CHECK_EQ(store.pending(), 0U);
-    CHECK(queue.engine()->activeWave()->phase == WavePhase::Running);
+    CHECK(queue.engine()->activeWave()->phase == WavePhase::Dispatching);
 
     // The committed row and engine both receive the normalized free text.
     store.defer(false);

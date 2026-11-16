@@ -2,6 +2,7 @@
 registry=SNodeC/Packages:ci/registry.json
 target-catalog=ci/targets.json
 workflow-repository=SNodeC/Packages
+wave-start-timeout=900
 github-app-id="REPLACE_WITH_APP_ID"
 github-installation-id="REPLACE_WITH_INSTALLATION_ID"
 github-app-key-file="REPLACE_WITH_RSA_PEM_PATH"
