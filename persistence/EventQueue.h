@@ -27,9 +27,9 @@ namespace coreci::persistence {
         EventQueue(EventStore& store,
                    std::function<Engine()> makeEngine,
                    std::function<Resumed()> resumed,
-                   std::function<void(const std::vector<Command>&)> commands,
                    std::function<void(std::uint64_t, const std::string&)> warning,
-                   std::function<void(std::uint64_t, const Event&, const Engine&)> committed = {});
+                   std::function<void(std::uint64_t, const Event&, const Engine&)> committed = {},
+                   std::function<bool()> operational = {});
         void start(std::function<void()> onReady, std::function<void(const EventStore::StoreError&)> onError);
         void enqueue(Event event, Reply reply);
         void recover(const std::string& reason);
@@ -41,6 +41,7 @@ namespace coreci::persistence {
             Reply reply;
         };
         enum class Mode { Unavailable, Loading, Resuming, Ready };
+        bool isCurrent(std::uint64_t epoch) const;
         void rebuild();
         void fatal(const EventStore::StoreError& error);
         void pump();
@@ -48,9 +49,9 @@ namespace coreci::persistence {
         EventStore& store;
         std::function<Engine()> makeEngine;
         std::function<Resumed()> resumed;
-        std::function<void(const std::vector<Command>&)> commands;
         std::function<void(std::uint64_t, const std::string&)> warning;
         std::function<void(std::uint64_t, const Event&, const Engine&)> committed;
+        std::function<bool()> operational;
         std::function<void()> onReady;
         std::function<void(const EventStore::StoreError&)> onError;
         std::unique_ptr<Engine> current;

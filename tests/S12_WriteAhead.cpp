@@ -17,10 +17,12 @@ Engine engine() {
 Event tag(const std::string& package, std::int64_t at = 100) {
     return TagObserved{at, package, "v1.0.0", std::string(40, 'a'), Origin::Webhook};
 }
+std::vector<Command> actions(const EventQueue& queue) {
+    return queue.engine() ? queue.engine()->commands() : std::vector<Command>{};
+}
 int recovery(InMemoryEventStore::Failure failure) {
     InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<Result> replies;
-    std::vector<Command> emitted;
     int ready = 0;
     std::int64_t now = 10;
     EventQueue queue(
@@ -28,9 +30,6 @@ int recovery(InMemoryEventStore::Failure failure) {
         engine,
         [&] {
             return Resumed{now};
-        },
-        [&](const auto& commands) {
-            emitted.insert(emitted.end(), commands.begin(), commands.end());
         },
         [](auto, const auto&) {
             CHECK(false);
@@ -44,7 +43,7 @@ int recovery(InMemoryEventStore::Failure failure) {
         });
     REQUIRE(queue.engine());
     CHECK_EQ(ready, 1);
-    CHECK(emitted.empty());
+    CHECK(actions(queue).empty());
     store.defer(true);
     store.failNextAppend(failure);
     const auto reply = [&](Result result) {
@@ -61,18 +60,18 @@ int recovery(InMemoryEventStore::Failure failure) {
     CHECK(std::holds_alternative<Unavailable>(replies[0]));
     CHECK(std::holds_alternative<Unavailable>(replies[1]));
     CHECK(!queue.engine());
-    CHECK(emitted.empty());
+    CHECK(actions(queue).empty());
     queue.enqueue(TagObserved{111, "", "", "", Origin::Webhook}, reply);
     CHECK(std::holds_alternative<Unavailable>(replies.back()));
     REQUIRE(store.completeOne()); // reconnect/open
     REQUIRE(store.completeOne()); // load/replay; Resumed append pending
     CHECK(!queue.engine());
-    CHECK(emitted.empty());
+    CHECK(actions(queue).empty());
     REQUIRE(store.completeOne()); // Resumed commits, then commands and availability
     REQUIRE(queue.engine());
     CHECK_EQ(ready, 2);
     const bool stored = failure == InMemoryEventStore::Failure::AfterStore;
-    CHECK(emitted.empty());
+    CHECK_EQ(actions(queue).size(), stored ? 1U : 0U);
     queue.enqueue(tag("a", 111), reply);
     if (stored) {
         CHECK(std::holds_alternative<Ignored>(replies.back()));
@@ -82,7 +81,7 @@ int recovery(InMemoryEventStore::Failure failure) {
         CHECK(std::holds_alternative<Accepted>(replies.back()));
         CHECK_EQ(store.rows()[2].seq, 4U); // graph=1, Resumed=2, failed append consumed seq 3
     }
-    CHECK_EQ(emitted.size(), stored ? 0U : 1U);
+    CHECK_EQ(actions(queue).size(), 1U);
     store.defer(false);
     Engine fresh = engine();
     store.loadAll(
@@ -100,6 +99,64 @@ int recovery(InMemoryEventStore::Failure failure) {
     CHECK(queue.engine()->releases() == fresh.releases());
     CHECK(queue.engine()->time() == fresh.time());
     return checkResult();
+}
+void stopping() {
+    for (unsigned phase = 0; phase != 4; ++phase) {
+        InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
+        store.defer(true);
+        bool live = true;
+        unsigned ready = 0, committed = 0;
+        EventQueue queue(
+            store,
+            engine,
+            [] {
+                return Resumed{100};
+            },
+            [](auto, const auto&) {
+                CHECK(false);
+            },
+            [&](auto, const auto&, const auto&) {
+                ++committed;
+            },
+            [&] {
+                return live;
+            });
+        const auto start = [&] {
+            queue.start(
+                [&] {
+                    ++ready;
+                },
+                [](const auto&) {
+                    CHECK(false);
+                });
+        };
+        start();
+        for (unsigned completed = 0; completed < phase; ++completed) {
+            CHECK(store.completeOne());
+        }
+        if (phase == 3) {
+            store.failNextAppend(InMemoryEventStore::Failure::AfterStore);
+            queue.enqueue(tag("a"), [](const auto&) {
+                CHECK(false); // entered callback is fenced after termination
+            });
+        }
+        const auto rows = store.rows().size();
+        const auto callbacks = committed;
+        live = false;
+        CHECK(!queue.engine());
+        queue.enqueue(tag("b"), [](const auto& result) {
+            CHECK(std::holds_alternative<Unavailable>(result));
+        });
+        while (store.completeOne()) {
+        }
+        queue.recover("late connection loss during stop");
+        start();
+        CHECK_EQ(store.pending(), 0U);
+        CHECK_EQ(store.rows().size(), rows + (phase >= 2 ? 1U : 0U));
+        CHECK_EQ(committed, callbacks);
+        CHECK_EQ(ready, phase == 3 ? 1U : 0U);
+        CHECK(!queue.engine());
+    }
 }
 class UnavailableStore : public InMemoryEventStore {
 public:
@@ -132,9 +189,6 @@ void unavailableErrors() {
             [] {
                 return Resumed{100};
             },
-            [](const auto&) {
-                CHECK(false);
-            },
             [](auto, const auto&) {
                 CHECK(false);
             });
@@ -157,7 +211,6 @@ void unavailableErrors() {
 }
 int externalRecovery() {
     InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
-    std::vector<Command> emitted;
     std::vector<Result> replies;
     int ready = 0;
     EventQueue queue(
@@ -165,9 +218,6 @@ int externalRecovery() {
         engine,
         [] {
             return Resumed{110};
-        },
-        [&](const auto& commands) {
-            emitted.insert(emitted.end(), commands.begin(), commands.end());
         },
         [](auto, const auto&) {
             CHECK(false);
@@ -192,7 +242,7 @@ int externalRecovery() {
     CHECK(std::holds_alternative<Unavailable>(replies[0]));
     CHECK(std::holds_alternative<Unavailable>(replies[1]));
     REQUIRE(store.completeOne()); // old append commits after recovery started
-    CHECK(emitted.empty());
+    CHECK(actions(queue).empty());
     CHECK_EQ(replies.size(), 2U);
     queue.recover("connection lost again"); // earlier open callback is now stale too
     REQUIRE(store.completeOne());
@@ -202,7 +252,7 @@ int externalRecovery() {
     REQUIRE(store.completeOne()); // Resumed commit
     REQUIRE(queue.engine());
     CHECK_EQ(ready, 2);
-    CHECK(emitted.empty());
+    CHECK_EQ(actions(queue).size(), 1U);
     CHECK(queue.engine()->releases().at("a").has_value());
     CHECK(!queue.engine()->releases().at("b"));
     return checkResult();
@@ -210,7 +260,6 @@ int externalRecovery() {
 int restartDispatching() {
     for (const auto resumeAt : {110, 115}) {
         InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
-        std::vector<Command> emitted;
         std::int64_t clock = 10;
         Plan frozen;
         const auto make = [] {
@@ -218,9 +267,6 @@ int restartDispatching() {
         };
         const auto resumed = [&] {
             return Resumed{clock};
-        };
-        const auto commands = [&](const auto& values) {
-            emitted.insert(emitted.end(), values.begin(), values.end());
         };
         const auto warning = [](auto, const auto&) {
             CHECK(false);
@@ -233,12 +279,12 @@ int restartDispatching() {
         const auto reply = [](const auto&) {
         };
         {
-            EventQueue first(store, make, resumed, commands, warning);
+            EventQueue first(store, make, resumed, warning);
             first.start(ready, error);
             first.enqueue(tag("a"), reply);
             first.enqueue(WaveDispatchAccepted{101, "w3", 1}, reply);
             first.enqueue(WaveDispatchAccepted{999, "w3", 1}, reply);
-            CHECK_EQ(emitted.size(), 1U);
+            CHECK(actions(first).empty());
             if (first.engine() && first.engine()->activeWave()) {
                 CHECK(first.engine()->activeWave()->phase == WavePhase::Dispatching);
                 CHECK_EQ(*first.engine()->time(), 101);
@@ -247,21 +293,20 @@ int restartDispatching() {
                 CHECK(false);
             }
         }
-        emitted.clear();
         clock = resumeAt;
-        EventQueue restarted(store, make, resumed, commands, warning);
+        EventQueue restarted(store, make, resumed, warning);
         restarted.start(ready, error);
-        CHECK_EQ(emitted.size(), resumeAt == 115 ? 1U : 0U);
+        CHECK_EQ(actions(restarted).size(), resumeAt == 115 ? 1U : 0U);
         if (resumeAt < 115) {
             CHECK_EQ(*restarted.engine()->nextDeadline(), 115);
             restarted.enqueue(Tick{114}, reply);
-            CHECK(emitted.empty());
+            CHECK(actions(restarted).empty());
             restarted.enqueue(Tick{115}, reply);
         }
-        CHECK_EQ(emitted.size(), 1U);
-        if (!emitted.empty() && restarted.engine() && restarted.engine()->activeWave()) {
-            CHECK_EQ(emitted.front().waveId, "w3");
-            CHECK_EQ(emitted.front().attempt, 2U);
+        CHECK_EQ(actions(restarted).size(), 1U);
+        if (!actions(restarted).empty() && restarted.engine() && restarted.engine()->activeWave()) {
+            CHECK_EQ(actions(restarted).front().waveId, "w3");
+            CHECK_EQ(actions(restarted).front().attempt, 2U);
             CHECK(restarted.engine()->activeWave()->plan == frozen);
             CHECK_EQ(restarted.engine()->activeWave()->deadline, 200);
             restarted.enqueue(WaveFinished{115, "w3", 42, "success"}, reply);
@@ -272,7 +317,7 @@ int restartDispatching() {
             CHECK(restarted.engine()->activeWave()->phase == WavePhase::Dispatching);
             restarted.enqueue(WaveStarted{117, "w3", 42, 1}, reply);
             restarted.enqueue(Resumed{132}, reply);
-            CHECK_EQ(emitted.size(), 1U);
+            CHECK(actions(restarted).empty());
             CHECK_EQ(*restarted.engine()->activeWave()->runId, 42U);
             restarted.enqueue(Resumed{200}, reply);
             CHECK(!restarted.engine()->activeWave());
@@ -281,11 +326,130 @@ int restartDispatching() {
     }
     return checkResult();
 }
+int lostResume() {
+    for (const auto failure : {InMemoryEventStore::Failure::BeforeStore, InMemoryEventStore::Failure::AfterStore}) {
+        InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1)),
+                                  std::get<EventRow>(encode(tag("a"), 2)),
+                                  std::get<EventRow>(encode(Tick{105}, 3))});
+        store.failNextAppend(failure);
+        unsigned ready = 0;
+        EventQueue queue(
+            store,
+            [] {
+                return Engine({5, 2000, 8, 0, "feed", {"o", "Packages", "main"}, 900});
+            },
+            [] {
+                return Resumed{1005};
+            },
+            [](auto, const auto&) {
+                CHECK(false);
+            });
+        queue.start(
+            [&] {
+                ++ready;
+            },
+            [](const auto&) {
+                CHECK(false);
+            });
+        CHECK_EQ(ready, 1U);
+        REQUIRE(queue.engine());
+        const std::vector<Command> expected{{"w3", 2, {"o", "Packages", "main"}, "feed"}};
+        CHECK(actions(queue) == expected);
+        CHECK(actions(queue) == expected); // Reading work never consumes its obligation.
+        CHECK_EQ(queue.engine()->activeWave()->attempt, 2U);
+        CHECK_EQ(store.rows().size(), failure == InMemoryEventStore::Failure::AfterStore ? 5U : 4U);
+        const auto frozen = queue.engine()->activeWave()->plan;
+        store.failNextAppend(failure);
+        queue.enqueue(WaveDispatchAccepted{1006, "w3", 2}, [](const auto& result) {
+            CHECK(std::holds_alternative<Unavailable>(result));
+        });
+        REQUIRE(queue.engine());
+        CHECK(queue.engine()->activeWave()->plan == frozen);
+        CHECK_EQ(actions(queue).size(), failure == InMemoryEventStore::Failure::AfterStore ? 0U : 1U);
+        CHECK_EQ(queue.engine()->activeWave()->attempt, 2U);
+    }
+    return checkResult();
+}
+void shutdownReconnectAndResume() {
+    for (const bool historicalShutdownResume : {false, true}) {
+        const std::int64_t stoppedAt = 1794823672; // production stop: 2026-11-16 10:07:52 UTC
+        InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{stoppedAt - 906, pipeline()}, 938)),
+                                  std::get<EventRow>(encode(tag("a", stoppedAt - 905), 939)),
+                                  std::get<EventRow>(encode(Tick{stoppedAt - 900}, 940))});
+        const auto make = [] {
+            return Engine({5, 2000, 8, 0, "feed", {"o", "Packages", "main"}, 900});
+        };
+        std::int64_t clock = stoppedAt - 899;
+        bool live = true;
+        const auto resumed = [&] {
+            return Resumed{clock};
+        };
+        const auto warning = [](auto, const auto&) {
+            CHECK(false);
+        };
+        const auto ready = [] {
+        };
+        const auto error = [](const auto&) {
+            CHECK(false);
+        };
+        Plan frozen;
+        {
+            EventQueue old(store, make, resumed, warning, {}, [&] {
+                return live;
+            });
+            old.start(ready, error);
+            CHECK_EQ(store.rows().back().seq, 941U);
+            if (old.engine() && old.engine()->activeWave()) {
+                frozen = old.engine()->activeWave()->plan;
+                CHECK_EQ(old.engine()->activeWave()->attempt, 1U);
+            }
+            store.defer(true);
+            clock = stoppedAt;
+            live = false;
+            old.recover("receiver removed during SIGTERM shutdown");
+            old.start(ready, error); // even a late app retry cannot reconnect/replay
+            CHECK_EQ(store.pending(), 0U);
+            CHECK_EQ(store.rows().back().seq, 941U); // no shutdown Resumed #942
+            CHECK(!old.engine());
+        }
+        store.defer(false);
+        if (historicalShutdownResume) {
+            // Model history left by the old broken binary: #942 advanced attempt 2
+            // during shutdown, but its one-shot dispatch never reached GitHub.
+            store.append(
+                Resumed{stoppedAt},
+                [](auto seq) {
+                    CHECK_EQ(seq, 942U);
+                },
+                [](const auto&) {
+                    CHECK(false);
+                });
+        }
+        clock = stoppedAt + 2;
+        EventQueue fresh(store, make, resumed, warning);
+        std::vector<Command> delivered;
+        fresh.start(
+            [&] {
+                delivered = actions(fresh); // app drives state on the new process's Resumed
+            },
+            error);
+        const std::vector<Command> expected{{"w940", 2, {"o", "Packages", "main"}, "feed"}};
+        CHECK(delivered == expected);
+        CHECK_EQ(store.rows().back().seq, historicalShutdownResume ? 943U : 942U);
+        if (fresh.engine() && fresh.engine()->activeWave()) {
+            CHECK(fresh.engine()->activeWave()->plan == frozen);
+            CHECK_EQ(*fresh.engine()->nextDeadline(), stoppedAt + (historicalShutdownResume ? 900 : 902));
+        } else {
+            CHECK(false);
+        }
+    }
+}
 int main() {
+    shutdownReconnectAndResume();
+    lostResume();
     restartDispatching();
     InMemoryEventStore store({std::get<EventRow>(encode(GraphChanged{0, pipeline()}, 1))});
     std::vector<Result> replies;
-    std::vector<Command> emitted;
     bool ready = false;
     bool reenter = false;
     EventQueue* active = nullptr;
@@ -298,16 +462,16 @@ int main() {
         [] {
             return Resumed{10};
         },
-        [&](const auto& commands) {
-            emitted.insert(emitted.end(), commands.begin(), commands.end());
-            if (reenter) {
-                reenter = false;
-                active->enqueue(WaveDispatchAccepted{101, "w3", 1}, reply);
-                CHECK(replies.empty()); // command callback precedes original request reply
-            }
-        },
         [](auto, const auto&) {
             CHECK(false);
+        },
+        [&](auto, const Event&, const Engine& state) {
+            if (reenter) {
+                CHECK_EQ(state.commands().size(), 1U);
+                reenter = false;
+                active->enqueue(WaveDispatchAccepted{101, "w3", 1}, reply);
+                CHECK(replies.empty()); // commit observer precedes original request reply
+            }
         });
     active = &queue;
     queue.enqueue(tag("a"), reply);
@@ -334,11 +498,11 @@ int main() {
     reenter = true;
     queue.enqueue(tag("a"), reply);
     CHECK_EQ(store.pending(), 1U);
-    CHECK(emitted.empty());
+    CHECK(actions(queue).empty());
     CHECK(replies.empty());
     CHECK(!queue.engine()->releases().at("a"));
     REQUIRE(store.completeOne());
-    CHECK_EQ(emitted.size(), 1U);
+    CHECK_EQ(actions(queue).size(), 1U);
     CHECK_EQ(replies.size(), 1U);
     CHECK(std::holds_alternative<Accepted>(replies.back()));
     CHECK_EQ(store.pending(), 1U);
@@ -361,6 +525,7 @@ int main() {
     CHECK_EQ(queue.engine()->units().at({"a", "t"}).failure->reason, "AB\xef\xbf\xbd");
 
     externalRecovery();
+    stopping();
     unavailableErrors();
     recovery(InMemoryEventStore::Failure::BeforeStore);
     recovery(InMemoryEventStore::Failure::AfterStore);
@@ -376,9 +541,6 @@ int main() {
         engine,
         [] {
             return Resumed{110};
-        },
-        [](const auto& c) {
-            CHECK(c.empty());
         },
         [&](auto seq, const auto&) {
             warnings.push_back(seq);
@@ -406,9 +568,6 @@ int main() {
         engine,
         [] {
             return Resumed{110};
-        },
-        [](const auto&) {
-            CHECK(false);
         },
         [](auto, const auto&) {
         });

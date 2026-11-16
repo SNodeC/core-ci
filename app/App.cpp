@@ -14,6 +14,7 @@
 #include <charconv>
 #include <core/SNodeC.h>
 #include <core/timer/Timer.h>
+#include <csignal>
 #include <cstdlib>
 #include <deque>
 #include <express/legacy/in/WebApp.h>
@@ -241,15 +242,6 @@ namespace coreci::app {
                         [] {
                             return Resumed{now()};
                         },
-                        [this](const auto& commands) {
-                            for (const auto& command : commands) {
-                                core::timer::Timer::singleshotTimer(
-                                    [this, command] {
-                                        dispatch(command);
-                                    },
-                                    0);
-                            }
-                        },
                         [](auto seq, const auto&) {
                             std::cerr << "replay ignored seq " << seq << '\n';
                         },
@@ -257,7 +249,11 @@ namespace coreci::app {
                             generation = seq;
                             if (queue->engine()) {
                                 dashboard->changed();
+                                dispatch();
                             }
+                        },
+                        [] {
+                            return core::SNodeC::state() != core::State::STOPPING;
                         });
                     store->setConnectionLost([this](const auto& reason) {
                         queue->recover(reason);
@@ -290,6 +286,9 @@ namespace coreci::app {
                     }
                     rebuild();
                     result = core::SNodeC::start();
+                    if (result == -SIGTERM || result == -SIGINT) {
+                        result = 0; // regular stop by signal, not a failure
+                    }
                     if (fatal) {
                         result = 1;
                     }
@@ -319,6 +318,7 @@ namespace coreci::app {
                     [this] {
                         recoveryDelay = 1;
                         dashboard->changed();
+                        dispatch();
                         if (listening) {
                             reload();
                         }
@@ -372,29 +372,29 @@ namespace coreci::app {
                         tickPending = false;
                     });
                 }
+                dispatch();
             }
-            void dispatch(const Command& command) {
-                const auto classification = queue->engine()
-                                                ? queue->engine()->classify(WaveDispatchAccepted{0, command.waveId, command.attempt})
-                                                : Classification{Ignore{"recovering"}};
-                if (std::holds_alternative<Accept>(classification)) {
-                    github->request(
-                        base->path + gh::dispatchPath(command),
-                        [this, command](int status, std::string body, std::string) {
-                            if (queue->engine()) {
-                                Event event = WaveDispatchAccepted{now(), command.waveId, command.attempt};
-                                if (status != 204) {
-                                    event = WaveDispatchRejected{now(), command.waveId, command.attempt, status, body};
-                                }
-                                queue->enqueue(std::move(event), [](const auto&) {
-                                });
-                            } else {
-                                std::cerr << "dispatch result dropped during recovery\n";
-                            }
-                        },
-                        gh::dispatchBody(command, get("callback-base-url")));
-                } else {
-                    std::cerr << "dispatch skipped: stale command or recovery\n";
+            void dispatch() {
+                if (const auto* engine = queue->engine()) {
+                    for (const auto& command : engine->commands()) {
+                        if (dispatching != command) {
+                            dispatching = command;
+                            github->request(
+                                base->path + gh::dispatchPath(command),
+                                [this, command](int status, std::string body, std::string) {
+                                    Event event = WaveDispatchAccepted{now(), command.waveId, command.attempt};
+                                    if (status != 204) {
+                                        event = WaveDispatchRejected{now(), command.waveId, command.attempt, status, body};
+                                    }
+                                    queue->enqueue(std::move(event), [this, command](const auto&) {
+                                        if (dispatching == command) {
+                                            dispatching.reset();
+                                        }
+                                    });
+                                },
+                                gh::dispatchBody(command, get("callback-base-url")));
+                        }
+                    }
                 }
             }
             void submit(Event event, const Res& res) {
@@ -650,6 +650,7 @@ namespace coreci::app {
             std::unique_ptr<gh::HttpClient> http;
             std::unique_ptr<mariadb::MariaDBEventStore> store;
             std::unique_ptr<ps::EventQueue> queue;
+            std::optional<Command> dispatching;
             std::unique_ptr<core::timer::Timer> retry, ticks, reconcileTimer;
             std::deque<std::string> deliveries;
             std::int64_t waveDelay = 0, waveDeadline = 0, waveStartTimeout = 0, attempts = 0, interval = 0, retryDelay = 0;

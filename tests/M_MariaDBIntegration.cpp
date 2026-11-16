@@ -76,9 +76,6 @@ private:
             [] {
                 return Resumed{100};
             },
-            [this](const auto& commands) {
-                emitted.insert(emitted.end(), commands.begin(), commands.end());
-            },
             [](auto, const auto&) {
                 CHECK(false);
             });
@@ -88,7 +85,7 @@ private:
     }
     void first() {
         fresh([this] {
-            CHECK(emitted.empty());
+            CHECK(queue->engine()->commands().empty());
             std::vector<TagObserved> tags;
             for (const auto& p : {"b", "c", "d", "e"}) {
                 tags.push_back({100, p, "v1.0.0", std::string(40, 'a'), Origin::Webhook});
@@ -111,19 +108,17 @@ private:
             later([this] {
                 queue.reset(); // destroys the first engine
                 store.reset(); // destroys the first SNode.C client and its connection
-                emitted.clear();
                 fresh([this] {
                     CHECK_EQ(recordedStatus(*queue->engine()), before);
-                    CHECK(emitted.empty());
+                    CHECK(queue->engine()->commands().empty());
                     CHECK(queue->engine()->activeWave());
                     checkRows();
                 });
             });
         } else {
-            emitted.clear();
             queue->enqueue(steps[index].event, [this](Result result) {
                 CHECK(std::holds_alternative<Accepted>(result));
-                CHECK(emitted == steps[index].commands);
+                CHECK(queue->engine()->commands() == steps[index].commands);
                 ++index;
                 next();
             });
@@ -331,7 +326,6 @@ private:
     std::unique_ptr<EventQueue> queue;
     std::vector<Step> steps;
     std::size_t index = 0;
-    std::vector<Command> emitted;
     std::string before;
 };
 std::string env(const char* name) {

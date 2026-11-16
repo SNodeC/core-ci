@@ -160,6 +160,31 @@ if(CORECI_WITH_SNODEC)
             ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/wave_start.py ${CMAKE_BINARY_DIR}
     )
+    foreach(
+        mode
+        append
+        result-before
+        result-after
+        restart-dispatch
+        replay
+        slow
+        shutdown
+        shutdown-idle
+        shutdown-int
+    )
+        add_test(
+            NAME ConnectionLoss-${mode}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/connection_loss.py
+                ${CMAKE_BINARY_DIR} ${mode}
+        )
+        set_tests_properties(
+            ConnectionLoss-${mode}
+            PROPERTIES LABELS integration TIMEOUT 90 ENVIRONMENT
+                       "PYTHONDONTWRITEBYTECODE=1"
+        )
+    endforeach()
     set_tests_properties(
         M_LocalSmoke S26_WaveStart
         PROPERTIES LABELS

@@ -205,7 +205,7 @@ void restart() {
         if (accepted) {
             h.apply(WaveDispatchAccepted{106, w.id, 1});
         }
-        CHECK(h.apply(Resumed{110}).empty());
+        CHECK_EQ(h.apply(Resumed{110}).size(), accepted ? 0U : 1U);
         CHECK(h.engine.activeWave());
         h.apply(WaveStarted{111, w.id, 42, 2});
         const auto before = h.engine.units();
