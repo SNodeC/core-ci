@@ -93,7 +93,8 @@ namespace coreci {
     public:
         explicit Engine(Options options = {});
         Classification classify(const Event& event) const;
-        std::vector<Command> handle(const Event& event, std::uint64_t seq = 0);
+        void handle(const Event& event, std::uint64_t seq = 0);
+        std::vector<Command> commands() const;
         std::optional<std::int64_t> nextDeadline() const;
         std::uint64_t nextRevision(const Unit& unit) const;
         bool sameSource(const std::string& package, const Repo& source) const;
@@ -114,7 +115,6 @@ namespace coreci {
         void request(const Unit& unit);
         void fail(const PlanUnit& unit, const std::string& reason, bool buildFailed = false, bool automatic = true);
         void finish(Wave& wave, const std::string& conclusion);
-        DispatchWave dispatch(const Wave& wave) const;
         Pipeline graph;
         Options options;
         std::map<std::string, std::optional<Released>> released;

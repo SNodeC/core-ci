@@ -10,6 +10,43 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B /tmp/codex/build/core-ci/pr -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build /tmp/codex/build/core-ci/pr --parallel 2
-      - run: ctest --test-dir /tmp/codex/build/core-ci/pr --output-on-failure
+      - run: cmake -S . -B "${{ runner.temp }}/core-ci/pr" -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build "${{ runner.temp }}/core-ci/pr" --parallel 2
+      - run: ctest --test-dir "${{ runner.temp }}/core-ci/pr" --output-on-failure
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      TMPDIR: "${{ runner.temp }}/core-ci/integration/tmp"
+    steps:
+      - run: mkdir -p "$TMPDIR"
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: SNodeC/snode.c
+          ref: 44ab18a8da4527937d3636ee44e3397a58a67fd0
+          path: dependencies/snode.c
+      - uses: actions/checkout@v4
+        with:
+          repository: SNodeC/snode.c-idp
+          ref: 85a21618c47c82bd146d380c0de397f189a07a52
+          path: dependencies/snode.c-idp
+      - name: Install build and disposable database dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libssl-dev nlohmann-json3-dev libmagic-dev libbluetooth-dev libmariadb-dev libncurses-dev mariadb-server python3-cryptography
+      - name: Build installed dependency packages
+        run: |
+          cmake -S dependencies/snode.c -B "${{ runner.temp }}/snode.c/core-ci" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/core-ci/dependencies" -DCMAKE_INSTALL_LIBDIR=lib -DSNODEC_BUILD_APPS=OFF -DCHECK_INCLUDES=OFF
+          cmake --build "${{ runner.temp }}/snode.c/core-ci" --parallel 2
+          cmake --install "${{ runner.temp }}/snode.c/core-ci"
+          cmake -S dependencies/snode.c-idp -B "${{ runner.temp }}/snodec-idp/core-ci" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/core-ci/dependencies" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH="${{ runner.temp }}/core-ci/dependencies" -DAUTH_CLIENT_ONLY=ON -DBUILD_TESTING=OFF
+          cmake --build "${{ runner.temp }}/snodec-idp/core-ci" --parallel 2
+          cmake --install "${{ runner.temp }}/snodec-idp/core-ci"
+      - name: Build actual daemon and run full CTest twice
+        run: |
+          cmake -S . -B "${{ runner.temp }}/core-ci/integration" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCORECI_WITH_SNODEC=ON -DCMAKE_PREFIX_PATH="${{ runner.temp }}/core-ci/dependencies" -DPython3_EXECUTABLE=/usr/bin/python3
+          cmake --build "${{ runner.temp }}/core-ci/integration" --parallel 2
+          /usr/bin/python3 tests/database.py "${{ runner.temp }}/core-ci/integration"
+          /usr/bin/python3 tests/database.py "${{ runner.temp }}/core-ci/integration"

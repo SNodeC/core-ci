@@ -42,9 +42,10 @@ namespace coreci {
                     events.push_back(event);
                     const auto row = std::get<persistence::EventRow>(persistence::encode(event, events.size()));
                     CHECK(std::get<Event>(persistence::decode(row)) == event);
-                    commands = engine.handle(event, events.size());
+                    engine.handle(event, events.size());
+                    commands = engine.commands();
                 } else {
-                    CHECK(engine.handle(event, events.size() + 1).empty());
+                    engine.handle(event, events.size() + 1);
                 }
                 Engine replay(options);
                 for (std::size_t n = 0; n < events.size(); ++n) {
@@ -53,6 +54,7 @@ namespace coreci {
                 CHECK(replay.units() == engine.units());
                 CHECK(replay.waves() == engine.waves());
                 CHECK(replay.releases() == engine.releases());
+                CHECK(replay.commands() == engine.commands());
                 CHECK(replay.nextDeadline() == engine.nextDeadline());
                 CHECK(app::statusSnapshot(replay) == app::statusSnapshot(engine));
             }

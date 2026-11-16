@@ -44,11 +44,13 @@ int main() {
     CHECK(Version::parse("v1.0.0+" + std::string(94, 'a')));
     CHECK(!Version::parse("1.0.0+" + std::string(95, 'a')));
     CHECK(version("999999999999999999999999.0.0") > version("99999999999999999999999.0.0"));
-    CHECK(e.handle(TagObserved{100, "a", "v1.0.0", hash(), Origin::Webhook}, 2).empty());
+    e.handle(TagObserved{100, "a", "v1.0.0", hash(), Origin::Webhook}, 2);
+    CHECK(e.commands().empty());
     const auto state = e.units();
     for (const auto& tag : {"v0.9.0", "v1.0.0", "1.0.0", "1.0.0+a", "v1.1.0-rc.1", "bad"}) {
         CHECK(std::holds_alternative<Ignore>(e.classify(TagObserved{999, "a", tag, hash(), Origin::Reconcile})));
-        CHECK(e.handle(TagObserved{999, "a", tag, hash(), Origin::Reconcile}, 3).empty());
+        e.handle(TagObserved{999, "a", tag, hash(), Origin::Reconcile}, 3);
+        CHECK(e.commands().empty());
         CHECK(e.units() == state);
         CHECK_EQ(*e.time(), 100);
     }

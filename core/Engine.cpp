@@ -240,11 +240,7 @@ namespace coreci {
         wave.conclusion = conclusion;
         wave.retryAt.reset();
     }
-    DispatchWave Engine::dispatch(const Wave& wave) const {
-        return {wave.id, wave.attempt, wave.workflow, wave.feedBranch};
-    }
-    std::vector<Command> Engine::handle(const Event& event, std::uint64_t seq) {
-        std::vector<Command> commands;
+    void Engine::handle(const Event& event, std::uint64_t seq) {
         if (std::holds_alternative<Accept>(classify(event))) {
             std::visit(
                 [&](const auto& e) {
@@ -272,7 +268,6 @@ namespace coreci {
                                 }
                                 wave.retryAt.reset();
                                 wave.dispatchedAt = *engineTime;
-                                commands.push_back(dispatch(wave));
                             }
                         }
                         for (const auto& [name, pkg] : graph.packages()) {
@@ -391,11 +386,17 @@ namespace coreci {
                     }
                     latest = wave.id;
                     waveStates.emplace(latest, std::move(wave));
-                    commands.push_back(dispatch(waveStates.at(latest)));
                 }
             }
         }
-        return commands;
+    }
+    std::vector<Command> Engine::commands() const {
+        std::vector<Command> result;
+        const auto* wave = activeWave();
+        if (wave && wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted && !wave->retryAt) {
+            result.push_back({wave->id, wave->attempt, wave->workflow, wave->feedBranch});
+        }
+        return result;
     }
     std::optional<std::int64_t> Engine::nextDeadline() const {
         std::optional<std::int64_t> result;

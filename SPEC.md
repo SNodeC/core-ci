@@ -14,7 +14,7 @@ never compiles, packages, signs, downloads artifacts or writes feeds.
 
 The engine is pure: no I/O, clock or randomness. Each accepted event carries UTC
 seconds at; engine time advances monotonically. Identical history/options produce
-identical state/plans/commands. SNode.C owns networking, TLS, timers and asynchronous
+identical state/plans/pending commands. SNode.C owns networking, TLS, timers and asynchronous
 MariaDB access. No threads, mutexes, blocking sleeps or Actions run/job polling.
 
 Typed Pipeline and event history are authoritative. No JSON persistence, graph
@@ -141,8 +141,9 @@ New highest release, GraphChanged adding units or changing build inputs, manual
 retry/rebuild, or due automatic retry marks dirty and sets quiet-until = engine
 time + wave-delay. Changes during an active wave coalesce into the next.
 After the quiet period, with no active wave, plan/dispatch once; empty plan clears
-dirty without a workflow. Only command: DispatchWave {waveId, attempt, workflow,
-feedBranch}; URLs derive from wave id.
+dirty without a workflow. The only outward action is DispatchWave {waveId, attempt,
+workflow, feedBranch}; URLs derive from wave id. Pending actions are a pure projection
+of committed engine state, not a consumed return value from an event transition.
 
 Per target traverse all units in topological order. Select each prerequisite's
 version-revision from this plan. Build if current version is unpublished, inputs
@@ -160,6 +161,19 @@ on included targets. The plan is the sole authority for unit callbacks. Publicat
 that wave for its accepted owner run identity.
 
 ### 4.4 Dispatch and lifetime
+
+Whenever the engine is live after startup, reconnect, replay or Resumed, a Dispatching
+wave without an accepted or rejected dispatch for its current attempt exposes the
+same pending DispatchWave. app drives this state after readiness, committed events
+and its existing tick. EventQueue owns persistence only; it never delivers outward
+commands. No historical HTTP effects run during replay. All initial dispatches,
+manual/automatic retries, rejection retries and reload/reconcile-triggered waves
+use this single state-derived authority. Repeated reads do not consume the action.
+app tracks only the lifetime of an HTTP request and its result append to avoid
+overlapping requests for the same wave/attempt; different attempts remain independent.
+An unavailable result append releases that request so recovered state can retry.
+Resends preserve wave_id and frozen inputs. First accepted owner_run_id fences
+callbacks and publication; GitHub dispatch itself may create duplicate runs.
 
 Accepted dispatch remains Dispatching until the first accepted WaveStarted,
 which makes the wave Running. The wave deadline remains dispatch time plus
@@ -204,7 +218,7 @@ Persistence is **event sourcing in MariaDB**: an append-only event table is the 
 
 Use the MariaDB client that SNode.C already provides. **Do not use libmariadb/libmysqlclient directly, do not add an ORM or another database library, and do not guess the API**: find SNode.C's MariaDB client in the SNode.C repository (master HEAD) and its examples/apps, and cite the source files you based your code on in the PR description. The client is asynchronous and runs in the SNode.C event loop; use it that way (callbacks), never block.
 
-Verified facts (SNode.C master, `src/database/mariadb/MariaDBClientASyncAPI.h`, `MariaDBClient.h`, `commands/async/MariaDBFetchRowCommand.cpp`): the client offers asynchronous `exec`, `query`, `startTransactions`/`commit`/`rollback`, but **no prepared statements and no escaping function**. Therefore every string value is written as a hexadecimal literal with charset introducer, `_utf8mb4 X'…'` (the bytes of the normalized UTF-8 value; the empty string as `_utf8mb4 X''`), every integer as a decimal literal and every absent value as `NULL` — no other form, so SQL injection is impossible by construction. The SQL text is produced by the pure `persistence/EventSql.h/.cpp` (S14). After every (re)connect, `open` executes `SET NAMES utf8mb4` and `SET autocommit = 1` before any other statement. An `INSERT` runs via `exec` in autocommit mode; its success callback is `onCommitted`. `query` delivers rows through `onQuery(MYSQL_ROW)` and ends with a final `nullptr` row. SNode.C reconnects lazily on the next command after a lost connection and reports state through `onStateChanged`. The only non-literal expression allowed in an `INSERT` is `UTC_TIMESTAMP(3)` for `recorded_at` (audit only: never read back, never decoded). Reads select every column except `recorded_at`, string columns as `HEX(col) AS col` and numeric columns as decimal text; `adapters/mariadb` decodes the hex purely (invalid hex or non-decimal number → `Corrupt`) before `EventRow` validation, so an embedded NUL is detected. A `nullptr` field is SQL `NULL`; `HEX('')` is an empty, non-null field.
+Verified facts (SNode.C master, `src/database/mariadb/MariaDBClientASyncAPI.h`, `MariaDBClient.h`, `commands/async/MariaDBFetchRowCommand.cpp`): the client offers asynchronous `exec`, `query`, `startTransactions`/`commit`/`rollback`, but **no prepared statements and no escaping function**. Therefore every string value is written as a hexadecimal literal with charset introducer, `_utf8mb4 X'…'` (the bytes of the normalized UTF-8 value; the empty string as `_utf8mb4 X''`), every integer as a decimal literal and every absent value as `NULL` — no other form, so SQL injection is impossible by construction. The SQL text is produced by the pure `persistence/EventSql.h/.cpp` (S14). After every (re)connect, `open` executes `SET NAMES utf8mb4` and `SET autocommit = 1` before any other statement. An `INSERT` runs via `exec` in autocommit mode; the store calls `onCommitted` only after the subsequent `SELECT LAST_INSERT_ID()` finishes. Failure between those statements is an unknown commit outcome. `query` delivers rows through `onQuery(MYSQL_ROW)` and ends with a final `nullptr` row. SNode.C reconnects lazily on the next command after a lost connection and reports state through `onStateChanged`. The only non-literal expression allowed in an `INSERT` is `UTC_TIMESTAMP(3)` for `recorded_at` (audit only: never read back, never decoded). Reads select every column except `recorded_at`, string columns as `HEX(col) AS col` and numeric columns as decimal text; `adapters/mariadb` decodes the hex purely (invalid hex or non-decimal number → `Corrupt`) before `EventRow` validation, so an embedded NUL is detected. A `nullptr` field is SQL `NULL`; `HEX('')` is an empty, non-null field.
 
 ### 5.2 Schema (adapters/mariadb/Schema.sql, created by core-ci at startup with `CREATE TABLE IF NOT EXISTS`, InnoDB, utf8mb4)
 
@@ -231,16 +245,17 @@ All inbound events (webhook, workflow callback, dispatch result, tick, dashboard
 0. Stamp `event.at` with the current UTC time (seconds) when the event enters the queue. This is the only place where core-ci reads the clock for events. Then `normalize(event)` (5.2); if invalid → answer `400 invalid: <reason>`, done (never retried, never classified, never stored).
 1. `engine.classify(event)`; if `Ignore` → answer the HTTP request (`200 ignored: <reason>`), done.
 2. `INSERT` the event row. **Wait for the commit callback.** No other event is processed meanwhile.
-3. Only after a successful commit: `engine.handle(event)` → execute the returned commands → answer the originating HTTP request (`200 accepted`).
-4. If `append` reports an error, the commit outcome is **unknown** (the row may or may not be stored): do not apply the event, answer `503`, and enter **recovery**: answer every further event `503`, discard the engine, then rebuild exactly as at startup (5.4: `loadAll`, replay, `Resumed`) and resume normal processing. If the row was in fact stored, the sender's retry is a duplicate and is answered `200 ignored`; an owner-bound wave waits until its deadline, while an unstarted Dispatching wave follows the start-timeout rule. Duplicate runs are fenced by the first accepted WaveStarted owner and the publisher ownership check.
+3. Only after a successful append acknowledgement: `engine.handle(event)` updates state → answer the originating HTTP request (`200 accepted`). app derives pending outward actions from the live committed state; no one-shot command is handed off by this transition.
+4. If `append` reports an error, the commit outcome is **unknown** (the row may or may not be stored): do not apply the event, answer `503`, and enter **recovery**: answer every further event `503`, discard the engine, reconnect and re-read the store, then rebuild exactly as at startup (5.4: `loadAll`, replay, `Resumed`). Never assume success or failure or blindly repeat the original append. The re-read history deterministically establishes whether its effects exist. If stored, the sender's retry is a duplicate and is answered `200 ignored`. A live unresolved Dispatching attempt is resent immediately from state, including when the lost acknowledgement belonged to a Resumed that advanced the attempt. A recorded acceptance waits for WaveStarted/start timeout; a recorded rejection retains its known backoff. An owner-bound Running wave waits for its deadline. Duplicate runs are fenced by the first accepted WaveStarted owner and the publisher ownership check.
 
 Consequence: the in-memory state only ever contains committed events, so a crash at any point loses nothing that was acknowledged.
 
 ### 5.4 Startup and outages
 
-- **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine, discarding commands → enqueue one `Resumed` event through the normal write-ahead queue → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished.
+- **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine without executing outward actions → enqueue one `Resumed` event through the normal write-ahead queue → mark the engine live and drive its pending actions → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished. The start timeout protects against a workflow silently dropped by GitHub; it is never the recovery mechanism for lost local command delivery.
 - During replay, a stored event that the engine classifies as `Ignore` (possible only if engine semantics changed between core-ci versions) is skipped with a warning naming its `seq`.
 - **Store errors** from `open`/`loadAll` have a kind (5.5): `Corrupt` (a row fails decoding per 5.2, or an unknown schema version) → log it and exit with a non-zero status, at startup and at runtime. `Unavailable` (any database or connection error) → stay in recovery (every event `503`, no ticks); `app/` retries the rebuild with an SNode.C timer, backoff 1 s doubling to at most 60 s, at startup and at runtime. A successful rebuild always starts from a fresh engine and replay (5.3 step 4).
+- **Shutdown:** the application's framework lifecycle is authoritative. Once termination begins, the queue exposes no live engine and starts no reconnect, replay, event append (including Resumed), or outward action. Late callbacks cannot revive it. Pending database operations close through the framework's existing cancellation/destruction path; an already-issued append can have an unknown durable outcome, resolved from the store on the next live start. Receiver teardown is not a connection-loss notification. A normal SIGTERM stop exits 0; fatal application/store errors retain a non-zero exit status.
 - Replaying the stored events must reproduce byte-identical status.json output (tested).
 - Compaction/snapshots are **out of scope**.
 
