@@ -18,9 +18,11 @@ jobs:
     timeout-minutes: 30
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      TMPDIR: "${{ runner.temp }}/core-ci/integration/tmp"
     steps:
-      - run: mkdir -p "$TMPDIR"
+      - name: Prepare temporary build directory
+        run: |
+          mkdir -p "${{ runner.temp }}/core-ci/integration/tmp"
+          echo "TMPDIR=${{ runner.temp }}/core-ci/integration/tmp" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
