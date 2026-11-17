@@ -124,7 +124,7 @@ All carry at. Exactly these 15 types exist:
 
 No PublishStarted event: acknowledge signed publish-start without a state change.
 Every unit wire callback requires a positive run_id. Admit it only when it matches
-the active wave's accepted WaveStarted owner, then persist the existing typed
+that wave's accepted WaveStarted owner, including after its deadline, then persist the existing typed
 unit event bound to wave id/build_id; no event schema or historical row changes.
 The first accepted WaveStarted binds the positive owner run id/attempt; later
 WaveStarted from another run is acknowledged and ignored. WaveFinished must
@@ -203,9 +203,15 @@ Automatic retry has the same effect once per failed version+inputs after retryDe
 (zero disables), except permanent dispatch rejections. New version/inputs make
 old failure eligible again. Requests/tags during a wave affect the following plan.
 
-Deadline expiry applies WaveFinished(conclusion "timeout"), including ordinary
-no-result/blocked outcomes. Resumed applies the same start-timeout rule to an
-unfinished Dispatching wave; an owner-bound Running wave waits for its deadline.
+Deadline expiry finishes the scheduling hold with conclusion "timeout"; it does
+not synthesize unit failures, Blocked outcomes or retries. Preserve unit state,
+frozen selection and owner_run_id. The owner's late build/publish callbacks still
+update units through their ordinary transitions; a successful publication is
+Published, never "no result", and the next plan reuses its version-revision and
+inputs. Non-owner callbacks remain ignored. Late callbacks do not reactivate the
+expired wave or extend its hold; an owner WaveFinished may finalize remaining
+unit outcomes. Resumed applies the same start-timeout rule to an unfinished
+Dispatching wave; an owner-bound Running wave waits for its deadline.
 An attempt with explicit rejection resumes its known backoff. nextDeadline is the
 earliest applicable debounce, wave start-timeout, backoff/deadline or automatic retry time; exclude
 debounce while active. Tick handles these due times; no per-unit deadline exists.
@@ -351,7 +357,7 @@ acknowledged without a persisted event; publish completion supplies its timing.
 Unit wire callbacks require run_id and bind build_id within the frozen wave.
 The authenticated callback admission boundary checks the run id against the
 accepted wave owner before queuing the existing typed unit event. Publish-start
-callbacks use the same ownership check. Non-owner callbacks receive200 ignored.
+callbacks use the same ownership check after deadline expiry as well. Non-owner callbacks receive200 ignored.
 Responses follow 5.3; duplicate/stale callbacks are ignored. Callback-before-dispatch,
 dispatch backoff/deadlines, automatic retry, startup resumption and recovery are unchanged.
 Webhooks remember the last 1000 successful delivery ids in memory. Failed loads are retryable.
@@ -454,7 +460,10 @@ W10 Concurrency: core-ci runs at most one wave at a time; wave.yml uses concurre
 ## 8. Acceptance
 
 Full build with adapters and full CTest twice green, no required skips, against
-disposable MariaDB and fake GitHub/IDP HTTP fixtures. No test framework or
+disposable MariaDB and fake GitHub/IDP HTTP fixtures. Label every test requiring
+a MariaDB server `mariadb`, including all ConnectionLoss tests. Native package
+builds run `ctest -LE mariadb` and do not install server-test-only dependencies;
+repository CI retains the server and full suite. No test framework or
 fetched dependencies. Retain HMAC/TLS/App auth, version/validation, write-ahead/
 ambiguous-outcome, SQL/row/replay, SSE, badges, status, dashboard model and integration
 coverage. Delete obsolete per-unit/feed tests. Browser-driven tests, dashboard
@@ -466,7 +475,8 @@ Cover debounce coalescing, only one wave active, changes during a wave, build vs
 reuse/unchanged reuse/diamond cascades, revision increments/base, W5 plan schema,
 callback transitions/idempotency, transitive Blocked dependents, independent
 success, no-result failures, manual/automatic retry cascades/limit, dispatch
-rejection/backoff/exhaustion, deadline, restart waiting, frozen plan during graph
+rejection/backoff/exhaustion, deadline followed by late owner publication and
+next-plan reuse (non-owner ignored), restart waiting, frozen plan during graph
 changes, dashboard unit/wave contents, SSE output and routes, old report route 404,
 public plan and authenticated callbacks. Retain 10000 seeded randomized scenarios.
 
