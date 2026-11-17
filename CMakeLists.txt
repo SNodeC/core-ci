@@ -48,6 +48,7 @@ foreach(
     retry
     dispatch
     restart
+    late
     graph
     randomized
 )
@@ -160,6 +161,13 @@ if(CORECI_WITH_SNODEC)
             ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/wave_start.py ${CMAKE_BINARY_DIR}
     )
+    add_test(
+        NAME S27_LatePublication
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/late_publication.py
+            ${CMAKE_BINARY_DIR}
+    )
     foreach(
         mode
         append
@@ -186,7 +194,7 @@ if(CORECI_WITH_SNODEC)
         )
     endforeach()
     set_tests_properties(
-        M_LocalSmoke S26_WaveStart
+        M_LocalSmoke S26_WaveStart S27_LatePublication
         PROPERTIES LABELS
                    "integration;mariadb"
                    SKIP_RETURN_CODE

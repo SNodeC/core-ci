@@ -232,6 +232,85 @@ void restart() {
     CHECK(h.apply(UnitPublishSucceeded{109, w.id, w.plan.at("t1")[0].buildId, hash('b')}).empty());
 }
 
+void late() {
+    History h;
+    h.load();
+    h.apply(Tick{105});
+    const auto w = h.wave();
+    h.apply(WaveStarted{106, w.id, 42, 1});
+    const auto first = w.plan.at("t1").front().buildId;
+    h.apply(UnitBuildSucceeded{107, w.id, first, "artifact"});
+    const auto before = h.engine.units();
+    h.apply(Resumed{205});
+    CHECK(!h.engine.activeWave());
+    CHECK_EQ(h.wave().conclusion, "timeout");
+    CHECK(h.engine.units() == before);
+    CHECK(h.engine.commands().empty());
+    h.apply(UnitPublishSucceeded{206, w.id, first, hash('b')});
+    for (const auto& [target, entries] : w.plan) {
+        for (const auto& entry : entries) {
+            if (entry.buildId != first) {
+                h.apply(UnitBuildStarted{207, w.id, entry.buildId});
+                h.apply(UnitBuildSucceeded{208, w.id, entry.buildId, "artifact"});
+                h.apply(UnitPublishSucceeded{209, w.id, entry.buildId, hash('b')});
+            }
+        }
+    }
+    CHECK(!h.engine.activeWave());
+    CHECK(h.engine.commands().empty());
+    for (const auto& [unit, state] : h.engine.units()) {
+        CHECK(state.state == State::Published);
+        CHECK(!state.failure);
+        CHECK(!state.retryAfter);
+        CHECK(state.published.has_value());
+        if (state.published) {
+            CHECK_EQ(state.published->waveId, w.id);
+            CHECK_EQ(state.published->revision, 1U);
+        }
+    }
+    h.apply(WaveFinished{210, w.id, 42, "success"});
+    CHECK_EQ(h.wave().conclusion, "success");
+    h.apply(RebuildRequested{211, "z", "t1"});
+    h.apply(Tick{216});
+    CHECK(h.engine.activeWave());
+    CHECK_EQ(h.wave().plan.size(), 1U);
+    for (const auto& entry : h.wave().plan.at("t1")) {
+        CHECK(entry.build == (entry.unit.package == "z"));
+        CHECK_EQ(entry.revision, entry.build ? 2U : 1U);
+    }
+
+    History overlapping;
+    overlapping.load();
+    overlapping.apply(Tick{105});
+    const auto expired = overlapping.wave();
+    overlapping.apply(WaveStarted{106, expired.id, 42, 1});
+    overlapping.apply(Tick{205});
+    overlapping.apply(TagObserved{206, "z", "v2.0.0", hash('c'), Origin::Webhook});
+    overlapping.apply(Tick{211});
+    const auto newer = overlapping.wave();
+    CHECK(newer.id != expired.id);
+    const auto assigned = overlapping.engine.units();
+    overlapping.apply(WaveFinished{212, expired.id, 42, "failure"});
+    CHECK(overlapping.engine.units() == assigned);
+    CHECK_EQ(overlapping.engine.activeWave()->id, newer.id);
+
+    History failures({5, 100, 3, 10});
+    failures.load();
+    failures.apply(Tick{105});
+    const auto failed = failures.wave();
+    failures.apply(WaveStarted{106, failed.id, 42, 1});
+    failures.apply(Tick{205});
+    CHECK(!failures.engine.nextDeadline());
+    failures.apply(UnitBuildFailed{206, failed.id, failed.plan.at("t1")[0].buildId, "late compiler failure"});
+    failures.apply(UnitBuildSucceeded{207, failed.id, failed.plan.at("t2")[0].buildId, "artifact"});
+    failures.apply(UnitPublishFailed{208, failed.id, failed.plan.at("t2")[0].buildId, "late feed failure"});
+    CHECK_EQ(failures.engine.units().at({"a", "t1"}).failure->reason, "late compiler failure");
+    CHECK_EQ(failures.engine.units().at({"a", "t2"}).failure->reason, "late feed failure");
+    CHECK_EQ(*failures.engine.units().at({"a", "t1"}).retryAfter, 216);
+    failures.apply(WaveFinished{209, failed.id, 42, "failure"});
+    CHECK(failures.engine.units().at({"b", "t1"}).state == State::Blocked);
+}
+
 void graph() {
     History h;
     h.load();
@@ -316,6 +395,7 @@ int main(int argc, char** argv) {
                                                       {"retry", retry},
                                                       {"dispatch", dispatch},
                                                       {"restart", restart},
+                                                      {"late", late},
                                                       {"graph", graph},
                                                       {"randomized", randomized}};
     CHECK(argc == 2);
