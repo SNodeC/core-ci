@@ -17,15 +17,12 @@
       "make",
       "pkg-config",
       "libssl-dev",
-      "openssl",
       "nlohmann-json3-dev",
       "libmagic-dev",
       "libbluetooth-dev",
       "libmariadb-dev",
-      "mariadb-server",
       "libncurses-dev",
-      "python3",
-      "python3-cryptography"
+      "python3"
     ],
     "rpm": [
       "cmake",
@@ -33,15 +30,12 @@
       "make",
       "pkgconf-pkg-config",
       "openssl-devel",
-      "openssl",
       "json-devel",
       "file-devel",
       "bluez-libs-devel",
       "mariadb-connector-c-devel",
-      "mariadb-server",
       "ncurses-devel",
-      "python3",
-      "python3-cryptography"
+      "python3"
     ],
     "openwrt": []
   },
