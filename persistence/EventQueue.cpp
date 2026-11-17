@@ -101,7 +101,7 @@ namespace coreci::persistence {
                 if (std::holds_alternative<Invalid>(normalized)) {
                     item.reply(std::get<Invalid>(normalized));
                 } else {
-                    const auto event = std::get<Event>(normalized);
+                    const auto event = current->record(std::get<Event>(normalized));
                     const auto classification = current->classify(event);
                     if (std::holds_alternative<Ignore>(classification)) {
                         item.reply(Ignored{std::get<Ignore>(classification).reason});

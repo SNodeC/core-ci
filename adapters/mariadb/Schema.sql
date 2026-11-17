@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS coreci_events (
   reason       TEXT         NULL,
   conclusion   VARCHAR(64)  NULL,
   event_at     BIGINT       NOT NULL,   -- the event's `at` (UTC seconds), section 4.3
+  dispatch_deadline BIGINT  NULL,
   INDEX idx_build_id (build_id),
   INDEX idx_unit (package, target)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

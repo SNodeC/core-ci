@@ -37,7 +37,7 @@ namespace coreci {
             const auto normalized = persistence::normalize(event);
             CHECK(std::holds_alternative<Event>(normalized));
             if (std::holds_alternative<Event>(normalized)) {
-                event = std::get<Event>(normalized);
+                event = engine.record(std::get<Event>(normalized));
                 if (std::holds_alternative<Accept>(engine.classify(event))) {
                     events.push_back(event);
                     const auto row = std::get<persistence::EventRow>(persistence::encode(event, events.size()));

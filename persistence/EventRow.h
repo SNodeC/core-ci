@@ -29,7 +29,7 @@ namespace coreci::persistence {
         std::string eventType;
         std::optional<std::string> package, target, tag, sourceSha, origin, buildId, waveId, message, artifact, feedCommit, reason,
             conclusion;
-        std::optional<std::int64_t> httpStatus, runAttempt, attempt, eventAt;
+        std::optional<std::int64_t> httpStatus, runAttempt, attempt, eventAt, dispatchDeadline;
         std::optional<std::uint64_t> runId;
         std::optional<GraphRows> graph;
         bool operator==(const EventRow&) const = default;

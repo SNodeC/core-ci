@@ -81,7 +81,8 @@ int main() {
                                     Resumed{10},
                                     GraphChanged{11, testPipeline()},
                                     GraphChanged{12, Pipeline{}},
-                                    WaveFinished{13, "w1", 7, "success"}};
+                                    WaveFinished{13, "w1", 7, "success"},
+                                    WaveExpired{20, "w1"}};
     const auto fields = std::tuple{&EventRow::package,
                                    &EventRow::target,
                                    &EventRow::tag,
@@ -99,7 +100,8 @@ int main() {
                                    &EventRow::attempt,
                                    &EventRow::eventAt,
                                    &EventRow::runId};
-    for (const auto& event : events) {
+    for (auto event : events) {
+        event.dispatchDeadline = 23420;
         const auto encoded = encode(event, 73);
         REQUIRE(std::holds_alternative<EventRow>(encoded));
         const auto row = std::get<EventRow>(encoded);

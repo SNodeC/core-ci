@@ -81,7 +81,6 @@ namespace coreci {
         return result;
     }
     Classification Engine::classify(const Event& event) const {
-        const auto* wave = activeWave();
         const auto now = [&](std::int64_t at) {
             return std::max(engineTime.value_or(at), at);
         };
@@ -107,25 +106,38 @@ namespace coreci {
                     allowed = graph.packages().contains(e.package) && graph.packages().at(e.package).targets.contains(e.target) &&
                               state != unitStates.end() && !state->second.requested &&
                               state->second.state == (std::is_same_v<E, RetryRequested> ? State::Failed : State::Published);
-                } else if (wave && e.waveId == wave->id) {
+                } else if (const auto found = waveStates.find(e.waveId); found != waveStates.end()) {
+                    const auto& wave = found->second;
                     if constexpr (std::is_same_v<E, WaveDispatchAccepted> || std::is_same_v<E, WaveDispatchRejected>) {
-                        allowed = wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted && !wave->retryAt &&
-                                  e.attempt == wave->attempt;
+                        allowed =
+                            wave.phase == WavePhase::Dispatching && !wave.dispatchAccepted && !wave.retryAt && e.attempt == wave.attempt;
                     } else if constexpr (std::is_same_v<E, WaveStarted>) {
-                        allowed = !wave->runId && e.runId > 0 && e.runAttempt > 0;
+                        allowed = !wave.finished && !wave.runId && e.runId > 0 && e.runAttempt > 0;
+                    } else if constexpr (std::is_same_v<E, WaveExpired>) {
+                        allowed = !wave.finished && now(e.at) >= wave.deadline;
                     } else if constexpr (std::is_same_v<E, WaveFinished>) {
-                        allowed = wave->runId == e.runId;
+                        allowed = wave.runId == e.runId && (!wave.finished || wave.awaitingOwnerFinish);
                     } else {
-                        for (const auto& [target, entries] : wave->plan) {
+                        for (const auto& [target, entries] : wave.plan) {
                             for (const auto& entry : entries) {
                                 if (entry.build && entry.buildId == e.buildId) {
-                                    const auto state = unitStates.at(entry.unit).state;
+                                    const auto& outcome = unitStates.at(entry.unit);
+                                    const auto state =
+                                        wave.awaitingOwnerFinish && outcome.failure && !outcome.failure->buildFailed && !outcome.publishEnd
+                                            ? (outcome.artifact.empty() ? State::Planned : State::Built)
+                                            : outcome.state;
                                     if constexpr (std::is_same_v<E, UnitBuildStarted>) {
-                                        allowed = state == State::Planned;
+                                        allowed = outcome.waveId == wave.id && state == State::Planned;
                                     } else if constexpr (std::is_same_v<E, UnitBuildSucceeded> || std::is_same_v<E, UnitBuildFailed>) {
-                                        allowed = state == State::Planned || state == State::Building;
+                                        allowed = outcome.waveId == wave.id && (state == State::Planned || state == State::Building);
+                                    } else if constexpr (std::is_same_v<E, UnitPublishSucceeded>) {
+                                        allowed = outcome.waveId == wave.id
+                                                      ? state == State::Built
+                                                      : wave.runId &&
+                                                            (!outcome.published || std::stoull(wave.id.substr(1)) >
+                                                                                       std::stoull(outcome.published->waveId.substr(1)));
                                     } else {
-                                        allowed = state == State::Built;
+                                        allowed = outcome.waveId == wave.id && state == State::Built;
                                     }
                                 }
                             }
@@ -214,11 +226,20 @@ namespace coreci {
             state.retryAfter = *engineTime + options.retryDelay;
         }
     }
-    void Engine::finish(Wave& wave, const std::string& conclusion) {
+    Event Engine::record(Event event) const {
+        event.dispatchDeadline = std::visit(
+                                     [&](const auto& e) {
+                                         return std::max(engineTime.value_or(e.at), e.at);
+                                     },
+                                     event) +
+                                 options.waveDeadline;
+        return event;
+    }
+    void Engine::finish(Wave& wave, const std::string& conclusion, bool expired) {
         for (const auto& [target, entries] : wave.plan) {
             std::set<std::string> blocked;
             for (const auto& entry : entries) {
-                if (entry.build) {
+                if (entry.build && !expired && unitStates.at(entry.unit).waveId == wave.id) {
                     auto& state = unitStates.at(entry.unit);
                     const bool prerequisiteFailed = std::any_of(entry.inputs.begin(), entry.inputs.end(), [&](const auto& input) {
                         return blocked.contains(input.first);
@@ -239,6 +260,7 @@ namespace coreci {
         wave.finished = *engineTime;
         wave.conclusion = conclusion;
         wave.retryAt.reset();
+        wave.awaitingOwnerFinish = expired;
     }
     void Engine::handle(const Event& event, std::uint64_t seq) {
         if (std::holds_alternative<Accept>(classify(event))) {
@@ -256,15 +278,16 @@ namespace coreci {
                     } else if constexpr (std::is_same_v<E, Tick> || std::is_same_v<E, Resumed>) {
                         if (activeWave()) {
                             auto& wave = waveStates.at(latest);
-                            if (*engineTime >= wave.deadline) {
+                            if (*engineTime >= wave.deadline && !event.dispatchDeadline) {
                                 finish(wave, "timeout");
-                            } else if ((wave.retryAt && *engineTime >= *wave.retryAt) ||
-                                       (!wave.retryAt && wave.phase == WavePhase::Dispatching &&
-                                        *engineTime >= wave.dispatchedAt + options.waveStartTimeout)) {
+                                wave.awaitingOwnerFinish = true;
+                            } else if (*engineTime < wave.deadline && ((wave.retryAt && *engineTime >= *wave.retryAt) ||
+                                                                       (!wave.retryAt && wave.phase == WavePhase::Dispatching &&
+                                                                        *engineTime >= wave.dispatchedAt + options.waveStartTimeout))) {
                                 ++wave.attempt;
                                 wave.dispatchAccepted = false;
                                 if (wave.retryAt) {
-                                    wave.deadline = *engineTime + options.waveDeadline;
+                                    wave.deadline = event.dispatchDeadline.value_or(*engineTime + 23400);
                                 }
                                 wave.retryAt.reset();
                                 wave.dispatchedAt = *engineTime;
@@ -282,7 +305,9 @@ namespace coreci {
                         }
                     } else {
                         auto& wave = waveStates.at(e.waveId);
-                        if constexpr (std::is_same_v<E, WaveDispatchRejected>) {
+                        if constexpr (std::is_same_v<E, WaveExpired>) {
+                            finish(wave, "timeout", true);
+                        } else if constexpr (std::is_same_v<E, WaveDispatchRejected>) {
                             const bool permanent = e.httpStatus == 401 || e.httpStatus == 403 || e.httpStatus == 404 || e.httpStatus == 422;
                             if (permanent || wave.attempt >= options.maxDispatchAttempts) {
                                 for (const auto& [target, entries] : wave.plan) {
@@ -306,33 +331,35 @@ namespace coreci {
                         } else {
                             if constexpr (std::is_same_v<E, WaveDispatchAccepted>) {
                                 wave.dispatchAccepted = true;
-                            } else {
+                            } else if constexpr (std::is_same_v<E, WaveStarted>) {
                                 wave.phase = WavePhase::Running;
-                            }
-                            wave.retryAt.reset();
-                            if constexpr (std::is_same_v<E, WaveStarted>) {
                                 wave.runId = e.runId;
                                 wave.runAttempt = e.runAttempt;
                                 wave.started = *engineTime;
                             } else if constexpr (std::is_same_v<E, WaveFinished>) {
                                 finish(wave, e.conclusion);
-                            } else if constexpr (!std::is_same_v<E, WaveDispatchAccepted>) {
+                            } else {
+                                wave.phase = wave.finished ? WavePhase::Finished : WavePhase::Running;
                                 for (const auto& [target, entries] : wave.plan) {
                                     for (const auto& entry : entries) {
                                         if (entry.build && entry.buildId == e.buildId) {
                                             auto& state = unitStates.at(entry.unit);
+                                            if (state.waveId == wave.id) {
+                                                state.failure.reset();
+                                                state.retryAfter.reset();
+                                            }
                                             if constexpr (std::is_same_v<E, UnitBuildStarted>) {
                                                 state.state = State::Building;
                                                 state.buildStart = *engineTime;
+                                                state.buildEnd.reset();
                                             } else if constexpr (std::is_same_v<E, UnitBuildSucceeded>) {
                                                 state.state = State::Built;
                                                 state.artifact = e.artifact;
                                                 state.buildEnd = *engineTime;
                                             } else if constexpr (std::is_same_v<E, UnitBuildFailed>) {
+                                                state.buildEnd = *engineTime;
                                                 fail(entry, e.reason, true);
                                             } else if constexpr (std::is_same_v<E, UnitPublishSucceeded>) {
-                                                state.state = State::Published;
-                                                state.publishEnd = *engineTime;
                                                 state.published = Published{entry.release.version,
                                                                             entry.revision,
                                                                             entry.inputs,
@@ -340,8 +367,10 @@ namespace coreci {
                                                                             wave.id,
                                                                             *engineTime,
                                                                             e.feedCommit};
-                                                state.failure.reset();
-                                                state.retryAfter.reset();
+                                                if (state.waveId == wave.id) {
+                                                    state.state = State::Published;
+                                                    state.publishEnd = *engineTime;
+                                                }
                                             } else if constexpr (std::is_same_v<E, UnitPublishFailed>) {
                                                 state.publishEnd = *engineTime;
                                                 fail(entry, e.reason);
@@ -350,6 +379,7 @@ namespace coreci {
                                     }
                                 }
                             }
+                            wave.retryAt.reset();
                         }
                     }
                 },
@@ -364,7 +394,7 @@ namespace coreci {
                     wave.feedBranch = options.feedBranch;
                     wave.workflow = options.workflow;
                     wave.dispatchedAt = *engineTime;
-                    wave.deadline = *engineTime + options.waveDeadline;
+                    wave.deadline = event.dispatchDeadline.value_or(*engineTime + 23400);
                     for (auto& [target, entries] : wave.plan) {
                         for (auto& entry : entries) {
                             if (entry.build) {
@@ -393,7 +423,7 @@ namespace coreci {
     std::vector<Command> Engine::commands() const {
         std::vector<Command> result;
         const auto* wave = activeWave();
-        if (wave && wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted && !wave->retryAt) {
+        if (wave && wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted && !wave->retryAt && *engineTime < wave->deadline) {
             result.push_back({wave->id, wave->attempt, wave->workflow, wave->feedBranch});
         }
         return result;

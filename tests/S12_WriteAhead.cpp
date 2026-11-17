@@ -320,6 +320,8 @@ int restartDispatching() {
             CHECK(actions(restarted).empty());
             CHECK_EQ(*restarted.engine()->activeWave()->runId, 42U);
             restarted.enqueue(Resumed{200}, reply);
+            CHECK(restarted.engine()->activeWave());
+            restarted.enqueue(WaveExpired{200, "w3"}, reply);
             CHECK(!restarted.engine()->activeWave());
             CHECK_EQ(restarted.engine()->latestWave()->conclusion, "timeout");
         }
@@ -444,7 +446,56 @@ void shutdownReconnectAndResume() {
         }
     }
 }
+void uncertainExpiry() {
+    for (const auto fault : {InMemoryEventStore::Failure::BeforeStore, InMemoryEventStore::Failure::AfterStore}) {
+        InMemoryEventStore store;
+        std::int64_t clock = 100;
+        EventQueue queue(
+            store,
+            engine,
+            [&] {
+                return Resumed{clock};
+            },
+            [](auto, const auto&) {
+                CHECK(false);
+            });
+        const auto reply = [](const auto&) {
+        };
+        queue.start(
+            [] {
+            },
+            [](const auto&) {
+                CHECK(false);
+            });
+        queue.enqueue(GraphChanged{100, pipeline()}, reply);
+        queue.enqueue(tag("a"), reply);
+        queue.enqueue(Tick{105}, reply);
+        const auto wave = *queue.engine()->activeWave();
+        queue.enqueue(WaveStarted{106, wave.id, 42, 1}, reply);
+        const auto units = queue.engine()->units();
+        clock = wave.deadline;
+        store.failNextAppend(fault);
+        queue.enqueue(WaveExpired{clock, wave.id}, [](const auto& result) {
+            CHECK(std::holds_alternative<Unavailable>(result));
+        });
+        CHECK(queue.engine());
+        CHECK_EQ(queue.engine()->activeWave() != nullptr, fault == InMemoryEventStore::Failure::BeforeStore);
+        CHECK(queue.engine()->units() == units);
+        if (queue.engine()->activeWave()) {
+            queue.enqueue(WaveExpired{clock, wave.id}, reply);
+        }
+        CHECK(!queue.engine()->activeWave());
+        unsigned expiries = 0;
+        for (const auto& row : store.rows()) {
+            expiries += row.eventType == "WaveExpired";
+        }
+        CHECK_EQ(expiries, 1U);
+        CHECK(queue.engine()->units() == units);
+    }
+}
+
 int main() {
+    uncertainExpiry();
     shutdownReconnectAndResume();
     lostResume();
     restartDispatching();

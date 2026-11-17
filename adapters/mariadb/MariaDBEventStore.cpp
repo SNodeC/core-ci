@@ -40,7 +40,7 @@ namespace coreci::mariadb {
     } // namespace
     std::variant<persistence::EventRow, persistence::Invalid> decodeFields(const std::vector<std::optional<std::string>>& fields) {
         persistence::EventRow row;
-        bool valid = fields.size() == 19;
+        bool valid = fields.size() == 20;
         const std::string seq = !fields.empty() && fields[0] ? *fields[0] : "NULL";
         if (valid) {
             valid = fields[0] && number(*fields[0], row.seq);
@@ -61,7 +61,8 @@ namespace coreci::mariadb {
                                         &persistence::EventRow::feedCommit,
                                         &persistence::EventRow::reason,
                                         &persistence::EventRow::conclusion,
-                                        &persistence::EventRow::eventAt};
+                                        &persistence::EventRow::eventAt,
+                                        &persistence::EventRow::dispatchDeadline};
         if (valid) {
             valid = fields[1] && unhex(*fields[1], row.eventType);
             std::size_t index = 2;
@@ -166,23 +167,28 @@ namespace coreci::mariadb {
         }
     }
     void MariaDBEventStore::checkSchema(std::function<void()> done) {
-        const auto bootstrap = std::make_shared<bool>(false);
+        const auto version = std::make_shared<std::string>();
         client.query(
             "SELECT (SELECT COUNT(*) FROM coreci_schema),(SELECT MIN(version) FROM coreci_schema),"
             "(EXISTS(SELECT 1 FROM coreci_events LIMIT 1) OR "
             "EXISTS(SELECT 1 FROM coreci_graph_packages LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_targets LIMIT 1) OR "
             "EXISTS(SELECT 1 FROM coreci_graph_prerequisites LIMIT 1) OR EXISTS(SELECT 1 FROM coreci_graph_releases LIMIT 1))",
-            [this, done, bootstrap](const MYSQL_ROW row) {
+            [this, done, version](const MYSQL_ROW row) {
                 if (row != nullptr) {
-                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr && std::string(row[1]) == "5") {
-                        // Wait for query's final nullptr before starting the next operation.
+                    if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr &&
+                        (std::string(row[1]) == "5" || std::string(row[1]) == "6")) {
+                        *version = row[1];
                     } else if (row[0] != nullptr && std::string(row[0]) == "0" && row[2] != nullptr && std::string(row[2]) == "0") {
-                        *bootstrap = true;
+                        *version = "0";
                     } else {
-                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 5 row, or empty schema and events"});
+                        fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 5/6 row, or empty schema and events"});
                     }
-                } else if (*bootstrap) {
-                    execute("INSERT INTO coreci_schema (version) VALUES (5)", done);
+                } else if (*version == "0") {
+                    execute("INSERT INTO coreci_schema (version) VALUES (6)", done);
+                } else if (*version == "5") {
+                    execute("ALTER TABLE coreci_events ADD COLUMN IF NOT EXISTS dispatch_deadline BIGINT NULL", [this, done] {
+                        execute("UPDATE coreci_schema SET version=6 WHERE version=5", done);
+                    });
                 } else {
                     done();
                 }
@@ -357,7 +363,7 @@ namespace coreci::mariadb {
                         });
                     } else {
                         std::vector<std::optional<std::string>> values;
-                        for (std::size_t i = 0; i < 19; ++i) {
+                        for (std::size_t i = 0; i < 20; ++i) {
                             values.push_back(fields[i] == nullptr ? std::nullopt : std::optional<std::string>(fields[i]));
                         }
                         const auto decoded = decodeFields(values);

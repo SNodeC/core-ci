@@ -191,7 +191,7 @@ void dispatch() {
     deadline.apply(Tick{105});
     deadline.apply(WaveDispatchAccepted{106, deadline.wave().id, 1});
     CHECK(deadline.apply(Tick{204}).empty());
-    deadline.apply(Tick{205});
+    deadline.apply(WaveExpired{205, deadline.wave().id});
     CHECK_EQ(deadline.wave().conclusion, "timeout");
     CHECK(!deadline.engine.activeWave());
 }
@@ -219,7 +219,7 @@ void restart() {
             CHECK(h.engine.time() == at);
         }
         CHECK(h.apply(Resumed{120}).empty());
-        h.apply(Tick{205});
+        h.apply(WaveExpired{205, w.id});
         CHECK_EQ(h.wave().conclusion, "timeout");
     }
     History h;
@@ -230,6 +230,87 @@ void restart() {
     CHECK(h.apply(WaveDispatchAccepted{107, w.id, 1}).empty());
     h.apply(UnitPublishFailed{108, w.id, w.plan.at("t1")[0].buildId, "signing"});
     CHECK(h.apply(UnitPublishSucceeded{109, w.id, w.plan.at("t1")[0].buildId, hash('b')}).empty());
+}
+
+void late() {
+    History h;
+    h.load();
+    h.apply(Tick{105});
+    const auto w = h.wave();
+    h.apply(WaveStarted{106, w.id, 42, 1});
+    const auto first = w.plan.at("t1").front().buildId;
+    h.apply(UnitBuildSucceeded{107, w.id, first, "artifact"});
+    const auto before = h.engine.units();
+    h.apply(Resumed{205});
+    CHECK(h.engine.activeWave());
+    h.apply(WaveExpired{205, w.id});
+    CHECK(!h.engine.activeWave());
+    CHECK_EQ(h.wave().conclusion, "timeout");
+    CHECK(h.engine.units() == before);
+    CHECK(h.engine.commands().empty());
+    h.apply(UnitPublishSucceeded{206, w.id, first, hash('b')});
+    for (const auto& [target, entries] : w.plan) {
+        for (const auto& entry : entries) {
+            if (entry.buildId != first) {
+                h.apply(UnitBuildStarted{207, w.id, entry.buildId});
+                h.apply(UnitBuildSucceeded{208, w.id, entry.buildId, "artifact"});
+                h.apply(UnitPublishSucceeded{209, w.id, entry.buildId, hash('b')});
+            }
+        }
+    }
+    CHECK(!h.engine.activeWave());
+    CHECK(h.engine.commands().empty());
+    for (const auto& [unit, state] : h.engine.units()) {
+        CHECK(state.state == State::Published);
+        CHECK(!state.failure);
+        CHECK(!state.retryAfter);
+        CHECK(state.published.has_value());
+        if (state.published) {
+            CHECK_EQ(state.published->waveId, w.id);
+            CHECK_EQ(state.published->revision, 1U);
+        }
+    }
+    h.apply(WaveFinished{210, w.id, 42, "success"});
+    CHECK_EQ(h.wave().conclusion, "success");
+    h.apply(RebuildRequested{211, "z", "t1"});
+    h.apply(Tick{216});
+    CHECK(h.engine.activeWave());
+    CHECK_EQ(h.wave().plan.size(), 1U);
+    for (const auto& entry : h.wave().plan.at("t1")) {
+        CHECK(entry.build == (entry.unit.package == "z"));
+        CHECK_EQ(entry.revision, entry.build ? 2U : 1U);
+    }
+
+    History overlapping;
+    overlapping.load();
+    overlapping.apply(Tick{105});
+    const auto expired = overlapping.wave();
+    overlapping.apply(WaveStarted{106, expired.id, 42, 1});
+    overlapping.apply(WaveExpired{205, expired.id});
+    overlapping.apply(TagObserved{206, "z", "v2.0.0", hash('c'), Origin::Webhook});
+    overlapping.apply(Tick{211});
+    const auto newer = overlapping.wave();
+    CHECK(newer.id != expired.id);
+    const auto assigned = overlapping.engine.units();
+    overlapping.apply(WaveFinished{212, expired.id, 42, "failure"});
+    CHECK(overlapping.engine.units() == assigned);
+    CHECK_EQ(overlapping.engine.activeWave()->id, newer.id);
+
+    History failures({5, 100, 3, 10});
+    failures.load();
+    failures.apply(Tick{105});
+    const auto failed = failures.wave();
+    failures.apply(WaveStarted{106, failed.id, 42, 1});
+    failures.apply(WaveExpired{205, failed.id});
+    CHECK(!failures.engine.nextDeadline());
+    failures.apply(UnitBuildFailed{206, failed.id, failed.plan.at("t1")[0].buildId, "late compiler failure"});
+    failures.apply(UnitBuildSucceeded{207, failed.id, failed.plan.at("t2")[0].buildId, "artifact"});
+    failures.apply(UnitPublishFailed{208, failed.id, failed.plan.at("t2")[0].buildId, "late feed failure"});
+    CHECK_EQ(failures.engine.units().at({"a", "t1"}).failure->reason, "late compiler failure");
+    CHECK_EQ(failures.engine.units().at({"a", "t2"}).failure->reason, "late feed failure");
+    CHECK_EQ(*failures.engine.units().at({"a", "t1"}).retryAfter, 216);
+    failures.apply(WaveFinished{209, failed.id, 42, "failure"});
+    CHECK(failures.engine.units().at({"b", "t1"}).state == State::Blocked);
 }
 
 void graph() {
@@ -270,6 +351,93 @@ void graph() {
     CHECK_EQ(addition.wave().plan.size(), 1U);
     CHECK_EQ(addition.wave().plan.at("t3").front().unit.package, "q");
     CHECK(addition.engine.units().at({"a", "t1"}).state == State::Published);
+}
+
+void deadlines() {
+    History h({5, 100, 3, 0});
+    h.load();
+    h.apply(Tick{105});
+    const auto first = h.wave();
+    CHECK_EQ(first.deadline, 205);
+    h.apply(WaveStarted{106, first.id, 42, 1});
+    h.apply(Tick{205});
+    CHECK(h.engine.activeWave()); // Only the persisted expiry ends the hold.
+    h.apply(WaveExpired{205, first.id});
+    const auto expired = h.wave();
+    const auto count = h.events.size();
+    h.apply(WaveExpired{999, first.id});
+    CHECK_EQ(h.events.size(), count);
+    CHECK(h.wave() == expired);
+    Options changed = h.options;
+    changed.waveDeadline = 86400;
+    Engine restarted(changed);
+    for (std::size_t n = 0; n < h.events.size(); ++n) {
+        restarted.handle(h.events[n], n + 1);
+    }
+    CHECK(restarted.waves() == h.engine.waves());
+    CHECK(restarted.units() == h.engine.units());
+    CHECK(!restarted.activeWave());
+    restarted.handle(restarted.record(TagObserved{206, "z", "v2.0.0", hash('c'), Origin::Webhook}), count + 1);
+    restarted.handle(restarted.record(Tick{211}), count + 2);
+    CHECK_EQ(restarted.activeWave()->deadline, 86611);
+    CHECK_EQ(restarted.waves().at(first.id).deadline, 205);
+    const auto newer = *restarted.activeWave();
+    const auto unit = first.plan.at("t1").front();
+    const auto allocation = restarted.units().at(unit.unit);
+    restarted.handle(restarted.record(UnitPublishSucceeded{212, first.id, unit.buildId, hash('b')}), count + 3);
+    auto expected = allocation;
+    expected.published = restarted.units().at(unit.unit).published;
+    CHECK(restarted.units().at(unit.unit) == expected);
+    CHECK(expected.published && expected.published->waveId == first.id);
+    CHECK_EQ(restarted.activeWave()->id, newer.id);
+    restarted.handle(restarted.record(WaveStarted{213, newer.id, 43, 1}), count + 4);
+    const auto nextUnit = newer.plan.at("t1").front();
+    restarted.handle(restarted.record(UnitBuildSucceeded{214, newer.id, nextUnit.buildId, "new-artifact"}), count + 5);
+    restarted.handle(restarted.record(UnitPublishSucceeded{215, newer.id, nextUnit.buildId, hash('d')}), count + 6);
+    const auto published = restarted.units().at(unit.unit);
+    CHECK(std::holds_alternative<Ignore>(restarted.classify(UnitPublishSucceeded{999, first.id, unit.buildId, hash('b')})));
+    CHECK(restarted.units().at(unit.unit) == published);
+
+    History backoff;
+    backoff.load();
+    backoff.apply(Tick{105});
+    backoff.apply(WaveDispatchRejected{106, backoff.wave().id, 1, 503, "busy"});
+    backoff.apply(Tick{136});
+    CHECK_EQ(backoff.wave().deadline, 236);
+    Engine replay(changed);
+    for (std::size_t n = 0; n < backoff.events.size(); ++n) {
+        replay.handle(backoff.events[n], n + 1);
+    }
+    CHECK(replay.waves() == backoff.engine.waves());
+
+    History terminal;
+    terminal.load();
+    terminal.apply(Tick{105});
+    terminal.apply(WaveStarted{106, terminal.wave().id, 42, 1});
+    terminal.apply(WaveFinished{107, terminal.wave().id, 42, "timeout"});
+    const auto finished = terminal.wave();
+    CHECK(std::holds_alternative<Ignore>(terminal.engine.classify(WaveFinished{999, finished.id, 42, "success"})));
+    CHECK(terminal.wave() == finished);
+
+    Engine legacy({5, 86400, 3, 600});
+    const std::vector<Event> oldRows{
+        h.events.front(), Tick{105}, WaveStarted{106, "w2", 42, 1}, UnitBuildSucceeded{107, "w2", "w2~a~t1", "artifact"}, Tick{23505}};
+    for (std::size_t n = 0; n < oldRows.size(); ++n) {
+        legacy.handle(oldRows[n], n + 1);
+    }
+    CHECK(legacy.units().at({"a", "t1"}).state == State::Failed);
+    CHECK_EQ(legacy.units().at({"a", "t1"}).failure->reason, "no result");
+    legacy.handle(legacy.record(UnitPublishSucceeded{23506, "w2", "w2~a~t1", hash('b')}), 6);
+    CHECK(legacy.units().at({"a", "t1"}).state == State::Published);
+    CHECK(!legacy.units().at({"a", "t1"}).failure);
+    legacy.handle(legacy.record(UnitBuildStarted{23507, "w2", "w2~a~t2"}), 7);
+    CHECK(!legacy.units().at({"a", "t2"}).failure);
+    CHECK(!legacy.units().at({"a", "t2"}).retryAfter);
+    CHECK(!legacy.units().at({"a", "t2"}).buildEnd);
+    legacy.handle(legacy.record(UnitBuildFailed{23508, "w2", "w2~a~t2", "late compiler failure"}), 8);
+    CHECK_EQ(*legacy.units().at({"a", "t2"}).buildEnd, 23508);
+    CHECK_EQ(*legacy.units().at({"a", "t2"}).retryAfter, 24108);
+    CHECK_EQ(legacy.units().at({"a", "t2"}).failure->reason, "late compiler failure");
 }
 
 void randomized() {
@@ -316,6 +484,8 @@ int main(int argc, char** argv) {
                                                       {"retry", retry},
                                                       {"dispatch", dispatch},
                                                       {"restart", restart},
+                                                      {"late", late},
+                                                      {"deadlines", deadlines},
                                                       {"graph", graph},
                                                       {"randomized", randomized}};
     CHECK(argc == 2);

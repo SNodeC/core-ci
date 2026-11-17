@@ -44,13 +44,18 @@ int main() {
     }
     const auto dispatch = std::get<std::string>(insertSql(WaveDispatchAccepted{1, "w1", 2}));
     CHECK(dispatch.ends_with(hex("WaveDispatchAccepted") + ",NULL,NULL,NULL,NULL,NULL,NULL," + hex("w1") +
-                             ",NULL,NULL,NULL,NULL,2,NULL,NULL,NULL,NULL,1)"));
+                             ",NULL,NULL,NULL,NULL,2,NULL,NULL,NULL,NULL,1,NULL)"));
+    Event expiry = WaveExpired{40, "w1"};
+    expiry.dispatchDeadline = 140;
+    const auto expirySql = std::get<std::string>(insertSql(expiry));
+    CHECK(expirySql.find(hex("WaveExpired")) != std::string::npos);
+    CHECK(expirySql.ends_with(",40,140)"));
     CHECK(std::holds_alternative<Invalid>(insertSql(TagObserved{1, "", "tag", sha, Origin::Webhook})));
     CHECK_EQ(selectSql(),
              "SELECT seq,HEX(event_type) AS event_type,HEX(package) AS package,HEX(target) AS target,HEX(tag) AS tag,"
              "HEX(source_sha) AS source_sha,HEX(origin) AS origin,HEX(build_id) AS build_id,HEX(wave_id) AS wave_id,http_status,"
              "HEX(message) AS message,run_id,run_attempt,attempt,HEX(artifact) AS artifact,HEX(feed_commit) AS feed_commit,"
-             "HEX(reason) AS reason,HEX(conclusion) AS conclusion,event_at FROM coreci_events ORDER BY seq");
+             "HEX(reason) AS reason,HEX(conclusion) AS conclusion,event_at,dispatch_deadline FROM coreci_events ORDER BY seq");
     CHECK_EQ(hex("'\\\";--/* é😀"), "_utf8mb4 X'275c223b2d2d2f2a20c3a9f09f9880'");
     const auto graphEvent = GraphChanged{11, testPipeline()};
     const auto row = std::get<EventRow>(encode(graphEvent));

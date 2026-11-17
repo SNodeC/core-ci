@@ -5,7 +5,7 @@ using namespace coreci;
 using namespace coreci::persistence;
 using namespace coreci::mariadb;
 int main() {
-    std::vector<std::optional<std::string>> fields(19);
+    std::vector<std::optional<std::string>> fields(20);
     fields[0] = "73";
     fields[1] = "556e69745075626c6973684661696c6564"; // UnitPublishFailed
     fields[8] = "7731";                               // w1
@@ -27,7 +27,7 @@ int main() {
         REQUIRE(std::holds_alternative<Invalid>(result));
         CHECK(std::get<Invalid>(result).reason.starts_with("seq 73:"));
     }
-    for (const auto index : {0, 11, 18}) {
+    for (const auto index : {0, 11, 18, 19}) {
         for (const auto& value : {"", "+1", "1x", " 1", "18446744073709551616"}) {
             auto bad = fields;
             bad[index] = value;

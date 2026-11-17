@@ -2,6 +2,7 @@
 #include "Graph.h"
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 namespace coreci {
@@ -89,19 +90,30 @@ namespace coreci {
         std::int64_t at;
         bool operator==(const Resumed&) const = default;
     };
-    using Event = std::variant<TagObserved,
-                               GraphChanged,
-                               WaveDispatchAccepted,
-                               WaveDispatchRejected,
-                               WaveStarted,
-                               WaveFinished,
-                               UnitBuildStarted,
-                               UnitBuildSucceeded,
-                               UnitBuildFailed,
-                               UnitPublishSucceeded,
-                               UnitPublishFailed,
-                               RetryRequested,
-                               RebuildRequested,
-                               Tick,
-                               Resumed>;
+    struct WaveExpired {
+        std::int64_t at;
+        std::string waveId;
+        bool operator==(const WaveExpired&) const = default;
+    };
+    using EventValue = std::variant<TagObserved,
+                                    GraphChanged,
+                                    WaveDispatchAccepted,
+                                    WaveDispatchRejected,
+                                    WaveStarted,
+                                    WaveFinished,
+                                    UnitBuildStarted,
+                                    UnitBuildSucceeded,
+                                    UnitBuildFailed,
+                                    UnitPublishSucceeded,
+                                    UnitPublishFailed,
+                                    RetryRequested,
+                                    RebuildRequested,
+                                    Tick,
+                                    Resumed,
+                                    WaveExpired>;
+    struct Event : EventValue {
+        using EventValue::EventValue;
+        std::optional<std::int64_t> dispatchDeadline;
+        bool operator==(const Event&) const = default;
+    };
 } // namespace coreci
