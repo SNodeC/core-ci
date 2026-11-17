@@ -1,7 +1,7 @@
 # core-ci — wave controller specification
 
 This is the master contract. No compatibility with earlier histories is required:
-use a fresh database. Section 7 is fixed owner-supplied CONTRACT W.
+preserve existing history; the additive schema-5-to-6 upgrade below is the only database compatibility exception. Section 7 is fixed owner-supplied CONTRACT W.
 
 ## 0. Goal
 
@@ -102,7 +102,10 @@ latest wave is the dashboard wave. Active = Dispatching or Running.
 
 ### 4.2 Complete events
 
-All carry at. Exactly these 15 types exist:
+All carry at. New records also carry optional dispatchDeadline: the absolute deadline
+computed before append from logical event time plus the configured wave-deadline.
+Only wave allocation and rejection-backoff redispatch consume this metadata. Replay
+uses the stored value, never current configuration. Exactly these 16 types exist:
 
 | Event | Additional fields |
 |---|---|
@@ -121,11 +124,12 @@ All carry at. Exactly these 15 types exist:
 | RebuildRequested | package, target |
 | Tick | — |
 | Resumed | — |
+| WaveExpired | waveId |
 
 No PublishStarted event: acknowledge signed publish-start without a state change.
 Every unit wire callback requires a positive run_id. Admit it only when it matches
 that wave's accepted WaveStarted owner, including after its deadline, then persist the existing typed
-unit event bound to wave id/build_id; no event schema or historical row changes.
+unit event bound to wave id/build_id; existing rows are never rewritten.
 The first accepted WaveStarted binds the positive owner run id/attempt; later
 WaveStarted from another run is acknowledged and ignored. WaveFinished must
 match the owner. The existing Wave.run_id is the only owner authority.
@@ -133,7 +137,7 @@ Duplicate/stale/wrong-wave callbacks do nothing, including engine time.
 Unit results may precede their build-start receipt, but require the owner
 WaveStarted; they cannot reverse a terminal result. Unit callbacks without an
 owner or from another run are acknowledged and ignored without changing time.
-Callback receipt proves dispatch; set deadline if acceptance was lost.
+Callback receipt proves dispatch; retain the deadline recorded by the allocating event.
 
 ### 4.3 Trigger and plan
 
@@ -176,8 +180,9 @@ Resends preserve wave_id and frozen inputs. First accepted owner_run_id fences
 callbacks and publication; GitHub dispatch itself may create duplicate runs.
 
 Accepted dispatch remains Dispatching until the first accepted WaveStarted,
-which makes the wave Running. The wave deadline remains dispatch time plus
-wave-deadline. Dispatching without WaveStarted for wave-start-timeout seconds
+which makes the wave Running. The allocating event records dispatch time plus
+wave-deadline as an absolute deadline. A rejection-backoff redispatch records its
+new absolute deadline in the event advancing the attempt. Dispatching without WaveStarted for wave-start-timeout seconds
 redispatches the same frozen wave with attempt+1, including on Resumed; measure
 from the most recent dispatch time. A recorded rejection retains its existing
 backoff and exhaustion rules. Start-timeout redispatch does not extend the wave
@@ -203,18 +208,34 @@ Automatic retry has the same effect once per failed version+inputs after retryDe
 (zero disables), except permanent dispatch rejections. New version/inputs make
 old failure eligible again. Requests/tags during a wave affect the following plan.
 
-Deadline expiry finishes the scheduling hold with conclusion "timeout"; it does
+The existing timer appends WaveExpired when the recorded deadline is due, including
+immediately after startup/recovery. Only its committed application ends the hold;
+new Tick/Resumed records do not synthesize expiry. WaveExpired finishes the
+scheduling hold with conclusion "timeout"; it does
 not synthesize unit failures, Blocked outcomes or retries. Preserve unit state,
 frozen selection and owner_run_id. The owner's late build/publish callbacks still
 update units through their ordinary transitions; a successful publication is
 Published, never "no result", and the next plan reuses its version-revision and
 inputs. Non-owner callbacks remain ignored. Late callbacks do not reactivate the
 expired wave or extend its hold; an owner WaveFinished may finalize remaining
-unit outcomes. Resumed applies the same start-timeout rule to an unfinished
+unit outcomes exactly once, including a real owner conclusion of "timeout". A late
+publication from a superseded allocation updates the publication fact without
+replacing the newer allocation state, timings or failure; an older allocation
+cannot overwrite a newer publication. Legacy synthetic no-result failures admit
+the missing owner outcome; explicit terminal build/publish outcomes remain final. Resumed applies the same start-timeout rule to an unfinished
 Dispatching wave; an owner-bound Running wave waits for its deadline.
 An attempt with explicit rejection resumes its known backoff. nextDeadline is the
 earliest applicable debounce, wave start-timeout, backoff/deadline or automatic retry time; exclude
-debounce while active. Tick handles these due times; no per-unit deadline exists.
+debounce while active. Tick handles debounce/start-timeout/backoff/retry due times; no per-unit deadline exists.
+
+The sole legacy rule is for events without dispatchDeadline: allocation and
+backoff redispatch use 23400 seconds, never the current setting. Their historical
+Tick/Resumed expiry still performs the original no-result/Blocked/automatic-retry
+transitions, preserving every existing revision allocation and wave state. No
+event is rewritten or removed; revision allocation must never decrease on replay.
+New waves use the new configured duration. A production-shaped legacy replay
+fixture including w964/w1339 timeouts and retries must match the pre-change
+baseline for every revision and existing wave field under changed configuration.
 
 ## 5. Persistence — MariaDB via SNode.C's MariaDB client
 
@@ -228,17 +249,17 @@ Verified facts (SNode.C master, `src/database/mariadb/MariaDBClientASyncAPI.h`, 
 
 ### 5.2 Schema (adapters/mariadb/Schema.sql, created by core-ci at startup with `CREATE TABLE IF NOT EXISTS`, InnoDB, utf8mb4)
 
-Fresh schema 5 uses coreci_events with typed nullable columns: package, target,
+Fresh schema 6 uses coreci_events with typed nullable columns: package, target,
 tag, source_sha, origin, wave_id, build_id, http_status, message, run_id,
-run_attempt, attempt, artifact, feed_commit, reason, conclusion, event_at.
+run_attempt, attempt, artifact, feed_commit, reason, conclusion, event_at, dispatch_deadline.
 No kind column. Graph tables contain packages (source identity/revision_base),
 target memberships, prerequisites and selected release rows. No feed table or
 per-package workflow columns. Schema.sql is the exact DDL authority.
 
 
-`coreci_schema` holds exactly one row, `version = 5`. In `open`: if `coreci_schema` has no row and all `coreci_*` tables are empty, insert `version = 5`; no row while any table has rows, more than one row, or a version other than 5 → `Corrupt` (older databases are not migrated). Every event type uses only its own columns; the others are `NULL`.
+`coreci_schema` holds exactly one row, `version = 6`. In `open`, under the writer lock, upgrade version 5 only by idempotently adding nullable BIGINT dispatch_deadline and then recording version 6. Existing event rows, identities and graph rows remain unchanged; their deadline metadata is NULL. If the schema table has no row and all coreci tables are empty, insert version 6. No row with existing data, multiple rows, or any other version is Corrupt. Every event uses only its own columns plus the optional common deadline metadata; the others are NULL.
 
-**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` set) plus its graph rows and selected tags in coreci_graph_releases(event_seq, package, tag, source_sha, origin), all non-null and keyed by (event_seq, package), written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail section 3, are `Corrupt`. Schema migrations are out of scope.
+**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` and optional `dispatch_deadline` set) plus its graph rows and selected tags in coreci_graph_releases(event_seq, package, tag, source_sha, origin), all non-null and keyed by (event_seq, package), written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail section 3, are `Corrupt`. Other schema migrations are out of scope.
 
 Every event field from 4.3 maps to exactly one typed column; unused columns are `NULL`. The mapping `Event ↔ EventRow` lives in `persistence/EventRow.cpp`, is pure and is round-trip tested for every event type.
 
