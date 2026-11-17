@@ -11,21 +11,22 @@
 
 namespace coreci::persistence {
     namespace {
-        constexpr std::array<std::string_view, std::variant_size_v<Event>> names{"TagObserved",
-                                                                                 "GraphChanged",
-                                                                                 "WaveDispatchAccepted",
-                                                                                 "WaveDispatchRejected",
-                                                                                 "WaveStarted",
-                                                                                 "WaveFinished",
-                                                                                 "UnitBuildStarted",
-                                                                                 "UnitBuildSucceeded",
-                                                                                 "UnitBuildFailed",
-                                                                                 "UnitPublishSucceeded",
-                                                                                 "UnitPublishFailed",
-                                                                                 "RetryRequested",
-                                                                                 "RebuildRequested",
-                                                                                 "Tick",
-                                                                                 "Resumed"};
+        constexpr std::array<std::string_view, std::variant_size_v<EventValue>> names{"TagObserved",
+                                                                                      "GraphChanged",
+                                                                                      "WaveDispatchAccepted",
+                                                                                      "WaveDispatchRejected",
+                                                                                      "WaveStarted",
+                                                                                      "WaveFinished",
+                                                                                      "UnitBuildStarted",
+                                                                                      "UnitBuildSucceeded",
+                                                                                      "UnitBuildFailed",
+                                                                                      "UnitPublishSucceeded",
+                                                                                      "UnitPublishFailed",
+                                                                                      "RetryRequested",
+                                                                                      "RebuildRequested",
+                                                                                      "Tick",
+                                                                                      "Resumed",
+                                                                                      "WaveExpired"};
         struct Character {
             std::size_t bytes;
             bool valid;
@@ -91,6 +92,7 @@ namespace coreci::persistence {
             EventRow row;
             row.seq = seq;
             row.eventType = names.at(event.index());
+            row.dispatchDeadline = event.dispatchDeadline;
             std::visit(
                 [&](const auto& e) {
                     row.eventAt = e.at;
@@ -348,8 +350,11 @@ namespace coreci::persistence {
                 result = Event{GraphChanged{at, builder.build(), graph.releases}};
             } else if (row.eventType == "Resumed") {
                 result = Event{Resumed{at}};
+            } else if (row.eventType == "WaveExpired") {
+                result = Event{WaveExpired{at, required(row.waveId, "wave_id")}};
             }
             if (std::holds_alternative<Event>(result)) {
+                std::get<Event>(result).dispatchDeadline = row.dispatchDeadline;
                 const auto normalized = normalize(std::get<Event>(result));
                 if (std::holds_alternative<Invalid>(normalized)) {
                     result = std::get<Invalid>(normalized);

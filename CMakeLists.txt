@@ -49,6 +49,7 @@ foreach(
     dispatch
     restart
     late
+    deadlines
     graph
     randomized
 )
@@ -73,6 +74,12 @@ if(CORECI_WITH_SNODEC)
         adapters/github/Protocol.cpp adapters/github/HttpClient.cpp
         adapters/github/Declarations.cpp adapters/github/AppToken.cpp
     )
+    add_executable(W_ReplayHistory tests/W_ReplayHistory.cpp)
+    target_link_libraries(W_ReplayHistory PRIVATE coreci_status)
+    add_test(NAME W_ReplayHistory
+             COMMAND W_ReplayHistory ${CMAKE_CURRENT_SOURCE_DIR}/tests/data
+    )
+    set_tests_properties(W_ReplayHistory PROPERTIES LABELS "core;persistence")
     target_link_libraries(
         coreci_github
         PUBLIC coreci_persistence snodec::http-client snodec::net-in-stream-tls

@@ -318,7 +318,7 @@ namespace coreci::app {
                     [this] {
                         recoveryDelay = 1;
                         dashboard->changed();
-                        dispatch();
+                        tick();
                         if (listening) {
                             reload();
                         }
@@ -368,14 +368,16 @@ namespace coreci::app {
                 const auto at = now();
                 if (engine && !tickPending && engine->nextDeadline() && at >= *engine->nextDeadline()) {
                     tickPending = true;
-                    queue->enqueue(Tick{at}, [this](const auto&) {
+                    const auto* wave = engine->activeWave();
+                    queue->enqueue(wave && at >= wave->deadline ? Event{WaveExpired{at, wave->id}} : Event{Tick{at}}, [this](const auto&) {
                         tickPending = false;
+                        dispatch();
                     });
                 }
                 dispatch();
             }
             void dispatch() {
-                if (const auto* engine = queue->engine()) {
+                if (const auto* engine = queue->engine(); engine && !tickPending) {
                     for (const auto& command : engine->commands()) {
                         if (dispatching != command) {
                             dispatching = command;

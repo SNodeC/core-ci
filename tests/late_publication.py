@@ -10,9 +10,40 @@ from fixture import fixture
 from database import eventually
 
 
+def sql(statement):
+    command = ['mariadb', '--no-defaults', '--skip-ssl', '--host=' + os.environ['CORECI_TEST_DB_HOST'],
+               '--port=' + os.environ.get('CORECI_TEST_DB_PORT', '3306'),
+               '--user=' + os.environ['CORECI_TEST_DB_USER'], '--database=' + os.environ['CORECI_TEST_DB_NAME'],
+               '-NB', '-e', statement]
+    return subprocess.check_output(command, env=dict(os.environ, MYSQL_PWD=os.environ.get('CORECI_TEST_DB_PASSWORD', '')),
+                                   text=True).strip()
+
+
+def restart(fx):
+    fx.process = subprocess.Popen(fx.command, env=fx.env, stdout=fx.log, stderr=subprocess.STDOUT)
+    assert eventually(lambda: fx.request('/api/v1/status.json', browser=False).status == 200)
+
+
 def run(build):
     with fixture(build, small=True, virtual_clock=True, wave_deadline=60) as fx:
         fx.ready()
+        # Simulate real schema 5 and an interrupted additive upgrade. Existing
+        # startup records have no allocations; their common metadata was unused.
+        for column_present in (False, True):
+            fx.process.terminate()
+            assert fx.process.wait(timeout=10) == 0
+            if not column_present:
+                sql('ALTER TABLE coreci_events DROP COLUMN dispatch_deadline')
+            sql('UPDATE coreci_schema SET version=5')
+            maximum = sql('SELECT MAX(seq) FROM coreci_events')
+            columns = ('seq,recorded_at,event_type,package,target,tag,source_sha,origin,build_id,wave_id,http_status,'
+                       'message,run_id,run_attempt,attempt,artifact,feed_commit,reason,conclusion,event_at')
+            rows = sql(f'SELECT {columns} FROM coreci_events WHERE seq<={maximum} ORDER BY seq')
+            graphs = sql('CHECKSUM TABLE coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases')
+            restart(fx)
+            assert sql('SELECT version FROM coreci_schema') == '6'
+            assert sql(f'SELECT {columns} FROM coreci_events WHERE seq<={maximum} ORDER BY seq') == rows
+            assert sql('CHECKSUM TABLE coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases') == graphs
         assert fx.webhook('owner/a') == 200
         owner, values = fx.dispatches.get(timeout=10)
         fx.started(owner, values)
@@ -28,11 +59,13 @@ def run(build):
         fx.advance(70)
         assert eventually(lambda: status()['wave']['phase'] == 'Finished')
         assert status()['wave']['conclusion'] == 'timeout'
+        assert sql("SELECT COUNT(*) FROM coreci_events WHERE event_type='WaveExpired'") == '1'
         assert status()['units'] == before, 'deadline synthesized unit outcomes'
         fx.process.terminate()
         assert fx.process.wait(timeout=10) == 0
-        fx.process = subprocess.Popen(fx.command, env=fx.env, stdout=fx.log, stderr=subprocess.STDOUT)
-        assert eventually(lambda: fx.request('/api/v1/status.json', browser=False).status == 200)
+        fx.command[fx.command.index('--wave-deadline') + 1] = '86400'
+        restart(fx)
+        assert status()['wave']['phase'] == 'Finished', 'configuration change revived the expired wave'
         assert status()['units'] == before, 'replay changed expired unit outcomes'
         assert fx.plan(values) == plan
 
@@ -60,6 +93,8 @@ def run(build):
         assert status()['wave']['conclusion'] == 'success'
         assert fx.webhook('owner/b') == 200
         next_owner, next_values = fx.dispatches.get(timeout=10)
+        seq = int(next_values['wave_id'][1:])
+        assert sql(f'SELECT dispatch_deadline-event_at FROM coreci_events WHERE seq={seq}') == '86400'
         for target in fx.plan(next_values)['targets']:
             reused = next(entry for entry in target['units'] if entry['package'] == 'a')
             assert reused['action'] == 'reuse' and reused['revision'] == 1 and reused['build_id'] == ''

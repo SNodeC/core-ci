@@ -37,6 +37,7 @@ namespace coreci {
         std::optional<std::int64_t> retryAt;
         std::int64_t dispatchedAt = 0, deadline = 0;
         bool dispatchAccepted = false;
+        bool awaitingOwnerFinish = false;
         std::optional<std::int64_t> started, finished;
         std::string conclusion;
         bool operator==(const Wave&) const = default;
@@ -93,6 +94,7 @@ namespace coreci {
     public:
         explicit Engine(Options options = {});
         Classification classify(const Event& event) const;
+        Event record(Event event) const;
         void handle(const Event& event, std::uint64_t seq = 0);
         std::vector<Command> commands() const;
         std::optional<std::int64_t> nextDeadline() const;
@@ -114,7 +116,7 @@ namespace coreci {
         void dirty();
         void request(const Unit& unit);
         void fail(const PlanUnit& unit, const std::string& reason, bool buildFailed = false, bool automatic = true);
-        void finish(Wave& wave, const std::string& conclusion);
+        void finish(Wave& wave, const std::string& conclusion, bool expired = false);
         Pipeline graph;
         Options options;
         std::map<std::string, std::optional<Released>> released;
