@@ -344,14 +344,20 @@ namespace coreci {
                                     for (const auto& entry : entries) {
                                         if (entry.build && entry.buildId == e.buildId) {
                                             auto& state = unitStates.at(entry.unit);
+                                            if (state.waveId == wave.id) {
+                                                state.failure.reset();
+                                                state.retryAfter.reset();
+                                            }
                                             if constexpr (std::is_same_v<E, UnitBuildStarted>) {
                                                 state.state = State::Building;
                                                 state.buildStart = *engineTime;
+                                                state.buildEnd.reset();
                                             } else if constexpr (std::is_same_v<E, UnitBuildSucceeded>) {
                                                 state.state = State::Built;
                                                 state.artifact = e.artifact;
                                                 state.buildEnd = *engineTime;
                                             } else if constexpr (std::is_same_v<E, UnitBuildFailed>) {
+                                                state.buildEnd = *engineTime;
                                                 fail(entry, e.reason, true);
                                             } else if constexpr (std::is_same_v<E, UnitPublishSucceeded>) {
                                                 state.published = Published{entry.release.version,
@@ -364,8 +370,6 @@ namespace coreci {
                                                 if (state.waveId == wave.id) {
                                                     state.state = State::Published;
                                                     state.publishEnd = *engineTime;
-                                                    state.failure.reset();
-                                                    state.retryAfter.reset();
                                                 }
                                             } else if constexpr (std::is_same_v<E, UnitPublishFailed>) {
                                                 state.publishEnd = *engineTime;

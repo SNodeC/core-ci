@@ -419,7 +419,7 @@ void deadlines() {
     CHECK(std::holds_alternative<Ignore>(terminal.engine.classify(WaveFinished{999, finished.id, 42, "success"})));
     CHECK(terminal.wave() == finished);
 
-    Engine legacy({5, 86400, 3, 0});
+    Engine legacy({5, 86400, 3, 600});
     const std::vector<Event> oldRows{
         h.events.front(), Tick{105}, WaveStarted{106, "w2", 42, 1}, UnitBuildSucceeded{107, "w2", "w2~a~t1", "artifact"}, Tick{23505}};
     for (std::size_t n = 0; n < oldRows.size(); ++n) {
@@ -430,6 +430,14 @@ void deadlines() {
     legacy.handle(legacy.record(UnitPublishSucceeded{23506, "w2", "w2~a~t1", hash('b')}), 6);
     CHECK(legacy.units().at({"a", "t1"}).state == State::Published);
     CHECK(!legacy.units().at({"a", "t1"}).failure);
+    legacy.handle(legacy.record(UnitBuildStarted{23507, "w2", "w2~a~t2"}), 7);
+    CHECK(!legacy.units().at({"a", "t2"}).failure);
+    CHECK(!legacy.units().at({"a", "t2"}).retryAfter);
+    CHECK(!legacy.units().at({"a", "t2"}).buildEnd);
+    legacy.handle(legacy.record(UnitBuildFailed{23508, "w2", "w2~a~t2", "late compiler failure"}), 8);
+    CHECK_EQ(*legacy.units().at({"a", "t2"}).buildEnd, 23508);
+    CHECK_EQ(*legacy.units().at({"a", "t2"}).retryAfter, 24108);
+    CHECK_EQ(legacy.units().at({"a", "t2"}).failure->reason, "late compiler failure");
 }
 
 void randomized() {
