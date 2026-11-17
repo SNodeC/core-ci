@@ -124,7 +124,7 @@ if(CORECI_WITH_SNODEC)
         set_tests_properties(
             ${case}
             PROPERTIES LABELS
-                       integration
+                       "integration;mariadb"
                        ENVIRONMENT
                        "PYTHONDONTWRITEBYTECODE=1"
                        SKIP_RETURN_CODE
@@ -181,14 +181,14 @@ if(CORECI_WITH_SNODEC)
         )
         set_tests_properties(
             ConnectionLoss-${mode}
-            PROPERTIES LABELS integration TIMEOUT 90 ENVIRONMENT
+            PROPERTIES LABELS "integration;mariadb" TIMEOUT 90 ENVIRONMENT
                        "PYTHONDONTWRITEBYTECODE=1"
         )
     endforeach()
     set_tests_properties(
         M_LocalSmoke S26_WaveStart
         PROPERTIES LABELS
-                   integration
+                   "integration;mariadb"
                    SKIP_RETURN_CODE
                    77
                    TIMEOUT
@@ -241,8 +241,8 @@ if(CORECI_WITH_SNODEC)
     endforeach()
     set_tests_properties(A_MariaDBRows PROPERTIES LABELS adapters)
     set_tests_properties(
-        M_MariaDBIntegration PROPERTIES LABELS integration SKIP_RETURN_CODE 77
-                                        TIMEOUT 30
+        M_MariaDBIntegration PROPERTIES LABELS "integration;mariadb"
+                                        SKIP_RETURN_CODE 77 TIMEOUT 30
     )
 endif()
 # Explicit discovery stays within owned source directories.
