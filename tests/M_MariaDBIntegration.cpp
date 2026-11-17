@@ -17,7 +17,7 @@ Pipeline pipeline() {
     return testPipeline();
 }
 Engine engine() {
-    return Engine({5, 100, 8, 0});
+    return Engine({5, 23400, 8, 0});
 }
 class Integration {
 public:
@@ -108,11 +108,19 @@ private:
             later([this] {
                 queue.reset(); // destroys the first engine
                 store.reset(); // destroys the first SNode.C client and its connection
-                fresh([this] {
-                    CHECK_EQ(recordedStatus(*queue->engine()), before);
-                    CHECK(queue->engine()->commands().empty());
-                    CHECK(queue->engine()->activeWave());
-                    checkRows();
+                // Existing allocated schema-5 history must survive the additive
+                // upgrade with its owner, publication, revisions and deadline.
+                sql("ALTER TABLE coreci_events DROP COLUMN dispatch_deadline", [this] {
+                    sql("UPDATE coreci_schema SET version=5", [this] {
+                        fresh([this] {
+                            CHECK_EQ(recordedStatus(*queue->engine()), before);
+                            CHECK(queue->engine()->commands().empty());
+                            CHECK(queue->engine()->activeWave());
+                            CHECK_EQ(queue->engine()->activeWave()->deadline, 23505);
+                            CHECK_EQ(*queue->engine()->activeWave()->runId, 101U);
+                            checkRows();
+                        });
+                    });
                 });
             });
         } else {
