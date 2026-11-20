@@ -1,53 +1,53 @@
-# core-ci — wave controller specification
+# core-ci — state and publication specification
 
-This is the master contract. No compatibility with earlier histories is required:
-preserve existing history; the additive schema-5-to-6 upgrade below is the only database compatibility exception. Section 7 is fixed owner-supplied CONTRACT W.
+This is the master contract. Section 7 is fixed owner-supplied CONTRACT W v2.
 
 ## 0. Goal
 
 A single-threaded C++20 daemon loads tag-bound declarations, maintains a typed
-package×target dependency graph, plans one wave, and dispatches one GitHub workflow.
-Per-target chains run independently inside that workflow and publish once. core-ci
+package×target dependency graph, plans one wave, and dispatches target chains.
+Finished targets publish early through a separate publication workflow. core-ci
 never compiles, packages, signs, downloads artifacts or writes feeds.
 
 ## 1. Constraints
 
-The engine is pure: no I/O, clock or randomness. Each accepted event carries UTC
-seconds at; engine time advances monotonically. Identical history/options produce
-identical state/plans/pending commands. SNode.C owns networking, TLS, timers and asynchronous
-MariaDB access. No threads, mutexes, blocking sleeps or Actions run/job polling.
+Committed state is authoritative. Display history is append-only and never read
+to rebuild state. No runtime event store, replay, legacy replay transitions,
+compatibility path or feature flag remains. Every state change is one transaction.
+Outward actions are projections of stored state whenever core-ci is live, after
+start, reconnect and timers; they are not consumed transition results.
 
-Typed Pipeline and event history are authoritative. No JSON persistence, graph
-blobs or JSON SQL. JSON libraries only in adapters/github and adapters/dashboard.
-Public status and plan JSON are handwritten in app, never stored or read back.
-At most one active wave globally. No per-unit dispatch, Kind, DispatchPublish,
-feed queues/locks, per-unit deadlines or maxConcurrentBuilds remain.
-
-Actions use major tags, never SHA pins. No production access, deployment or tags.
-Build C++20 with -Wall -Wextra -Wpedantic -Werror. Core/persistence remain buildable
-without SNode.C. Keep committed shared formatting settings and explicit targets.
+SNode.C owns networking, TLS, timers and asynchronous MariaDB access. No threads,
+mutexes, blocking sleeps or Actions run/job polling. Core/persistence remain
+buildable without SNode.C. Build C++20 with -Wall -Wextra -Wpedantic -Werror.
+Actions use major tags. No production access, deployment or tags.
 
 ## 2. Ownership and workspace
 
-core owns versions, graph, planner and engine. persistence owns typed event rows,
-SQL and the write-ahead queue. adapters/github owns declarations, App auth,
-dispatch and HMAC; adapters/mariadb implements the store; adapters/dashboard
-projects events; app owns routes, timers, configuration and dashboard assets.
-tests contains the test-only in-memory store and disposable loopback fixtures.
+Thin main starts the application. config owns application options in the coreci
+section; SNode.C owns WebApp instance options. API, webhook and dashboard routers
+mount on the WebApp. WaveController owns planning/build scheduling;
+PublicationController owns target batching and publication scheduling. Existing
+GitHub, dashboard and MariaDB adapters retain their transport responsibilities.
+The state store owns transaction boundaries and recovery. There is one authority
+for every fact. Only the separate coreci-migrate tool contains old replay semantics;
+it is never linked into the daemon.
 
-Canonical checkout /home/voc/projects/snodec/core-ci only. Temporary builds:
- /tmp/codex/build/core-ci/wave-model (including compiler temporaries).
-Persistent results: build/codex/wave-model, removable after review. No additional
-checkout. Never modify chore/owner-pending-core-ci, AGENTS.md, .local-credentials/,
-secrets/ or .qtcreator/. Existing explicit formatting targets adapt the canonical
-modules to this layout; builds use committed copies only.
+Canonical source: /home/voc/projects/snodec/core-ci.
+Persistent agent build: /home/voc/projects/snodec/build/codex/core-ci/state-model.
+Manual build: /home/voc/projects/snodec/build/qtcreator/core-ci/<configuration>.
+Temporary builds: /tmp/codex/build/core-ci/state-model.
+Temporary artifacts: /tmp/codex/artifacts/core-ci/state-model.
+No additional checkout. Never modify chore/owner-pending-core-ci, AGENTS.md,
+.local-credentials/, secrets/ or .qtcreator/. Committed formatting and analysis
+settings match the shared baseline; use explicit development targets.
 
 ## 3. Graph and declarations
 
 Unit = package×target. Package: name, canonical sourceRepo/default branch,
 targets, prerequisites, revisionBase. Target: opaque catalog id. No Feed or
 per-package build/publisher workflow types. One configured workflow repository,
-wave.yml on main; feed branch belongs to the wave configuration.
+wave.yml and publish.yml on main; feed branch belongs to the wave configuration.
 
 Validate duplicate packages, source repository identities, target ids within a
 package, prerequisites and catalog ids; unknown references; cycles with cycle
@@ -69,7 +69,7 @@ Highest stable release wins. Sources without accepted release bootstrap their
 default-branch declaration only to display Idle units without a release, never
 to build. For unchanged source identity, never omit/regress a recorded release
 (including dormant packages) or replace it with an equal-version tag alias.
-GraphChanged atomically includes its selected TagObserved records.
+A graph replacement atomically includes its selected tags.
 W2 has no prerelease opt-in; Version still parses/orders full SemVer.
 
 Tags exactly v?MAJOR.MINOR.PATCH(-PRERELEASE)?(+BUILD)?, SemVer 2.0.0, max 100
@@ -83,226 +83,148 @@ nothing. Concurrent triggers coalesce to one more load; sources load independent
 Unchanged reload never rebuilds published units. Removed units retire from the
 active graph. Active wave plans remain frozen and callbacks resolve against them.
 
-## 4. Engine
+## 4. State model and controllers
 
-### 4.1 Stored state
+### 4.1 Stored facts
 
-Per package: released {version, tag, sourceSha}. Unit state: Idle, Planned,
-Building, Built, Published, Failed, Blocked. Idle includes no-release units.
-Per unit: publication {version, revision, inputs, feedCommit, at, runId}, failure
-{version, revision, inputs, reason, at}, retryAfter, autoRetried version+inputs,
-requested retry/rebuild, lastRevision by version, allocation order, build start/end
-and wave run/attempt. No independent workflow/job state cache.
+- units: package, target; published version/revision/inputs/feed_commit/time and
+  source/run links; current status Idle|Planned|Building|Built|Publishing|Published|
+  Failed|Blocked; last reason, allocation order, build/publication timings,
+  next revision per version, requested retry/rebuild and automatic retry bookkeeping.
+- waves: id, feed_branch, frozen typed plan, owner_run_id, run_attempt, dispatch
+  attempt, phase, absolute deadline, start-timeout/retry times, timestamps, conclusion.
+- wave_targets: wave, target, status, artifact.
+- publications: id, feed_branch, frozen typed plan, owner_run_id, run_attempt,
+  dispatch attempt, phase, absolute deadline, start-timeout/retry times, timestamps.
+- tags: package → highest observed stable release tag/commit, including dormant
+  packages. Source identity determines whether a recorded release can be reused.
+- log: append-only display history. Never read for startup, recovery or decisions.
 
-Wave {id "w<seq>", immutable plan, feed_branch, phase Dispatching | Running |
-Finished, run_id, run_attempt, attempt, retryAt, deadline}; retain dispatch,
-start/end, conclusion. seq is the committed allocating event sequence. Retain
-plans in replayed engine history for public GET, without persisted JSON. The
-latest wave is the dashboard wave. Active = Dispatching or Running.
+Typed state includes the current graph, scheduling clock/debounce and monotonically
+allocated ids. Schema.sql is the exact DDL authority; child tables for typed plans,
+inputs, revisions and graph membership are allowed, with one authoritative copy.
+No persisted event stream or JSON state/graph blobs.
 
-### 4.2 Complete events
+### 4.2 Planning, revisions and cascade
 
-All carry at. New records also carry optional dispatchDeadline: the absolute deadline
-computed before append from logical event time plus the configured wave-deadline.
-Only wave allocation and rejection-backoff redispatch consume this metadata. Replay
-uses the stored value, never current configuration. Exactly these 16 types exist:
+New highest release, changed graph/build inputs, manual retry/rebuild or due
+automatic retry marks dirty and sets quiet-until = logical time + wave-delay.
+Logical time advances monotonically from supplied UTC seconds. Changes during an
+active wave coalesce into the next. After quiet-until, with no active wave,
+allocate one wave; an empty plan clears dirty without dispatch.
 
-| Event | Additional fields |
-|---|---|
-| TagObserved | package, tag, sourceSha, origin webhook/reconcile |
-| GraphChanged | pipeline, selected TagObserved records |
-| WaveDispatchAccepted | waveId, attempt |
-| WaveDispatchRejected | waveId, attempt, httpStatus, message |
-| WaveStarted | waveId, runId, runAttempt |
-| WaveFinished | waveId, runId, conclusion |
-| UnitBuildStarted | waveId, buildId |
-| UnitBuildSucceeded | waveId, buildId, artifact |
-| UnitBuildFailed | waveId, buildId, reason |
-| UnitPublishSucceeded | waveId, buildId, feedCommit |
-| UnitPublishFailed | waveId, buildId, reason |
-| RetryRequested | package, target |
-| RebuildRequested | package, target |
-| Tick | — |
-| Resumed | — |
-| WaveExpired | waveId |
+Per target traverse in deterministic topological order. Select prerequisite
+version-revisions from this plan. Build if the current version is unpublished,
+inputs differ from publication, retry/rebuild is requested, or a same-target
+prerequisite builds; otherwise reuse the published version-revision. Missing
+releases prevent that chain from building. Unchanged failed chains wait for retry;
+independent units remain eligible. Omit targets without a build. Reuse has empty
+build_id and no callbacks, and counts as Published.
 
-No PublishStarted event: acknowledge signed publish-start without a state change.
-Every unit wire callback requires a positive run_id. Admit it only when it matches
-that wave's accepted WaveStarted owner, including after its deadline, then persist the existing typed
-unit event bound to wave id/build_id; existing rows are never rewritten.
-The first accepted WaveStarted binds the positive owner run id/attempt; later
-WaveStarted from another run is acknowledged and ignored. WaveFinished must
-match the owner. The existing Wave.run_id is the only owner authority.
-Duplicate/stale/wrong-wave callbacks do nothing, including engine time.
-Unit results may precede their build-start receipt, but require the owner
-WaveStarted; they cannot reverse a terminal result. Unit callbacks without an
-owner or from another run are acknowledged and ignored without changing time.
-Callback receipt proves dispatch; retain the deadline recorded by the allocating event.
+For each build allocate max(last revision for version, revision_base)+1, including
+retry/rebuild. Freeze source repo, tag, commit, version, revision, inputs and direct
+prerequisites. Reset allocation timings, assign Planned and consume the request.
+Never decrease any revision, including across migration and restart.
 
-### 4.3 Trigger and plan
+Retry on Failed schedules it and its Blocked dependents. Rebuild on Published
+schedules it and its dependent cascade. Automatic retry has the same effect once
+per failed version+inputs after retry-delay (zero disables), except permanent
+dispatch rejection. New version/inputs make an old failure eligible again.
+Blocked units have no independent retry timer.
 
-New highest release, GraphChanged adding units or changing build inputs, manual
-retry/rebuild, or due automatic retry marks dirty and sets quiet-until = engine
-time + wave-delay. Changes during an active wave coalesce into the next.
-After the quiet period, with no active wave, plan/dispatch once; empty plan clears
-dirty without a workflow. The only outward action is DispatchWave {waveId, attempt,
-workflow, feedBranch}; URLs derive from wave id. Pending actions are a pure projection
-of committed engine state, not a consumed return value from an event transition.
+### 4.3 Ownership, target publication and completion
 
-Per target traverse all units in topological order. Select each prerequisite's
-version-revision from this plan. Build if current version is unpublished, inputs
-differ from publication, retry/rebuild requested, or any same-target prerequisite
-builds. Otherwise reuse published version-revision. Missing releases prevent that
-chain from building. Unchanged failed units wait for retry with their dependent
-chain; independent units remain eligible. Omit targets with no build units.
-Reuse has empty build_id and no callbacks. Wave counts include reuse as Published.
+First valid started callback binds the positive run id/attempt immutably, separately
+for each wave/publication. Other runs and callbacks without an owner are acknowledged
+and ignored without changing state or time. The frozen plan admits build ids.
+Duplicate/stale callbacks cannot reverse terminal results or regress publication
+facts. Results may precede build-start receipt. Owner callbacks remain valid after
+a deadline. An older allocation may update its publication fact but never overwrite
+a newer publication or replace newer allocation state, timings or failure.
 
-For each build allocate max(lastRevision[version], revision_base)+1 as before,
-including retry/rebuild; reuse retains publication revision. Freeze source repo,
-tag, commit, version, revision, inputs and direct prerequisites. Reset build/result
-timings on allocation, assign Planned, consume its request. Allocate only builds
-on included targets. The plan is the sole authority for unit callbacks. Publication records refer to
-that wave for its accepted owner run identity.
+Build started → Building; succeeded → Built; failed → Failed with reason/timing.
+A target finished callback records its artifact and target completion atomically.
+An empty artifact means there are no successfully built packages to publish.
+Skipped units with transitive failed same-target prerequisites become Blocked;
+other missing build results become Failed. Preserve independent successes.
 
-### 4.4 Dispatch and lifetime
+When no publication is active for a feed, batch all finished targets with nonempty
+artifacts and unpublished built units into one frozen publication, one item per
+target with its successful units. Mark those units Publishing. Targets finishing
+during publication wait for the next publication. Do not wait for wave completion.
+Publication callbacks require the publication owner. Success records Published
+with frozen version/revision/inputs, feed_commit/time/run; clear failure/request.
+Already-published success is idempotent. Failure records the reason. A failed
+publication unit is retried through a new publication using the same artifact
+while available, retaining version/revision; if unavailable it requires a rebuild.
+No artifact download or Actions polling is introduced into core-ci.
 
-Whenever the engine is live after startup, reconnect, replay or Resumed, a Dispatching
-wave without an accepted or rejected dispatch for its current attempt exposes the
-same pending DispatchWave. app drives this state after readiness, committed events
-and its existing tick. EventQueue owns persistence only; it never delivers outward
-commands. No historical HTTP effects run during replay. All initial dispatches,
-manual/automatic retries, rejection retries and reload/reconcile-triggered waves
-use this single state-derived authority. Repeated reads do not consume the action.
-app tracks only the lifetime of an HTTP request and its result append to avoid
-overlapping requests for the same wave/attempt; different attempts remain independent.
-An unavailable result append releases that request so recovered state can retry.
-Resends preserve wave_id and frozen inputs. First accepted owner_run_id fences
-callbacks and publication; GitHub dispatch itself may create duplicate runs.
+Wave-finished records the owner's conclusion; the wave remains active until every
+planned target is published, failed or blocked. Deadline expiry also permits this
+completion check; late owner callbacks still apply. No next wave starts before
+this hold ends. Publication-finished finalizes missing publication outcomes once;
+late owner successes after deadlines remain valid.
 
-Accepted dispatch remains Dispatching until the first accepted WaveStarted,
-which makes the wave Running. The allocating event records dispatch time plus
-wave-deadline as an absolute deadline. A rejection-backoff redispatch records its
-new absolute deadline in the event advancing the attempt. Dispatching without WaveStarted for wave-start-timeout seconds
-redispatches the same frozen wave with attempt+1, including on Resumed; measure
-from the most recent dispatch time. A recorded rejection retains its existing
-backoff and exhaustion rules. Start-timeout redispatch does not extend the wave
-deadline; expiry takes precedence. No new timer or dispatch authority is added.
-Reject → same frozen wave with 30s backoff doubling to 1800s, maxDispatchAttempts.
-401/403/404/422 or exhausted attempts finish wave and fail its builds. Permanent
-rejections never automatically retry. Ignore dispatch results after callbacks.
-No second active wave, including during rejection backoff.
+### 4.4 Dispatch, deadlines and recovery
 
-Build started → Building/start; succeeded → Built/artifact/end; failed → Failed/
-reason/end. Publish succeeded from Built → Published using frozen selection/inputs,
-feed_commit/time/run; clear failure/request. Publish failed from Built → Failed.
-Publish shares the wave run and has completion time only.
+WaveController and PublicationController expose pending dispatches from committed
+state. Repeated reads do not consume them. Startup and reconnect immediately drive
+outstanding work, including a crash between commit and dispatch. The app tracks
+only in-flight HTTP request lifetimes to avoid overlapping the same id/attempt.
+Unknown result-commit outcomes trigger state reload before further decisions.
 
-WaveFinished ends the wave. Planned builds without callbacks whose transitive
-same-target prerequisite build failed become Blocked. Other Planned/Building/Built
-without final publication callback become Failed ("no result"). Preserve successful
-publications and independent results. Blocked units have no retry timer of their own.
+Dispatch acceptance waits for started. After start-timeout, redispatch the same
+frozen id with attempt+1. Start-timeout times and deadlines are stored absolute
+times and survive configuration changes; redispatch does not extend deadlines.
+Explicit rejection retains 30-second backoff doubling to 1800, up to
+max-dispatch-attempts. 401/403/404/422 or exhaustion is permanent, with no automatic
+retry. Ignore dispatch responses after an owner callback. Deadlines take precedence.
+No per-unit deadline or independent dispatch authority.
 
-RetryRequested on Failed schedules it and its Blocked dependents into the next
-wave. RebuildRequested on Published schedules it and its dependent cascade.
-Automatic retry has the same effect once per failed version+inputs after retryDelay
-(zero disables), except permanent dispatch rejections. New version/inputs make
-old failure eligible again. Requests/tags during a wave affect the following plan.
+The existing SNode.C timer handles debounce, start timeout, rejection backoff,
+deadlines and automatic retry. nextDeadline excludes debounce during an active
+wave. Configuration changes apply to newly allocated deadlines only.
 
-The existing timer appends WaveExpired when the recorded deadline is due, including
-immediately after startup/recovery. Only its committed application ends the hold;
-new Tick/Resumed records do not synthesize expiry. WaveExpired finishes the
-scheduling hold with conclusion "timeout"; it does
-not synthesize unit failures, Blocked outcomes or retries. Preserve unit state,
-frozen selection and owner_run_id. The owner's late build/publish callbacks still
-update units through their ordinary transitions; a successful publication is
-Published, never "no result", and the next plan reuses its version-revision and
-inputs. Non-owner callbacks remain ignored. Late callbacks do not reactivate the
-expired wave or extend its hold; an owner WaveFinished may finalize remaining
-unit outcomes exactly once, including a real owner conclusion of "timeout". A late
-publication from a superseded allocation updates the publication fact without
-replacing the newer allocation state, timings or failure; an older allocation
-cannot overwrite a newer publication. Legacy synthetic no-result failures admit
-the missing owner outcome; explicit terminal build/publish outcomes remain final. Resumed applies the same start-timeout rule to an unfinished
-Dispatching wave; an owner-bound Running wave waits for its deadline.
-An attempt with explicit rejection resumes its known backoff. nextDeadline is the
-earliest applicable debounce, wave start-timeout, backoff/deadline or automatic retry time; exclude
-debounce while active. Tick handles debounce/start-timeout/backoff/retry due times; no per-unit deadline exists.
+## 5. Transactional persistence and migration
 
-The sole legacy rule is for events without dispatchDeadline: allocation and
-backoff redispatch use 23400 seconds, never the current setting. Their historical
-Tick/Resumed expiry still performs the original no-result/Blocked/automatic-retry
-transitions, preserving every existing revision allocation and wave state. No
-event is rewritten or removed; revision allocation must never decrease on replay.
-New waves use the new configured duration. A production-shaped legacy replay
-fixture including w964/w1339 timeouts and retries must match the pre-change
-baseline for every revision and existing wave field under changed configuration.
+### 5.1 MariaDB state store
 
-## 5. Persistence — MariaDB via SNode.C's MariaDB client
+Use SNode.C's asynchronous MariaDBClient only, never libmariadb/libmysqlclient
+directly or an ORM. Base API usage on SNode.C master source and examples and cite
+the files in the implementation PR. MariaDBClient supports exec/query,
+startTransactions/commit/endTransactions; no prepared statements or escaping.
+Write strings as _utf8mb4 X'…', integers decimal, absent values NULL. Read strings
+as HEX and validate all fields, including embedded NUL and numeric syntax.
+After every connection set utf8mb4 and autocommit before other statements.
+Use one connection and a database-scoped GET_LOCK single-writer lock.
 
-Persistence is **event sourcing in MariaDB**: an append-only event table is the single source of truth; engine state is rebuilt by replaying it. The graph is stored only as part of `GraphChanged` events, in typed tables (5.2) — never as JSON.
+For each accepted input, calculate candidate state from the committed state,
+write every affected state row and its display log entry in one InnoDB transaction,
+then expose the candidate and acknowledge success only after commit/endTransactions.
+Never expose an uncommitted candidate or dispatch from it. Duplicate/ignored input
+requires no write. An unavailable or ambiguous commit outcome hides live state,
+fails pending requests with 503 and reloads state before resuming; never assume
+rollback or repeat an unknown external mutation blindly. Corrupt schema/rows fail
+closed with nonzero exit. Reconnect backoff uses the existing SNode.C timer, 1–60s.
 
-### 5.1 Database API
+Startup: connect → validate/create state schema → load state directly → drive
+pending actions and due times → listen and reconcile declarations. No history
+read, replay or Resumed append. No request is accepted before state is ready.
+Shutdown uses the framework lifecycle; no reconnect, mutation or dispatch starts
+after STOPPING. SIGTERM/SIGINT exit normally; fatal store errors remain nonzero.
 
-Use the MariaDB client that SNode.C already provides. **Do not use libmariadb/libmysqlclient directly, do not add an ORM or another database library, and do not guess the API**: find SNode.C's MariaDB client in the SNode.C repository (master HEAD) and its examples/apps, and cite the source files you based your code on in the PR description. The client is asynchronous and runs in the SNode.C event loop; use it that way (callbacks), never block.
+### 5.2 One-shot migration
 
-Verified facts (SNode.C master, `src/database/mariadb/MariaDBClientASyncAPI.h`, `MariaDBClient.h`, `commands/async/MariaDBFetchRowCommand.cpp`): the client offers asynchronous `exec`, `query`, `startTransactions`/`commit`/`rollback`, but **no prepared statements and no escaping function**. Therefore every string value is written as a hexadecimal literal with charset introducer, `_utf8mb4 X'…'` (the bytes of the normalized UTF-8 value; the empty string as `_utf8mb4 X''`), every integer as a decimal literal and every absent value as `NULL` — no other form, so SQL injection is impossible by construction. The SQL text is produced by the pure `persistence/EventSql.h/.cpp` (S14). After every (re)connect, `open` executes `SET NAMES utf8mb4` and `SET autocommit = 1` before any other statement. An `INSERT` runs via `exec` in autocommit mode; the store calls `onCommitted` only after the subsequent `SELECT LAST_INSERT_ID()` finishes. Failure between those statements is an unknown commit outcome. `query` delivers rows through `onQuery(MYSQL_ROW)` and ends with a final `nullptr` row. SNode.C reconnects lazily on the next command after a lost connection and reports state through `onStateChanged`. The only non-literal expression allowed in an `INSERT` is `UTC_TIMESTAMP(3)` for `recorded_at` (audit only: never read back, never decoded). Reads select every column except `recorded_at`, string columns as `HEX(col) AS col` and numeric columns as decimal text; `adapters/mariadb` decodes the hex purely (invalid hex or non-decimal number → `Corrupt`) before `EventRow` validation, so an embedded NUL is detected. A `nullptr` field is SQL `NULL`; `HEX('')` is an empty, non-null field.
-
-### 5.2 Schema (adapters/mariadb/Schema.sql, created by core-ci at startup with `CREATE TABLE IF NOT EXISTS`, InnoDB, utf8mb4)
-
-Fresh schema 6 uses coreci_events with typed nullable columns: package, target,
-tag, source_sha, origin, wave_id, build_id, http_status, message, run_id,
-run_attempt, attempt, artifact, feed_commit, reason, conclusion, event_at, dispatch_deadline.
-No kind column. Graph tables contain packages (source identity/revision_base),
-target memberships, prerequisites and selected release rows. No feed table or
-per-package workflow columns. Schema.sql is the exact DDL authority.
-
-
-`coreci_schema` holds exactly one row, `version = 6`. In `open`, under the writer lock, upgrade version 5 only by idempotently adding nullable BIGINT dispatch_deadline and then recording version 6. Existing event rows, identities and graph rows remain unchanged; their deadline metadata is NULL. If the schema table has no row and all coreci tables are empty, insert version 6. No row with existing data, multiple rows, or any other version is Corrupt. Every event uses only its own columns plus the optional common deadline metadata; the others are NULL.
-
-**GraphChanged storage.** A `GraphChanged` is one `coreci_events` row (`event_type = 'GraphChanged'`, only `event_at` and optional `dispatch_deadline` set) plus its graph rows and selected tags in coreci_graph_releases(event_seq, package, tag, source_sha, origin), all non-null and keyed by (event_seq, package), written atomically on one connection as `startTransactions` (autocommit off) → the event `INSERT` → the graph `INSERT`s → `commit` → `endTransactions` (autocommit on again), as implemented in SNode.C's `MariaDBClientASyncAPI.cpp` (`MariaDBAutoCommitCommand`, `MariaDBCommitCommand`). The graph rows use `LAST_INSERT_ID()` as `event_seq`, the second allowed non-literal expression. `onCommitted` is called only after `endTransactions` succeeded. On any error in this sequence the store aborts the connection instead of issuing `rollback` (the server discards uncommitted work and releases the writer lock) and reports an unknown commit outcome (5.3 step 4); a connection is never reused with autocommit off. `normalize` checks a `GraphChanged`'s strings against these columns. The graph tables use `utf8mb4_bin`, so identifiers compare exactly as in C++. `loadAll` reads the graph tables ordered by primary key and attaches them to their `GraphChanged` rows; a `GraphChanged` without graph rows is the empty pipeline; graph rows without their `GraphChanged` row, or rows that fail section 3, are `Corrupt`. Other schema migrations are out of scope.
-
-Every event field from 4.3 maps to exactly one typed column; unused columns are `NULL`. The mapping `Event ↔ EventRow` lives in `persistence/EventRow.cpp`, is pure and is round-trip tested for every event type.
-
-**Field rules** (`persistence/EventRow`, pure): `normalize(event) → Event | Invalid(reason)`. Identifier fields (`package`, `target`, `tag`, `wave_id`, `build_id`, `artifact`, `conclusion`) must be non-empty valid UTF-8 without NUL and fit their column, counted in characters as MariaDB `utf8mb4` does. `source_sha` and `feed_commit` are exactly 40 lowercase hexadecimal characters. Numbers must fit their column (`run_attempt`, `attempt` ≥ 1; `http_status` 0–999). Free text (`message`, `reason`) is never rejected: invalid UTF-8 → U+FFFD, NUL removed, truncated to 4096 bytes at a character boundary. Every field listed for an event in 4.2 is required; `message`/`reason` may be empty. **Decoding** a row with an unknown `event_type`, an invalid `origin`, a missing required field, a non-NULL field the event type does not use, or a value violating these rules is fatal: `loadAll` reports it through `onError` naming the row's `seq`, and core-ci refuses to start.
-
-### 5.3 Write-ahead ordering (critical)
-
-All inbound events (webhook, workflow callback, dispatch result, tick, dashboard operation) go through **one FIFO event queue** and are processed strictly one at a time:
-
-0. Stamp `event.at` with the current UTC time (seconds) when the event enters the queue. This is the only place where core-ci reads the clock for events. Then `normalize(event)` (5.2); if invalid → answer `400 invalid: <reason>`, done (never retried, never classified, never stored).
-1. `engine.classify(event)`; if `Ignore` → answer the HTTP request (`200 ignored: <reason>`), done.
-2. `INSERT` the event row. **Wait for the commit callback.** No other event is processed meanwhile.
-3. Only after a successful append acknowledgement: `engine.handle(event)` updates state → answer the originating HTTP request (`200 accepted`). app derives pending outward actions from the live committed state; no one-shot command is handed off by this transition.
-4. If `append` reports an error, the commit outcome is **unknown** (the row may or may not be stored): do not apply the event, answer `503`, and enter **recovery**: answer every further event `503`, discard the engine, reconnect and re-read the store, then rebuild exactly as at startup (5.4: `loadAll`, replay, `Resumed`). Never assume success or failure or blindly repeat the original append. The re-read history deterministically establishes whether its effects exist. If stored, the sender's retry is a duplicate and is answered `200 ignored`. A live unresolved Dispatching attempt is resent immediately from state, including when the lost acknowledgement belonged to a Resumed that advanced the attempt. A recorded acceptance waits for WaveStarted/start timeout; a recorded rejection retains its known backoff. An owner-bound Running wave waits for its deadline. Duplicate runs are fenced by the first accepted WaveStarted owner and the publisher ownership check.
-
-Consequence: the in-memory state only ever contains committed events, so a crash at any point loses nothing that was acknowledged.
-
-### 5.4 Startup and outages
-
-- **Startup order:** connect to MariaDB → ensure schema → `SELECT … FROM coreci_events ORDER BY seq` → replay every row through the same engine without executing outward actions → enqueue one `Resumed` event through the normal write-ahead queue → mark the engine live and drive its pending actions → **only then** start the HTTP listener and timers. No inbound event may be accepted before replay has finished. The start timeout protects against a workflow silently dropped by GitHub; it is never the recovery mechanism for lost local command delivery.
-- During replay, a stored event that the engine classifies as `Ignore` (possible only if engine semantics changed between core-ci versions) is skipped with a warning naming its `seq`.
-- **Store errors** from `open`/`loadAll` have a kind (5.5): `Corrupt` (a row fails decoding per 5.2, or an unknown schema version) → log it and exit with a non-zero status, at startup and at runtime. `Unavailable` (any database or connection error) → stay in recovery (every event `503`, no ticks); `app/` retries the rebuild with an SNode.C timer, backoff 1 s doubling to at most 60 s, at startup and at runtime. A successful rebuild always starts from a fresh engine and replay (5.3 step 4).
-- **Shutdown:** the application's framework lifecycle is authoritative. Once termination begins, the queue exposes no live engine and starts no reconnect, replay, event append (including Resumed), or outward action. Late callbacks cannot revive it. Pending database operations close through the framework's existing cancellation/destruction path; an already-issued append can have an unknown durable outcome, resolved from the store on the next live start. Receiver teardown is not a connection-loss notification. A normal SIGTERM stop exits 0; fatal application/store errors retain a non-zero exit status.
-- Replaying the stored events must reproduce byte-identical status.json output (tested).
-- Compaction/snapshots are **out of scope**.
-
-### 5.5 Store interface (persistence/EventStore.h)
-
-```cpp
-class EventStore {
-public:
-    virtual ~EventStore() = default;
-    struct StoreError { enum class Kind { Unavailable, Corrupt } kind; std::string message; };
-    virtual void open(std::function<void()> onReady, std::function<void(const StoreError&)> onError) = 0;  // connect + ensure schema
-    virtual void append(const Event&, std::function<void(std::uint64_t seq)> onCommitted, std::function<void(const std::string&)> onError) = 0;  // onError: commit outcome unknown (5.3 step 4)
-    virtual void loadAll(std::function<void(std::uint64_t seq, const Event&)> onEvent, std::function<void()> onDone,
-                         std::function<void(const StoreError&)> onError) = 0;
-};
-```
-
-`loadAll` delivers events in ascending `seq` order with the row's actual `seq` (gaps are allowed). `onCommitted` receives the committed row's actual `seq`: `InMemoryEventStore` its own counter, `MariaDBEventStore` the result of `SELECT LAST_INSERT_ID()` on the same connection directly after the event `INSERT` (for a `GraphChanged` inside its transaction, before `commit`); an error of that `SELECT` is an unknown commit outcome (5.3 step 4). `app/` keeps the `seq` of the last committed event, from `loadAll` and from `onCommitted`, as the status.json/SSE event sequence. `tests/InMemoryEventStore` (pure, test-only) and `MariaDBEventStore` (SNode.C) implement it. The event-queue logic of 5.3 is written once against this interface and tested with `InMemoryEventStore`, including injected `append` failures.
-
----
+coreci-migrate is a separate executable, never linked into the daemon. Under the
+same writer lock, replay an existing schema-5/6 event database once using the
+pre-change semantics, including missing dispatch_deadline metadata, w964/w1339
+expiry/retry behavior and allocated sequence ids. Preserve every revision,
+publication fact, tag and wave history entry. Validate the complete conversion
+before installing state tables, then rename old tables to legacy_* and record
+the state schema version. An interrupted/ambiguous migration must fail closed
+and be recoverable without discarding source history. Refuse concurrent daemon
+writers and repeat migration of an already migrated database. No legacy tables
+are read by the daemon. An unmigrated database is refused with a migration diagnostic.
 
 ## 6. External interfaces
 
@@ -313,6 +235,8 @@ public:
 | POST /api/v1/github/webhook | Raw-body HMAC-SHA256, X-Hub-Signature-256 | Push notifications: known source tag creations and registry default-branch pushes only; ping acknowledged. |
 | GET /api/v1/waves/{wave_id}/plan.json | Public | Frozen W5 plan, including after finish/restart; unknown id 404, recovery 503, no-store. |
 | POST /api/v1/waves/{wave_id}/report | Callback HMAC | Workflow events below. |
+| GET /api/v1/publications/{publication_id}/plan.json | Public | Frozen W5 publication plan; unknown id 404, recovery 503, no-store. |
+| POST /api/v1/publications/{publication_id}/report | Callback HMAC | W6 publication callbacks. |
 | GET /api/v1/status.json | Public | Recorded unit status, 503 during recovery. |
 | GET /api/v1/badge/{package}/{target}.svg | Public | Badge from recorded unit state, always 200, unavailable during recovery. |
 | GET /, /style.css, /app.js, /events | IDP and subject allowlist | Dashboard assets and SSE. |
@@ -337,74 +261,76 @@ Complete endpoint shapes:
 
 There are no Actions run or job lookups. No static bearer credential is accepted or configured. Repository calls use installation tokens; token mint uses the signed JWT. All use X-GitHub-Api-Version: 2022-11-28 and User-Agent core-ci.
 
-Dispatch JSON is W4 on main with string inputs wave_id, plan_url, callback_url,
-feed_branch. 204 emits WaveDispatchAccepted; other statuses emit WaveDispatchRejected
-(transport failure 0). core-ci never sends plan_json. No presentation dispatch.
+Dispatch JSON is W4 on main: wave.yml uses wave_id; publish.yml uses publication_id.
+Both include plan_url, callback_url and feed_branch. 204 records accepted dispatch;
+other statuses record rejection (transport failure 0). core-ci never sends plan_json.
 
-Outbound TLS verifies the CA chain and hostname before sending request bytes, sets SNI, and uses system CA trust or github-ca-cert. One request per connection, 30-second deadline, no redirects. Pagination accepts only links on github-api-url's exact scheme/host/port and rejects loops. One one-second engine timer enqueues Tick only when nextDeadline is due. There is no Actions run/job polling timer; the dashboard timer performs no GitHub I/O. Configured declaration reconciliation (3.3) belongs to workflow management.
+Outbound TLS verifies the CA chain and hostname before sending request bytes, sets SNI, and uses system CA trust or github-ca-cert. One request per connection, 30-second deadline, no redirects. Pagination accepts only links on github-api-url's exact scheme/host/port and rejects loops. One one-second engine timer applies a transactional timer update only when nextDeadline is due. There is no Actions run/job polling timer; the dashboard timer performs no GitHub I/O. Configured declaration reconciliation (3.3) belongs to workflow management.
 
 ### 6.3 Configuration
 
-Non-secret options use SNode.C configuration, command line overriding configuration file. Keys:
-registry, target-catalog, workflow-repository, github-app-id, github-installation-id,
-github-app-key-file, callback-base-url, github-api-url, github-ca-cert, db-host,
-db-port, db-socket, db-user, db-name, wave-delay, wave-deadline, wave-start-timeout, feed-branch, retry-delay,
-max-dispatch-attempts, reconcile-interval, listen-address,
-listen-port, tls-cert, tls-key, idp-base-url, idp-client-id, idp-public-key-path,
-dashboard-users, dashboard-redirect-port.
+All configuration uses SNode.C configuration files and command-line options, with
+no environment variables. Application options live in an own "coreci" section.
+Dashboard server instance "coreci" and optional redirect instance "coreci-redirect"
+use their WebApp instance host, port, TLS certificate and key options. No application
+option duplicates or programmatic overrides of these instance settings.
 
-All three GitHub App keys,
-callback-base-url, db-user, db-name, TLS files, idp-client-id, idp-public-key-path and
-dashboard-users are required. App and installation ids are positive decimal ids.
-Defaults: github-api-url https://api.github.com (HTTPS only); db-host localhost,
-db-port 0, db-socket empty uses MYSQL_UNIX_ADDR; registry SNodeC/Packages:ci/registry.json, target-catalog ci/targets.json,
-workflow-repository SNodeC/Packages, wave-delay 120 (0–86400), wave-deadline 23400
-(60–86400), wave-start-timeout 900 (1–86400), feed-branch feed (only feed/feed-staging); retry-delay 600 (0–86400; zero disables), max-dispatch-attempts
-8 (1–20), reconcile-interval 900 (60–86400),
-listen-address 0.0.0.0, listen-port 8443, dashboard-redirect-port 0/off.
-Missing or invalid settings fail before connecting and log only the option name.
-Required secret environment variables: CORECI_WEBHOOK_SECRET and CORECI_CALLBACK_SECRET.
-Optional CORECI_DB_PASSWORD (empty permits passwordless socket authentication).
-No other production CORECI environment variables remain.
+Application keys: registry, target-catalog, workflow-repository, feed-branch,
+github-app-id, github-installation-id, github-app-key-file, callback-base-url,
+github-api-url, github-ca-cert, webhook-secret-file, callback-secret-file,
+idp-base-url, idp-client-id, idp-public-key-path, dashboard-users,
+db-host, db-port, db-socket, db-user, db-name, db-password-file,
+wave-delay, wave-deadline, publication-deadline, start-timeout, retry-delay,
+max-dispatch-attempts, reconcile-interval.
 
-### 6.4 Callbacks, write-ahead and recovery
+Secret values are read from operator-owned files; database password uses FILE,
+including passwordless socket authentication when omitted. Never print secrets.
+All GitHub App keys, callback URL, HMAC files, db-user/db-name, IDP client/public
+key and dashboard-users remain required. Positive decimal App/installation ids.
+Defaults retain registry SNodeC/Packages:ci/registry.json, catalog ci/targets.json,
+workflow repository SNodeC/Packages, feed-branch feed (only feed/feed-staging),
+github-api-url https://api.github.com (HTTPS only), db-host localhost, db-port 0,
+db-socket empty uses MYSQL_UNIX_ADDR; wave-delay 120 (0–86400), wave-deadline 23400
+(60–86400), publication-deadline 23400 (60–86400), start-timeout 900 (1–86400),
+retry-delay 600 (0–86400, zero disables), max-dispatch-attempts 8 (1–20),
+reconcile-interval 900 (60–86400). Invalid settings fail before connecting and
+log only the option name. Package examples use actual SNode.C config syntax.
+Deployment notes document the translation from old options and one-shot migration;
+service unit changes only as required by configuration. No service activation.
 
-Callbacks are application/x-www-form-urlencoded, authenticated with
-X-CoreCI-Timestamp and X-CoreCI-Signature-256: sha256=HMAC(secret,timestamp+"."+rawBody).
+### 6.4 Callback admission and recovery
 
-W6 is the complete callback protocol. Empty required values are absent. Decode
-wave_id once. Publish-start callbacks are authenticated and validated, then
-acknowledged without a persisted event; publish completion supplies its timing.
-Unit wire callbacks require run_id and bind build_id within the frozen wave.
-The authenticated callback admission boundary checks the run id against the
-accepted wave owner before queuing the existing typed unit event. Publish-start
-callbacks use the same ownership check after deadline expiry as well. Non-owner callbacks receive200 ignored.
-Responses follow 5.3; duplicate/stale callbacks are ignored. Callback-before-dispatch,
-dispatch backoff/deadlines, automatic retry, startup resumption and recovery are unchanged.
-Webhooks remember the last 1000 successful delivery ids in memory. Failed loads are retryable.
-
-MariaDB uses exactly one writer per database (GET_LOCK), retains the existing asynchronous
-client and unknown-commit-outcome recovery. No production access is required for acceptance.
+Callbacks remain application/x-www-form-urlencoded authenticated with
+X-CoreCI-Timestamp and X-CoreCI-Signature-256:
+sha256=HMAC(secret,timestamp+"."+rawBody). W6 is the complete protocol.
+Authenticate before parsing; decode ids once. Wave reports accept build and target
+facts only; publication reports accept publish facts only. Frozen plans and their
+respective owner_run_id determine admission, including after deadline.
+Non-owner/duplicate/stale callbacks return 200 ignored. Invalid input returns 400;
+accepted changes answer 200 only after transaction commit; unavailable store 503.
+Webhooks retain the last 1000 successful delivery ids in memory; failed declaration
+loads are retryable. No new production access is required.
 
 ### 6.5 SSE dashboard
 
 Preserve the existing layout and information about packages, targets, versions, dependencies,
-attempts and workflow phases. Derive all phase information solely from committed engine events:
+attempts and workflow phases. Derive all phase information solely from committed state:
 for build and publish, expose start, end, duration, state and run link
 https://github.com/{workflowRepo}/actions/runs/{run_id}[/attempts/{run_attempt}].
 Unknown values stay absent; dispatch acceptance must not invent a workflow start.
-Retain publication finish times and assignment order from recorded events.
+Retain publication finish times and assignment order from stored state.
 Drop GitHub job queued/cancelled states, job cache, job log links and unsupported metadata
 (proof, verified_at, uncertainty, publish_assigned, publish_run_bound, retire action, step).
 
 Assets use no-cache. SSE sends a snapshot on connect and full model updates at most once per
-second on committed events or successful declaration loads; no updates during recovery.
+second on committed state changes or successful declaration loads; no updates during recovery.
 Keep alive every 30 seconds, at most 64 streams (excess 503). Until declarations are loaded,
 ready is false and units are empty. A one-second SSE timer may coalesce events and check sessions;
 it never requests GitHub data. Dependencies sort descending by level and allocation order.
 
 Add a wave panel with latest id, phase, run link, started/finished and counts by
-unit state. Public status includes wave state.
+unit state. Add a publication panel with id, run link, items and phase, and
+per-target publication state. Public status includes wave and publication state.
 
 Supported POST /api/{operation}: retry (Failed unit), rebuild (Published unit), reload
 (declarations and tags), reconcile (same reconciliation path). Unit operations take
@@ -420,7 +346,7 @@ lifetime 12 hours. Re-introspect open streams at least every 60 seconds and clos
 ### 6.6 Public status
 
 status.json is generated from recorded unit state by the existing handwritten app/ writer,
-without a JSON library. It contains the event sequence, packages and unit selections, published,
+without a JSON library. It contains the state sequence, packages and unit selections, published,
 selection and failure records, plus the current wave. It is public alongside badges. No presentation dispatch,
 status workflow, generation/dirty bookkeeping for a presentation writer, registry presentation
 field or status_url field exists.
@@ -428,81 +354,104 @@ field or status_url field exists.
 
 ---
 
-## 7. GitHub side — wave contract
+## 7. GitHub side — wave and publication contract
 
 W1 Repositories. SNodeC/Packages, default branch main, holds .github/workflows/wave.yml,
-   ci/registry.json {"schema":1,"repositories":["SNodeC/snode.c", …]} and the target catalog
-   ci/targets.json. The production feed is branch `feed`, the staging feed branch
-   `feed-staging` of SNodeC/Packages.
+   .github/workflows/publish.yml, ci/registry.json {"schema":1,"repositories":[…]} and the target
+   catalog ci/targets.json. Production feed: branch `feed`; staging feed: branch `feed-staging`.
 W2 Source declaration, read at the tag: ci/packages.json {"schema":1, "package", "title",
    "depends_on":[packages], "build":{"deb":path,"rpm":path,"openwrt":path?},
    "build_dependencies":{"deb":[…],"rpm":[…],"openwrt":[…]}, "targets":[catalog ids],
    "revision_base":N?}.
-W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release",
-   "codename","arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?}.
-   Fields other than id, family, distribution, release, codename and arch are opaque to core-ci; sdk is an object used only by wave.yml.
-W4 Dispatch: core-ci → workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
-   callback_url, feed_branch ("feed" | "feed-staging"). wave.yml additionally accepts
-   plan_json (base64) for manual runs; empty callback_url = no callbacks.
-W5 Plan (GET plan_url, public, JSON): {"wave":id, "feed_branch", "owner_run_id":id|null, "targets":[{"id",
-   "units":[{"package","repo","tag","commit","version","revision","build_id",
-   "action":"build"|"reuse"}]}]}; units per target in topological order; "reuse" = install
-   the published version-revision from the feed; only targets with ≥1 "build" unit.
-   owner_run_id is null until the first accepted WaveStarted, then its run_id;
-   it is derived from the existing wave owner and remains fixed through finish/replay.
-W6 Callbacks: POST callback_url (https://<core-ci>/api/v1/waves/{wave_id}/report), signed with
-   the existing core-ci callback HMAC wire format; form fields: scope=wave → status=started
-   (run_id, run_attempt) | finished (run_id, conclusion); scope=unit → run_id, build_id,
-   phase=build|publish, status=started|succeeded|failed, plus reason (failed), artifact (build
-   succeeded), feed_commit (publish succeeded).
-W7 Workflow semantics: job plan → matrix job chain (one job per planned target, fail-fast
-   false; inside, units in plan order; a unit whose same-target prerequisite failed is skipped
-   without callback) → job publish (always after chain): every unit built successfully in
-   this run is published in ONE orphan-root commit to feed_branch with GITHUB_TOKEN, publish
-   reported per unit, then scope=wave finished.
-   With non-empty plan_url, the publisher re-fetches that plan immediately before
-   pushing and publishes only when owner_run_id equals GITHUB_RUN_ID. A non-owner
-   publisher succeeds without a push or publisher/wave-finished callbacks. An
-   empty plan_url keeps the existing manual publication behavior. Fetch/validation
-   errors fail closed. Owner checks use one shared predicate; all publisher
-   callbacks are deferred until ownership is established. The existing serialized
-   feed mutation remains unchanged; no target-early publication is introduced.
-W8 Versions: deb <version>-<revision>~<codename>; rpm <version>-<revision>.<disttag>;
+W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release","codename",
+   "arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?}. Fields other than id,
+   family, distribution, release, codename and arch are opaque to core-ci.
+W4 Dispatch. Wave: workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
+   callback_url, feed_branch. Publication: workflow_dispatch of publish.yml on main with inputs
+   publication_id, plan_url, callback_url, feed_branch. Both accept plan_json (base64) for manual
+   runs; empty callback_url = no callbacks.
+W5 Plans (GET plan_url, public, JSON).
+   Wave plan: {"wave", "feed_branch", "owner_run_id":id|null, "targets":[{"id","units":[{"package",
+   "repo","tag","commit","version","revision","build_id","action":"build"|"reuse"}]}]}; units per
+   target in topological order; "reuse" = install the published version-revision from the feed;
+   only targets with ≥1 "build" unit.
+   Publication plan: {"publication", "feed_branch", "owner_run_id":id|null, "items":[{"wave",
+   "wave_run_id","target","artifact","units":[{"build_id","package","version","revision"}]}]};
+   all units of one target are in one item.
+   owner_run_id is null until the first accepted "started" callback of that wave/publication, then
+   that run_id, fixed afterwards.
+W6 Callbacks, signed with the existing core-ci callback HMAC wire format.
+   Wave run → POST https://<core-ci>/api/v1/waves/{wave_id}/report: scope=wave status=started
+   (run_id, run_attempt) | finished (run_id, conclusion); scope=unit phase=build
+   status=started|succeeded|failed (run_id, build_id, reason when failed); scope=target
+   status=finished (run_id, target, artifact — empty if no unit of the target built successfully).
+   Publication run → POST https://<core-ci>/api/v1/publications/{publication_id}/report:
+   scope=publication status=started (run_id, run_attempt) | finished (run_id, conclusion);
+   scope=unit phase=publish status=succeeded (run_id, build_id, feed_commit, reason
+   "already published" when applicable) | failed (run_id, build_id, reason).
+W7 wave.yml: job plan → matrix job chain (one job per planned target, fail-fast false; units in plan
+   order; a unit whose same-target prerequisite failed is skipped without callback; at the end the
+   job uploads artifact coreci-<wave>-<target> with the successfully built packages and a sha256
+   manifest, then sends scope=target finished) → job report (always): scope=wave finished. wave.yml
+   holds no signing keys and never writes a feed.
+W8 publish.yml (environment publish, the only holder of signing keys): re-fetch plan_url
+   immediately before pushing; publish only if owner_run_id equals GITHUB_RUN_ID, otherwise
+   succeed without push and without callbacks (fetch/validation errors fail closed). Download the
+   listed artifacts from their wave runs (same repository, GITHUB_TOKEN), verify the manifests,
+   place packages, rebuild the indices of touched suites, apply retention, ONE orphan-root commit,
+   push with lease; callbacks per unit, then scope=publication finished.
+W9 Versions: deb <version>-<revision>~<codename>; rpm <version>-<revision>.<disttag>;
    ipk/apk <version>-r<revision>.
-W9 Feed: apt/ (dists/<codename>/main/binary-<arch>/, pool/main/; Release with Origin
-   SNodeC/Packages, Label SNode.C, Suite = Codename = <codename>, Components main,
-   Architectures, Date, Acquire-By-Hash yes, SHA256 only, InRelease + Release.gpg),
-   rpm/<distribution>/<release>/<arch>/ (signed packages, repodata, repomd.xml.asc),
-   openwrt/<release>/<arch>/ (ipk: Packages + Packages.sig usign; apk: signed packages.adb),
-   keys/ (public keys). Retention: newest 2 publications per package×target.
-W10 Concurrency: core-ci runs at most one wave at a time; wave.yml uses concurrency group
-   "wave-<feed_branch>" without cancellation.
+W10 Feed: apt/ (dists/<codename>/main/binary-<arch>/, pool/main/; Release with Origin
+   SNodeC/Packages, Label SNode.C, Suite = Codename = <codename>, Components main, Architectures,
+   Date, Acquire-By-Hash yes, SHA256 only, InRelease + Release.gpg), rpm/<distribution>/<release>/
+   <arch>/ (signed packages, repodata, repomd.xml.asc), openwrt/<release>/<arch>/ (ipk: Packages +
+   Packages.sig usign; apk: signed packages.adb), keys/. Ledger publications.json. Immutability:
+   if the ledger already holds the same package, target, version and revision, no file is placed
+   or changed and the unit is reported published with reason "already published". Retention:
+   newest 2 publications per package×target.
+W11 Concurrency. core-ci runs at most one wave at a time and at most one publication run per feed
+   at a time. Whenever no publication is active and at least one target has reported
+   scope=target finished with a non-empty artifact and is not yet published, core-ci dispatches
+   one publication containing all such targets. Targets finishing while a publication runs go into
+   the next one. A wave is finished when its run reported scope=wave finished (or its deadline
+   expired) and every planned target is published, failed or blocked; the next wave starts only
+   after that. wave.yml uses concurrency group "wave-<feed_branch>", publish.yml
+   "publish-<feed_branch>", both without cancellation.
 
 ## 8. Acceptance
 
-Full build with adapters and full CTest twice green, no required skips, against
-disposable MariaDB and fake GitHub/IDP HTTP fixtures. Label every test requiring
-a MariaDB server `mariadb`, including all ConnectionLoss tests. Native package
-builds run `ctest -LE mariadb` and do not install server-test-only dependencies;
-repository CI retains the server and full suite. No test framework or
-fetched dependencies. Retain HMAC/TLS/App auth, version/validation, write-ahead/
-ambiguous-outcome, SQL/row/replay, SSE, badges, status, dashboard model and integration
-coverage. Delete obsolete per-unit/feed tests. Browser-driven tests, dashboard
-end-to-end/browser scripts, Node/npm dependencies, Playwright and reference-browser
-requirements are removed completely. C++ dashboard model tests and HTTP tests of
-SSE, routes, operations and authentication remain; no test launches a browser.
+Build with adapters and run full CTest twice green, no required skips, against
+disposable MariaDB and fake GitHub/IDP HTTP fixtures. Label all server-dependent
+tests mariadb, including ConnectionLoss tests. Package scope ctest -LE mariadb
+must pass without server-test dependencies. Keep no browser/Node/npm requirements.
 
-Cover debounce coalescing, only one wave active, changes during a wave, build vs
-reuse/unchanged reuse/diamond cascades, revision increments/base, W5 plan schema,
-callback transitions/idempotency, transitive Blocked dependents, independent
-success, no-result failures, manual/automatic retry cascades/limit, dispatch
-rejection/backoff/exhaustion, deadline followed by late owner publication and
-next-plan reuse (non-owner ignored), restart waiting, frozen plan during graph
-changes, dashboard unit/wave contents, SSE output and routes, old report route 404,
-public plan and authenticated callbacks. Retain 10000 seeded randomized scenarios.
+Migration: production-shaped tests/data/legacy-replay-baseline.json and w964/w1339
+history yield every revision, publication, tag and wave field identical to the
+pre-change baseline, including under changed daemon configuration.
+State: transactional updates, commit failure/unknown outcome, corruption,
+shutdown, restart at every boundary including commit-before-dispatch, immediate
+recovery of outstanding wave/publication actions. A source/link test proves no
+event store, EventRow/EventSql/EventQueue or replay path exists in the daemon.
+
+Publication: target-finished dispatches early; batch several ready targets;
+targets arriving during publication enter the next; owner fencing; already-published
+idempotency; retry failed publication from the same artifact without revision
+allocation; unavailable artifact rebuild; wave completion waits for all targets;
+the next wave waits. Test deadlines and late owner facts for both workflow types.
+
+Configuration: parse an SNode.C configuration file including coreci application
+section and WebApp instance options; start the daemon with no configuration
+environment variables; verify required-file validation without leaking values.
+Preserve HMAC/TLS/App auth, declaration validation/SemVer, graph/revision/cascade,
+retry/backoff/deadline, frozen plans, status/badges, SSE, IDP authentication and
+retry/rebuild/reload/reconcile behavior. Exercise populated and changing dashboard
+models and public HTTP boundaries. Retain 10000 seeded randomized scenarios.
 
 Report baseline/final physical production lines per directory and dashboard
-assets, test lines separately, event/rule/route/config counts, PRs/merge SHAs and
-qualification. Record each reversible ambiguity as "Decision: … because …".
-Merge SPEC first, implementation after qualification, delete only task branches
-and leave canonical main pulled and clean.
+assets, migration lines separately, test lines, routes, configuration keys,
+environment variables (zero), tables, SPEC old/new SHA256, PRs/merge SHAs, checks,
+owner option translation and merged CONTRACT W v2. Daemon production code must
+be below the baseline. Record reversible choices as "Decision: … because …".
+Merge SPEC first, implementation only after qualification; delete task branches,
+leave canonical main pulled and clean. No tag, installation or deployment.
