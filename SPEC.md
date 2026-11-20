@@ -156,7 +156,8 @@ Publication callbacks require the publication owner. Success records Published
 with frozen version/revision/inputs, feed_commit/time/run; clear failure/request.
 Already-published success is idempotent. Failure records the reason. A failed
 publication unit is retried through a new publication using the same artifact
-while available, retaining version/revision; if unavailable it requires a rebuild.
+while available, retaining version/revision; failure=artifact-unavailable requires a rebuild.
+Reason is human display text only. Unknown or missing failure is treated as other.
 No artifact download or Actions polling is introduced into core-ci.
 
 Wave-finished records the owner's conclusion; the wave remains active until every
@@ -389,6 +390,11 @@ W6 Callbacks, signed with the existing core-ci callback HMAC wire format.
    scope=publication status=started (run_id, run_attempt) | finished (run_id, conclusion);
    scope=unit phase=publish status=succeeded (run_id, build_id, feed_commit, reason
    "already published" when applicable) | failed (run_id, build_id, reason).
+   publication callbacks with status=failed carry an additional field
+   failure=artifact-unavailable | immutable-conflict | feed-push | signing | other (reason stays
+   free text for humans). core-ci decides only by `failure`: artifact-unavailable → rebuild; every
+   other value → retry the recorded artifact while it is available. Unknown or missing failure value
+   → treated as other.
 W7 wave.yml: job plan → matrix job chain (one job per planned target, fail-fast false; units in plan
    order; a unit whose same-target prerequisite failed is skipped without callback; at the end the
    job uploads artifact coreci-<wave>-<target> with the successfully built packages and a sha256
@@ -437,7 +443,9 @@ event store, EventRow/EventSql/EventQueue or replay path exists in the daemon.
 Publication: target-finished dispatches early; batch several ready targets;
 targets arriving during publication enter the next; owner fencing; already-published
 idempotency; retry failed publication from the same artifact without revision
-allocation; unavailable artifact rebuild; wave completion waits for all targets;
+allocation; test artifact-unavailable, immutable-conflict, feed-push, signing, other,
+unknown and missing failure values, including misleading reason text; unavailable
+artifact rebuild; wave completion waits for all targets;
 the next wave waits. Test deadlines and late owner facts for both workflow types.
 
 Configuration: parse an SNode.C configuration file including coreci application
