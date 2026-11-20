@@ -16,6 +16,7 @@ import urllib.parse
 
 sys.path.insert(0, str(Path(__file__).parent / 'dashboard'))
 from fixture import fixture
+from database import eventually
 
 def raw_status(fx, headers):
     with socket.create_connection(('127.0.0.1', fx.app_port), timeout=5) as tcp:
@@ -45,8 +46,16 @@ def run(build):
         assert raw_status(fx, 'GET / HTTP/1.1\r\nHost: localhost\r\nX-Large: ' + 'x' * 1500 + '\r\n\r\n') == 431
         assert raw_status(fx, 'GET / HTTP/1.1\r\nHost: localhost\r\n' + 'X-Test: x\r\n' * 4 + '\r\n') == 431
         assert raw_status(fx, 'GET /' + 'x' * 1500 + ' HTTP/1.1\r\nHost: localhost\r\n\r\n') == 431
-    with fixture(build, small=True) as fx:
+    with fixture(build, small=True, virtual_clock=True) as fx:
         fx.ready()
+        def assert_recorded_state(before):
+            expected = json.loads(before)
+            after = json.loads(fx.request('/api/v1/status.json', browser=False).read())
+            # Debounce housekeeping may commit independently of declaration loading.
+            assert after['generation'] >= expected['generation']
+            after['generation'] = expected['generation']
+            assert after == expected, {key: [expected.get(key), after.get(key)]
+                for key in expected if expected.get(key) != after.get(key)}
         assert fx.request('/').status == 200
         assert fx.mints == 1
         def state(package, target):
@@ -62,7 +71,8 @@ def run(build):
         for name, maximum in (('body-bytes', 25 * 1024 * 1024), ('header-bytes', 64 * 1024),
                               ('header-fields', 100), ('start-line-bytes', 8 * 1024)):
             for value in (0, maximum + 1):
-                checked = subprocess.run(fx.command + ['http', 'parser', '--maximum-' + name, str(value)],
+                index = fx.command.index('parser') + 1
+                checked = subprocess.run(fx.command[:index] + ['--maximum-' + name, str(value)] + fx.command[index:],
                     env=fx.env, capture_output=True, timeout=10)
                 assert checked.returncode != 0 and ('invalid option: maximum-' + name).encode() in checked.stderr
         assert raw_status(fx, 'POST /api/v1/github/webhook HTTP/1.1\r\nHost: localhost\r\nContent-Length: 26214401\r\n\r\n') == 413
@@ -87,7 +97,7 @@ def run(build):
         assert signed_form('phase=build', content_type='application/x-www-form-urlencodedBAD').status == 400
         assert signed_form('phase=publish&status=started').status == 400
         assert signed_form('scope=unit&build_id=id&phase=publish&status=started').status == 400
-        assert signed_form('scope=unit&build_id=id&phase=publish&status=started&run_id=1').status == 200
+        assert signed_form('scope=unit&build_id=id&phase=publish&status=started&run_id=1').status == 400
         for repo in 'bcde':
             assert fx.webhook('owner/' + repo) == 200
         assert fx.webhook('owner/a') == 200
@@ -121,8 +131,9 @@ def run(build):
                 if entry['build_id'] != first['build_id']:
                     fx.unit(values, entry, status='started')
                 fx.unit(values, entry)
-                fx.unit(values, entry, 'publish', 'succeeded')
+            fx.target(values, target['id'])
         fx.finished(rid, values)
+        fx.publish_ready()
         assert state('e', 't1')['status'] == 'Published'
         assert '1.0.0-1' in fx.request('/api/v1/badge/d/t1.svg', browser=False).read().decode()
         # SDK browser sessions are memory-owned; a process restart requires login.
@@ -130,8 +141,10 @@ def run(build):
         assert fx.request('/').status == 200
         # Second instance must not acquire this database's writer lock or listen.
         command = list(fx.command)
-        command[command.index('--listen-port') + 1] = str(fx.redirect_port)
-        command[command.index('--dashboard-redirect-port') + 1] = '0'
+        second_config = fx.work / 'second.conf'
+        second_config.write_text(fx.config_path.read_text().replace('port=' + json.dumps(fx.app_port),
+            'port=' + json.dumps(fx.redirect_port)) + '\n[coreci-redirect]\ndisabled=true\n')
+        command[command.index('--config-file') + 1] = str(second_config)
         refused = subprocess.Popen(command, env=fx.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             try:
@@ -139,7 +152,7 @@ def run(build):
             except subprocess.TimeoutExpired:
                 refused.terminate()
                 output, _ = refused.communicate(timeout=10)
-            assert b'store unavailable; recovering' in output
+            assert b'store unavailable; recovering' in output, output.decode(errors='replace')
         finally:
             if refused.poll() is None:
                 refused.kill()
@@ -178,7 +191,7 @@ def run(build):
             fx.tags['owner/f'] = tags
             fx.sources['owner/f']['targets'].append('t2')
             assert fx.post('/api/reload', {})[0] == 503
-            assert fx.request('/api/v1/status.json', browser=False).read() == before
+            assert_recorded_state(before)
             fx.sources['owner/f']['targets'].pop()
         fx.registry['repositories'].remove('owner/f')
         assert fx.post('/api/reload', {})[0] == 200
@@ -186,7 +199,7 @@ def run(build):
         fx.registry['repositories'].append('owner/f')
         fx.tags['owner/f'] = {}
         assert fx.post('/api/reload', {})[0] == 503
-        assert fx.request('/api/v1/status.json', browser=False).read() == dormant
+        assert_recorded_state(dormant)
         fx.tags['owner/f'] = saved
         assert fx.post('/api/reload', {})[0] == 200
         assert state('f', 't1')['status'] == 'Published' and state('f', 't1')['published']['revision'] == 1
@@ -194,8 +207,10 @@ def run(build):
         fx.sources['owner/g'] = dict(fx.sources['owner/a'], package='g', title='g', depends_on=['g'], targets=['t1'])
         fx.tags['owner/g'] = {'v1.0.0': 'b' * 40}
         fx.registry['repositories'].append('owner/g')
+        fx.advance(2)
+        assert eventually(lambda: json.loads(fx.request('/api/v1/status.json', browser=False).read())['generation'] > json.loads(before)['generation'])
         assert fx.post('/api/reload', {})[0] == 503
-        assert fx.request('/api/v1/status.json', browser=False).read() == before
+        assert_recorded_state(before)
         assert fx.mints == 2, 'restart should mint once; other requests reuse the token'
         print('PASS: real TLS/App JWT, limits and routes, wave diamond plan, reuse, independent targets,')
         print('      callback-before-dispatch/restart, writer lock, badges, IDP rebuild, tag declarations and registry unit changes')

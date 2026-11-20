@@ -157,7 +157,7 @@ function renderExecution(work, panel) {
     }
     columns.append(facts, dependencies);
     const actions = node('div', '', 'actions');
-    actions.append(link('GitHub wave run', build?.html_url || publish?.html_url));
+    actions.append(link('GitHub build run', build?.html_url), link('GitHub publication run', publish?.html_url));
     for (const [name, label, enabled] of [
         ['reconcile', 'Reconcile', true],
         ['rebuild', 'Rebuild', active.state === 'published'],
@@ -246,9 +246,26 @@ function renderWork() {
         timing.append(node('span', 'Started: '), timestamp(wave.started == null ? null : new Date(wave.started * 1000).toISOString()),
             node('span', ' · Finished: '), timestamp(wave.finished == null ? null : new Date(wave.finished * 1000).toISOString()));
         panel.append(timing);
+        const targets = node('ul');
+        for (const target of graph.targets || []) {
+            targets.append(node('li', target.target + ' · ' + target.status + (target.publication ? ' · ' + target.publication : '')));
+        }
+        panel.append(targets);
+    }
+    const publicationPanel = element('publication-panel'), publication = graph.publication;
+    publicationPanel.replaceChildren();
+    if (publication) {
+        publicationPanel.append(node('h2', 'Publication ' + publication.publication + ' · ' + publication.phase),
+            link('GitHub publication run', publication.html_url));
+        const items = node('ul');
+        for (const item of publication.items) {
+            items.append(node('li', item.target + ' · ' + item.wave + ' · ' + item.units.map(unit =>
+                unit.package + ' ' + unit.version + '-' + unit.revision).join(', ')));
+        }
+        publicationPanel.append(items);
     }
     element('visible-count').textContent = `${visible.length} of ${items.length} executions`;
-    element('counts').textContent = ['planned', 'building', 'built', 'blocked', 'failed', 'published'].map(value =>
+    element('counts').textContent = ['planned', 'building', 'built', 'publishing', 'blocked', 'failed', 'published'].map(value =>
         `${items.filter(work => work.active.state === value).length} ${value === 'building' ? 'build phase' : value}`).join(' · ');
 }
 function selectRepository(name = null, entry = graph.repositories[name]) {
@@ -292,7 +309,7 @@ function mapModel(model) {
         repositories[repository] = {title: item.title, ref: source.branch, commit: item.commit};
     }
     const states = {Idle: 'idle', Planned: 'planned', Building: 'building', Built: 'built',
-        Published: 'published', Failed: 'failed', Blocked: 'blocked'};
+        Publishing: 'publishing', Published: 'published', Failed: 'failed', Blocked: 'blocked'};
     const time = value => value == null ? undefined : new Date(value * 1000).toISOString();
     const run = value => value ? {...value, start: time(value.start), end: time(value.end)} : undefined;
     for (const [index, unit] of units.entries()) {
@@ -309,7 +326,7 @@ function mapModel(model) {
             prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
             build: run(unit.build), publish: run(unit.publish)};
     }
-    return {ready: model.ready, repositories, executions, wave: model.wave};
+    return {ready: model.ready, repositories, executions, wave: model.wave, publication: model.publication, targets: model.targets};
 }
 function connect() {
     if (events) {

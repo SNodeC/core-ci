@@ -1,11 +1,15 @@
 #include "Check.h"
-#include "Fixture.h"
-#include "persistence/EventSql.h"
+#include "LegacyFixture.h"
+#include "migration/legacy/EventSql.h"
 
 #include <limits>
 #include <vector>
-using namespace coreci;
-using namespace coreci::persistence;
+using namespace coreci::legacy;
+using coreci::Pipeline;
+using coreci::Repo;
+using coreci::Unit;
+using coreci::Version;
+using namespace coreci::legacy::persistence;
 
 std::string hex(const std::string& s) {
     constexpr char digits[] = "0123456789abcdef";

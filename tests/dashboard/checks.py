@@ -60,6 +60,8 @@ def stream_checks(fx):
     stream = Stream(fx)
     at, kind, value = stream.next()
     assert kind == 'snapshot' and value['ready'] is False and value['units'] == []
+    time.sleep(1.5)
+    assert stream.messages.empty(), 'unchanged initial model was sent again before declarations loaded'
     fx.ready()
     _, kind, value = stream.next()
     assert kind == 'update' and value['ready'] is True and len(value['units']) == 178
@@ -163,7 +165,7 @@ def renewal_checks(fx):
     rid, values = fx.dispatches.get(timeout=12)
     fx.started(rid, values)
     transitions = iter((entry, phase, status) for target in fx.plan(values)['targets'] for entry in target['units']
-                       for phase, status in [('build', 'started'), ('build', 'succeeded'), ('publish', 'succeeded')])
+                       for phase, status in [('build', 'started'), ('build', 'succeeded')])
     def latest():
         expected = json.loads(fx.request('/api/v1/status.json', browser=False).read())['generation']
         _, kind, value = stream.next()

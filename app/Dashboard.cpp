@@ -17,7 +17,7 @@ namespace coreci::app {
     } // namespace
     Dashboard::Dashboard(std::shared_ptr<snodec::auth::OAuthClient> client,
                          std::set<std::string> users,
-                         persistence::EventQueue& queue,
+                         persistence::StateSession& queue,
                          std::function<void(std::function<void(bool)>)> reload,
                          std::function<std::uint64_t()> generation)
         : client(std::move(client))
@@ -92,12 +92,6 @@ namespace coreci::app {
                     .set("Connection", "close")
                     .set("Transfer-Encoding", "chunked")
                     .sendHeader();
-                if (queue.engine()) {
-                    res->sendFragment("event: snapshot\ndata: " +
-                                      dashboard::model(*queue.engine(), declarations, generation(), ready, stream->email, loadError) +
-                                      "\n\n");
-                    stream->snapshot = false;
-                }
             }
         });
         router.all("/events", auth, gate, [](const auto&, const Res& res) {

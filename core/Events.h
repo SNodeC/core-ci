@@ -54,7 +54,7 @@ namespace coreci {
     };
     struct UnitBuildSucceeded {
         std::int64_t at;
-        std::string waveId, buildId, artifact;
+        std::string waveId, buildId;
         bool operator==(const UnitBuildSucceeded&) const = default;
     };
     struct UnitBuildFailed {
@@ -64,12 +64,13 @@ namespace coreci {
     };
     struct UnitPublishSucceeded {
         std::int64_t at;
-        std::string waveId, buildId, feedCommit;
+        std::string publicationId, buildId, feedCommit;
         bool operator==(const UnitPublishSucceeded&) const = default;
     };
     struct UnitPublishFailed {
         std::int64_t at;
-        std::string waveId, buildId, reason;
+        std::string publicationId, buildId, reason;
+        std::string failure = "other";
         bool operator==(const UnitPublishFailed&) const = default;
     };
     struct RetryRequested {
@@ -86,14 +87,43 @@ namespace coreci {
         std::int64_t at;
         bool operator==(const Tick&) const = default;
     };
-    struct Resumed {
-        std::int64_t at;
-        bool operator==(const Resumed&) const = default;
-    };
     struct WaveExpired {
         std::int64_t at;
         std::string waveId;
         bool operator==(const WaveExpired&) const = default;
+    };
+    struct TargetFinished {
+        std::int64_t at;
+        std::string waveId, target, artifact;
+        bool operator==(const TargetFinished&) const = default;
+    };
+    struct PublicationStarted {
+        std::int64_t at;
+        std::string publicationId;
+        std::uint64_t runId;
+        unsigned runAttempt;
+        bool operator==(const PublicationStarted&) const = default;
+    };
+    struct PublicationFinished {
+        std::int64_t at;
+        std::string publicationId;
+        std::uint64_t runId;
+        std::string conclusion;
+        bool operator==(const PublicationFinished&) const = default;
+    };
+    struct PublicationDispatchAccepted {
+        std::int64_t at;
+        std::string publicationId;
+        unsigned attempt;
+        bool operator==(const PublicationDispatchAccepted&) const = default;
+    };
+    struct PublicationDispatchRejected {
+        std::int64_t at;
+        std::string publicationId;
+        unsigned attempt;
+        int httpStatus;
+        std::string message;
+        bool operator==(const PublicationDispatchRejected&) const = default;
     };
     using EventValue = std::variant<TagObserved,
                                     GraphChanged,
@@ -109,11 +139,11 @@ namespace coreci {
                                     RetryRequested,
                                     RebuildRequested,
                                     Tick,
-                                    Resumed,
-                                    WaveExpired>;
-    struct Event : EventValue {
-        using EventValue::EventValue;
-        std::optional<std::int64_t> dispatchDeadline;
-        bool operator==(const Event&) const = default;
-    };
+                                    WaveExpired,
+                                    TargetFinished,
+                                    PublicationStarted,
+                                    PublicationFinished,
+                                    PublicationDispatchAccepted,
+                                    PublicationDispatchRejected>;
+    using Event = EventValue;
 } // namespace coreci

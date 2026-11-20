@@ -26,7 +26,7 @@ namespace coreci::github {
     using Form = std::map<std::string, std::string>;
     std::variant<Form, Error> form(const std::string& body);
     std::variant<Event, Error, std::monostate>
-    report(const std::string& waveId, const Form& values, std::int64_t at, std::optional<std::uint64_t> owner = {});
+    report(const std::string& id, const Form& values, std::int64_t at, std::optional<std::uint64_t> owner = {}, bool publication = false);
     struct Push {
         std::string repo, tag, sha;
         std::string branch = {}, defaultBranch = {};

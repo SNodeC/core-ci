@@ -1,9 +1,9 @@
 #pragma once
-#include "core/Events.h"
+#include "migration/legacy/Events.h"
 
 #include <optional>
 
-namespace coreci::persistence {
+namespace coreci::legacy::persistence {
     struct Invalid {
         std::string reason;
         bool operator==(const Invalid&) const = default;
@@ -37,4 +37,4 @@ namespace coreci::persistence {
     Normalized normalize(Event event);
     std::variant<EventRow, Invalid> encode(const Event& event, std::uint64_t seq = 0);
     Normalized decode(const EventRow& row);
-} // namespace coreci::persistence
+} // namespace coreci::legacy::persistence

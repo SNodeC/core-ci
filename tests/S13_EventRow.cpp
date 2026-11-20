@@ -1,11 +1,15 @@
 #include "Check.h"
-#include "Fixture.h"
+#include "LegacyFixture.h"
 #include "tests/InMemoryEventStore.h"
 
 #include <limits>
 #include <tuple>
-using namespace coreci;
-using namespace coreci::persistence;
+using namespace coreci::legacy;
+using coreci::Pipeline;
+using coreci::Repo;
+using coreci::Unit;
+using coreci::Version;
+using namespace coreci::legacy::persistence;
 
 std::string repeated(const std::string& character, std::size_t n) {
     std::string value;

@@ -1,8 +1,12 @@
-#include "Fixture.h"
-#include "core/Badge.h"
+#include "LegacyFixture.h"
+#include "migration/legacy/Badge.h"
 
 #include <random>
-using namespace coreci;
+using namespace coreci::legacy;
+using coreci::Pipeline;
+using coreci::Repo;
+using coreci::Unit;
+using coreci::Version;
 
 void debounce() {
     History h;

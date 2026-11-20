@@ -1,10 +1,11 @@
 #pragma once
 #include "Commands.h"
 #include "Events.h"
+#include "core/WaveController.h"
 
 #include <optional>
 
-namespace coreci {
+namespace coreci::legacy {
     enum class State { Idle, Planned, Building, Built, Published, Failed, Blocked };
     std::string stateName(State state);
     enum class WavePhase { Dispatching, Running, Finished };
@@ -108,6 +109,7 @@ namespace coreci {
         const Wave* latestWave() const;
         const PlanUnit* selection(const Unit& unit) const;
         std::optional<std::int64_t> time() const;
+        ::coreci::StoredState convert() const;
 
     private:
         bool newerTag(const TagObserved& tag, const Pipeline& candidate) const;
@@ -123,7 +125,8 @@ namespace coreci {
         std::map<std::string, Repo> sources;
         std::map<Unit, UnitState> unitStates;
         std::map<std::string, Wave> waveStates;
+        std::map<std::pair<std::string, std::string>, std::map<std::string, bool>> builds;
         std::string latest;
         std::optional<std::int64_t> engineTime, quietUntil;
     };
-} // namespace coreci
+} // namespace coreci::legacy
