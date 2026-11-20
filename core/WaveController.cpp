@@ -266,7 +266,7 @@ namespace coreci {
                                                   }));
                     }
                 }
-                if (!pending && result.status != State::Blocked) {
+                if (!pending && (published || result.status != State::Blocked)) {
                     result.status = published || result.status == State::Published ? State::Published : State::Failed;
                 }
                 complete = complete && !pending;
