@@ -71,6 +71,20 @@ Json snapshot(const Controller& engine) {
             row["revisions"][version.text()] = revision;
         }
         row["auto_retried"] = state.autoRetried ? Json(state.autoRetried->first.text()) : Json(nullptr);
+        if (state.published) {
+            const auto& p = *state.published;
+            auto& fact = result["published"][unit.package + "/" + unit.target];
+            fact = {{"version", p.version.text()},
+                    {"revision", p.revision},
+                    {"wave", p.waveId},
+                    {"at", p.at},
+                    {"feed_commit", p.feedCommit},
+                    {"source", {p.source.owner, p.source.repo, p.source.branch}}};
+            fact["inputs"] = Json::object();
+            for (const auto& [name, input] : p.inputs) {
+                fact["inputs"][name] = {input.version.text(), input.revision};
+            }
+        }
     }
     return result;
 }

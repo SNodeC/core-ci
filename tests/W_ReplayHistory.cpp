@@ -85,7 +85,53 @@ Engine history(const std::filesystem::path& directory,
     return engine;
 }
 
+void publishedHistory() {
+    Pipeline::Builder builder;
+    builder.target({"t"}).package({"a", {"Owner", "a", "main"}, {"t"}, {}, 10}).package({"b", {"Owner", "b", "main"}, {"t"}, {"a"}, 100});
+    Engine old({0, 100, 3, 0});
+    std::uint64_t seq = 0;
+    const auto apply = [&](const Event& event) {
+        old.handle(event, ++seq);
+    };
+    const std::string sha(40, 'a'), feed(40, 'b');
+    apply(GraphChanged{100, builder.build(), {{100, "a", "v1.0.0", sha, Origin::Reconcile}, {100, "b", "v1.0.0", sha, Origin::Reconcile}}});
+    const auto first = *old.latestWave();
+    apply(WaveStarted{101, first.id, 7001, 2});
+    for (const auto& entry : first.plan.at("t")) {
+        apply(UnitBuildSucceeded{102, first.id, entry.buildId, "unit-artifact"});
+        apply(UnitPublishSucceeded{103, first.id, entry.buildId, feed});
+    }
+    apply(WaveFinished{104, first.id, 7001, "success"});
+    apply(RebuildRequested{105, "a", "t"});
+    const auto second = *old.latestWave();
+    apply(WaveStarted{106, second.id, 7002, 3});
+    for (const auto& entry : second.plan.at("t")) {
+        apply(UnitBuildSucceeded{107, second.id, entry.buildId, "unit-artifact"});
+        if (entry.unit.package == "a") {
+            apply(UnitPublishSucceeded{108, second.id, entry.buildId, std::string(40, 'c')});
+        } else {
+            apply(UnitPublishFailed{108, second.id, entry.buildId, "feed failed"});
+        }
+    }
+    apply(WaveFinished{109, second.id, 7002, "failure"});
+    apply(TagObserved{110, "a", "v2.0.0", std::string(40, 'd'), Origin::Webhook});
+    const coreci::WaveController converted({}, old.convert());
+    CHECK(snapshot(converted) == snapshot(old));
+    const coreci::WaveController loaded({}, coreci::persistence::decodeState(coreci::persistence::encodeState(converted.stored())));
+    CHECK(snapshot(loaded) == snapshot(old));
+    const auto& a = *loaded.units().at({"a", "t"}).published;
+    const auto& b = *loaded.units().at({"b", "t"}).published;
+    CHECK_EQ(a.revision, 12U);
+    CHECK_EQ(*a.runId, 7002U);
+    CHECK_EQ(*b.runId, 7001U);
+    CHECK_EQ(b.revision, 101U);
+    CHECK_EQ(b.inputs.at("a").revision, 11U);
+    CHECK_EQ(loaded.nextRevision({"a", "t"}), 12U);
+    CHECK_EQ(loaded.nextRevision({"b", "t"}), 104U);
+}
+
 int main(int argc, char** argv) {
+    publishedHistory();
     CHECK(argc == 2 || argc == 3);
     if (argc == 2 || argc == 3) {
         const std::filesystem::path directory(argv[1]);
