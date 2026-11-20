@@ -43,7 +43,10 @@ maximum-header-bytes=65536
 maximum-header-fields=100
 maximum-start-line-bytes=8192
 
+[coreci-redirect]
+disabled=true
+
 [coreci-redirect.local]
 host="0.0.0.0"
 port=8080
-# To omit this listener, add [coreci-redirect] with disabled=true.
+# Set disabled=false above to enable this optional listener.
