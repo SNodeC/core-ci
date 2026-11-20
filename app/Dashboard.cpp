@@ -92,12 +92,6 @@ namespace coreci::app {
                     .set("Connection", "close")
                     .set("Transfer-Encoding", "chunked")
                     .sendHeader();
-                if (queue.engine()) {
-                    res->sendFragment("event: snapshot\ndata: " +
-                                      dashboard::model(*queue.engine(), declarations, generation(), ready, stream->email, loadError) +
-                                      "\n\n");
-                    stream->snapshot = false;
-                }
             }
         });
         router.all("/events", auth, gate, [](const auto&, const Res& res) {
