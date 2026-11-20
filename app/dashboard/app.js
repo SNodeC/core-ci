@@ -246,11 +246,6 @@ function renderWork() {
         timing.append(node('span', 'Started: '), timestamp(wave.started == null ? null : new Date(wave.started * 1000).toISOString()),
             node('span', ' · Finished: '), timestamp(wave.finished == null ? null : new Date(wave.finished * 1000).toISOString()));
         panel.append(timing);
-        const targets = node('ul');
-        for (const target of graph.targets || []) {
-            targets.append(node('li', target.target + ' · ' + target.status + (target.publication ? ' · ' + target.publication : '')));
-        }
-        panel.append(targets);
     }
     const publicationPanel = element('publication-panel'), publication = graph.publication;
     publicationPanel.replaceChildren();
@@ -326,7 +321,7 @@ function mapModel(model) {
             prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
             build: run(unit.build), publish: run(unit.publish)};
     }
-    return {ready: model.ready, repositories, executions, wave: model.wave, publication: model.publication, targets: model.targets};
+    return {ready: model.ready, repositories, executions, wave: model.wave, publication: model.publication};
 }
 function connect() {
     if (events) {
