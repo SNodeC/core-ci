@@ -1,164 +1,144 @@
 #include "StatusJson.h"
 
-#include "core/Status.h"
+#include <algorithm>
 
-#include <charconv>
 namespace coreci::app {
     namespace {
-        std::string quote(const std::string& value) {
-            const char* hex = "0123456789abcdef";
-            std::string result = "\"";
-            for (const unsigned char c : value) {
-                if (c == '"' || c == '\\') {
-                    result += '\\';
-                    result += static_cast<char>(c);
-                } else if (c < 32) {
-                    result += "\\u00";
-                    result += hex[c >> 4];
-                    result += hex[c & 15];
-                } else {
-                    result += static_cast<char>(c);
+        using Json = nlohmann::json;
+        template <class T>
+        Json nullable(const std::optional<T>& value) {
+            return value ? Json(*value) : Json();
+        }
+        Json publicationPlan(const Publication& publication, const std::map<std::string, Wave>& waves) {
+            Json items = Json::array();
+            for (const auto& item : publication.items) {
+                const auto& wave = waves.at(item.waveId);
+                Json units = Json::array();
+                for (const auto& entry : wave.plan.at(item.target)) {
+                    if (std::find(item.buildIds.begin(), item.buildIds.end(), entry.buildId) != item.buildIds.end()) {
+                        units.push_back({{"build_id", entry.buildId},
+                                         {"package", entry.unit.package},
+                                         {"version", entry.release.version.text()},
+                                         {"revision", entry.revision}});
+                    }
                 }
+                items.push_back({{"wave", item.waveId},
+                                 {"wave_run_id", nullable(wave.runId)},
+                                 {"target", item.target},
+                                 {"artifact", item.artifact},
+                                 {"units", units}});
             }
-            result += '"';
-            return result;
-        }
-        std::string object(std::map<std::string, std::string> fields) {
-            std::string result = "{";
-            for (const auto& [key, value] : fields) {
-                result += (result.size() == 1 ? "" : ",") + quote(key) + ":" + value;
-            }
-            return result + "}";
-        }
-        std::string array(const std::vector<std::string>& values) {
-            std::string result = "[";
-            for (const auto& value : values) {
-                result += (result.size() == 1 ? "" : ",") + value;
-            }
-            return result + "]";
-        }
-        std::string run(const std::optional<std::uint64_t>& value) {
-            return value ? std::to_string(*value) : "null";
+            return {{"publication", publication.run.id},
+                    {"feed_branch", publication.run.feedBranch},
+                    {"owner_run_id", nullable(publication.run.runId)},
+                    {"items", items}};
         }
     } // namespace
-    StatusSnapshot statusSnapshot(const Engine& engine) {
-        StatusSnapshot result;
+    nlohmann::json statusSnapshot(const WaveController& engine) {
+        Json value{{"schema", 2},
+                   {"packages", Json::array()},
+                   {"units", Json::array()},
+                   {"wave", nullptr},
+                   {"publication", nullptr},
+                   {"targets", Json::array()}};
         for (const auto& [name, package] : engine.pipeline().packages()) {
-            result.packages.emplace(name, PackageView{package.sourceRepo, engine.releases().at(name)});
-        }
-        for (const auto& [unit, status] : statuses(engine)) {
-            const auto& state = engine.units().at(unit);
-            UnitView view;
-            view.status = status;
-            view.published = state.published;
-            view.failure = state.failure;
-            if (state.published) {
-                view.publishedRun = engine.waves().at(state.published->waveId).runId;
-            }
-            if (const auto* entry = engine.selection(unit)) {
-                view.selection = VersionView{entry->release.version.text(), entry->revision};
-                view.buildId = entry->buildId;
-            } else if (state.published) {
-                view.selection = VersionView{state.published->version.text(), state.published->revision};
-            }
-            result.units.emplace(unit, std::move(view));
-        }
-        if (engine.latestWave()) {
-            result.wave = *engine.latestWave();
-            for (const auto& [target, entries] : result.wave->plan) {
-                for (const auto& entry : entries) {
-                    ++result.waveCounts[entry.build ? stateName(engine.units().at(entry.unit).state) : "Published"];
-                }
-            }
-        }
-        return result;
-    }
-    std::string statusJson(const StatusSnapshot& snapshot, std::uint64_t generation) {
-        const auto version = [](const std::string& text, std::uint64_t revision) {
-            return object({{"version", quote(text)}, {"revision", std::to_string(revision)}});
-        };
-        const auto timestamp = [](std::optional<std::int64_t> value) {
-            return value ? std::to_string(*value) : "null";
-        };
-        std::vector<std::string> packages, units;
-        for (const auto& [name, package] : snapshot.packages) {
-            const auto& r = package.released;
-            packages.push_back(object(
-                {{"name", quote(name)},
+            const auto& repo = package.sourceRepo;
+            const auto& release = engine.releases().at(name);
+            value["packages"].push_back(
+                {{"name", name},
+                 {"sourceRepo", {{"owner", repo.owner}, {"repo", repo.repo}, {"branch", repo.branch}}},
                  {"released",
-                  r ? object({{"tag", quote(r->tag)}, {"version", quote(r->version.text())}, {"commit", quote(r->sourceSha)}}) : "null"},
-                 {"sourceRepo",
-                  object({{"branch", quote(package.sourceRepo.branch)},
-                          {"owner", quote(package.sourceRepo.owner)},
-                          {"repo", quote(package.sourceRepo.repo)}})}}));
-        }
-        for (const auto& [unit, state] : snapshot.units) {
-            std::string publication = "null", failure = "null";
-            if (state.published) {
-                const auto& p = *state.published;
-                publication = object({{"version", quote(p.version.text())},
-                                      {"revision", std::to_string(p.revision)},
-                                      {"at", std::to_string(p.at)},
-                                      {"feedCommit", quote(p.feedCommit)},
-                                      {"runId", run(state.publishedRun)}});
+                  release ? Json{{"tag", release->tag}, {"version", release->version.text()}, {"commit", release->sourceSha}} : Json()}});
+            for (const auto& target : package.targets) {
+                const Unit key{name, target};
+                const auto& state = engine.units().at(key);
+                Json published, failure, selection;
+                std::string build;
+                if (state.published) {
+                    const auto& p = *state.published;
+                    published = {{"version", p.version.text()},
+                                 {"revision", p.revision},
+                                 {"at", p.at},
+                                 {"feedCommit", p.feedCommit},
+                                 {"runId", nullable(p.runId)}};
+                    selection = {{"version", p.version.text()}, {"revision", p.revision}};
+                }
+                if (state.failure) {
+                    const auto& f = *state.failure;
+                    failure = {{"version", f.version.text()}, {"revision", f.revision}, {"at", f.at}, {"reason", f.reason}};
+                }
+                if (const auto* entry = engine.selection(key)) {
+                    selection = {{"version", entry->release.version.text()}, {"revision", entry->revision}};
+                    build = entry->buildId;
+                }
+                value["units"].push_back({{"package", name},
+                                          {"target", target},
+                                          {"status", stateName(state.state)},
+                                          {"buildId", build},
+                                          {"published", published},
+                                          {"failure", failure},
+                                          {"selection", selection}});
             }
-            if (state.failure) {
-                const auto& f = *state.failure;
-                failure = object({{"version", quote(f.version.text())},
-                                  {"revision", std::to_string(f.revision)},
-                                  {"at", std::to_string(f.at)},
-                                  {"reason", quote(f.reason)}});
-            }
-            units.push_back(
-                object({{"package", quote(unit.package)},
-                        {"target", quote(unit.target)},
-                        {"status", quote(state.status)},
-                        {"buildId", quote(state.buildId)},
-                        {"published", publication},
-                        {"failure", failure},
-                        {"selection", state.selection ? version(state.selection->version, state.selection->revision) : "null"}}));
         }
-        std::string wave = "null";
-        if (snapshot.wave) {
-            const auto& w = *snapshot.wave;
-            std::map<std::string, std::string> encodedCounts;
-            for (const auto& [state, count] : snapshot.waveCounts) {
-                encodedCounts.emplace(state, std::to_string(count));
+        if (const auto* wave = engine.latestWave()) {
+            Json counts = Json::object();
+            for (const auto& [target, entries] : wave->plan) {
+                for (const auto& entry : entries) {
+                    const auto status = entry.build ? stateName(engine.units().at(entry.unit).state) : "Published";
+                    counts[status] = counts.value(status, 0U) + 1;
+                }
+                const auto& result = engine.stored().waveTargets.at({wave->id, target});
+                value["targets"].push_back({{"wave", wave->id},
+                                            {"target", target},
+                                            {"status", stateName(result.status)},
+                                            {"artifact", result.artifact},
+                                            {"publication", result.publicationId}});
             }
-            wave = object({{"id", quote(w.id)},
-                           {"phase", quote(phaseName(w.phase))},
-                           {"runId", run(w.runId)},
-                           {"runAttempt", w.runAttempt ? std::to_string(*w.runAttempt) : "null"},
-                           {"started", timestamp(w.started)},
-                           {"finished", timestamp(w.finished)},
-                           {"conclusion", quote(w.conclusion)},
-                           {"counts", object(encodedCounts)}});
+            value["wave"] = {{"id", wave->id},
+                             {"phase", phaseName(wave->phase)},
+                             {"runId", nullable(wave->runId)},
+                             {"runAttempt", nullable(wave->runAttempt)},
+                             {"started", nullable(wave->started)},
+                             {"finished", nullable(wave->finished)},
+                             {"conclusion", wave->conclusion},
+                             {"counts", counts}};
         }
-        return object({{"schema", "2"},
-                       {"generation", std::to_string(generation)},
-                       {"packages", array(packages)},
-                       {"units", array(units)},
-                       {"wave", wave}});
+        const Publication* latest = nullptr;
+        for (const auto& [id, publication] : engine.publications()) {
+            if (!latest || std::stoull(id.substr(1)) > std::stoull(latest->run.id.substr(1))) {
+                latest = &publication;
+            }
+        }
+        if (latest) {
+            value["publication"] = publicationPlan(*latest, engine.waves());
+            value["publication"].update({{"phase", phaseName(latest->run.phase)}, {"runId", nullable(latest->run.runId)}});
+        }
+        return value;
+    }
+    std::string statusJson(nlohmann::json snapshot, std::uint64_t generation) {
+        snapshot["generation"] = generation;
+        return snapshot.dump();
     }
     std::string planJson(const Wave& wave) {
-        std::vector<std::string> targets;
+        Json targets = Json::array();
         for (const auto& [target, entries] : wave.plan) {
-            std::vector<std::string> units;
+            Json units = Json::array();
             for (const auto& entry : entries) {
-                units.push_back(object({{"package", quote(entry.unit.package)},
-                                        {"repo", quote(entry.repo.owner + "/" + entry.repo.repo)},
-                                        {"tag", quote(entry.release.tag)},
-                                        {"commit", quote(entry.release.sourceSha)},
-                                        {"version", quote(entry.release.version.text())},
-                                        {"revision", std::to_string(entry.revision)},
-                                        {"build_id", quote(entry.buildId)},
-                                        {"action", quote(entry.build ? "build" : "reuse")}}));
+                units.push_back({{"package", entry.unit.package},
+                                 {"repo", entry.repo.owner + "/" + entry.repo.repo},
+                                 {"tag", entry.release.tag},
+                                 {"commit", entry.release.sourceSha},
+                                 {"version", entry.release.version.text()},
+                                 {"revision", entry.revision},
+                                 {"build_id", entry.buildId},
+                                 {"action", entry.build ? "build" : "reuse"}});
             }
-            targets.push_back(object({{"id", quote(target)}, {"units", array(units)}}));
+            targets.push_back({{"id", target}, {"units", units}});
         }
-        return object({{"wave", quote(wave.id)},
-                       {"feed_branch", quote(wave.feedBranch)},
-                       {"owner_run_id", run(wave.runId)},
-                       {"targets", array(targets)}});
+        return Json{{"wave", wave.id}, {"feed_branch", wave.feedBranch}, {"owner_run_id", nullable(wave.runId)}, {"targets", targets}}
+            .dump();
+    }
+    std::string publicationPlanJson(const Publication& publication, const std::map<std::string, Wave>& waves) {
+        return publicationPlan(publication, waves).dump();
     }
 } // namespace coreci::app

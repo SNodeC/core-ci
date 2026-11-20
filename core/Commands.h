@@ -12,12 +12,13 @@ namespace coreci {
         bool operator==(const Input&) const = default;
     };
     using Inputs = std::map<std::string, Input>;
-    struct DispatchWave {
-        std::string waveId;
+    struct Dispatch {
+        std::string id;
+        bool publication;
         unsigned attempt;
         Repo workflow;
         std::string feedBranch;
-        bool operator==(const DispatchWave&) const = default;
+        bool operator==(const Dispatch&) const = default;
     };
-    using Command = DispatchWave;
+    using Command = Dispatch;
 } // namespace coreci

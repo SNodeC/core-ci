@@ -1,14 +1,13 @@
 #include "MariaDBEventStore.h"
 
-#include "Schema.h"
-#include "persistence/EventSql.h"
+#include "migration/legacy/EventSql.h"
 
 #include <charconv>
 #include <memory>
 #include <tuple>
 #include <utility>
 
-namespace coreci::mariadb {
+namespace coreci::legacy::mariadb {
     namespace {
         int nibble(char c) {
             int result = -1;
@@ -102,15 +101,12 @@ namespace coreci::mariadb {
         client.abort();
     }
     void MariaDBEventStore::fail(const StoreError& error) {
-        const bool wasReady = ready;
         ready = false;
         // Cancel remaining callbacks before a recovery callback may issue new commands.
         client.abort();
         auto failed = std::exchange(onFailure, {});
         if (failed) {
             failed(error);
-        } else if (wasReady && onLost) {
-            onLost(error.message);
         }
     }
     void MariaDBEventStore::execute(const std::string& sql, std::function<void()> done) {
@@ -125,19 +121,14 @@ namespace coreci::mariadb {
         execute("SET NAMES utf8mb4", [this, onReady] {
             execute("SET autocommit = 1", [this, onReady] {
                 lockWriter([this, onReady] {
-                    createSchema(0, [this, onReady] {
-                        checkSchema([this, onReady] {
-                            ready = true;
-                            onFailure = {};
-                            onReady();
-                        });
+                    checkSchema([this, onReady] {
+                        ready = true;
+                        onFailure = {};
+                        onReady();
                     });
                 });
             });
         });
-    }
-    void MariaDBEventStore::setConnectionLost(std::function<void(const std::string&)> callback) {
-        onLost = std::move(callback);
     }
     void MariaDBEventStore::lockWriter(std::function<void()> done) {
         client.query(
@@ -155,17 +146,6 @@ namespace coreci::mariadb {
                 fail({StoreError::Kind::Unavailable, error});
             });
     }
-    void MariaDBEventStore::createSchema(std::size_t index, std::function<void()> done) {
-        // Schema.sql is embedded by CMake; its CREATE statements contain no string literals.
-        const auto end = schema.find(';', index);
-        if (end == std::string_view::npos) {
-            done();
-        } else {
-            execute(std::string(schema.substr(index, end - index)), [this, end, done] {
-                createSchema(end + 1, done);
-            });
-        }
-    }
     void MariaDBEventStore::checkSchema(std::function<void()> done) {
         const auto version = std::make_shared<std::string>();
         client.query(
@@ -178,13 +158,9 @@ namespace coreci::mariadb {
                     if (row[0] != nullptr && std::string(row[0]) == "1" && row[1] != nullptr &&
                         (std::string(row[1]) == "5" || std::string(row[1]) == "6")) {
                         *version = row[1];
-                    } else if (row[0] != nullptr && std::string(row[0]) == "0" && row[2] != nullptr && std::string(row[2]) == "0") {
-                        *version = "0";
                     } else {
                         fail({StoreError::Kind::Corrupt, "coreci_schema: expected one version 5/6 row, or empty schema and events"});
                     }
-                } else if (*version == "0") {
-                    execute("INSERT INTO coreci_schema (version) VALUES (6)", done);
                 } else if (*version == "5") {
                     execute("ALTER TABLE coreci_events ADD COLUMN IF NOT EXISTS dispatch_deadline BIGINT NULL", [this, done] {
                         execute("UPDATE coreci_schema SET version=6 WHERE version=5", done);
@@ -196,72 +172,6 @@ namespace coreci::mariadb {
             [this](const std::string& message, unsigned int) {
                 fail({StoreError::Kind::Unavailable, message});
             });
-    }
-    void MariaDBEventStore::append(const Event& event,
-                                   std::function<void(std::uint64_t)> onCommitted,
-                                   std::function<void(const std::string&)> onError) {
-        const auto sql = persistence::insertSql(event);
-        if (!ready) {
-            onError("MariaDB session requires open before append");
-        } else if (std::holds_alternative<persistence::Invalid>(sql)) {
-            onError(std::get<persistence::Invalid>(sql).reason);
-        } else {
-            onFailure = [onError](const StoreError& error) {
-                onError(error.message);
-            };
-            const auto seq = std::make_shared<std::uint64_t>(0);
-            const auto committed = [this, onCommitted, seq] {
-                onFailure = {};
-                onCommitted(*seq);
-            };
-            const auto sequence = [this, seq](std::function<void()> done) {
-                client.query(
-                    "SELECT LAST_INSERT_ID()",
-                    [this, seq, done](const MYSQL_ROW row) {
-                        if (row != nullptr) {
-                            if (row[0] == nullptr || !number(std::string(row[0]), *seq) || *seq == 0) {
-                                fail({StoreError::Kind::Unavailable, "invalid committed event seq"});
-                            }
-                        } else if (ready) {
-                            done();
-                        }
-                    },
-                    [this](const std::string& error, unsigned) {
-                        fail({StoreError::Kind::Unavailable, error});
-                    });
-            };
-            if (std::holds_alternative<GraphChanged>(event)) {
-                auto statements = std::make_shared<std::vector<std::string>>();
-                const auto row = std::get<persistence::EventRow>(persistence::encode(event));
-                const auto graphSql = persistence::graphInsertSql(*row.graph);
-                statements->insert(statements->end(), graphSql.begin(), graphSql.end());
-                client.startTransactions(
-                    [this, statements, committed, sequence, eventSql = std::get<std::string>(sql)] {
-                        execute(eventSql, [this, statements, committed, sequence] {
-                            sequence([this, statements, committed] {
-                                insertGraph(statements, 0, [this, committed] {
-                                    client.commit(
-                                        [this, committed] {
-                                            client.endTransactions(committed, [this](const auto& error, auto) {
-                                                fail({StoreError::Kind::Unavailable, error});
-                                            });
-                                        },
-                                        [this](const auto& error, auto) {
-                                            fail({StoreError::Kind::Unavailable, error});
-                                        });
-                                });
-                            });
-                        });
-                    },
-                    [this](const auto& error, auto) {
-                        fail({StoreError::Kind::Unavailable, error});
-                    });
-            } else {
-                execute(std::get<std::string>(sql), [sequence, committed] {
-                    sequence(committed);
-                });
-            }
-        }
     }
     void
     MariaDBEventStore::insertGraph(std::shared_ptr<std::vector<std::string>> statements, std::size_t index, std::function<void()> done) {
@@ -383,4 +293,4 @@ namespace coreci::mariadb {
                 });
         }
     }
-} // namespace coreci::mariadb
+} // namespace coreci::legacy::mariadb

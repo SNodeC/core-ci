@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace coreci::persistence {
+namespace coreci::legacy::persistence {
     InMemoryEventStore::InMemoryEventStore(std::vector<EventRow> rows)
         : stored(std::move(rows)) {
         for (const auto& row : stored) {
@@ -84,4 +84,4 @@ namespace coreci::persistence {
     const std::vector<EventRow>& InMemoryEventStore::rows() const {
         return stored;
     }
-} // namespace coreci::persistence
+} // namespace coreci::legacy::persistence

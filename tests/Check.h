@@ -12,7 +12,11 @@ template <class A, class B>
 void checkEqual(const A& a, const B& b, const char* file, int line) {
     if (!(a == b)) {
         ++checkFailures;
-        std::cerr << file << ':' << line << ": expected " << b << " got " << a << '\n';
+        std::cerr << file << ':' << line << ": values differ";
+        if constexpr (requires { std::cerr << a << b; }) {
+            std::cerr << ": expected " << b << " got " << a;
+        }
+        std::cerr << '\n';
     }
 }
 inline int checkResult() {

@@ -51,7 +51,7 @@ namespace coreci {
                std::to_string(left / 2) + "\" y=\"14\">" + xml(label) + "</text><text x=\"" + std::to_string(left + right / 2) +
                "\" y=\"14\">" + xml(message) + "</text></g></svg>";
     }
-    std::string unitBadge(const Engine& engine, const Unit& unit) {
+    std::string unitBadge(const WaveController& engine, const Unit& unit) {
         const auto states = statuses(engine);
         std::string message = "unknown", colour = "#6e7781";
         if (states.contains(unit)) {

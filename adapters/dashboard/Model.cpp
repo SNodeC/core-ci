@@ -29,7 +29,7 @@ namespace coreci::dashboard {
             return result;
         }
     } // namespace
-    std::string model(const Engine& engine,
+    std::string model(const WaveController& engine,
                       const github::LoadedDeclarations& declarations,
                       std::uint64_t generation,
                       bool ready,
@@ -54,6 +54,10 @@ namespace coreci::dashboard {
         if (const auto* wave = engine.latestWave()) {
             value["wave"]["html_url"] = runLink(*wave);
         }
+        if (!value["publication"].is_null()) {
+            const auto id = value["publication"].at("publication").get<std::string>();
+            value["publication"]["html_url"] = runLink(engine.publications().at(id).run);
+        }
         for (auto& unit : value["units"]) {
             const Unit key{unit.at("package"), unit.at("target")};
             const auto& state = engine.units().at(key);
@@ -69,10 +73,23 @@ namespace coreci::dashboard {
                          {"format", target.family},
                          {"prerequisites", declarations.packages.at(key.package).prerequisites}});
             const auto buildState =
-                state.buildEnd ? (state.artifact.empty() ? "failed" : "succeeded") : (state.buildStart ? "running" : "pending");
+                state.failure && state.failure->buildFailed
+                    ? "failed"
+                    : (state.state == State::Blocked ? "blocked"
+                                                     : (state.buildEnd ? "succeeded" : (state.buildStart ? "running" : "pending")));
             unit["build"] = phase(buildState, state.buildStart, state.buildEnd, wave);
-            unit["publish"] = phase(
-                state.publishEnd ? (state.state == State::Published ? "succeeded" : "failed") : "pending", {}, state.publishEnd, wave);
+            const auto waveTarget = engine.stored().waveTargets.find({state.waveId, key.target});
+            const Wave* publication = waveTarget != engine.stored().waveTargets.end() && !waveTarget->second.publicationId.empty()
+                                          ? &engine.publications().at(waveTarget->second.publicationId).run
+                                          : nullptr;
+            if (!publication && state.published && state.published->waveId == state.waveId) {
+                publication = wave;
+            }
+            unit["publish"] = phase(state.publishEnd ? (state.state == State::Published ? "succeeded" : "failed")
+                                                     : (state.state == State::Publishing ? "running" : "pending"),
+                                    publication ? publication->started : std::nullopt,
+                                    state.publishEnd,
+                                    publication);
             if (const auto* entry = engine.selection(key)) {
                 unit["tag"] = entry->release.tag;
             }

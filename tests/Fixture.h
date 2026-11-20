@@ -1,7 +1,7 @@
 #pragma once
 #include "Check.h"
 #include "app/StatusJson.h"
-#include "persistence/EventRow.h"
+#include "persistence/StateSql.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -26,67 +26,73 @@ namespace coreci {
     }
     struct History {
         Options options;
-        Engine engine;
-        std::vector<Event> events;
+        WaveController engine;
         explicit History(Options options = {5, 100, 3, 0})
             : options(options)
             , engine(options) {
         }
-        std::vector<Command> apply(Event event) {
-            std::vector<Command> commands;
-            const auto normalized = persistence::normalize(event);
-            CHECK(std::holds_alternative<Event>(normalized));
-            if (std::holds_alternative<Event>(normalized)) {
-                event = engine.record(std::get<Event>(normalized));
-                if (std::holds_alternative<Accept>(engine.classify(event))) {
-                    events.push_back(event);
-                    const auto row = std::get<persistence::EventRow>(persistence::encode(event, events.size()));
-                    CHECK(std::get<Event>(persistence::decode(row)) == event);
-                    engine.handle(event, events.size());
-                    commands = engine.commands();
-                } else {
-                    engine.handle(event, events.size() + 1);
-                }
-                Engine replay(options);
-                for (std::size_t n = 0; n < events.size(); ++n) {
-                    replay.handle(events[n], n + 1);
-                }
-                CHECK(replay.units() == engine.units());
-                CHECK(replay.waves() == engine.waves());
-                CHECK(replay.releases() == engine.releases());
-                CHECK(replay.commands() == engine.commands());
-                CHECK(replay.nextDeadline() == engine.nextDeadline());
-                CHECK(app::statusSnapshot(replay) == app::statusSnapshot(engine));
-            }
-            return commands;
+        std::vector<Command> apply(const Event& event) {
+            engine.handle(event);
+            const auto state = persistence::decodeState(persistence::encodeState(engine.stored()));
+            CHECK(state == engine.stored());
+            WaveController restarted(options, state);
+            CHECK(restarted.commands() == engine.commands());
+            CHECK(restarted.nextDeadline() == engine.nextDeadline());
+            CHECK(app::statusSnapshot(restarted) == app::statusSnapshot(engine));
+            return engine.commands();
         }
         void load(unsigned base = 0, std::int64_t at = 100) {
             const auto graph = testPipeline(base);
             std::vector<TagObserved> tags;
-            for (const auto& [name, pkg] : graph.packages()) {
+            for (const auto& [name, package] : graph.packages()) {
                 tags.push_back({at, name, "v1.0.0", hash(), Origin::Reconcile});
             }
             apply(GraphChanged{at, graph, tags});
         }
         const Wave& wave() const {
             if (!engine.latestWave()) {
-                throw std::runtime_error("test expected a wave");
+                throw std::runtime_error("expected wave");
             }
             return *engine.latestWave();
         }
-        void complete(std::int64_t at = 110) {
-            const auto active = wave();
-            apply(WaveStarted{at, active.id, 42, 2});
-            for (const auto& [target, entries] : active.plan) {
-                for (const auto& entry : entries) {
-                    if (entry.build) {
-                        apply(UnitBuildStarted{at, active.id, entry.buildId});
-                        apply(UnitBuildSucceeded{at + 1, active.id, entry.buildId, "artifact"});
-                        apply(UnitPublishSucceeded{at + 2, active.id, entry.buildId, hash('b')});
-                    }
+        const Publication& publication() const {
+            const Publication* result = nullptr;
+            for (const auto& [id, publication] : engine.publications()) {
+                if (!result || std::stoull(id.substr(1)) > std::stoull(result->run.id.substr(1))) {
+                    result = &publication;
                 }
             }
-            apply(WaveFinished{at + 3, active.id, 42, "success"});
+            if (!result) {
+                throw std::runtime_error("expected publication");
+            }
+            return *result;
+        }
+        void publish(std::int64_t at) {
+            const auto p = publication();
+            apply(PublicationStarted{at, p.run.id, 314, 1});
+            for (const auto& item : p.items) {
+                for (const auto& id : item.buildIds) {
+                    apply(UnitPublishSucceeded{at + 1, p.run.id, id, hash('b')});
+                }
+            }
+            apply(PublicationFinished{at + 2, p.run.id, 314, "success"});
+        }
+        void complete(std::int64_t at = 110) {
+            const auto w = wave();
+            apply(WaveStarted{at, w.id, 42, 2});
+            for (const auto& [target, entries] : w.plan) {
+                for (const auto& entry : entries) {
+                    if (entry.build) {
+                        apply(UnitBuildStarted{at, w.id, entry.buildId});
+                        apply(UnitBuildSucceeded{at + 1, w.id, entry.buildId});
+                    }
+                }
+                apply(TargetFinished{at + 2, w.id, target, "artifact-" + target});
+                if (publication().run.phase != WavePhase::Finished) {
+                    publish(at + 3);
+                }
+            }
+            apply(WaveFinished{at + 6, w.id, 42, "success"});
         }
     };
 } // namespace coreci

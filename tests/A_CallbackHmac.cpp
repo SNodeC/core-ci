@@ -1,6 +1,6 @@
 #include "Check.h"
 #include "adapters/github/Protocol.h"
-#include "persistence/EventRow.h"
+#include "persistence/Input.h"
 using namespace coreci;
 using namespace coreci::github;
 int main() {
@@ -49,11 +49,34 @@ int main() {
               {"run_id", "1"},
               {"feed_commit", std::string(40, 'a')}},
              {{"scope", "unit"}, {"build_id", "id"}, {"phase", "publish"}, {"status", "failed"}, {"run_id", "1"}, {"reason", "failed"}}}) {
-        CHECK(std::holds_alternative<Event>(report("id", data, 1, 1)));
+        CHECK(std::holds_alternative<Event>(report("id", data, 1, 1, data.contains("phase") && data.at("phase") == "publish")));
     }
-    CHECK(std::holds_alternative<std::monostate>(
+    CHECK(std::holds_alternative<Error>(
         report("w1", {{"scope", "unit"}, {"build_id", "id"}, {"phase", "publish"}, {"status", "started"}, {"run_id", "1"}}, 1, 1)));
     CHECK(std::holds_alternative<Event>(
         report("w1", {{"scope", "wave"}, {"status", "finished"}, {"run_id", "2"}, {"conclusion", "success"}}, 1)));
+    for (const std::string failure : {"artifact-unavailable", "immutable-conflict", "feed-push", "signing", "other", "unknown", ""}) {
+        Form fields{{"scope", "unit"},
+                    {"build_id", "build"},
+                    {"phase", "publish"},
+                    {"status", "failed"},
+                    {"run_id", "7"},
+                    {"reason", "artifact unavailable"},
+                    {"failure", failure}};
+        if (failure.empty()) {
+            fields.erase("failure");
+        }
+        const auto parsed = report("p1", fields, 100, 7, true);
+        CHECK(std::holds_alternative<Event>(parsed));
+        if (std::holds_alternative<Event>(parsed)) {
+            const auto& result = std::get<UnitPublishFailed>(std::get<Event>(parsed));
+            CHECK_EQ(result.failure, failure.empty() || failure == "unknown" ? "other" : failure);
+            CHECK_EQ(result.reason, "artifact unavailable");
+        }
+        CHECK(std::holds_alternative<std::monostate>(report("p1", fields, 100, 8, true)));
+        CHECK(std::holds_alternative<Error>(report("w1", fields, 100, 7, false)));
+    }
+    CHECK(std::holds_alternative<Event>(
+        report("w1", {{"scope", "target"}, {"status", "finished"}, {"run_id", "7"}, {"target", "t1"}, {"artifact", ""}}, 100, 7)));
     return checkResult();
 }

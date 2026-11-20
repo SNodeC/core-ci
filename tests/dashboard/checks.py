@@ -163,7 +163,7 @@ def renewal_checks(fx):
     rid, values = fx.dispatches.get(timeout=12)
     fx.started(rid, values)
     transitions = iter((entry, phase, status) for target in fx.plan(values)['targets'] for entry in target['units']
-                       for phase, status in [('build', 'started'), ('build', 'succeeded'), ('publish', 'succeeded')])
+                       for phase, status in [('build', 'started'), ('build', 'succeeded')])
     def latest():
         expected = json.loads(fx.request('/api/v1/status.json', browser=False).read())['generation']
         _, kind, value = stream.next()

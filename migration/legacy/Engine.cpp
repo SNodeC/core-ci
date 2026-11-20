@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <type_traits>
 
-namespace coreci {
+namespace coreci::legacy {
     std::string stateName(State state) {
         const char* names[] = {"Idle", "Planned", "Building", "Built", "Published", "Failed", "Blocked"};
         return names[static_cast<unsigned>(state)];
@@ -264,6 +264,24 @@ namespace coreci {
     }
     void Engine::handle(const Event& event, std::uint64_t seq) {
         if (std::holds_alternative<Accept>(classify(event))) {
+            if (const auto* success = std::get_if<UnitBuildSucceeded>(&event)) {
+                for (const auto& [target, entries] : waveStates.at(success->waveId).plan) {
+                    for (const auto& entry : entries) {
+                        if (entry.buildId == success->buildId) {
+                            builds[{success->waveId, target}][entry.buildId] = true;
+                        }
+                    }
+                }
+            }
+            if (const auto* failure = std::get_if<UnitBuildFailed>(&event)) {
+                for (const auto& [target, entries] : waveStates.at(failure->waveId).plan) {
+                    for (const auto& entry : entries) {
+                        if (entry.buildId == failure->buildId) {
+                            builds[{failure->waveId, target}][entry.buildId] = false;
+                        }
+                    }
+                }
+            }
             std::visit(
                 [&](const auto& e) {
                     using E = std::decay_t<decltype(e)>;
@@ -469,4 +487,4 @@ namespace coreci {
     std::optional<std::int64_t> Engine::time() const {
         return engineTime;
     }
-} // namespace coreci
+} // namespace coreci::legacy

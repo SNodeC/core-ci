@@ -2,7 +2,7 @@
 #include "adapters/github/Declarations.h"
 #include "auth/JwtAuthMiddleware.h"
 #include "express/Router.h"
-#include "persistence/EventQueue.h"
+#include "persistence/StateSession.h"
 
 #include <chrono>
 #include <core/timer/Timer.h>
@@ -12,7 +12,7 @@ namespace coreci::app {
         using Res = std::shared_ptr<express::Response>;
         Dashboard(std::shared_ptr<snodec::auth::OAuthClient> client,
                   std::set<std::string> users,
-                  persistence::EventQueue& queue,
+                  persistence::StateSession& queue,
                   std::function<void(std::function<void(bool)>)> reload,
                   std::function<std::uint64_t()> generation);
         ~Dashboard();
@@ -31,7 +31,7 @@ namespace coreci::app {
         void tick();
         std::shared_ptr<snodec::auth::OAuthClient> client;
         std::set<std::string> users;
-        persistence::EventQueue& queue;
+        persistence::StateSession& queue;
         std::function<void(std::function<void(bool)>)> reload;
         std::function<std::uint64_t()> generation;
         std::vector<std::shared_ptr<Stream>> streams;

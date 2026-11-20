@@ -1,6 +1,6 @@
 #include "EventSql.h"
 
-namespace coreci::persistence {
+namespace coreci::legacy::persistence {
     namespace {
         std::string literal(const std::string& value) {
             constexpr char digits[] = "0123456789abcdef";
@@ -80,4 +80,4 @@ namespace coreci::persistence {
                "HEX(message) AS message,run_id,run_attempt,attempt,HEX(artifact) AS artifact,HEX(feed_commit) AS feed_commit,"
                "HEX(reason) AS reason,HEX(conclusion) AS conclusion,event_at,dispatch_deadline FROM coreci_events ORDER BY seq";
     }
-} // namespace coreci::persistence
+} // namespace coreci::legacy::persistence

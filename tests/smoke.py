@@ -62,7 +62,8 @@ def run(build):
         for name, maximum in (('body-bytes', 25 * 1024 * 1024), ('header-bytes', 64 * 1024),
                               ('header-fields', 100), ('start-line-bytes', 8 * 1024)):
             for value in (0, maximum + 1):
-                checked = subprocess.run(fx.command + ['http', 'parser', '--maximum-' + name, str(value)],
+                index = fx.command.index('parser') + 1
+                checked = subprocess.run(fx.command[:index] + ['--maximum-' + name, str(value)] + fx.command[index:],
                     env=fx.env, capture_output=True, timeout=10)
                 assert checked.returncode != 0 and ('invalid option: maximum-' + name).encode() in checked.stderr
         assert raw_status(fx, 'POST /api/v1/github/webhook HTTP/1.1\r\nHost: localhost\r\nContent-Length: 26214401\r\n\r\n') == 413
@@ -87,7 +88,7 @@ def run(build):
         assert signed_form('phase=build', content_type='application/x-www-form-urlencodedBAD').status == 400
         assert signed_form('phase=publish&status=started').status == 400
         assert signed_form('scope=unit&build_id=id&phase=publish&status=started').status == 400
-        assert signed_form('scope=unit&build_id=id&phase=publish&status=started&run_id=1').status == 200
+        assert signed_form('scope=unit&build_id=id&phase=publish&status=started&run_id=1').status == 400
         for repo in 'bcde':
             assert fx.webhook('owner/' + repo) == 200
         assert fx.webhook('owner/a') == 200
@@ -121,8 +122,9 @@ def run(build):
                 if entry['build_id'] != first['build_id']:
                     fx.unit(values, entry, status='started')
                 fx.unit(values, entry)
-                fx.unit(values, entry, 'publish', 'succeeded')
+            fx.target(values, target['id'])
         fx.finished(rid, values)
+        fx.publish_ready()
         assert state('e', 't1')['status'] == 'Published'
         assert '1.0.0-1' in fx.request('/api/v1/badge/d/t1.svg', browser=False).read().decode()
         # SDK browser sessions are memory-owned; a process restart requires login.
@@ -130,8 +132,10 @@ def run(build):
         assert fx.request('/').status == 200
         # Second instance must not acquire this database's writer lock or listen.
         command = list(fx.command)
-        command[command.index('--listen-port') + 1] = str(fx.redirect_port)
-        command[command.index('--dashboard-redirect-port') + 1] = '0'
+        second_config = fx.work / 'second.conf'
+        second_config.write_text(fx.config_path.read_text().replace('port=' + json.dumps(fx.app_port),
+            'port=' + json.dumps(fx.redirect_port)) + '\n[coreci-redirect]\ndisabled=true\n')
+        command[command.index('--config-file') + 1] = str(second_config)
         refused = subprocess.Popen(command, env=fx.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             try:
@@ -139,7 +143,7 @@ def run(build):
             except subprocess.TimeoutExpired:
                 refused.terminate()
                 output, _ = refused.communicate(timeout=10)
-            assert b'store unavailable; recovering' in output
+            assert b'store unavailable; recovering' in output, output.decode(errors='replace')
         finally:
             if refused.poll() is None:
                 refused.kill()

@@ -140,14 +140,16 @@ class Provider(BaseHTTPRequestHandler):
                 self.respond(200, dict(active=active, sub=claims['sub'], sid=claims['sid'], mfa_verified=True) if active else dict(active=False))
         elif self.path.endswith('/dispatches'):
             values = json.loads(raw)['inputs']
-            assert self.path.endswith('/actions/workflows/wave.yml/dispatches')
+            publication = self.path.endswith('/actions/workflows/publish.yml/dispatches')
+            assert publication or self.path.endswith('/actions/workflows/wave.yml/dispatches')
             assert json.loads(raw)['ref'] == 'main'
-            assert set(values) == {'wave_id', 'plan_url', 'callback_url', 'feed_branch'}
+            assert set(values) == {('publication_id' if publication else 'wave_id'), 'plan_url', 'callback_url', 'feed_branch'}
             assert all(isinstance(value, str) for value in values.values())
             assert values['feed_branch'] in ('feed', 'feed-staging')
             rid = state.next_run
             state.next_run += 1
             state.dispatches.put((rid, values))
+            assert state.dispatch_response.wait(20), 'dispatch response fixture not released'
             self.respond(204)
         else:
             self.respond(404)
@@ -166,6 +168,8 @@ class Fixture:
         self.unavailable = False
         self.token_lifetime = 3600
         self.dispatches = queue.Queue()
+        self.dispatch_response = threading.Event()
+        self.dispatch_response.set()
         self.requested, self.release = threading.Event(), threading.Event()
         self.api_port, self.app_port, self.redirect_port = port(), port(), port()
         self.api = 'https://localhost:' + str(self.api_port)
@@ -192,9 +196,15 @@ class Fixture:
                 build_dependencies=dict(deb=[], rpm=[], openwrt=[]),
                 targets=['t1'] + ([] if p == 'e' else ['t2']))
                 for p, q in [('a', []), ('b', ['a']), ('c', ['a']), ('d', ['b', 'c']), ('e', ['d'])]}
-        self.env = dict(os.environ, SSL_CERT_FILE=str(self.cert), CORECI_WEBHOOK_SECRET='fixture-webhook',
-                        CORECI_CALLBACK_SECRET='fixture-callback',
-                        CORECI_DB_PASSWORD=os.environ.get('CORECI_TEST_DB_PASSWORD', ''))
+        self.env = {key: value for key, value in os.environ.items()
+                    if key not in ('CORECI_WEBHOOK_SECRET', 'CORECI_CALLBACK_SECRET', 'CORECI_DB_PASSWORD')}
+        self.env['SSL_CERT_FILE'] = str(self.cert)
+        self.secret_files = {}
+        for name, value in [('webhook-secret-file', 'fixture-webhook'), ('callback-secret-file', 'fixture-callback'),
+                            ('db-password-file', os.environ.get('CORECI_TEST_DB_PASSWORD', ''))]:
+            path = self.work / name
+            path.write_text(value)
+            self.secret_files[name] = str(path)
         if virtual_clock:
             self.clock_path = self.work / 'clock-offset'
             self.clock_path.write_text('0')
@@ -209,18 +219,28 @@ class Fixture:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.log = (self.work / 'daemon.log').open('w')
-        command = [self.build / 'core-ci', '--registry', 'Fixture/Registry:ci/registry.json',
-                   '--workflow-repository', 'Fixture/Workflows', '--target-catalog', 'ci/targets.json',
-                   '--github-app-id', '123', '--github-installation-id', '42', '--github-app-key-file', self.key_path,
-                   '--db-host', self.env['CORECI_TEST_DB_HOST'], '--db-port', self.env.get('CORECI_TEST_DB_PORT', '0'),
-                   '--db-user', self.env['CORECI_TEST_DB_USER'], '--db-name', self.env['CORECI_TEST_DB_NAME'],
-                   '--callback-base-url', self.app, '--github-api-url', self.api.replace('localhost', '127.0.0.1') if wrong_host else self.api, '--github-ca-cert', self.cert,
-                   '--tls-cert', self.cert, '--tls-key', self.key_path, '--listen-address', '127.0.0.1', '--listen-port', str(self.app_port),
-                   '--idp-base-url', self.api, '--idp-client-id', 'coreci-test', '--idp-public-key-path', self.public,
-                   '--dashboard-users', 'owner', '--dashboard-redirect-port', str(self.redirect_port), '--wave-delay', '1', '--wave-deadline', str(wave_deadline), '--retry-delay', '0', 'coreci']
+        self.config_path = self.work / 'coreci.conf'
+        self.settings = {
+            'coreci': dict(registry='Fixture/Registry:ci/registry.json', **{
+                'workflow-repository': 'Fixture/Workflows', 'target-catalog': 'ci/targets.json',
+                'github-app-id': '123', 'github-installation-id': '42', 'github-app-key-file': str(self.key_path),
+                'db-host': self.env['CORECI_TEST_DB_HOST'], 'db-port': self.env.get('CORECI_TEST_DB_PORT', '0'),
+                'db-user': self.env['CORECI_TEST_DB_USER'], 'db-name': self.env['CORECI_TEST_DB_NAME'],
+                'callback-base-url': self.app, 'github-api-url': self.api.replace('localhost', '127.0.0.1') if wrong_host else self.api,
+                'github-ca-cert': str(self.cert), 'idp-base-url': self.api, 'idp-client-id': 'coreci-test',
+                'idp-public-key-path': str(self.public), 'dashboard-users': 'owner', 'wave-delay': '1',
+                'wave-deadline': str(wave_deadline), 'publication-deadline': str(wave_deadline), 'retry-delay': '0', **self.secret_files}),
+            'coreci.local': dict(host='127.0.0.1', port=self.app_port),
+            'coreci.socket': {'reuse-address': True},
+            'coreci.http.parser': {'maximum-body-bytes': 26214400, 'maximum-header-bytes': 65536,
+                                   'maximum-header-fields': 100, 'maximum-start-line-bytes': 8192},
+            'coreci.tls': dict(cert=str(self.cert), **{'cert-key': str(self.key_path)}),
+            'coreci-redirect.local': dict(host='127.0.0.1', port=self.redirect_port)}
+        self.write_config()
+        self.command = [str(self.build / 'core-ci'), '--config-file', str(self.config_path), 'coreci', 'local', 'tls', 'socket', 'http', 'parser', 'coreci-redirect', 'local', 'coreci']
         if parser:
-            command += ['http', 'parser', *parser]
-        self.command = [str(x) for x in command]
+            index = self.command.index('parser') + 1
+            self.command[index:index] = parser
         self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
         if not wrong_host and not self.requested.wait(10):
             self.log.flush()
@@ -229,6 +249,10 @@ class Fixture:
             raise AssertionError('controller did not start declaration load; startup log saved')
         self.jar = http.cookiejar.CookieJar()
         self.browser = urllib.request.build_opener(urllib.request.HTTPSHandler(context=self.context), urllib.request.HTTPCookieProcessor(self.jar))
+
+    def write_config(self):
+        self.config_path.write_text('\n'.join('[' + section + ']\n' + '\n'.join(
+            key + '=' + json.dumps(value) for key, value in values.items()) for section, values in self.settings.items()) + '\n')
 
     def now(self):
         return int(time.time()) + self.offset
@@ -273,9 +297,14 @@ class Fixture:
             'X-GitHub-Delivery': repo + tag, 'X-Hub-Signature-256': 'sha256=' + hmac.new(b'fixture-webhook', raw, hashlib.sha256).hexdigest()})
         return response.status
 
+    def workflow_path(self, values):
+        return ('/api/v1/publications/' + values['publication_id'] if 'publication_id' in values
+                else '/api/v1/waves/' + values['wave_id'])
+
     def plan(self, values):
-        assert values['plan_url'] == self.app + '/api/v1/waves/' + values['wave_id'] + '/plan.json'
-        response = self.request('/api/v1/waves/' + values['wave_id'] + '/plan.json', browser=False)
+        path = self.workflow_path(values) + '/plan.json'
+        assert values['plan_url'] == self.app + path
+        response = self.request(path, browser=False)
         assert response.status == 200 and response.headers['Cache-Control'] == 'no-store'
         return json.loads(response.read())
 
@@ -283,22 +312,42 @@ class Fixture:
         raw = urllib.parse.urlencode(fields).encode()
         stamp = str(self.now())
         signature = hmac.new(b'fixture-callback', stamp.encode() + b'.' + raw, hashlib.sha256).hexdigest()
-        response = self.request('/api/v1/waves/' + values['wave_id'] + '/report', raw,
+        response = self.request(self.workflow_path(values) + '/report', raw,
             {'Content-Type': 'application/x-www-form-urlencoded', 'X-CoreCI-Timestamp': stamp,
              'X-CoreCI-Signature-256': 'sha256=' + signature}, browser=False)
-        assert response.status == 200
+        assert response.status == 200, (response.status, response.read())
         return response.read()
 
     def started(self, rid, values):
-        self.report(values, scope='wave', status='started', run_id=rid, run_attempt=2)
+        self.report(values, scope='publication' if 'publication_id' in values else 'wave', status='started', run_id=rid, run_attempt=2)
 
     def finished(self, rid, values, conclusion='success'):
-        self.report(values, scope='wave', status='finished', run_id=rid, conclusion=conclusion)
+        self.report(values, scope='publication' if 'publication_id' in values else 'wave', status='finished', run_id=rid, conclusion=conclusion)
 
-    def unit(self, values, entry, phase='build', status='succeeded'):
+    def unit(self, values, entry, phase='build', status='succeeded', **extra):
         self.report(values, scope='unit', build_id=entry['build_id'], phase=phase, status=status,
-                    artifact='fixture-artifact', feed_commit='b' * 40, reason='fixture failure',
-                    run_id=self.plan(values)['owner_run_id'])
+                    feed_commit='b' * 40, reason='fixture failure',
+                    run_id=self.plan(values)['owner_run_id'], **extra)
+
+    def target(self, values, target, artifact=None):
+        self.report(values, scope='target', status='finished', run_id=self.plan(values)['owner_run_id'],
+                    target=target, artifact=('coreci-' + values['wave_id'] + '-' + target) if artifact is None else artifact)
+
+    def publish_one(self):
+        rid, values = self.dispatches.get(timeout=12)
+        assert 'publication_id' in values
+        self.started(rid, values)
+        for item in self.plan(values)['items']:
+            for entry in item['units']:
+                self.unit(values, entry, 'publish')
+        self.finished(rid, values)
+        return rid, values
+
+    def publish_ready(self):
+        status = json.loads(self.request('/api/v1/status.json', browser=False).read())
+        while any(target['status'] in ('Built', 'Publishing') for target in status['targets']):
+            self.publish_one()
+            status = json.loads(self.request('/api/v1/status.json', browser=False).read())
 
     def complete(self, rid, values):
         self.started(rid, values)
@@ -307,11 +356,13 @@ class Fixture:
                 if entry['action'] == 'build':
                     self.unit(values, entry, status='started')
                     self.unit(values, entry)
-                    self.unit(values, entry, 'publish', 'succeeded')
+            self.target(values, target['id'])
         self.finished(rid, values)
+        self.publish_ready()
 
     def close(self):
         self.release.set()
+        self.dispatch_response.set()
         self.process.terminate()
         self.process.wait(timeout=10)
         self.log.close()

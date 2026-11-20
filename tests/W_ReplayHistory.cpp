@@ -1,63 +1,22 @@
 #include "Check.h"
 #include "app/StatusJson.h"
+#include "migration/legacy/EventSql.h"
+#include "migration/legacy/StatusJson.h"
+#include "persistence/StateSql.h"
 
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-using namespace coreci;
+using namespace coreci::legacy;
+using coreci::Pipeline;
 using Json = nlohmann::json;
 
-Json readJson(const std::filesystem::path& path) {
-    std::ifstream input(path);
-    Json value;
-    input >> value;
-    return value;
-}
+#include "MigrationFixture.h"
 
-template <typename T>
-Json optional(const std::optional<T>& value) {
-    return value ? Json(*value) : Json(nullptr);
-}
-
-Json snapshot(const Engine& engine) {
-    Json result;
-    result["status"] = Json::parse(app::statusJson(app::statusSnapshot(engine), 0));
-    for (const auto& [id, wave] : engine.waves()) {
-        result["waves"][id] = {{"plan", Json::parse(app::planJson(wave))},
-                               {"phase", phaseName(wave.phase)},
-                               {"workflow", {wave.workflow.owner, wave.workflow.repo, wave.workflow.branch}},
-                               {"attempt", wave.attempt},
-                               {"retry_at", optional(wave.retryAt)},
-                               {"dispatched_at", wave.dispatchedAt},
-                               {"deadline", wave.deadline},
-                               {"accepted", wave.dispatchAccepted},
-                               {"started", optional(wave.started)},
-                               {"finished", optional(wave.finished)},
-                               {"conclusion", wave.conclusion},
-                               {"run_id", optional(wave.runId)},
-                               {"run_attempt", optional(wave.runAttempt)}};
-    }
-    for (const auto& [unit, state] : engine.units()) {
-        auto& row = result["units"][unit.package + "/" + unit.target];
-        row = {{"state", stateName(state.state)},
-               {"wave", state.waveId},
-               {"order", state.order},
-               {"artifact", state.artifact},
-               {"requested", state.requested},
-               {"build_start", optional(state.buildStart)},
-               {"build_end", optional(state.buildEnd)},
-               {"publish_end", optional(state.publishEnd)},
-               {"retry_after", optional(state.retryAfter)}};
-        for (const auto& [version, revision] : state.lastRevision) {
-            row["revisions"][version.text()] = revision;
-        }
-        row["auto_retried"] = state.autoRetried ? Json(state.autoRetried->first.text()) : Json(nullptr);
-    }
-    return result;
-}
-
-Engine history(const std::filesystem::path& directory, std::int64_t configuredDeadline) {
+Engine history(const std::filesystem::path& directory,
+               std::int64_t configuredDeadline,
+               std::vector<std::pair<std::uint64_t, Event>>* saved = nullptr) {
     const auto plan = readJson(directory / "legacy-w964-plan.json");
     const auto origins = readJson(directory / "production/origins.json");
     Pipeline::Builder builder;
@@ -82,9 +41,15 @@ Engine history(const std::filesystem::path& directory, std::int64_t configuredDe
         tags.push_back({start - 6, name, entry.at("tag"), entry.at("commit"), Origin::Reconcile});
     }
     Engine engine({5, configuredDeadline, 8, 600});
-    engine.handle(GraphChanged{start - 6, builder.build(), tags}, 963);
-    engine.handle(Tick{start - 1}, 964);
-    engine.handle(WaveStarted{start, "w964", 43926583894, 1}, 965);
+    const auto apply = [&](const Event& event, std::uint64_t seq) {
+        if (saved) {
+            saved->push_back({seq, event});
+        }
+        engine.handle(event, seq);
+    };
+    apply(GraphChanged{start - 6, builder.build(), tags}, 963);
+    apply(Tick{start - 1}, 964);
+    apply(WaveStarted{start, "w964", 43926583894, 1}, 965);
     std::uint64_t seq = 966;
     const auto outcomes = [&](const Wave& wave, unsigned built, unsigned failed, unsigned building, std::int64_t at) {
         unsigned index = 0;
@@ -92,11 +57,11 @@ Engine history(const std::filesystem::path& directory, std::int64_t configuredDe
             for (const auto& entry : entries) {
                 if (entry.build) {
                     if (index < built) {
-                        engine.handle(UnitBuildSucceeded{at, wave.id, entry.buildId, "artifact"}, seq++);
+                        apply(UnitBuildSucceeded{at, wave.id, entry.buildId, "artifact"}, seq++);
                     } else if (index < built + failed) {
-                        engine.handle(UnitBuildFailed{at, wave.id, entry.buildId, "compiler"}, seq++);
+                        apply(UnitBuildFailed{at, wave.id, entry.buildId, "compiler"}, seq++);
                     } else if (index < built + failed + building) {
-                        engine.handle(UnitBuildStarted{at, wave.id, entry.buildId}, seq++);
+                        apply(UnitBuildStarted{at, wave.id, entry.buildId}, seq++);
                     }
                     ++index;
                 }
@@ -105,34 +70,62 @@ Engine history(const std::filesystem::path& directory, std::int64_t configuredDe
         CHECK_EQ(index, 173U);
     };
     outcomes(*engine.latestWave(), 148, 24, 1, start + 23380);
-    engine.handle(Tick{start + 23399}, 1300);
-    engine.handle(Tick{start + 23999}, 1337);
-    engine.handle(TagObserved{start + 24000, "core-ci", "v0.1.5", std::string(40, 'c'), Origin::Webhook}, 1338);
-    engine.handle(Tick{start + 24005}, 1339);
-    engine.handle(WaveStarted{start + 24006, "w1339", 43991561301, 1}, 1340);
+    apply(Tick{start + 23399}, 1300);
+    apply(Tick{start + 23999}, 1337);
+    apply(TagObserved{start + 24000, "core-ci", "v0.1.5", std::string(40, 'c'), Origin::Webhook}, 1338);
+    apply(Tick{start + 24005}, 1339);
+    apply(WaveStarted{start + 24006, "w1339", 43991561301, 1}, 1340);
     CHECK(engine.waves().contains("w1339"));
     seq = 1341;
     outcomes(*engine.latestWave(), 148, 10, 3, start + 47385);
-    engine.handle(Tick{start + 47405}, 1700);
-    engine.handle(Tick{start + 48005}, 1701);
-    engine.handle(Tick{start + 48010}, 1702);
-    engine.handle(Resumed{start + 48011}, 1703);
+    apply(Tick{start + 47405}, 1700);
+    apply(Tick{start + 48005}, 1701);
+    apply(Tick{start + 48010}, 1702);
+    apply(Resumed{start + 48011}, 1703);
     return engine;
 }
 
 int main(int argc, char** argv) {
-    CHECK_EQ(argc, 2);
-    if (argc == 2) {
+    CHECK(argc == 2 || argc == 3);
+    if (argc == 2 || argc == 3) {
         const std::filesystem::path directory(argv[1]);
         const auto baseline = readJson(directory / "legacy-replay-baseline.json");
         for (const std::int64_t duration : {23400, 86400, 60}) {
             const auto engine = history(directory, duration);
             CHECK(snapshot(engine) == baseline);
+            const coreci::WaveController converted({}, engine.convert());
+            CHECK(snapshot(converted) == baseline);
+            const auto loaded = coreci::persistence::decodeState(coreci::persistence::encodeState(converted.stored()));
+            CHECK(loaded == converted.stored());
+            CHECK(snapshot(coreci::WaveController({}, loaded)) == baseline);
             CHECK(engine.waves().at("w964").phase == WavePhase::Finished);
             CHECK(engine.waves().at("w1339").phase == WavePhase::Finished);
             for (const auto& [unit, state] : engine.units()) {
                 for (const auto& [version, revision] : state.lastRevision) {
                     CHECK(revision >= baseline.at("units").at(unit.package + "/" + unit.target).at("revisions").at(version.text()));
+                }
+            }
+        }
+    }
+    if (argc == 3 && std::string(argv[2]) == "--sql" && checkFailures == 0) {
+        std::vector<std::pair<std::uint64_t, Event>> events;
+        history(argv[1], 23400, &events);
+        for (const auto& [seq, event] : events) {
+            auto statement = std::get<std::string>(persistence::insertSql(event));
+            const auto columns = statement.find('(');
+            statement.insert(columns + 1, "seq,");
+            const auto values = statement.find("VALUES (");
+            statement.insert(values + 8, std::to_string(seq) + ",");
+            std::cout << statement << ";\n";
+            if (std::holds_alternative<GraphChanged>(event)) {
+                const auto row = std::get<persistence::EventRow>(persistence::encode(event, seq));
+                for (auto graph : persistence::graphInsertSql(*row.graph)) {
+                    auto at = graph.find("LAST_INSERT_ID()");
+                    while (at != std::string::npos) {
+                        graph.replace(at, 16, std::to_string(seq));
+                        at = graph.find("LAST_INSERT_ID()");
+                    }
+                    std::cout << graph << ";\n";
                 }
             }
         }

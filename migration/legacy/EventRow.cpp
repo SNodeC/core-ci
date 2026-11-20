@@ -9,7 +9,7 @@
 #include <string_view>
 #include <type_traits>
 
-namespace coreci::persistence {
+namespace coreci::legacy::persistence {
     namespace {
         constexpr std::array<std::string_view, std::variant_size_v<EventValue>> names{"TagObserved",
                                                                                       "GraphChanged",
@@ -370,4 +370,4 @@ namespace coreci::persistence {
         }
         return result;
     }
-} // namespace coreci::persistence
+} // namespace coreci::legacy::persistence

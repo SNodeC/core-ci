@@ -10,7 +10,7 @@ Version version(const std::string& v = "1.0.0") {
     return Version::parse(v).value();
 }
 int main() {
-    Engine e;
+    WaveController e;
     e.handle(GraphChanged{100, testPipeline()}, 1);
     for (const auto& tag : {"V1.0.0",
                             "1.0",

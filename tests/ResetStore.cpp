@@ -1,3 +1,5 @@
+#include "persistence/StateSql.h"
+
 #include <core/SNodeC.h>
 #include <cstdlib>
 #include <database/mariadb/MariaDBClient.h>
@@ -28,9 +30,16 @@ int main(int argc, char** argv) {
             client.abort();
         };
         client.connect();
+        std::string tables = "coreci_log,coreci_migration_schema,coreci_events,coreci_graph_packages,coreci_graph_targets,coreci_graph_"
+                             "prerequisites,coreci_graph_releases";
+        for (const auto& table : coreci::persistence::stateTables()) {
+            tables += "," + table.name;
+        }
+        for (const auto& name : {"schema", "events", "graph_packages", "graph_targets", "graph_prerequisites", "graph_releases"}) {
+            tables += ",legacy_coreci_" + std::string(name);
+        }
         client.exec(
-            "DROP TABLE IF EXISTS "
-            "coreci_events,coreci_graph_packages,coreci_graph_targets,coreci_graph_prerequisites,coreci_graph_releases",
+            "DROP TABLE IF EXISTS " + tables,
             [&] {
                 client.exec(
                     "DROP TABLE IF EXISTS coreci_schema",

@@ -2,7 +2,7 @@
 #include "adapters/github/Declarations.h"
 #include "app/StatusJson.h"
 namespace coreci::dashboard {
-    std::string model(const Engine& engine,
+    std::string model(const WaveController& engine,
                       const github::LoadedDeclarations& declarations,
                       std::uint64_t generation,
                       bool ready,

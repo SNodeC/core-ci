@@ -1,7 +1,7 @@
 #include "Status.h"
 
 namespace coreci {
-    std::map<Unit, std::string> statuses(const Engine& engine) {
+    std::map<Unit, std::string> statuses(const WaveController& engine) {
         std::map<Unit, std::string> result;
         for (const auto& [name, package] : engine.pipeline().packages()) {
             for (const auto& target : package.targets) {

@@ -1,9 +1,9 @@
 #pragma once
-#include "core/Events.h"
+#include "migration/legacy/Events.h"
 
 #include <functional>
 
-namespace coreci::persistence {
+namespace coreci::legacy::persistence {
     class EventStore {
     public:
         virtual ~EventStore() = default;
@@ -19,4 +19,4 @@ namespace coreci::persistence {
                              std::function<void()> onDone,
                              std::function<void(const StoreError&)> onError) = 0;
     };
-} // namespace coreci::persistence
+} // namespace coreci::legacy::persistence

@@ -73,13 +73,13 @@ class Proxy:
                             if source is client and packet[4:5] == b'\x03':
                                 query = packet[5:].decode(errors='replace')
                             needle, boundary = self.rule or ('', '')
-                            matched = needle and needle in query
+                            matched = bool(needle) and (query == needle[1:] if needle.startswith('=') else needle in query)
                             cut = matched and ((source is client and boundary == 'before') or
                                 (source is upstream and (boundary == 'read' or
                                  (boundary == 'after' and packet[4:5] == b'\x00'))))
                             if matched and source is client and boundary == 'slow':
-                                query = query.replace('FROM coreci_events ORDER BY seq',
-                                    'FROM coreci_events JOIN (SELECT SLEEP(3)) AS replay_delay ORDER BY seq')
+                                query = query.replace('FROM coreci_targets ORDER BY',
+                                    'FROM coreci_targets JOIN (SELECT SLEEP(3)) AS load_delay ORDER BY')
                                 payload = b'\x03' + query.encode()
                                 packet = len(payload).to_bytes(3, 'little') + packet[3:4] + payload
                                 self.rule = None

@@ -1,11 +1,11 @@
 #pragma once
-#include "persistence/EventRow.h"
-#include "persistence/EventStore.h"
+#include "migration/legacy/EventRow.h"
+#include "migration/legacy/EventStore.h"
 
 #include <deque>
 #include <vector>
 
-namespace coreci::persistence {
+namespace coreci::legacy::persistence {
     class InMemoryEventStore : public EventStore {
     public:
         enum class Failure { None, BeforeStore, AfterStore };
@@ -29,4 +29,4 @@ namespace coreci::persistence {
         bool deferred = false;
         std::deque<std::function<void()>> operations;
     };
-} // namespace coreci::persistence
+} // namespace coreci::legacy::persistence
