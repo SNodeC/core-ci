@@ -125,7 +125,7 @@ namespace coreci::legacy {
         std::map<std::string, Repo> sources;
         std::map<Unit, UnitState> unitStates;
         std::map<std::string, Wave> waveStates;
-        std::map<std::pair<std::string, std::string>, std::map<std::string, bool>> builds;
+        std::map<std::pair<std::string, std::string>, std::map<std::string, std::pair<std::optional<bool>, State>>> outcomes;
         std::string latest;
         std::optional<std::int64_t> engineTime, quietUntil;
     };

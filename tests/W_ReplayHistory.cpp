@@ -128,10 +128,59 @@ void publishedHistory() {
     CHECK_EQ(b.inputs.at("a").revision, 11U);
     CHECK_EQ(loaded.nextRevision({"a", "t"}), 12U);
     CHECK_EQ(loaded.nextRevision({"b", "t"}), 104U);
+    CHECK(loaded.stored().waveTargets.at({first.id, "t"}).status == coreci::State::Published);
+    CHECK(loaded.stored().waveTargets.at({second.id, "t"}).status == coreci::State::Failed);
+}
+
+void retriedTargetHistory() {
+    Pipeline::Builder builder;
+    builder.target({"t"}).package({"a", {"Owner", "a", "main"}, {"t"}, {}, 0}).package({"b", {"Owner", "b", "main"}, {"t"}, {"a"}, 0});
+    Engine old({0, 100, 3, 0});
+    std::uint64_t seq = 0;
+    const auto apply = [&](const Event& event) {
+        old.handle(event, ++seq);
+    };
+    const std::string sha(40, 'a'), feed(40, 'b');
+    apply(GraphChanged{100, builder.build(), {{100, "a", "v1.0.0", sha, Origin::Reconcile}, {100, "b", "v1.0.0", sha, Origin::Reconcile}}});
+    const auto failed = *old.latestWave();
+    apply(WaveStarted{101, failed.id, 7001, 1});
+    apply(UnitBuildFailed{102, failed.id, failed.plan.at("t").front().buildId, "compiler"});
+    apply(WaveFinished{103, failed.id, 7001, "failure"});
+    CHECK(old.units().at({"a", "t"}).state == State::Failed);
+    CHECK(old.units().at({"b", "t"}).state == State::Blocked);
+    CHECK(old.convert().waveTargets.at({failed.id, "t"}).status == coreci::State::Failed);
+    apply(RetryRequested{104, "a", "t"});
+    const auto retry = *old.latestWave();
+    apply(WaveStarted{105, retry.id, 7002, 1});
+    for (const auto& entry : retry.plan.at("t")) {
+        CHECK_EQ(entry.revision, 2U);
+        apply(UnitBuildSucceeded{106, retry.id, entry.buildId, "unit-artifact"});
+        apply(UnitPublishSucceeded{107, retry.id, entry.buildId, feed});
+    }
+    apply(WaveFinished{108, retry.id, 7002, "success"});
+    const auto state = old.convert();
+    CHECK(state.waveTargets.at({retry.id, "t"}).status == coreci::State::Published);
+    CHECK(state.waveTargets.at({failed.id, "t"}).status == coreci::State::Failed);
+    const coreci::WaveController loaded({}, coreci::persistence::decodeState(coreci::persistence::encodeState(state)));
+    CHECK(snapshot(loaded) == snapshot(old));
+    CHECK(loaded.stored().waveTargets == state.waveTargets);
+    CHECK(loaded.commands().empty());
+    for (const auto& [unit, result] : loaded.units()) {
+        CHECK(result.state == coreci::State::Published);
+        CHECK_EQ(result.published->revision, 2U);
+    }
+    apply(RebuildRequested{109, "a", "t"});
+    const auto pending = *old.latestWave();
+    CHECK(old.convert().waveTargets.at({pending.id, "t"}).status == coreci::State::Planned);
+    apply(WaveStarted{110, pending.id, 7003, 1});
+    apply(WaveExpired{23509, pending.id});
+    CHECK(old.convert().waveTargets.at({pending.id, "t"}).status == coreci::State::Failed);
+    CHECK(old.convert().waveTargets.at({retry.id, "t"}).status == coreci::State::Published);
 }
 
 int main(int argc, char** argv) {
     publishedHistory();
+    retriedTargetHistory();
     CHECK(argc == 2 || argc == 3);
     if (argc == 2 || argc == 3) {
         const std::filesystem::path directory(argv[1]);

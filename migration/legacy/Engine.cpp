@@ -253,6 +253,7 @@ namespace coreci::legacy {
                     if (state.state == State::Blocked || (state.failure && state.failure->buildFailed)) {
                         blocked.insert(entry.unit.package);
                     }
+                    outcomes[{wave.id, target}][entry.buildId].second = state.state;
                 }
             }
         }
@@ -264,24 +265,6 @@ namespace coreci::legacy {
     }
     void Engine::handle(const Event& event, std::uint64_t seq) {
         if (std::holds_alternative<Accept>(classify(event))) {
-            if (const auto* success = std::get_if<UnitBuildSucceeded>(&event)) {
-                for (const auto& [target, entries] : waveStates.at(success->waveId).plan) {
-                    for (const auto& entry : entries) {
-                        if (entry.buildId == success->buildId) {
-                            builds[{success->waveId, target}][entry.buildId] = true;
-                        }
-                    }
-                }
-            }
-            if (const auto* failure = std::get_if<UnitBuildFailed>(&event)) {
-                for (const auto& [target, entries] : waveStates.at(failure->waveId).plan) {
-                    for (const auto& entry : entries) {
-                        if (entry.buildId == failure->buildId) {
-                            builds[{failure->waveId, target}][entry.buildId] = false;
-                        }
-                    }
-                }
-            }
             std::visit(
                 [&](const auto& e) {
                     using E = std::decay_t<decltype(e)>;
@@ -371,10 +354,12 @@ namespace coreci::legacy {
                                                 state.buildStart = *engineTime;
                                                 state.buildEnd.reset();
                                             } else if constexpr (std::is_same_v<E, UnitBuildSucceeded>) {
+                                                outcomes[{wave.id, target}][entry.buildId].first = true;
                                                 state.state = State::Built;
                                                 state.artifact = e.artifact;
                                                 state.buildEnd = *engineTime;
                                             } else if constexpr (std::is_same_v<E, UnitBuildFailed>) {
+                                                outcomes[{wave.id, target}][entry.buildId].first = false;
                                                 state.buildEnd = *engineTime;
                                                 fail(entry, e.reason, true);
                                             } else if constexpr (std::is_same_v<E, UnitPublishSucceeded>) {
@@ -393,6 +378,8 @@ namespace coreci::legacy {
                                                 state.publishEnd = *engineTime;
                                                 fail(entry, e.reason);
                                             }
+                                            outcomes[{wave.id, target}][entry.buildId].second =
+                                                std::is_same_v<E, UnitPublishSucceeded> ? State::Published : state.state;
                                         }
                                     }
                                 }
@@ -417,6 +404,7 @@ namespace coreci::legacy {
                         for (auto& entry : entries) {
                             if (entry.build) {
                                 entry.buildId = wave.id + "~" + entry.unit.package + "~" + target;
+                                outcomes[{wave.id, target}][entry.buildId].second = State::Planned;
                                 auto& state = unitStates.at(entry.unit);
                                 state.state = State::Planned;
                                 state.waveId = wave.id;
