@@ -98,6 +98,10 @@ int main(int argc, char** argv) {
             const auto loaded = coreci::persistence::decodeState(coreci::persistence::encodeState(converted.stored()));
             CHECK(loaded == converted.stored());
             CHECK(snapshot(coreci::WaveController({}, loaded)) == baseline);
+            coreci::WaveController driven({}, loaded);
+            driven.handle(
+                coreci::TagObserved{*converted.time() + 1, "core-ci", "v999.0.0", std::string(40, 'd'), coreci::Origin::Reconcile});
+            CHECK(driven.publications().empty());
             CHECK(engine.waves().at("w964").phase == WavePhase::Finished);
             CHECK(engine.waves().at("w1339").phase == WavePhase::Finished);
             for (const auto& [unit, state] : engine.units()) {

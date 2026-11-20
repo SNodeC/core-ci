@@ -24,6 +24,8 @@ If interrupted, inspect coreci_schema before retrying: version 5/6 means the sou
 
 The binary embeds authoritative assets and DDL at configure time. No installation or working-directory-dependent asset lookup is introduced.
 
+Legacy per-unit artifacts remain in unit history. They are not W7 target archives with a manifest, so migration does not advertise them as publication items. Existing unit states and revisions stay intact; normal subsequent build planning produces the required target archives.
+
 ## Configuration translation
 
 | Previous option | SNode.C option |

@@ -67,6 +67,7 @@ namespace coreci::legacy {
             converted.runFinished = wave.finished.has_value() && !wave.awaitingOwnerFinish;
             for (const auto& [target, entries] : wave.plan) {
                 ::coreci::WaveTarget result;
+                result.artifactAvailable = false;
                 if (builds.contains({id, target})) {
                     result.builds = builds.at({id, target});
                 }
@@ -80,9 +81,6 @@ namespace coreci::legacy {
                                                       inputs(entry.inputs),
                                                       entry.buildId,
                                                       entry.build});
-                    if (entry.build && !unitStates.at(entry.unit).artifact.empty()) {
-                        result.artifact = unitStates.at(entry.unit).artifact;
-                    }
                 }
                 state.waveTargets.emplace(std::pair{id, target}, std::move(result));
             }
