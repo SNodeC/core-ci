@@ -74,6 +74,8 @@ col.work-phase, col.work-recorded { width: 184px; }
 .work-phase > strong, .work-recorded > strong { display: block; margin-bottom: 7px; } thead .phase-pair { font-size: 10px; font-weight: 400; }
 .timestamp { display: block; font-variant-numeric: tabular-nums; } .timestamp > span { display: block; white-space: nowrap; text-align: center; }
 .timestamp > span:first-child { font-size: 13px; font-weight: 650; } .timestamp > span:last-child { font-size: 11px; color: var(--sub); }
+#wave-panel .timestamp, #wave-panel .timestamp > span { display: inline; }
+#wave-panel .timestamp > span:last-child::before { content: ' '; }
 .phase-pair > .secondary, .timings .activity { font-size: 11px; min-width: 0; max-width: 72px; }
 .work-recorded { text-align: center; }
 .work-table > thead strong { color: var(--text); font-size: 12px; font-weight: 700; }

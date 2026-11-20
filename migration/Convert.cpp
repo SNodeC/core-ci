@@ -68,11 +68,20 @@ namespace coreci::legacy {
             for (const auto& [target, entries] : wave.plan) {
                 ::coreci::WaveTarget result;
                 result.artifactAvailable = false;
-                if (builds.contains({id, target})) {
-                    result.builds = builds.at({id, target});
+                result.status = wave.finished ? ::coreci::State::Published : ::coreci::State::Planned;
+                if (outcomes.contains({id, target})) {
+                    for (const auto& [buildId, outcome] : outcomes.at({id, target})) {
+                        if (outcome.first) {
+                            result.builds[buildId] = *outcome.first;
+                        }
+                        if (wave.finished && outcome.second != State::Published) {
+                            result.status = outcome.second == State::Blocked && result.status != ::coreci::State::Failed
+                                                ? ::coreci::State::Blocked
+                                                : ::coreci::State::Failed;
+                        }
+                    }
                 }
                 result.finished = wave.finished.has_value();
-                result.status = wave.finished ? ::coreci::State::Failed : ::coreci::State::Planned;
                 for (const auto& entry : entries) {
                     converted.plan[target].push_back({entry.unit,
                                                       entry.repo,
