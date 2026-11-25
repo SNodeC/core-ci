@@ -415,8 +415,7 @@ W7 wave.yml: job plan → matrix job chain (one job per planned target, fail-fas
    TARGET_JSON, PACKAGE_VERSION, PACKAGE_RELEASE and DEPENDENCIES_JSON. Installed are
    exactly generic base tooling + the catalog's host_packages + the target's resolved
    declaration list (dnf with --allowerasing). For OpenWrt, feeds install gets the
-   resolved openwrt list instead of -a. The build hook runs WITHOUT network access.
-   Everything it needs comes from SOURCE_DIR, CI_DIR, SDK_DIR and installed packages.
+   resolved openwrt list instead of -a.
    Toolchain activation is the hook's job.
 W8 publish.yml (environment publish, the only holder of signing keys): re-fetch plan_url
    immediately before pushing; publish only if owner_run_id equals GITHUB_RUN_ID, otherwise
