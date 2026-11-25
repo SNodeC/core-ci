@@ -360,12 +360,21 @@ field or status_url field exists.
 W1 Repositories. SNodeC/Packages, default branch main, holds .github/workflows/wave.yml,
    .github/workflows/publish.yml, ci/registry.json {"schema":1,"repositories":[…]} and the target
    catalog ci/targets.json. Production feed: branch `feed`; staging feed: branch `feed-staging`.
-W2 Source declaration, read at the tag: ci/packages.json {"schema":1, "package", "title",
-   "depends_on":[packages], "build":{"deb":path,"rpm":path,"openwrt":path?},
+W2 The source is the tag's commit. ci/packages.json and every file its hooks use come
+   from the repository's default-branch tip at reconcile time (ci_commit). Schema 2:
+   {"schema":2, "package", "title", "depends_on":[{"package":name,"version":range}],
+   "build":{"deb":path,"rpm":path,"openwrt":path?},
    "build_dependencies":{"deb":[…],"rpm":[…],"openwrt":[…]}, "targets":[catalog ids],
-   "revision_base":N?}.
+   "revision_base":N?}. A range uses the form ">=3.0,<4": comma = AND; operators
+   >=, >, <=, <, ==. build_dependencies keys are "deb" | "rpm" | "openwrt", plus
+   optional "<family>@<distribution>-<release>" (e.g. "rpm@rocky-9"), whose list is
+   added to the family list for matching targets. The build identity of a unit includes
+   the git tree hash of ci/ at ci_commit, not the commit. Ordinary commits without a
+   ci/ change create no new build_ids. A wave's frozen plan keeps its ci_commit;
+   running waves never change.
 W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release","codename",
-   "arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?}. Fields other than id,
+   "arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?,"host_packages":[…]?}.
+   host_packages declares distribution/SDK host prerequisites. Fields other than id,
    family, distribution, release, codename and arch are opaque to core-ci.
 W4 Dispatch. Wave: workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
    callback_url, feed_branch. Publication: workflow_dispatch of publish.yml on main with inputs
@@ -373,7 +382,8 @@ W4 Dispatch. Wave: workflow_dispatch of wave.yml on main with inputs wave_id, pl
    runs; empty callback_url = no callbacks.
 W5 Plans (GET plan_url, public, JSON).
    Wave plan: {"wave", "feed_branch", "owner_run_id":id|null, "targets":[{"id","units":[{"package",
-   "repo","tag","commit","version","revision","build_id","action":"build"|"reuse"}]}]}; units per
+   "repo","tag","commit","ci_commit","version","revision","build_id",
+   "dependencies":[{"package","version","revision"}],"action":"build"|"reuse"}]}]}; units per
    target in topological order; "reuse" = install the published version-revision from the feed;
    only targets with ≥1 "build" unit.
    Publication plan: {"publication", "feed_branch", "owner_run_id":id|null, "items":[{"wave",
@@ -400,6 +410,14 @@ W7 wave.yml: job plan → matrix job chain (one job per planned target, fail-fas
    job uploads artifact coreci-<wave>-<target> with the successfully built packages and a sha256
    manifest, then sends scope=target finished) → job report (always): scope=wave finished. wave.yml
    holds no signing keys and never writes a feed.
+   The chain checks out the source at commit (with submodules) and ci/ at ci_commit
+   (/work/ci/<package>). Hooks run with SOURCE_DIR, CI_DIR, OUTPUT_DIR, SDK_DIR,
+   TARGET_JSON, PACKAGE_VERSION, PACKAGE_RELEASE and DEPENDENCIES_JSON. Installed are
+   exactly generic base tooling + the catalog's host_packages + the target's resolved
+   declaration list (dnf with --allowerasing). For OpenWrt, feeds install gets the
+   resolved openwrt list instead of -a. The build hook runs WITHOUT network access.
+   Everything it needs comes from SOURCE_DIR, CI_DIR, SDK_DIR and installed packages.
+   Toolchain activation is the hook's job.
 W8 publish.yml (environment publish, the only holder of signing keys): re-fetch plan_url
    immediately before pushing; publish only if owner_run_id equals GITHUB_RUN_ID, otherwise
    succeed without push and without callbacks (fetch/validation errors fail closed). Download the
@@ -424,6 +442,9 @@ W11 Concurrency. core-ci runs at most one wave at a time and at most one publica
    expired) and every planned target is published, failed or blocked; the next wave starts only
    after that. wave.yml uses concurrency group "wave-<feed_branch>", publish.yml
    "publish-<feed_branch>", both without cancellation.
+   A unit whose depends_on range is not satisfied by the version planned or published
+   in the same wave is set to blocked at planning time with reason
+   "dependency <pkg> <version> outside <range>". It is not dispatched.
 
 ## 8. Acceptance
 
