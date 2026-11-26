@@ -10,7 +10,7 @@ SameMinorVersion export (`>=2.0,<2.1`). Targets and existing family build lists
 are unchanged. Only Rocky 9 adds and activates GCC Toolset 14 here.
 
 Hooks use `SOURCE_DIR` for tagged source and `CI_DIR` for their own packaging
-configuration and maintainer scripts. CPack reads dependency lower bounds from
-`DEPENDENCIES_JSON` and retains the auth SDK's minor-version upper bound. Local
+configuration and maintainer scripts. CPack records exact native dependency versions/revisions from
+`DEPENDENCIES_JSON`; core-ci checks the declared compatibility ranges while planning. Local
 packaging uses the same configuration under `ci/`. Existing formatter discovery
 includes these CI CMake assets; shared style settings are unchanged.
