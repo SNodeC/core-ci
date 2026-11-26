@@ -72,7 +72,7 @@ namespace {
         CHECK_EQ(*history.engine.nextDeadline(), 200);
         CHECK(std::holds_alternative<Ignore>(history.engine.classify(Tick{132})));
     }
-    void pause() {
+    void pausedDispatch() {
         History history({0, 100, 3, 0});
         history.apply(DispatchPaused{99, true});
         load(history);
@@ -113,7 +113,7 @@ namespace {
 int main() {
     identity();
     ranges();
-    pause();
+    pausedDispatch();
     pausedBackoff();
     return checkResult();
 }
