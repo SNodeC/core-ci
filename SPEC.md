@@ -502,6 +502,7 @@ Report baseline/final physical production lines per directory and dashboard
 assets, migration lines separately, test lines, routes, configuration keys,
 environment variables (zero), tables, SPEC old/new SHA256, PRs/merge SHAs, checks,
 owner option translation and merged CONTRACT W v2. Daemon production code must
-be below the baseline. Record reversible choices as "Decision: … because …".
+not exceed the owner-approved ceiling of 5,850 physical lines. Report net growth
+against the baseline separately from migration and test code. Record reversible choices as "Decision: … because …".
 Merge SPEC first, implementation only after qualification; delete task branches,
 leave canonical main pulled and clean. No tag, installation or deployment.
