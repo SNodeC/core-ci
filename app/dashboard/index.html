@@ -14,7 +14,7 @@
 <section id="publication-panel" aria-label="Current publication"></section>
 <section id="work-panel" aria-labelledby="work-heading">
 <div class="heading"><div><h1 id="work-heading">Package work</h1><p id="counts"></p></div>
-<button id="reload">Reload</button>
+<div><button id="dispatch-paused" aria-pressed="false">Pause dispatch</button><button id="reload">Reload</button></div>
 </div>
 <div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
 <label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
@@ -31,19 +31,8 @@
 </section>
 <section id="repositories-panel" aria-labelledby="repositories-heading" hidden>
 <div class="heading"><div><h1 id="repositories-heading">Repositories</h1><p>Definitions are committed to GitHub</p></div>
-<button id="enroll">Enroll repository</button></div>
-<div class="repository-layout"><div id="repositories" aria-label="Enrolled repositories"></div><section class="editor-panel">
-<form id="editor" autocomplete="off"><h2>Read a repository definition</h2><div class="fields">
-<label>GitHub repository<input id="repository" required placeholder="owner/repository" autocomplete="off"></label>
-<label>Configuration branch<input id="branch" required autocomplete="off"></label></div>
-<p id="revision">No committed revision selected</p><p id="remote-revision" role="status"></p>
-<button type="submit" id="import">Read committed definition from GitHub</button>
-<details id="definition-details"><summary>GitHub-owned package definition</summary>
-<label>Package definition<textarea id="definition" rows="14" spellcheck="false" readonly></textarea></label></details>
-</form>
-<div class="heading"><h2>Source selection</h2></div><label>Exact version tag<input id="tag" placeholder="Empty selects highest SemVer"></label>
-<button id="request-build">Request build</button>
-</section></div></section>
+</div>
+<div id="repositories" aria-label="Enrolled repositories"></div></section>
 <details id="feedback-details"><summary id="feedback-summary" role="status" aria-live="polite">Operation details</summary>
 <pre id="feedback"></pre></details>
 </main></body></html>

@@ -16,7 +16,7 @@ namespace coreci {
             b.package({name,
                        {"owner", name, "trunk"},
                        name == std::string("e") ? std::set<std::string>{"t1"} : std::set<std::string>{"t1", "t2"},
-                       prerequisites.at(name),
+                       requirements(prerequisites.at(name)),
                        base});
         }
         return b.build();

@@ -8,6 +8,8 @@ namespace coreci {
     class Version {
     public:
         static std::optional<Version> parse(const std::string& tag);
+        static bool validRange(const std::string& range);
+        bool satisfies(const std::string& range) const;
         const std::string& text() const;
         bool prerelease() const;
         std::strong_ordering operator<=>(const Version& other) const;

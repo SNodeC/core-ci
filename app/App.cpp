@@ -116,12 +116,16 @@ namespace coreci::app {
                         Config::invalid(key, valid);
                     }
                 }
-                waveDelay = config.number("wave-delay", 0, 86400, valid);
-                waveDeadline = config.number("wave-deadline", 60, 86400, valid);
-                waveStartTimeout = config.number("start-timeout", 1, 86400, valid);
-                publicationDeadline = config.number("publication-deadline", 60, 86400, valid);
-                retryDelay = config.number("retry-delay", 0, 86400, valid);
-                attempts = config.number("max-dispatch-attempts", 1, 20, valid);
+                if (!config.get("dispatch-paused").empty() && config.get("dispatch-paused") != "true" &&
+                    config.get("dispatch-paused") != "false") {
+                    Config::invalid("dispatch-paused", valid);
+                }
+                scheduling.waveDelay = config.number("wave-delay", 0, 86400, valid);
+                scheduling.waveDeadline = config.number("wave-deadline", 60, 86400, valid);
+                scheduling.waveStartTimeout = config.number("start-timeout", 1, 86400, valid);
+                scheduling.publicationDeadline = config.number("publication-deadline", 60, 86400, valid);
+                scheduling.retryDelay = config.number("retry-delay", 0, 86400, valid);
+                scheduling.maxDispatchAttempts = static_cast<unsigned>(config.number("max-dispatch-attempts", 1, 20, valid));
                 if (config.get("feed-branch") != "feed" && config.get("feed-branch") != "feed-staging") {
                     Config::invalid("feed-branch", valid);
                 }
@@ -169,16 +173,13 @@ namespace coreci::app {
                     store = std::make_unique<mariadb::MariaDBStateStore>(details);
                     const auto repository = config.get("workflow-repository");
                     const auto slash = repository.find('/');
+                    scheduling.feedBranch = config.get("feed-branch");
+                    scheduling.workflow = {repository.substr(0, slash), repository.substr(slash + 1), "main"};
+                    scheduling.dispatchPaused =
+                        config.get("dispatch-paused").empty() ? std::nullopt : std::optional<bool>{config.get("dispatch-paused") == "true"};
                     queue = std::make_unique<ps::StateSession>(
                         *store,
-                        Options{waveDelay,
-                                waveDeadline,
-                                static_cast<unsigned>(attempts),
-                                retryDelay,
-                                config.get("feed-branch"),
-                                {repository.substr(0, slash), repository.substr(slash + 1), "main"},
-                                waveStartTimeout,
-                                publicationDeadline},
+                        scheduling,
                         [this](auto seq) {
                             generation = seq;
                             if (dashboard && queue->engine()) {
@@ -419,8 +420,8 @@ namespace coreci::app {
             std::unique_ptr<ps::StateSession> queue;
             std::vector<Command> dispatching;
             std::unique_ptr<core::timer::Timer> retry, ticks, reconcileTimer;
-            std::int64_t waveDelay = 0, waveDeadline = 0, waveStartTimeout = 0, attempts = 0, interval = 0, retryDelay = 0,
-                         publicationDeadline = 0;
+            Options scheduling;
+            std::int64_t interval = 0;
             double recoveryDelay = 1;
             bool listening = false, fatal = false, tickPending = false;
         };

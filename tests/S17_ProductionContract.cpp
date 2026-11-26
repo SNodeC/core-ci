@@ -58,10 +58,19 @@ void contract(const std::filesystem::path& directory, bool released) {
                 if (name == "Packages") {
                     const auto filename = path.find("registry.json") != std::string::npos ? "registry.json" : "targets.json";
                     body = read(directory / filename);
+                } else if (path.find("/contents/?") != std::string::npos) {
+                    body = Json::array({{{"name", "ci"}, {"type", "dir"}, {"sha", std::string(40, 'd')}}}).dump();
                 } else {
                     CHECK(path.find("ci%2Fpackages.json") != std::string::npos);
                     declarations.insert(name);
-                    body = read(directory / (name + ".json"));
+                    auto declaration = Json::parse(read(directory / (name + ".json")));
+                    declaration["schema"] = 2;
+                    Json dependencies = Json::array();
+                    for (const auto& prerequisite : declaration.at("depends_on")) {
+                        dependencies.push_back({{"package", prerequisite}, {"version", ">=0.0.0"}});
+                    }
+                    declaration["depends_on"] = dependencies;
+                    body = declaration.dump();
                 }
                 status = 200;
             }
@@ -79,7 +88,6 @@ void contract(const std::filesystem::path& directory, bool released) {
         CHECK_EQ(loaded.catalog.size(), 40U);
         CHECK_EQ(loaded.pipeline.targets().size(), 40U);
         CHECK_EQ(loaded.pipeline.packages().size(), 6U);
-        CHECK_EQ(loaded.packages.size(), 6U);
         CHECK_EQ(loaded.releases.size(), released ? 6U : 0U);
         std::size_t units = 0;
         for (const auto& [name, count] : std::map<std::string, std::size_t>{

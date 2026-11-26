@@ -8,15 +8,10 @@ namespace coreci::github {
     struct CatalogTarget {
         std::string distribution, release, codename, arch, family;
     };
-    struct PackageDetails {
-        std::string title, commit;
-        std::vector<std::string> prerequisites = {};
-    };
     struct LoadedDeclarations {
         Pipeline pipeline;
         std::map<std::string, Tag> releases = {};
         std::map<std::string, CatalogTarget> catalog = {};
-        std::map<std::string, PackageDetails> packages = {};
     };
     using Fetch = std::function<void(std::string path, bool raw, Completion)>;
     void loadDeclarations(const DeclarationFile& registry,

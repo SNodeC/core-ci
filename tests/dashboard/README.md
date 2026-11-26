@@ -4,7 +4,11 @@ S22–S24 exercise SSE snapshots/updates, operations and session enforcement aga
 a running controller with disposable MariaDB, GitHub and IDP HTTP fixtures.
 W_Model tests the dashboard projection and frozen plan schema in C++.
 M_LocalSmoke covers public plans, HMAC callbacks, route removal, restart, writer
-locking and tag-bound declaration changes.
+locking and declaration changes at the independently resolved default-branch tip.
+I_agnostic exercises corrected CI on an unchanged source tag, unchanged CI trees,
+range blocking and the persisted pause toggle through real HTTP operations.
+I_state_migration verifies every schema-7 column and retained table across the
+atomic schema-8 upgrade, concurrent-writer rejection and paused restart.
 
 Provide CORECI_TEST_DB_HOST, CORECI_TEST_DB_PORT, CORECI_TEST_DB_USER and
 CORECI_TEST_DB_NAME for the disposable database. Optional

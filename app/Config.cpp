@@ -22,6 +22,7 @@ namespace coreci::app {
                                                           {"db-user", ""},
                                                           {"db-name", ""},
                                                           {"wave-delay", "120"},
+                                                          {"dispatch-paused", ""},
                                                           {"wave-deadline", "23400"},
                                                           {"start-timeout", "900"},
                                                           {"publication-deadline", "23400"},

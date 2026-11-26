@@ -36,7 +36,7 @@ Engine history(const std::filesystem::path& directory,
         builder.package({name,
                          {repo.substr(0, slash), repo.substr(slash + 1), origins.at(repo.substr(slash + 1)).at("branch")},
                          declaration.at("targets").get<std::set<std::string>>(),
-                         declaration.at("depends_on").get<std::vector<std::string>>(),
+                         requirements(declaration.at("depends_on").get<std::vector<std::string>>()),
                          entry.at("revision").get<unsigned>() - 1});
         tags.push_back({start - 6, name, entry.at("tag"), entry.at("commit"), Origin::Reconcile});
     }
@@ -87,7 +87,9 @@ Engine history(const std::filesystem::path& directory,
 
 void publishedHistory() {
     Pipeline::Builder builder;
-    builder.target({"t"}).package({"a", {"Owner", "a", "main"}, {"t"}, {}, 10}).package({"b", {"Owner", "b", "main"}, {"t"}, {"a"}, 100});
+    builder.target({"t"})
+        .package({"a", {"Owner", "a", "main"}, {"t"}, {}, 10})
+        .package({"b", {"Owner", "b", "main"}, {"t"}, requirements({"a"}), 100});
     Engine old({0, 100, 3, 0});
     std::uint64_t seq = 0;
     const auto apply = [&](const Event& event) {
@@ -134,7 +136,9 @@ void publishedHistory() {
 
 void retriedTargetHistory() {
     Pipeline::Builder builder;
-    builder.target({"t"}).package({"a", {"Owner", "a", "main"}, {"t"}, {}, 0}).package({"b", {"Owner", "b", "main"}, {"t"}, {"a"}, 0});
+    builder.target({"t"})
+        .package({"a", {"Owner", "a", "main"}, {"t"}, {}, 0})
+        .package({"b", {"Owner", "b", "main"}, {"t"}, requirements({"a"}), 0});
     Engine old({0, 100, 3, 0});
     std::uint64_t seq = 0;
     const auto apply = [&](const Event& event) {

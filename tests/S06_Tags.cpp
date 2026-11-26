@@ -1,6 +1,5 @@
 #include "Check.h"
 #include "Fixture.h"
-#include "core/Status.h"
 
 #include <algorithm>
 #include <stdexcept>

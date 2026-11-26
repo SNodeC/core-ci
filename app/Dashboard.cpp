@@ -101,18 +101,28 @@ namespace coreci::app {
             const auto operation = req->param("operation");
             if (!contentType(req, "application/json")) {
                 result(res, 400, "invalid content type");
-            } else if (operation == "retry" || operation == "rebuild") {
-                const auto parsed = dashboard::unit(std::string(req->body.begin(), req->body.end()));
+            } else if (operation == "retry" || operation == "rebuild" || operation == "dispatch-paused") {
+                const auto parsed = dashboard::operation(operation, std::string(req->body.begin(), req->body.end()), now());
                 if (std::holds_alternative<github::Error>(parsed)) {
                     result(res, 400, std::get<github::Error>(parsed).reason);
                 } else {
-                    const auto unit = std::get<Unit>(parsed);
-                    queue.enqueue(operation == "retry" ? Event{RetryRequested{now(), unit.package, unit.target}}
-                                                       : Event{RebuildRequested{now(), unit.package, unit.target}},
-                                  [res](const auto& value) {
-                                      const auto [code, text] = response(value);
-                                      result(res, code, text);
-                                  });
+                    const auto apply = [this, res, event = std::get<Event>(parsed)] {
+                        queue.enqueue(event, [res](const auto& value) {
+                            const auto [code, text] = response(value);
+                            result(res, code, text);
+                        });
+                    };
+                    if (operation == "dispatch-paused" || !queue.engine()) {
+                        apply();
+                    } else {
+                        reload([apply, res](bool loaded) {
+                            if (loaded) {
+                                apply();
+                            } else {
+                                result(res, 503, "Declaration load failed");
+                            }
+                        });
+                    }
                 }
             } else if (operation == "reload" || operation == "reconcile") {
                 reload([res](bool loaded) {

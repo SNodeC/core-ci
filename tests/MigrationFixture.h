@@ -26,16 +26,40 @@ inline Json statusView(const Engine& engine) {
     return Json::parse(migration_app::statusJson(migration_app::statusSnapshot(engine), 0));
 }
 Json statusView(const coreci::WaveController& engine) {
-    auto value = Json::parse(coreci::app::statusJson(coreci::app::statusSnapshot(engine), 0));
+    auto value = coreci::app::statusSnapshot(engine);
     value.erase("publication");
     value.erase("targets");
+    CHECK(value.at("dispatch_paused") == false);
+    value.erase("dispatch_paused");
+    value.erase("totals");
+    for (auto& package : value["packages"]) {
+        package.erase("title");
+        package.erase("commit");
+    }
+    for (auto& unit : value["units"]) {
+        if (!unit["selection"].is_null()) {
+            CHECK(unit["selection"]["ci_commit"] == "");
+            unit["selection"].erase("ci_commit");
+            unit["selection"].erase("commit");
+            unit["selection"].erase("dependencies");
+        }
+    }
     return value;
 }
 inline std::string planView(const Wave& wave) {
     return migration_app::planJson(wave);
 }
 std::string planView(const coreci::Wave& wave) {
-    return coreci::app::planJson(wave);
+    auto value = Json::parse(coreci::app::planJson(wave));
+    for (auto& target : value["targets"]) {
+        for (auto& unit : target["units"]) {
+            CHECK(unit.at("ci_commit") == "");
+            CHECK(unit.at("dependencies").is_array());
+            unit.erase("ci_commit");
+            unit.erase("dependencies");
+        }
+    }
+    return value.dump();
 }
 template <typename Controller>
 Json snapshot(const Controller& engine) {

@@ -9,10 +9,14 @@ using namespace coreci::github;
 using Json = nlohmann::json;
 
 Json source(const std::string& name, std::vector<std::string> prerequisites = {}) {
-    return Json{{"schema", 1},
+    Json requirements = Json::array();
+    for (const auto& name : prerequisites) {
+        requirements.push_back({{"package", name}, {"version", ">=0.0.0"}});
+    }
+    return Json{{"schema", 2},
                 {"package", name},
                 {"title", name + " title"},
-                {"depends_on", prerequisites},
+                {"depends_on", requirements},
                 {"build", {{"deb", "ci/deb.sh"}, {"rpm", "ci/rpm.sh"}}},
                 {"build_dependencies", {{"deb", Json::array()}, {"rpm", Json::array()}, {"openwrt", Json::array()}}},
                 {"targets", {"t"}}};
@@ -23,6 +27,16 @@ std::string read(const std::string& path) {
     text << input.rdbuf();
     CHECK(input.good() || input.eof());
     return text.str();
+}
+std::string converted(const std::string& body) {
+    auto value = Json::parse(body);
+    value["schema"] = 2;
+    Json dependencies = Json::array();
+    for (const auto& name : value.at("depends_on")) {
+        dependencies.push_back({{"package", name}, {"version", ">=0.0.0"}});
+    }
+    value["depends_on"] = dependencies;
+    return value.dump();
 }
 struct LoadResult {
     std::variant<LoadedDeclarations, Error> value = Error{"unfinished"};
@@ -76,6 +90,9 @@ LoadResult load(const std::string& registry,
                            "/repos/o/a/tags?page=2>; rel=\"next\"";
                 }
             }
+        } else if (path.find("/contents/?") != std::string::npos) {
+            CHECK(raw);
+            body = Json::array({{{"name", "ci"}, {"type", "dir"}, {"sha", std::string(40, 'd')}}}).dump();
         } else if (path.find("/contents/") != std::string::npos) {
             CHECK(raw);
             CHECK(path.find("/contents/ci%2F") != std::string::npos);
@@ -107,13 +124,13 @@ int main() {
     CHECK_EQ(loaded.pipeline.packages().size(), 2U);
     CHECK_EQ(loaded.pipeline.packages().at("a").sourceRepo.branch, "master");
     CHECK_EQ(loaded.pipeline.packages().at("a").sourceRepo.repo, "a");
-    CHECK(loaded.pipeline.prerequisites("b") == std::vector<std::string>{"a"});
+    CHECK(loaded.pipeline.prerequisites("b") == requirements({"a"}));
     CHECK_EQ(loaded.catalog.at("t").family, "deb");
-    CHECK_EQ(loaded.packages.at("a").title, "a title");
+    CHECK_EQ(loaded.pipeline.packages().at("a").title, "a title");
     CHECK(valid.maximumPending >= 2);
-    CHECK(valid.sourceHeads == 0);
+    CHECK(valid.sourceHeads == 2);
     for (const auto& ref : valid.refs) {
-        CHECK_EQ(ref, std::string(40, 'b'));
+        CHECK_EQ(ref, std::string(40, 'a'));
     }
     const auto bad = [&](std::string reg, std::string a, std::string cat = "") {
         const auto result = load(reg, a, source("b", {"a"}).dump(), cat.empty() ? catalog : cat);
@@ -191,11 +208,11 @@ int main() {
             const auto& declarations = std::get<LoadedDeclarations>(result.value);
             CHECK(declarations.releases.empty() == (std::string(mode) == "empty"));
             for (const auto& ref : result.refs) {
-                CHECK_EQ(ref, std::string(40, std::string(mode) == "empty" ? 'a' : 'c'));
+                CHECK_EQ(ref, std::string(40, 'a'));
             }
         }
     }
-    const auto real = load(registry.dump(), read("snodec-packages.json"), read("mqttsuite-packages.json"), catalog);
+    const auto real = load(registry.dump(), converted(read("snodec-packages.json")), converted(read("mqttsuite-packages.json")), catalog);
     REQUIRE(std::holds_alternative<LoadedDeclarations>(real.value));
     CHECK_EQ(std::get<LoadedDeclarations>(real.value).pipeline.packages().at("snodec").targets.size(), 76U);
     return checkResult();

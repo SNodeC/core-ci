@@ -14,7 +14,7 @@ namespace {
             b.target({"t" + std::to_string(i)});
         }
         b.package({"a", {"o", "a", "main"}, names, {}});
-        b.package({"b", {"o", "b", "main"}, names, {"a"}});
+        b.package({"b", {"o", "b", "main"}, names, requirements({"a"})});
         h.apply(GraphChanged{
             100, b.build(), {{100, "a", "v1.0.0", hash(), Origin::Reconcile}, {100, "b", "v1.0.0", hash(), Origin::Reconcile}}});
         h.apply(WaveStarted{101, h.wave().id, 42, 1});

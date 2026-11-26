@@ -22,7 +22,7 @@ namespace coreci::legacy::mariadb {
         }
         ddl->push_back("CREATE TABLE IF NOT EXISTS coreci_migration_schema (version INT NOT NULL PRIMARY KEY)");
         ddl->push_back("DELETE FROM coreci_migration_schema");
-        ddl->push_back("INSERT INTO coreci_migration_schema (version) VALUES (7)");
+        ddl->push_back("INSERT INTO coreci_migration_schema (version) VALUES (8)");
         auto statements = std::make_shared<std::vector<std::string>>();
         for (const auto& table : ::coreci::persistence::stateTables()) {
             statements->push_back("DELETE FROM " + table.name);

@@ -15,16 +15,13 @@ namespace coreci {
         bool operator==(const Repo&) const = default;
     };
     bool sameIdentity(const Repo& a, const Repo& b);
-    struct Target {
-        std::string id;
-        bool operator==(const Target&) const = default;
-    };
     struct Package {
         std::string name;
         Repo sourceRepo;
         std::set<std::string> targets;
-        std::vector<std::string> prerequisites;
+        std::map<std::string, std::string> prerequisites;
         unsigned revisionBase = 0;
+        std::string ciCommit = {}, ciTree = {}, title = {};
         bool operator==(const Package&) const = default;
     };
     struct Unit {
@@ -36,25 +33,25 @@ namespace coreci {
         class Builder;
         Pipeline() = default;
         bool operator==(const Pipeline&) const = default;
-        const std::map<std::string, Target>& targets() const;
+        const std::set<std::string>& targets() const;
         const std::map<std::string, Package>& packages() const;
         const std::vector<std::string>& topologicalOrder(const std::string& target) const;
-        const std::vector<std::string>& prerequisites(const std::string& package) const;
-        std::vector<std::string> packagesForRepo(const std::string& owner, const std::string& repo) const;
+        const std::map<std::string, std::string>& prerequisites(const std::string& package) const;
+        bool containsRepository(const std::string& owner, const std::string& repo) const;
 
     private:
-        std::map<std::string, Target> targetMap;
+        std::set<std::string> targetMap;
         std::map<std::string, Package> packageMap;
         std::map<std::string, std::vector<std::string>> orders;
     };
     class Pipeline::Builder {
     public:
-        Builder& target(Target value);
+        Builder& target(std::string value);
         Builder& package(Package value);
         Pipeline build() const;
 
     private:
-        std::vector<Target> targetList;
+        std::set<std::string> targetList;
         std::vector<Package> packageList;
     };
 } // namespace coreci

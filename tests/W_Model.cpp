@@ -19,7 +19,7 @@ int main() {
     for (const auto& target : plan["targets"]) {
         CHECK_EQ(target.size(), 2U);
         for (const auto& unit : target["units"]) {
-            CHECK_EQ(unit.size(), 8U);
+            CHECK_EQ(unit.size(), 10U);
             CHECK_EQ(unit["action"], "build");
             CHECK_EQ(unit["commit"], hash());
             CHECK_EQ(unit["repo"], "owner/" + unit["package"].get<std::string>());
@@ -28,10 +28,7 @@ int main() {
     }
     github::LoadedDeclarations declarations;
     declarations.pipeline = h.engine.pipeline();
-    for (const auto& [name, pkg] : declarations.pipeline.packages()) {
-        declarations.packages[name] = {name + " title", hash(), pkg.prerequisites};
-    }
-    for (const auto& [name, target] : declarations.pipeline.targets()) {
+    for (const auto& name : declarations.pipeline.targets()) {
         declarations.catalog[name] = {"debian", "13", "trixie", "amd64", "deb"};
     }
     auto model = Json::parse(dashboard::model(h.engine, declarations, 2, false));

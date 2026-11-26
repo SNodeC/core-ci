@@ -48,7 +48,7 @@ def run(build, proxy=None, fault=''):
             if proxy:
                 assert proxy.fired.wait(5) and migrated.returncode != 0
                 version_after = sql('SELECT version FROM coreci_schema;').strip()
-                assert version_after == ('6' if fault == 'commit' else '7')
+                assert version_after == ('6' if fault == 'commit' else '8')
                 if version_after == '6':
                     refused = subprocess.run(fx.command, env=fx.env, capture_output=True, timeout=15)
                     assert refused.returncode != 0 and b'coreci-migrate' in refused.stderr
@@ -57,7 +57,7 @@ def run(build, proxy=None, fault=''):
                     # The atomic rename committed; never infer failure from the lost acknowledgement.
                     migrated = None
             assert migrated is None or migrated.returncode == 0, migrated.stderr.decode()
-            assert sql('SELECT version FROM coreci_schema;').strip() == '7'
+            assert sql('SELECT version FROM coreci_schema;').strip() == '8'
             assert sql('SELECT ' + columns + ' FROM legacy_coreci_events ORDER BY seq;') == before
             assert sql('SELECT COUNT(*) FROM coreci_log;').strip() == str(len(before.splitlines()))
             subprocess.run([build / 'coreci-state-dump', root / 'tests/data/legacy-replay-baseline.json'],
@@ -73,5 +73,5 @@ def run(build, proxy=None, fault=''):
 if __name__ == '__main__':
     run(sys.argv[1])
     for boundary in ('commit', 'rename'):
-        with database(sys.argv[1]) as (proxy, _, environment, _), patch.dict(os.environ, environment):
+        with database() as (proxy, _, environment, _), patch.dict(os.environ, environment):
             run(sys.argv[1], proxy, boundary)

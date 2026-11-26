@@ -10,7 +10,7 @@ Pipeline::Builder base() {
     return b;
 }
 Package package(const std::string& name, std::vector<std::string> prerequisites = {}) {
-    return {name, {"o", name, "trunk"}, {"t"}, prerequisites};
+    return {name, {"o", name, "trunk"}, {"t"}, requirements(prerequisites)};
 }
 void rejects(const Pipeline::Builder& builder, const std::string& message) {
     bool rejected = false;
@@ -112,9 +112,9 @@ int main() {
     const auto pipeline = valid.build();
     CHECK((pipeline.topologicalOrder("t") == std::vector<std::string>{"a", "b", "c", "d"}));
     CHECK((pipeline.topologicalOrder("t2") == std::vector<std::string>{"q"}));
-    CHECK((pipeline.prerequisites("d") == std::vector<std::string>{"b", "c"}));
-    CHECK((pipeline.packagesForRepo("o", "a") == std::vector<std::string>{"a"}));
-    CHECK(pipeline.packagesForRepo("unknown", "repo").empty());
+    CHECK((pipeline.prerequisites("d") == requirements({"b", "c"})));
+    CHECK(pipeline.containsRepository("o", "a"));
+    CHECK(!pipeline.containsRepository("unknown", "repo"));
     // A built graph owns its definitions and cannot be changed by its builder.
     valid.package(package("z"));
     CHECK(!pipeline.packages().contains("z"));

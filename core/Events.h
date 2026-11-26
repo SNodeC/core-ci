@@ -125,6 +125,11 @@ namespace coreci {
         std::string message;
         bool operator==(const PublicationDispatchRejected&) const = default;
     };
+    struct DispatchPaused {
+        std::int64_t at;
+        bool paused;
+        bool operator==(const DispatchPaused&) const = default;
+    };
     using EventValue = std::variant<TagObserved,
                                     GraphChanged,
                                     WaveDispatchAccepted,
@@ -144,6 +149,7 @@ namespace coreci {
                                     PublicationStarted,
                                     PublicationFinished,
                                     PublicationDispatchAccepted,
-                                    PublicationDispatchRejected>;
+                                    PublicationDispatchRejected,
+                                    DispatchPaused>;
     using Event = EventValue;
 } // namespace coreci

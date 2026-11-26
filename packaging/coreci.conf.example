@@ -4,6 +4,8 @@ registry=SNodeC/Packages:ci/registry.json
 target-catalog=ci/targets.json
 workflow-repository=SNodeC/Packages
 feed-branch=feed
+# Enable before the first reconcile of an upgrade; omit afterwards to preserve the dashboard toggle.
+dispatch-paused=true
 wave-delay=120
 wave-deadline=23400
 publication-deadline=23400

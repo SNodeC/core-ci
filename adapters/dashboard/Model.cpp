@@ -36,18 +36,11 @@ namespace coreci::dashboard {
                       const std::string& email,
                       const std::string& loadError) {
         using Json = nlohmann::json;
-        auto value = Json::parse(app::statusJson(app::statusSnapshot(engine), generation));
+        auto value = app::statusSnapshot(engine, generation);
         ready = ready && engine.pipeline() == declarations.pipeline;
         value["ready"] = ready;
         value["loadError"] = loadError;
         value["userEmail"] = email;
-        for (auto& package : value["packages"]) {
-            const auto name = package.at("name").get<std::string>();
-            const auto& source = engine.pipeline().packages().at(name).sourceRepo;
-            package["title"] =
-                declarations.packages.contains(name) ? declarations.packages.at(name).title : source.owner + "/" + source.repo;
-            package["commit"] = declarations.packages.contains(name) ? declarations.packages.at(name).commit : "";
-        }
         if (!ready) {
             value["units"] = Json::array();
         }
@@ -71,7 +64,10 @@ namespace coreci::dashboard {
                          {"suite", target.release},
                          {"arch", target.arch},
                          {"format", target.family},
-                         {"prerequisites", declarations.packages.at(key.package).prerequisites}});
+                         {"prerequisites", Json::array()}});
+            for (const auto& [name, range] : engine.pipeline().prerequisites(key.package)) {
+                unit["prerequisites"].push_back(name);
+            }
             const auto buildState =
                 state.failure && state.failure->buildFailed
                     ? "failed"
@@ -96,13 +92,18 @@ namespace coreci::dashboard {
         }
         return value.dump();
     }
-    std::variant<Unit, github::Error> unit(const std::string& body) {
-        std::variant<Unit, github::Error> result;
+    std::variant<Event, github::Error> operation(const std::string& name, const std::string& body, std::int64_t at) {
+        std::variant<Event, github::Error> result;
         try {
             const auto value = nlohmann::json::parse(body);
-            result = Unit{value.at("package").get<std::string>(), value.at("target").get<std::string>()};
+            if (name == "dispatch-paused") {
+                result = DispatchPaused{at, value.at("paused").get<bool>()};
+            } else {
+                const auto package = value.at("package").get<std::string>(), target = value.at("target").get<std::string>();
+                result = name == "retry" ? Event{RetryRequested{at, package, target}} : Event{RebuildRequested{at, package, target}};
+            }
         } catch (const std::exception&) {
-            result = github::Error{"invalid unit body"};
+            result = github::Error{"invalid operation body"};
         }
         return result;
     }
