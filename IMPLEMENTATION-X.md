@@ -88,6 +88,15 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
   - snapshot interleaving: a publication freezes its plan, then a pick pins the
     current head, then the push — the pinned snapshot survives; a snapshot is
     deleted only in a later publication once it is neither head nor pinned;
+  - the 3 protected rollback points are never deleted while among the newest 3;
+  - finalization: report before completion and completion before report both
+    finalize immediately once both are known; a reservation is released at observed
+    completion while the item is still processing; missing report → grace → failed,
+    retry-eligible only if the desired identity is unchanged;
+  - the next publication waits until the previous one is reconciled, not only
+    completed;
+  - day-30 legacy APT retirement on an idle feed dispatches a retirement-only
+    publication;
   - all three deadlines; restart in every state; pause.
 
 ## 4. Registry repositories (one PR each, no tags)
@@ -129,22 +138,22 @@ Merge the PRs (after GATE A if it applies), tag core-ci v1.0.0, build the bootst
 
 ### c) Staging qualification
 
-Reset feed-staging (new layout, keys only; record its head as
-`refs/snapshots/feed-staging/pre-x`), then three runs:
+Staging is qualified production-shaped, in two runs on one fresh database:
 
-1. **Cold run** (timing baseline, no interference): unpause and let the full matrix
-   reach a terminal disposition. Its timings and runner-hours are the baseline for
-   GATE C criterion 5.
-2. **Fault run**: start it with T6 (a ci/-only commit in core-ci's own `ci/`), which
-   re-enrolls core-ci on all its targets. Set `qualification_fault =
+1. **Cold legacy run** (T8, and the timing baseline for GATE C criterion 5, no
+   interference): with Pause ON, `restore.yml` sets feed-staging to
+   `refs/snapshots/feed/pre-x` (the production feed as it was at quiesce); fresh
+   database; revision floor computed exactly as for production (§5d.1) from the old
+   database dump and the pre-x ledger; unpause. Bootstrap admits the newest stable tag
+   of every registry repository, so the full matrix runs (all namespaces: APT per
+   distribution, RPM, IPK, APK) and every first X publication into a namespace meets
+   legacy content. Let it reach a terminal disposition.
+2. **Fault run** on the same database: start it with T6 (a ci/-only commit in
+   core-ci's own `ci/`), which re-enrolls core-ci on all its targets. Set `qualification_fault =
    after_push:<token>` for T4 beforehand. T1, T2 and T5 are executed while that run's
    builds are in processing; T3 on a finished run. After T4 has consumed the token:
-   one more restart to prove it is not armed again.
-3. **Legacy transition run** (T8, production-shaped): pause; wait until no
-   publication run is non-terminal; `restore.yml` sets feed-staging to
-   `refs/snapshots/feed/pre-x` (the production feed as it was at quiesce); unpause;
-   re-enroll core-ci (Retry is not applicable: use a second ci/-only commit) so that
-   the first X publication meets the legacy feed. Then T7.
+   one more restart to prove it is not armed again. A second ci/-only commit then
+   produces at least two further publications for T7. Then T7.
 
 Authorized staging test operations (feed-staging only), each with its evidence:
 
@@ -154,10 +163,10 @@ Authorized staging test operations (feed-staging only), each with its evidence:
 | T2 duplicate dispatch | dispatch `build.yml` manually with a running request's id and attempt | second run ends with 409 log line, no work, no artifact |
 | T3 manual rerun | `gh run rerun` of a finished build run | run_attempt 2 gets 409, no work |
 | T4 interruption after push | `qualification_fault = after_push:<token>` → the next publication gets `fault=after_push` | push present at feed-staging head; job failed after claim, before any post-push report; core-ci recovers all items from receipts; no duplicate publication; token consumption committed; a restart afterwards does not re-arm it |
-| T5 isolated retry | `gh run cancel` of one running build | item failed with reason "cancelled" (from the final report or, if missing, from the GitHub conclusion after the callback deadline); Retry → attempt +1, same revision, `inputs` byte-identical (diff), snapshot still present; other items unaffected |
+| T5 isolated retry | `gh run cancel` of one running build | GitHub conclusion cancelled; item failed with reason "cancelled" if the report arrived, or "conclusion cancelled, no report" after the callback grace if not (state which path happened); reservation released at observed completion; Retry → attempt +1, same revision, `inputs` byte-identical (diff), snapshot still present; other items unaffected |
 | T6 ci-only revision | a test-only commit in core-ci's own `ci/` (comment line in its hook) on its default branch | core-ci items get revision +1 with the same source commit; no tag; no other repository rebuilt except declared consumers |
-| T7 restore | pause; wait until no publication run is non-terminal; `restore.yml` on feed-staging to `refs/snapshots/feed/pre-x`, then back to the latest X publication snapshot | branch head equals each snapshot; lease respected; at pre-x: `apt update` + install with the OLD sources lines works; at the X snapshot: `apt update` + install with BOTH old and new sources lines works |
-| T8 legacy transition | run 3 above | legacy `apt/dists` + `apt/pool` byte-identical after the X publication; legacy RPM/OpenWrt packages imported into the ledger as legacy entries and present in the rebuilt indices; fresh installs from the old APT layout, the new APT layout, dnf, opkg and apk all work |
+| T7 restore | pause; wait until no publication is unreconciled; `restore.yml` on feed-staging to `refs/snapshots/feed/pre-x`; then to the OLDEST of the 3 protected rollback points (at least two publications newer than it exist); then back to the newest snapshot | branch head equals each snapshot; lease respected; the rollback point was not pruned; at pre-x: `apt update` + install with the OLD sources lines works; at the rollback point and the newest snapshot: `apt update` + install with BOTH old and new sources lines works |
+| T8 legacy transition | run 1 above | legacy `apt/dists` + `apt/pool` byte-identical after the X publication; legacy RPM/OpenWrt packages imported into the ledger as legacy entries and present in the rebuilt indices; fresh installs from the old APT layout, the new APT layout, dnf, opkg and apk all work |
 
 **GATE C criteria** (all must hold; report each with evidence):
 
@@ -174,7 +183,8 @@ Authorized staging test operations (feed-staging only), each with its evidence:
 5. Timings and runner-hours measured and compared with the estimate (4½–7 h,
    40–53 runner-hours).
 6. T1–T8 passed.
-7. No namespace collision; ledger = database; snapshots consistent.
+7. No namespace collision; ledger = database of the qualification runs; snapshots
+   and the 3 protected rollback points consistent.
 
 The report contains the new APT sources lines for users and the rollback procedure.
 Wait for "cut over" (with any accepted exceptions).
@@ -199,9 +209,9 @@ of the CI itself is fix-forward.
 
 1. Pause core-ci 1.0.0; wait until no publication run is non-terminal; stop it.
 2. `restore.yml` on `feed` to the snapshot the owner names:
-   - the last good X publication snapshot (default): clients on the old and on the
-     new sources lines keep working (the legacy APT tree is part of every X snapshot
-     during the 30 days);
+   - one of the 3 protected rollback points (X6; default: the newest one before the
+     problem): clients on the old and on the new sources lines keep working (the
+     legacy APT tree is part of every X snapshot during the 30 days);
    - `refs/snapshots/feed/pre-x` (last resort): clients on the old sources lines keep
      working; clients that switched to the new lines must switch back — the notice
      file and the landing pages say so before the restore is executed.

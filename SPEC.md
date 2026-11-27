@@ -425,18 +425,26 @@ X3 Declaration, schema 2, read at the default-branch tip (ci_commit):
  - Selector lists are added to the family list of matching targets.
 
 X4 Items, reservations, selection.
- - Item = release × target. States: enrolled, processing (build job reserved:
-   queued, running or terminating), built, published, failed. Conditions of enrolled
-   items, each with a reason: waiting; blocked (range unsatisfiable, target missing,
+ - Item = release × target. States: enrolled, processing (an attempt exists whose
+   outcome is not finalized), built, published, failed. Conditions of enrolled items,
+   each with a reason: waiting; blocked (range unsatisfiable, target missing,
    prerequisite failed, closure conflict, cycle); unsupported.
+ - Every attempt (build or publication) has a run state, separate from the item
+   state: dispatched → claimed → completed (observed via the GitHub API, X10).
  - Required option "github_slots" in the coreci configuration section (default 20).
-   Reservations = items in processing + the publication reservation <= github_slots.
- - A build's reservation is released only when GitHub reports its run completed.
-   core-ci observes every known run independently of callbacks (X10).
- - Publication reservation: whenever built items not assigned to a publication exist
-   and no publication reservation exists, the publication claims the next released
-   reservation before any build (on a build's release, on publication completion and
-   at startup). The batching deadline (default 2 min after the claim) is persisted and
+   Reservations = attempts (builds and publications) whose run state is not
+   completed <= github_slots. A reservation is released when its run is observed
+   completed; core-ci observes every known run independently of callbacks (X10).
+ - Outcome finalization of a build attempt: as soon as the run is observed completed
+   AND a valid finished report has arrived (in either order) → built or failed per the
+   report. Run completed without a report → callback grace (X10), then failed with
+   reason "conclusion <conclusion>, no report"; retry eligibility per X5.
+ - Publication reservation: whenever publication work exists (built items not
+   assigned to a publication, or a due timed retirement, X6) and no publication is
+   unreconciled, the publication claims the next released reservation before any
+   build (on a build's release, on publication completion, on the retirement timer
+   and at startup). A publication is unreconciled until its receipts or its failure
+   are reconciled (X8), not merely until its run completes. The batching deadline (default 2 min after the claim) is persisted and
    runs inside that reservation; no build can take it. It is released when GitHub
    reports the publication run completed; at that moment the rule is evaluated again.
  - A pick is synchronous in memory. Pick, frozen request, attempt and pending
@@ -487,6 +495,9 @@ X6 Namespace, snapshots, retention.
    refs/snapshots/<feed_branch>/<publication_id>. A pick always pins the snapshot of
    the current feed head as feed_commit. core-ci keeps a snapshot while an attempt
    referencing it is active or its item is retry-eligible (X5).
+ - Rollback points: the snapshots of the 3 most recent reconciled publications per
+   feed branch are protected and never deleted while they are among those 3; they
+   are the rollback targets besides pre-x.
  - A publication's deletion list never contains the snapshot of its own expected
    head. A snapshot is listed for deletion only if, in the committed transition that
    freezes the plan, it is not the current head and no attempt pins it. The deletion
@@ -494,8 +505,10 @@ X6 Namespace, snapshots, retention.
  - refs/snapshots/<feed_branch>/pre-x is protected: never deleted by publications.
  - Legacy content (on the first X publication into a feed that has pre-X content):
    - The legacy APT tree apt/dists/ and apt/pool/ is carried over byte-identical and
-     is never indexed, bound or changed by X. 30 days after the cutover, core-ci puts
-     "retire legacy APT" into a publication plan, which removes both directories.
+     is never indexed, bound or changed by X. 30 days after the cutover a timer makes
+     "retire legacy APT" due; it is publication work (X4): it joins the next plan, and
+     if no items are built, a publication containing only this retirement is
+     dispatched. It removes both directories.
    - Legacy RPM and OpenWrt packages stay in their namespaces. The first publication
      that touches such a namespace imports them into the ledger as legacy entries:
      served sha256 from the file, runtime dependencies read from the package
@@ -530,11 +543,13 @@ X7 build.yml — workflow_dispatch on main with return_run_details: true;
    → upload artifact coreci-<request>-<attempt> (retention-days 90) with sha256
    manifest and inventory → report finished (artifact id, digest, inventory).
  - On failure the job reports finished with status failed.
- - Outcome of a completed run (X10 observation), after the callback grace period:
-   with a finished report → that report decides. Without a finished report → failed,
-   retry-eligible, reason "conclusion <conclusion>, no report", for every conclusion
-   (success, failure, cancelled, timed_out, startup_failure, action_required, stale,
-   skipped, neutral). An artifact of a run without report is never used.
+ - Outcome per X4 finalization. A run completed without a finished report becomes
+   failed after the callback grace, for every conclusion (success, failure, cancelled,
+   timed_out, startup_failure, action_required, stale, skipped, neutral), with reason
+   "conclusion <conclusion>, no report"; it is retry-eligible only per X5 (desired
+   identity equals the frozen one). An artifact of a run without report is never used.
+ - A cancelled run that still delivers its finished report reports status failed with
+   reason "cancelled".
  - OpenWrt (normative path): SDK digest and feed revisions from the catalog; register
    the closure's recipes (one per package, at their commit/ci_commit) before feed
    resolution; build in topological order with the repositories' Build/InstallDev
