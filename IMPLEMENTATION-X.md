@@ -68,7 +68,12 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
   - the last build finishes while a publication with a frozen plan runs: on that
     publication's completion a new publication reservation is claimed for it; same
     at startup; batching deadline survives a restart;
-  - a reservation is released only when GitHub reports the run completed;
+  - a reservation is released only when GitHub reports the run completed, except
+    for superseding: at full capacity, an ambiguous attempt (no run found by
+    run-name right before the decision, no claim past the queue deadline) is
+    superseded and its reservation passes to the next attempt in one transaction; a
+    late run of the superseded attempt gets 409 and holds no reservation; a found
+    run is never superseded;
   - Retry uses the identical frozen request; changed inputs after a failure → new
     revision, no Retry;
   - identity changes (ci/, target environment, contract, dependency); no rebuild on an

@@ -435,6 +435,16 @@ X4 Items, reservations, selection.
    Reservations = attempts (builds and publications) whose run state is not
    completed <= github_slots. A reservation is released when its run is observed
    completed; core-ci observes every known run independently of callbacks (X10).
+ - Superseding an ambiguous attempt (builds and publications): a dispatched attempt
+   whose run_id is unknown, for which a run-name lookup performed immediately before
+   the decision finds no run, and which has no claim past the queue deadline, is
+   superseded. In ONE transaction: its run state becomes superseded (counts as
+   completed for reservations; any later claim for it gets 409), the next attempt is
+   created, and the reservation passes directly to that next attempt. A run of the
+   superseded attempt that GitHub creates later is observed like any known run, holds
+   no reservation, and ends without work at its claim (409). An attempt whose run IS
+   found is a known run and is never superseded; past its deadline it is cancelled
+   and replaced only after its completion is observed (X10).
  - Outcome finalization of a build attempt: as soon as the run is observed completed
    AND a valid finished report has arrived (in either order) → built or failed per the
    report. Run completed without a report → callback grace (X10), then failed with
