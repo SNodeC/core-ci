@@ -126,9 +126,9 @@ reconnect backoff. Stop starting work on framework shutdown.
 | Method and path | Authentication | Purpose |
 |---|---|---|
 | POST /api/v1/github/webhook | GitHub raw-body HMAC-SHA256 | Ping, registered source tag and default-branch pushes, registry default-branch pushes. |
-| GET /api/v1/requests/{id}/request.json | Public | Immutable X7 request for the dispatched attempt specified in the request URL. |
-| GET /api/v1/publications/{id}/plan.json | Public | Immutable X8 plan for the dispatched attempt specified in the plan URL. |
-| POST /api/v1/requests/{id}/claim, /api/v1/publications/{id}/claim | Callback HMAC | X9 claim with attempt, run id, and run attempt. |
+| GET /api/v1/requests/{id}/attempts/{attempt} | Public | Immutable X7 request for the specified attempt. |
+| GET /api/v1/publications/{id}/attempts/{attempt} | Public | Immutable X8 plan for the specified attempt. |
+| POST /api/v1/requests/{id}/claim, /api/v1/publications/{id}/claim | Callback HMAC | X9 claim. A successful response signs the owner identity and the document digest. |
 | POST /api/v1/requests/{id}/report, /api/v1/publications/{id}/report | Callback HMAC | X9 reports from the claim owner. |
 | GET /api/v1/status.json | Public | Committed scheduler and item status. |
 | GET /api/v1/badge/{package}/{target}.svg | Public | Badge from committed package and target status. |
@@ -151,8 +151,10 @@ request returns 401. Verify outbound TLS host names and CA chains. Preserve
 request timeouts and same-origin, loop-free pagination.
 
 Use the repository, commit, contents, and tags APIs for declaration and release
-discovery. Dispatch build.yml and publish.yml on main with return_run_details,
-recording the returned run id. Use Actions run listing to locate ambiguous
+discovery. Dispatch build.yml on main with request_id, attempt, and feed_branch.
+Dispatch publish.yml on main with publication_id, attempt, feed_branch, and
+the X8 fault input. Request return_run_details for each and record the
+returned run id. Use Actions run listing to locate ambiguous
 dispatches by exact run-name, run details to observe known runs, and cancellation
 where X10 requires it. Read the configured feed head and its ledger for
 publication reconciliation.
@@ -167,7 +169,7 @@ WebApp instance sections. Application settings do not come from environment
 variables.
 
 Preserve registry, target-catalog, workflow-repository, feed-branch, GitHub App,
-API and CA options, callback URL and HMAC files, IDP endpoint and subject
+API and CA options, the HTTPS base URL, HMAC files, IDP endpoint and subject
 allowlist, database connection options, and reconcile-interval. Read secret
 values from operator-owned files and log option names on configuration errors.
 Validate before scheduling. Use the scope and defaults of X4, X8, and X10:
@@ -177,15 +179,23 @@ grace to 15 minutes. Reject qualification_fault unless the feed branch is
 feed-staging. Token consumption is part of the committed publication plan.
 Persist the dashboard Pause action and start qualification with Pause enabled.
 
+The Packages workflows derive core-ci URLs from the repository Actions variable
+CORECI_ORIGIN and fail closed if it is unset. Set it during staging installation
+as specified in IMPLEMENTATION-X.md §5b.
+
 ### 6.4 Callback admission
 
 Preserve application/x-www-form-urlencoded callbacks and the X-CoreCI-Timestamp
 and X-CoreCI-Signature-256 headers. The signature is
 sha256=HMAC(secret,timestamp+"."+rawBody). Authenticate before parsing, reject
 invalid authentication or timestamp skew over 300 seconds with 401, and reject
-invalid input with 400. Commit accepted changes before answering 200. Apply the
-idempotent claim and 409 rules in X9, accept a finished report before started,
-and enforce monotonic terminal outcomes.
+invalid input with 400. Commit accepted changes before answering 200. Sign each
+successful claim response under X9, including the digest of the exact bytes
+served for its attempt. Workflows verify the signature, timestamp, owner fields,
+and document digest before doing work. The publisher re-fetches the plan and
+verifies its digest before pushing. Apply the idempotent claim and 409 rules in
+X9, accept a finished report before started, and enforce monotonic terminal
+outcomes.
 
 ### 6.5 Dashboard and public status
 
