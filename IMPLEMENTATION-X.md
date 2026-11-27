@@ -37,7 +37,8 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
   OpenWrt closure in one SDK; quarantine with partial publication; receipts and
   acknowledgement; atomic push with snapshot refs; `pre-x` protection; the deletion
   list never contains the expected head's snapshot; legacy APT tree carried
-  byte-identical; legacy RPM/OpenWrt import into the ledger and indices; retention
+  byte-identical; legacy RPM/OpenWrt import into the ledger and indices, with the
+  publication date from the old database or else the `pre-x` committer time; retention
   closure over runtime dependencies plus by-hash generations; namespace collision
   check; `fault` rejected outside feed-staging; restore with lease; grep test against
   project names in `tools/`, `.github/`, `ci/targets.json`.

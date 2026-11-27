@@ -526,6 +526,10 @@ X6 Namespace, snapshots, retention.
      metadata, original digest "unknown". Indices are rebuilt over X entries and
      legacy entries together. Legacy entries are never bound and are subject to the
      normal retention (they disappear once newer X revisions are kept).
+   - Publication date of a legacy entry (for the 7-day rule): the timestamp from the
+     old database's publication records where one matches; otherwise the committer
+     time of refs/snapshots/<feed_branch>/pre-x (an upper bound of the true date). It
+     is recorded in the ledger entry at import.
  - Retention on the branch head keeps: the two highest version-revisions per
    package×target; the transitive runtime closure of everything kept (over the
    inventory's runtime dependencies); everything published within the last 7 days.
