@@ -10,6 +10,7 @@
 #include "adapters/mariadb/MariaDBStateStore.h"
 #include "persistence/StateSession.h"
 
+#include <algorithm>
 #include <charconv>
 #include <core/SNodeC.h>
 #include <core/timer/Timer.h>
@@ -120,12 +121,21 @@ namespace coreci::app {
                     config.get("dispatch-paused") != "false") {
                     Config::invalid("dispatch-paused", valid);
                 }
-                scheduling.waveDelay = config.number("wave-delay", 0, 86400, valid);
-                scheduling.waveDeadline = config.number("wave-deadline", 60, 86400, valid);
-                scheduling.waveStartTimeout = config.number("start-timeout", 1, 86400, valid);
-                scheduling.publicationDeadline = config.number("publication-deadline", 60, 86400, valid);
-                scheduling.retryDelay = config.number("retry-delay", 0, 86400, valid);
-                scheduling.maxDispatchAttempts = static_cast<unsigned>(config.number("max-dispatch-attempts", 1, 20, valid));
+                scheduling.slots = static_cast<unsigned>(config.number("github_slots", 1, 1000, valid));
+                scheduling.batch = config.number("batch-delay", 0, 86400, valid);
+                scheduling.queue = config.number("queue-deadline", 1, 86400, valid);
+                scheduling.execution = config.number("execution-deadline", 1, 21600, valid);
+                scheduling.grace = config.number("callback-grace", 1, 86400, valid);
+                scheduling.poll = config.number("run-poll", 1, 86400, valid);
+                scheduling.branch = config.get("feed-branch");
+                const auto fault = config.get("qualification_fault");
+                if (!fault.empty()) {
+                    if (scheduling.branch == "feed-staging" && fault.starts_with("after_push:") && fault.size() > 11) {
+                        scheduling.fault = fault.substr(11);
+                    } else {
+                        Config::invalid("qualification_fault", valid);
+                    }
+                }
                 if (config.get("feed-branch") != "feed" && config.get("feed-branch") != "feed-staging") {
                     Config::invalid("feed-branch", valid);
                 }
@@ -171,21 +181,15 @@ namespace coreci::app {
                     details.database = config.get("db-name");
                     details.password = databasePassword;
                     store = std::make_unique<mariadb::MariaDBStateStore>(details);
-                    const auto repository = config.get("workflow-repository");
-                    const auto slash = repository.find('/');
-                    scheduling.feedBranch = config.get("feed-branch");
-                    scheduling.workflow = {repository.substr(0, slash), repository.substr(slash + 1), "main"};
-                    scheduling.dispatchPaused =
+                    scheduling.workflowRepository = config.get("workflow-repository");
+                    remote = base->path + "/repos/" + config.get("workflow-repository");
+                    scheduling.paused =
                         config.get("dispatch-paused").empty() ? std::nullopt : std::optional<bool>{config.get("dispatch-paused") == "true"};
                     queue = std::make_unique<ps::StateSession>(
                         *store,
                         scheduling,
-                        [this](auto seq) {
-                            generation = seq;
-                            if (dashboard && queue->engine()) {
-                                dashboard->changed();
-                                dispatch();
-                            }
+                        [this] {
+                            dashboard->changed();
                         },
                         [] {
                             return core::SNodeC::state() != core::State::STOPPING;
@@ -206,8 +210,8 @@ namespace coreci::app {
                         [this](auto done) {
                             reload(std::move(done));
                         },
-                        [this] {
-                            return generation;
+                        [this](const auto& body, auto done) {
+                            admit(body, std::move(done));
                         });
                     routes();
                     if (!redirect.getConfig()->net::config::ConfigInstance::getDisabled()) {
@@ -235,7 +239,7 @@ namespace coreci::app {
                 queue->start(
                     [this] {
                         recoveryDelay = 1;
-                        generation = queue->engine()->stored().sequence;
+                        nextFeed = 0;
                         dashboard->changed();
                         tick();
                         if (listening) {
@@ -283,40 +287,229 @@ namespace coreci::app {
                     });
             }
             void tick() {
-                const auto* engine = queue->engine();
-                const auto at = now();
-                if (engine && !tickPending && engine->nextDeadline() && at >= *engine->nextDeadline()) {
-                    tickPending = true;
-                    queue->enqueue(Tick{at}, [this](const auto&) {
-                        tickPending = false;
-                        dispatch();
+                if (const auto* state = queue->state()) {
+                    const auto at = now();
+                    const auto& records = state->at("attempts");
+                    const auto active = [](const Json& attempt) {
+                        return attempt.at("run_state") != "completed" && attempt.at("run_state") != "superseded";
+                    };
+                    const bool changingHead = std::ranges::any_of(records, [&](const Json& record) {
+                        return record.at("publication") == true && active(record) && record.at("dispatch") == "sent";
                     });
-                }
-                dispatch();
-            }
-            void dispatch() {
-                if (const auto* engine = queue->engine(); engine && !tickPending) {
-                    for (const auto& command : engine->commands()) {
-                        if (std::find(dispatching.begin(), dispatching.end(), command) == dispatching.end()) {
-                            dispatching.push_back(command);
-                            github->request(
-                                base->path + gh::dispatchPath(command),
-                                [this, command](int status, std::string body, std::string) {
-                                    Event event = command.publication
-                                                      ? Event{PublicationDispatchAccepted{now(), command.id, command.attempt}}
-                                                      : Event{WaveDispatchAccepted{now(), command.id, command.attempt}};
-                                    if (status != 204) {
-                                        event = command.publication
-                                                    ? Event{PublicationDispatchRejected{now(), command.id, command.attempt, status, body}}
-                                                    : Event{WaveDispatchRejected{now(), command.id, command.attempt, status, body}};
-                                    }
-                                    queue->enqueue(std::move(event), [this, command](const auto&) {
-                                        std::erase(dispatching, command);
-                                    });
-                                },
-                                gh::dispatchBody(command, config.get("callback-base-url")));
+                    const bool ready = std::ranges::any_of(state->at("items"), [](const Json& item) {
+                        return item.at("state") == "enrolled" && item.value("condition", "") == "";
+                    });
+                    const bool pick =
+                        changingHead && ready && state->at("paused") == false && std::ranges::count_if(records, active) < scheduling.slots;
+                    if (at >= nextFeed || pick) {
+                        refreshFeed(pick);
+                    }
+                    if (!pick) {
+                        turn();
+                    }
+                    state = queue->state();
+                    if (state) {
+                        const bool paused = state->at("paused").get<bool>();
+                        const auto attempts = state->at("attempts");
+                        for (const auto& [key, record] : attempts.items()) {
+                            const auto phase = record.at("run_state");
+                            const auto dispatch = record.at("dispatch");
+                            if (!busy.contains(key) && dispatch == "pending" && !paused && record.value("retry_at", Time{0}) <= at) {
+                                send(key, record);
+                            } else if (!busy.contains(key) && dispatch == "sent" && phase != "completed" &&
+                                       !record.value("superseded_completed", false) &&
+                                       (at >= record.at("poll_at").get<Time>() ||
+                                        (phase != "superseded" && !record.value("cancel_sent", false) &&
+                                         at >= record.value("execute_at", record.at("queue_at").get<Time>())))) {
+                                observe(key, record);
+                            }
                         }
                     }
+                }
+            }
+
+            void turn() {
+                queue->enqueue("", [this](auto& facts) {
+                    return queue->scheduler().turn(facts, now());
+                });
+            }
+
+            std::string workflow(const Json& record) const {
+                return remote + "/actions/workflows/" + (record.at("publication") == true ? "publish.yml" : "build.yml");
+            }
+
+            void send(const std::string& key, const Json& record) {
+                busy.insert(key);
+                queue->enqueue(
+                    "",
+                    [key](auto& state) {
+                        state["attempts"][key]["dispatch"] = "sent";
+                        return Result{};
+                    },
+                    [this, key, record](const auto& result) {
+                        if (result.code != 200) {
+                            busy.erase(key);
+                        } else {
+                            const bool publication = record.at("publication").get<bool>();
+                            Json inputs{{publication ? "publication_id" : "request_id", record.at("id")},
+                                        {"attempt", std::to_string(record.at("attempt").get<unsigned>())},
+                                        {"feed_branch", scheduling.branch}};
+                            if (publication) {
+                                const auto plan = Json::parse(record.at("document").get<std::string>());
+                                inputs["fault"] = plan.at("fault");
+                            }
+                            const Json request{{"ref", "main"}, {"return_run_details", true}, {"inputs", inputs}};
+                            github->request(
+                                workflow(record) + "/dispatches",
+                                [this, key](int status, std::string body, const auto&) {
+                                    busy.erase(key);
+                                    const auto run = Json::parse(body, nullptr, false);
+                                    if (status >= 200 && status < 300 && run.is_object() && run.contains("workflow_run_id")) {
+                                        applyObservation(key, Json{{"id", run.at("workflow_run_id")}, {"status", "queued"}});
+                                    }
+                                },
+                                request.dump());
+                        }
+                    });
+            }
+
+            void applyObservation(const std::string& key, Json run) {
+                if ((run.value("status", "") == "in_progress" || run.value("status", "") == "completed") && run.contains("created_at") &&
+                    run.contains("run_started_at")) {
+                    try {
+                        run["queue_seconds"] = std::max<Time>(0,
+                                                              gh::isoTime(run.at("run_started_at").get<std::string>()) -
+                                                                  gh::isoTime(run.at("created_at").get<std::string>()));
+                    } catch (const std::exception&) {
+                        // An absent timing does not prevent observing completion.
+                    }
+                }
+                queue->enqueue(
+                    "",
+                    [this, key, run](auto& state) {
+                        return queue->scheduler().observed(state, key, run, now());
+                    },
+                    [this, key](const auto&) {
+                        if (const auto* state = queue->state(); state && state->at("attempts").contains(key)) {
+                            const auto& record = state->at("attempts").at(key);
+                            if (record.at("publication") == true && record.at("run_state") == "completed") {
+                                nextFeed = 0;
+                                refreshFeed();
+                            }
+                            if (record.value("cancel_requested", false) && !record.value("cancel_sent", false) &&
+                                record.at("run_state") != "completed" && !busy.contains(key)) {
+                                busy.insert(key);
+                                github->request(
+                                    remote + "/actions/runs/" + std::to_string(record.at("run").get<std::uint64_t>()) + "/cancel",
+                                    [this, key](int status, const auto&, const auto&) {
+                                        busy.erase(key);
+                                        if (status == 202 || status == 409) {
+                                            queue->enqueue("", [key](auto& state) {
+                                                state["attempts"][key]["cancel_sent"] = true;
+                                                return Result{};
+                                            });
+                                        }
+                                    },
+                                    "{}");
+                            }
+                        }
+                    });
+            }
+
+            void observe(const std::string& key, const Json& record) {
+                busy.insert(key);
+                if (record.at("run") != 0) {
+                    github->request(remote + "/actions/runs/" + std::to_string(record.at("run").get<std::uint64_t>()),
+                                    [this, key](int status, std::string body, const auto&) {
+                                        busy.erase(key);
+                                        const auto result = Json::parse(body, nullptr, false);
+                                        if (status == 200 && result.is_object()) {
+                                            applyObservation(key, result);
+                                        }
+                                    });
+                } else {
+                    const auto title = std::string(record.at("publication") == true ? "publish " : "build ") + key;
+                    locate(key, title, workflow(record) + "/runs?branch=main&event=workflow_dispatch&per_page=100", {});
+                }
+            }
+
+            void locate(const std::string& key, const std::string& title, const std::string& page, std::set<std::string> visited) {
+                visited.insert(page);
+                github->request(page, [this, key, title, visited = std::move(visited)](int status, std::string body, std::string link) {
+                    const auto result = Json::parse(body, nullptr, false);
+                    if (status == 200 && result.is_object() && result.contains("workflow_runs")) {
+                        const auto& runs = result.at("workflow_runs");
+                        const auto found = std::ranges::find_if(runs, [&](const auto& run) {
+                            return run.value("display_title", "") == title && run.value("run_attempt", 0U) >= 1;
+                        });
+                        if (found != runs.end()) {
+                            busy.erase(key);
+                            applyObservation(key, *found);
+                        } else if (const auto next = gh::nextLink(link, *base); std::holds_alternative<std::optional<std::string>>(next)) {
+                            const auto uri = std::get<std::optional<std::string>>(next);
+                            if (uri && !visited.contains(gh::httpsUrl(*uri).value().path)) {
+                                locate(key, title, gh::httpsUrl(*uri).value().path, visited);
+                            } else {
+                                busy.erase(key);
+                                if (!uri) {
+                                    applyObservation(key, Json{{"not_found", true}});
+                                }
+                            }
+                        } else {
+                            busy.erase(key);
+                        }
+                    } else {
+                        busy.erase(key);
+                    }
+                });
+            }
+
+            void refreshFeed(bool pick = false) {
+                if (!readingFeed && queue->state()) {
+                    readingFeed = true;
+                    nextFeed = now() + scheduling.poll;
+                    github->request(
+                        remote + "/git/ref/heads/" + scheduling.branch, [this, pick](int status, std::string body, const auto&) {
+                            const auto ref = Json::parse(body, nullptr, false);
+                            if (status == 200 && ref.is_object() && ref.contains("object") && ref["object"].contains("sha")) {
+                                const auto head = ref["object"]["sha"].get<std::string>();
+                                github->request(remote + "/git/matching-refs/snapshots/" + scheduling.branch + "/",
+                                                [this, head, pick](int code, std::string body, const auto&) {
+                                                    const auto refs = Json::parse(body, nullptr, false);
+                                                    if (code == 200 && refs.is_array()) {
+                                                        Json snapshots = Json::object();
+                                                        for (const auto& ref : refs) {
+                                                            snapshots[ref.at("ref").get<std::string>()] = ref.at("object").at("sha");
+                                                        }
+                                                        github->request(
+                                                            remote + "/contents/publications.json?ref=" + head,
+                                                            [this, head, snapshots, pick](int code, std::string body, const auto&) {
+                                                                readingFeed = false;
+                                                                const auto ledger = Json::parse(body, nullptr, false);
+                                                                if (code == 200 && (ledger.is_array() || ledger.is_object())) {
+                                                                    queue->enqueue(
+                                                                        "",
+                                                                        [this, head, snapshots, ledger](auto& state) {
+                                                                            return queue->scheduler().feed(
+                                                                                state, head, snapshots, ledger, now());
+                                                                        },
+                                                                        [this, pick](const auto& result) {
+                                                                            if (pick && result.code == 200) {
+                                                                                turn();
+                                                                            }
+                                                                        });
+                                                                }
+                                                            },
+                                                            {},
+                                                            true);
+                                                    } else {
+                                                        readingFeed = false;
+                                                    }
+                                                });
+                            } else {
+                                readingFeed = false;
+                            }
+                        });
                 }
             }
             void routes() {
@@ -366,45 +559,50 @@ namespace coreci::app {
                             github->request(std::move(path), std::move(done), {}, raw);
                         },
                         [this](auto result) {
-                            if (std::holds_alternative<gh::LoadedDeclarations>(result) && queue->engine()) {
-                                const auto& loaded = std::get<gh::LoadedDeclarations>(result);
-                                bool compatible = true;
-                                for (const auto& [package, release] : queue->engine()->releases()) {
-                                    if (release && loaded.pipeline.packages().contains(package) &&
-                                        queue->engine()->sameSource(package, loaded.pipeline.packages().at(package).sourceRepo)) {
-                                        const auto selected = loaded.releases.find(package);
-                                        compatible = compatible && selected != loaded.releases.end() &&
-                                                     (*Version::parse(selected->second.tag) > release->version ||
-                                                      (selected->second.tag == release->tag && selected->second.sha == release->sourceSha));
-                                    }
-                                }
-                                if (!compatible) {
-                                    result = gh::Error{"tag-bound load would regress a recorded release"};
-                                }
-                            }
-                            if (std::holds_alternative<gh::Error>(result)) {
-                                const auto message = std::get<gh::Error>(result).reason;
-                                std::cerr << message << '\n';
-                                dashboard->failed(message);
+                            if (const auto* problem = std::get_if<gh::Error>(&result)) {
+                                std::cerr << problem->reason << '\n';
+                                dashboard->failed(problem->reason);
                                 finishLoad(false);
                             } else {
-                                const auto loaded = std::get<gh::LoadedDeclarations>(result);
-                                std::vector<TagObserved> tags;
-                                const auto at = now();
-                                for (const auto& [package, tag] : loaded.releases) {
-                                    tags.push_back({at, package, tag.tag, tag.sha, Origin::Reconcile});
-                                }
-                                queue->enqueue(GraphChanged{at, loaded.pipeline, tags}, [this, loaded](const auto&) {
-                                    if (queue->engine() && queue->engine()->pipeline() == loaded.pipeline) {
-                                        dashboard->loaded(loaded);
-                                    }
-                                    finishLoad(queue->engine() && queue->engine()->pipeline() == loaded.pipeline);
-                                });
+                                auto loaded = std::get<gh::LoadedDeclarations>(std::move(result));
+                                discovered = loaded.releases;
+                                queue->enqueue(
+                                    "declarations reconciled",
+                                    [this, loaded = std::move(loaded)](auto& state) {
+                                        return queue->scheduler().declarations(state, loaded.catalog, loaded.declarations, loaded.releases);
+                                    },
+                                    [this](const auto& outcome) {
+                                        dashboard->failed(outcome.code == 200 ? "" : outcome.text);
+                                        nextFeed = 0;
+                                        refreshFeed();
+                                        finishLoad(outcome.code == 200);
+                                    });
                             }
                         });
                 }
             }
-            std::uint64_t generation = 0;
+
+            void admit(const Json& body, ps::StateSession::Reply done) {
+                const auto repo = body.at("repo").get<std::string>();
+                const auto tag = body.at("tag").get<std::string>();
+                reload([this, repo, tag, done = std::move(done)](bool loaded) {
+                    const auto release = std::ranges::find_if(discovered, [&](const auto& value) {
+                        return value.at("repo") == repo && value.at("tag") == tag;
+                    });
+                    if (!loaded || release == discovered.end()) {
+                        done({loaded ? 404 : 503, "tag unavailable"});
+                    } else {
+                        const auto commit = release->at("commit").get<std::string>();
+                        queue->enqueue(
+                            "admit " + repo + ":" + tag,
+                            [this, repo, tag, commit](auto& state) {
+                                return queue->scheduler().admit(state, repo, tag, commit);
+                            },
+                            done);
+                    }
+                });
+            }
+
             gh::DeclarationFile registryDefinition;
             bool loading = false, reloadPending = false;
             Server server;
@@ -418,12 +616,16 @@ namespace coreci::app {
             std::unique_ptr<gh::HttpClient> http;
             std::unique_ptr<mariadb::MariaDBStateStore> store;
             std::unique_ptr<ps::StateSession> queue;
-            std::vector<Command> dispatching;
+            std::set<std::string> busy;
+            std::string remote;
+            Json discovered = Json::array();
+            Time nextFeed = 0;
+            bool readingFeed = false;
             std::unique_ptr<core::timer::Timer> retry, ticks, reconcileTimer;
             Options scheduling;
             std::int64_t interval = 0;
             double recoveryDelay = 1;
-            bool listening = false, fatal = false, tickPending = false;
+            bool listening = false, fatal = false;
         };
     } // namespace
     int run(int argc, char** argv) {

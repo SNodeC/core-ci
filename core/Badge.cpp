@@ -33,25 +33,4 @@ namespace coreci {
                std::to_string(left / 2) + "\" y=\"14\">" + xml(label) + "</text><text x=\"" + std::to_string(left + right / 2) +
                "\" y=\"14\">" + xml(message) + "</text></g></svg>";
     }
-    std::string unitBadge(const WaveController& engine, const Unit& unit) {
-        std::string message = "unknown", colour = "#6e7781";
-        if (engine.pipeline().packages().contains(unit.package) &&
-            engine.pipeline().packages().at(unit.package).targets.contains(unit.target)) {
-            const auto& state = engine.units().at(unit);
-            if (!engine.releases().at(unit.package)) {
-                message = "no release";
-            } else if (state.state == State::Published) {
-                message = state.published->version.text() + "-" + std::to_string(state.published->revision);
-                colour = "#2ea44f";
-            } else if (state.state == State::Blocked) {
-                message = "blocked";
-                colour = "#bf8700";
-            } else {
-                const bool failed = state.state == State::Failed;
-                message = std::string(failed ? "failed " : "building ") + engine.releases().at(unit.package)->version.text();
-                colour = failed ? "#cf222e" : "#0969da";
-            }
-        }
-        return badge(unit.package, message, colour);
-    }
 } // namespace coreci

@@ -1,6 +1,8 @@
 #include "Protocol.h"
 
 #include <charconv>
+#include <ctime>
+#include <iomanip>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <openssl/crypto.h>
@@ -166,6 +168,16 @@ namespace coreci::github {
         }
         return result;
     }
+    std::int64_t isoTime(const std::string& value) {
+        std::tm date{};
+        std::istringstream input(value);
+        input >> std::get_time(&date, "%Y-%m-%dT%H:%M:%SZ");
+        if (input.fail() || input.peek() != std::char_traits<char>::eof()) {
+            throw std::invalid_argument("invalid GitHub timestamp");
+        }
+        return timegm(&date);
+    }
+
     std::string hmac(const std::string& secret, const std::string& body) {
         unsigned char digest[EVP_MAX_MD_SIZE];
         unsigned len = 0;
@@ -218,54 +230,6 @@ namespace coreci::github {
         }
         return output;
     }
-    std::variant<Event, Error, std::monostate>
-    report(const std::string& id, const Form& values, std::int64_t at, std::optional<std::uint64_t> owner, bool publication) {
-        const auto get = [&](const std::string& key) {
-            const auto found = values.find(key);
-            return found == values.end() ? std::string{} : found->second;
-        };
-        const auto scope = get("scope"), phase = get("phase"), status = get("status"), build = get("build_id");
-        std::uint64_t run = 0;
-        unsigned attempt = 0;
-        std::variant<Event, Error, std::monostate> output = Error{"invalid callback fields"};
-        if (!id.empty() && number(get("run_id"), run) && run > 0) {
-            if (scope == (publication ? "publication" : "wave")) {
-                if (status == "started" && number(get("run_attempt"), attempt) && attempt > 0) {
-                    output = publication ? Event{PublicationStarted{at, id, run, attempt}} : Event{WaveStarted{at, id, run, attempt}};
-                } else if (status == "finished" && !get("conclusion").empty()) {
-                    output = publication ? Event{PublicationFinished{at, id, run, get("conclusion")}}
-                                         : Event{WaveFinished{at, id, run, get("conclusion")}};
-                }
-            } else if (!publication && scope == "target" && status == "finished" && !get("target").empty() && values.contains("artifact")) {
-                output = Event{TargetFinished{at, id, get("target"), get("artifact")}};
-            } else if (scope == "unit" && !build.empty()) {
-                if (!publication && phase == "build") {
-                    if (status == "started") {
-                        output = Event{UnitBuildStarted{at, id, build}};
-                    } else if (status == "succeeded") {
-                        output = Event{UnitBuildSucceeded{at, id, build}};
-                    } else if (status == "failed" && !get("reason").empty()) {
-                        output = Event{UnitBuildFailed{at, id, build, get("reason")}};
-                    }
-                } else if (publication && phase == "publish") {
-                    if (status == "succeeded" && !get("feed_commit").empty()) {
-                        output = Event{UnitPublishSucceeded{at, id, build, get("feed_commit")}};
-                    } else if (status == "failed" && !get("reason").empty()) {
-                        auto failure = get("failure");
-                        if (failure != "artifact-unavailable" && failure != "immutable-conflict" && failure != "feed-push" &&
-                            failure != "signing" && failure != "other") {
-                            failure = "other";
-                        }
-                        output = Event{UnitPublishFailed{at, id, build, get("reason"), failure}};
-                    }
-                }
-            }
-            if (scope != (publication ? "publication" : "wave") && !std::holds_alternative<Error>(output) && owner != run) {
-                output = std::monostate{};
-            }
-        }
-        return output;
-    }
     std::variant<Push, Error, std::monostate> webhook(const std::string& body, const std::string& event) {
         std::variant<Push, Error, std::monostate> output = std::monostate{};
         try {
@@ -304,21 +268,5 @@ namespace coreci::github {
             result = Error{"malformed tag page"};
         }
         return result;
-    }
-    std::string dispatchBody(const Command& command, const std::string& callbackBase) {
-        auto base = callbackBase;
-        while (!base.empty() && base.back() == '/') {
-            base.pop_back();
-        }
-        const auto prefix = base + (command.publication ? "/api/v1/publications/" : "/api/v1/waves/") + escape(command.id);
-        const nlohmann::json inputs{{command.publication ? "publication_id" : "wave_id", command.id},
-                                    {"plan_url", prefix + "/plan.json"},
-                                    {"callback_url", prefix + "/report"},
-                                    {"feed_branch", command.feedBranch}};
-        return nlohmann::json{{"ref", "main"}, {"inputs", inputs}}.dump();
-    }
-    std::string dispatchPath(const Command& command) {
-        return "/repos/" + escape(command.workflow.owner) + "/" + escape(command.workflow.repo) + "/actions/workflows/" +
-               std::string(command.publication ? "publish.yml" : "wave.yml") + "/dispatches";
     }
 } // namespace coreci::github

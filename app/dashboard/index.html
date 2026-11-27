@@ -1,38 +1,43 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>core-ci</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>core-ci</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
 </head>
 <body>
-<header><strong>core-ci</strong><span id="owner">Local administration</span><span id="connection" role="status">Connecting…</span>
-<button id="reconnect" hidden>Reconnect</button></header>
-<nav aria-label="Management"><button id="work-tab" aria-controls="work-panel" aria-pressed="true">Work</button>
-<button id="repositories-tab" aria-controls="repositories-panel" aria-pressed="false">Repositories</button></nav>
-<main>
-<section id="wave-panel" aria-label="Current wave"></section>
-<section id="publication-panel" aria-label="Current publication"></section>
-<section id="work-panel" aria-labelledby="work-heading">
-<div class="heading"><div><h1 id="work-heading">Package work</h1><p id="counts"></p></div>
-<div><button id="dispatch-paused" aria-pressed="false">Pause dispatch</button><button id="reload">Reload</button></div>
-</div>
-<div class="filters"><label>Find repository or target<input id="search" placeholder="Repository, version, distribution…"></label>
-<label>Show<select id="state-filter"><option value="all">All work</option><option value="active">Active and failed</option>
-<option value="failed">Failed</option><option value="blocked">Blocked</option><option value="published">Published</option></select></label></div>
-<div class="table-wrap" tabindex="0" role="region" aria-label="Package executions; scroll horizontally for all timing columns">
-<table class="work-table"><colgroup><col class="work-toggle"><col class="work-package"><col class="work-target"><col class="work-state">
-<col class="work-phase"><col class="work-phase"><col class="work-recorded"></colgroup><thead><tr>
-<th scope="col" aria-label="Build details"></th><th scope="col">Package</th><th scope="col">Target</th><th scope="col">State</th>
-<th scope="col" class="work-phase"><strong>Build</strong><span class="phase-pair"><span>Started</span><span>Finished</span></span></th>
-<th scope="col" class="work-phase"><strong>Publish</strong><span class="phase-pair"><span>Started</span><span>Finished</span></span></th>
-<th scope="col" class="work-recorded"><strong>Publication recorded</strong><span class="phase-pair"><span>Started</span><span>Finished</span></span></th>
-</tr></thead><tbody id="graph"></tbody></table></div>
-<p id="visible-count"></p>
-</section>
-<section id="repositories-panel" aria-labelledby="repositories-heading" hidden>
-<div class="heading"><div><h1 id="repositories-heading">Repositories</h1><p>Definitions are committed to GitHub</p></div>
-</div>
-<div id="repositories" aria-label="Enrolled repositories"></div></section>
-<details id="feedback-details"><summary id="feedback-summary" role="status" aria-live="polite">Operation details</summary>
-<pre id="feedback"></pre></details>
-</main></body></html>
+  <header>
+    <h1>core-ci</h1>
+    <p id="session"></p>
+    <button id="pause">Pause</button>
+    <button id="reconcile">Reconcile</button>
+  </header>
+  <main>
+    <p id="connection" role="status">Connecting</p>
+    <p id="reservations"></p>
+    <form id="admit">
+      <label>Repository <input name="repo" required placeholder="owner/repository"></label>
+      <label>Stable tag <input name="tag" required placeholder="v1.2.3"></label>
+      <button type="submit">Admit tag</button>
+    </form>
+    <section aria-labelledby="publications-label">
+      <h2 id="publications-label">Publications</h2>
+      <ul id="publications"></ul>
+    </section>
+    <section aria-labelledby="queues-label">
+      <h2 id="queues-label">Repository queues</h2>
+      <div id="queues"></div>
+    </section>
+    <section aria-labelledby="matrix-label">
+      <h2 id="matrix-label">Packages and targets</h2>
+      <label>Filter <input id="filter" type="search" placeholder="Package, version or target"></label>
+      <table>
+        <thead><tr><th>Package</th><th>Target</th><th>Version</th><th>Status</th><th>Build</th><th>Timings</th><th>Bindings</th><th>Feed commit</th></tr></thead>
+        <tbody id="matrix"></tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

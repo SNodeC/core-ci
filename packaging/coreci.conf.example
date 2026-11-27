@@ -4,14 +4,14 @@ registry=SNodeC/Packages:ci/registry.json
 target-catalog=ci/targets.json
 workflow-repository=SNodeC/Packages
 feed-branch=feed
-# Enable before the first reconcile of an upgrade; omit afterwards to preserve the dashboard toggle.
+# Applied once when the fresh database starts. The dashboard persists later changes.
 dispatch-paused=true
-wave-delay=120
-wave-deadline=23400
-publication-deadline=23400
-start-timeout=900
-retry-delay=600
-max-dispatch-attempts=8
+github_slots=20
+batch-delay=120
+queue-deadline=7200
+execution-deadline=21600
+callback-grace=900
+run-poll=300
 reconcile-interval=900
 github-app-id="REPLACE_WITH_APP_ID"
 github-installation-id="REPLACE_WITH_INSTALLATION_ID"
