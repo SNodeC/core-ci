@@ -156,7 +156,9 @@ Staging is qualified production-shaped, in two runs on one fresh database:
 
 1. **Cold legacy run** (T8, and the timing baseline for GATE C criterion 5, no
    interference): with Pause ON, `restore.yml` sets feed-staging to
-   `refs/snapshots/feed/pre-x` (the production feed as it was at quiesce); fresh
+   `refs/snapshots/feed/pre-x` (the production feed as it was at quiesce); then create
+   `refs/snapshots/feed-staging/pre-x` pointing at that same commit (ref creation only;
+   protected per X6; X6's legacy date rule for feed-staging uses this ref); fresh
    database; revision floor computed exactly as for production (§5d.1) from the old
    database dump and the pre-x ledger; unpause. Bootstrap admits the newest stable tag
    of every registry repository, so the full matrix runs (all namespaces: APT per
