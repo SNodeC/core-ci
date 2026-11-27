@@ -494,7 +494,8 @@ X6 Namespace, snapshots, retention.
  - Snapshots: every publication commit additionally gets the ref
    refs/snapshots/<feed_branch>/<publication_id>. A pick always pins the snapshot of
    the current feed head as feed_commit. core-ci keeps a snapshot while an attempt
-   referencing it is active or its item is retry-eligible (X5).
+   referencing it is active, or its item is built (until published or failed), or
+   its item is retry-eligible (X5).
  - Rollback points: the snapshots of the 3 most recent reconciled publications per
    feed branch are protected and never deleted while they are among those 3; they
    are the rollback targets besides pre-x.
@@ -580,7 +581,11 @@ X8 publish.yml — ONE job; environment publish; the only holder of signing keys
    old one gets 409). Deadline exceeded → establish the known run's terminal state,
    compare receipts, only then a new attempt.
  - Transient failures (feed-push, signing, other): retry with backoff, at most 3 →
-   item failed, with Retry. Confirmed artifact expiry → item re-enrolled for a build.
+   item failed, with Retry.
+ - Confirmed artifact expiry of a built item: if its desired identity still equals
+   the frozen one → automatically the next attempt of the SAME revision with
+   byte-identical inputs (its snapshot is still pinned, see X6), dispatched under the
+   normal reservation rules; otherwise the next revision is enrolled per X5.
  - Staging fault input "fault" (none | after_push), honoured only when feed_branch is
    feed-staging: after_push ends the job with failure directly after a successful
    push, before any post-push report (the claim has already happened). core-ci sets it

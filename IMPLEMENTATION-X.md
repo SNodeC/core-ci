@@ -74,8 +74,11 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
     rerun → 409; finished before started; duplicates;
   - publication: ambiguous run found via run-name; crash after push → receipts;
     quarantine; backoff limit; artifact expiry; acknowledgement;
-  - snapshots kept while an attempt is active or the item is retry-eligible, deleted
-    afterwards, `pre-x` never;
+  - snapshots kept while an attempt is active, the item is built, or the item is
+    retry-eligible; deleted afterwards; `pre-x` never;
+  - artifact expiry of a built item with unchanged desired identity → next attempt of
+    the same revision, byte-identical inputs, snapshot still present; with changed
+    desired identity → next revision;
   - Retry: `inputs` byte-identical, attempt +1; a run ending without a report is
     concluded from the GitHub API after the callback deadline;
   - immutability: same original digest → already published; different → conflict;
