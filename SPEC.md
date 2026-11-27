@@ -1,6 +1,6 @@
 # core-ci — state and publication specification
 
-This is the master contract. Section 7 is fixed owner-supplied CONTRACT W v2.
+This is the master contract. Section 7 is the owner-approved Contract X v2 and is authoritative; sections that still describe waves are superseded where they conflict with it.
 
 ## 0. Goal
 
@@ -377,95 +377,210 @@ field or status_url field exists.
 
 ---
 
-## 7. GitHub side — wave and publication contract
+## 7. Contract X v2 — scheduling and execution (authoritative)
 
-W1 Repositories. SNodeC/Packages, default branch main, holds .github/workflows/wave.yml,
-   .github/workflows/publish.yml, ci/registry.json {"schema":1,"repositories":[…]} and the target
-   catalog ci/targets.json. Production feed: branch `feed`; staging feed: branch `feed-staging`.
-W2 The source is the tag's commit. ci/packages.json and every file its hooks use come
-   from the repository's default-branch tip at reconcile time (ci_commit). Schema 2:
-   {"schema":2, "package", "title", "depends_on":[{"package":name,"version":range}],
-   "build":{"deb":path,"rpm":path,"openwrt":path?},
-   "build_dependencies":{"deb":[…],"rpm":[…],"openwrt":[…]}, "targets":[catalog ids],
-   "revision_base":N?}. A range uses the form ">=3.0,<4": comma = AND; operators
-   >=, >, <=, <, ==. build_dependencies keys are "deb" | "rpm" | "openwrt", plus
-   optional "<family>@<distribution>-<release>" (e.g. "rpm@rocky-9"), whose list is
-   added to the family list for matching targets. The build identity of a unit includes
-   the git tree hash of ci/ at ci_commit, not the commit. Ordinary commits without a
-   ci/ change create no new build_ids. A wave's frozen plan keeps its ci_commit;
-   running waves never change.
-W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release","codename",
-   "arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?,"host_packages":[…]?}.
-   host_packages declares distribution/SDK host prerequisites. Fields other than id,
-   family, distribution, release, codename and arch are opaque to core-ci.
-W4 Dispatch. Wave: workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
-   callback_url, feed_branch. Publication: workflow_dispatch of publish.yml on main with inputs
-   publication_id, plan_url, callback_url, feed_branch. Both accept plan_json (base64) for manual
-   runs; empty callback_url = no callbacks.
-W5 Plans (GET plan_url, public, JSON).
-   Wave plan: {"wave", "feed_branch", "owner_run_id":id|null, "targets":[{"id","units":[{"package",
-   "repo","tag","commit","ci_commit","version","revision","build_id",
-   "dependencies":[{"package","version","revision"}],"action":"build"|"reuse"}]}]}; units per
-   target in topological order; "reuse" = install the published version-revision from the feed;
-   only targets with ≥1 "build" unit.
-   Publication plan: {"publication", "feed_branch", "owner_run_id":id|null, "items":[{"wave",
-   "wave_run_id","target","artifact","units":[{"build_id","package","version","revision"}]}]};
-   all units of one target are in one item.
-   owner_run_id is null until the first accepted "started" callback of that wave/publication, then
-   that run_id, fixed afterwards.
-W6 Callbacks, signed with the existing core-ci callback HMAC wire format.
-   Wave run → POST https://<core-ci>/api/v1/waves/{wave_id}/report: scope=wave status=started
-   (run_id, run_attempt) | finished (run_id, conclusion); scope=unit phase=build
-   status=started|succeeded|failed (run_id, build_id, reason when failed); scope=target
-   status=finished (run_id, target, artifact — empty if no unit of the target built successfully).
-   Publication run → POST https://<core-ci>/api/v1/publications/{publication_id}/report:
-   scope=publication status=started (run_id, run_attempt) | finished (run_id, conclusion);
-   scope=unit phase=publish status=succeeded (run_id, build_id, feed_commit, reason
-   "already published" when applicable) | failed (run_id, build_id, reason).
-   publication callbacks with status=failed carry an additional field
-   failure=artifact-unavailable | immutable-conflict | feed-push | signing | other (reason stays
-   free text for humans). core-ci decides only by `failure`: artifact-unavailable → rebuild; every
-   other value → retry the recorded artifact while it is available. Unknown or missing failure value
-   → treated as other.
-W7 wave.yml: job plan → matrix job chain (one job per planned target, fail-fast false; units in plan
-   order; a unit whose same-target prerequisite failed is skipped without callback; at the end the
-   job uploads artifact coreci-<wave>-<target> with the successfully built packages and a sha256
-   manifest, then sends scope=target finished) → job report (always): scope=wave finished. wave.yml
-   holds no signing keys and never writes a feed.
-   The chain checks out the source at commit (with submodules) and ci/ at ci_commit
-   (/work/ci/<package>). Hooks run with SOURCE_DIR, CI_DIR, OUTPUT_DIR, SDK_DIR,
-   TARGET_JSON, PACKAGE_VERSION, PACKAGE_RELEASE and DEPENDENCIES_JSON. Installed are
-   exactly generic base tooling + the catalog's host_packages + the target's resolved
-   declaration list (dnf with --allowerasing). For OpenWrt, feeds install gets the
-   resolved openwrt list instead of -a.
-   Toolchain activation is the hook's job.
-W8 publish.yml (environment publish, the only holder of signing keys): re-fetch plan_url
-   immediately before pushing; publish only if owner_run_id equals GITHUB_RUN_ID, otherwise
-   succeed without push and without callbacks (fetch/validation errors fail closed). Download the
-   listed artifacts from their wave runs (same repository, GITHUB_TOKEN), verify the manifests,
-   place packages, rebuild the indices of touched suites, apply retention, ONE orphan-root commit,
-   push with lease; callbacks per unit, then scope=publication finished.
-W9 Versions: deb <version>-<revision>~<codename>; rpm <version>-<revision>.<disttag>;
-   ipk/apk <version>-r<revision>.
-W10 Feed: apt/ (dists/<codename>/main/binary-<arch>/, pool/main/; Release with Origin
-   SNodeC/Packages, Label SNode.C, Suite = Codename = <codename>, Components main, Architectures,
-   Date, Acquire-By-Hash yes, SHA256 only, InRelease + Release.gpg), rpm/<distribution>/<release>/
-   <arch>/ (signed packages, repodata, repomd.xml.asc), openwrt/<release>/<arch>/ (ipk: Packages +
-   Packages.sig usign; apk: signed packages.adb), keys/. Ledger publications.json. Immutability:
-   if the ledger already holds the same package, target, version and revision, no file is placed
-   or changed and the unit is reported published with reason "already published". Retention:
-   newest 2 publications per package×target.
-W11 Concurrency. core-ci runs at most one wave at a time and at most one publication run per feed
-   at a time. Whenever no publication is active and at least one target has reported
-   scope=target finished with a non-empty artifact and is not yet published, core-ci dispatches
-   one publication containing all such targets. Targets finishing while a publication runs go into
-   the next one. A wave is finished when its run reported scope=wave finished (or its deadline
-   expired) and every planned target is published, failed or blocked; the next wave starts only
-   after that. wave.yml uses concurrency group "wave-<feed_branch>", publish.yml
-   "publish-<feed_branch>", both without cancellation.
-   A unit whose depends_on range is not satisfied by the version planned or published
-   in the same wave is set to blocked at planning time with reason
-   "dependency <pkg> <version> outside <range>". It is not dispatched.
+Contract X v2 replaces CONTRACT W v2 completely. Where §0–§6 or §8 still describe
+waves, chains, the one-shot migration or W-era routes, they are superseded and are
+rewritten to match this section during the X implementation (see IMPLEMENTATION-X.md).
+
+X1 Roles.
+ - Repositories (Packages ci/registry.json) own ci/packages.json and everything
+   project-specific: toolchain activation, build, test, OpenWrt staging
+   (Build/InstallDev), package metadata.
+ - The catalog ci/targets.json owns the target environment: image (digest),
+   distribution repository setup (e.g. Rocky CRB/EPEL, Raspberry Pi archive),
+   host_packages, OpenWrt SDK (URL, digest, pinned feed revisions).
+ - SNodeC/Packages owns the generic workflows build.yml, publish.yml and restore.yml.
+ - core-ci owns admission, scheduling, binding, revisions, dispatch, retry, recovery.
+ - Central code (Packages, core-ci) contains no project-specific knowledge.
+
+X2 Admission and turns.
+ - Release = (repository, stable tag vMAJOR.MINOR.PATCH, peeled commit). "Newest" =
+   numeric SemVer. Deduplicated by repository + tag; a retag (same tag, different
+   commit) is reported as a conflict and not admitted.
+ - First discovery of a repository (bootstrap, registry addition) admits its highest
+   stable tag. Reconcile recovers missed newer tags. Historical tags only via
+   "Admit tag".
+ - Every admitted release creates one item per declared target. A tag outside the
+   declaration's "releases" range → item condition unsupported, with reason.
+ - Pass counter N. Every admission, declaration change, retry and committed outcome
+   gets eligibility N+1, regardless of how many arrive.
+ - A scheduler turn (triggered by events, timers, startup, unpause) opens pass N+1 if
+   entries with eligibility N+1 exist, commits that cutoff, and fills ALL free
+   reservations; it considers only eligibility <= its pass. Arrivals after the cutoff
+   go to the next turn.
+ - One queue per repository (admission order, tie-break SemVer). Fill order: the
+   oldest ready item across all queues; dependency order comes from readiness.
+ - A default-branch push with a changed ci/ tree hash re-reads the declaration.
+
+X3 Declaration, schema 2, read at the default-branch tip (ci_commit):
+   {"schema":2, "package", "title", "releases":range,
+    "depends_on":[{"package","version":range}],
+    "build":{"deb","rpm","openwrt"?},
+    "build_dependencies":{"deb":[…],"rpm":[…],"openwrt":[…],
+                          "<family>@<distribution>-<release>":[…]},
+    "targets":[catalog ids]}
+ - Range ">=3.0,<4": comma = AND; operators >=, >, <=, <, ==; abbreviated endpoints
+   are normalized (3 → 3.0.0).
+ - Selector lists are added to the family list of matching targets.
+
+X4 Items, reservations, selection.
+ - Item = release × target. States: enrolled, processing (build job reserved:
+   queued, running or terminating), built, published, failed. Conditions of enrolled
+   items, each with a reason: waiting; blocked (range unsatisfiable, target missing,
+   prerequisite failed, closure conflict, cycle); unsupported.
+ - Required option "github_slots" in the coreci configuration section (default 20).
+   Reservations = items in processing + the publication reservation <= github_slots.
+ - Publication reservation: when an item becomes built and no publication reservation
+   exists, the reservation its build just released passes directly to the
+   publication. The batching delay (default 2 min) runs inside that reservation; no
+   build can take it. It is released when the publication run has finished.
+ - A pick is synchronous in memory. Pick, frozen request, attempt and pending
+   dispatch are then committed in ONE transaction; only then is the request
+   dispatched. If the outcome of a commit is uncertain: reload from the database
+   before the next decision.
+ - An item belongs to its pick until published or failed.
+ - Selection per depends_on, for the same target: if a newer eligible version in
+   range is in progress (enrolled, processing, built; not failed, blocked or
+   unsupported) → waiting, EVEN IF an older publication would be usable (deliberate:
+   no double build; covered by acceptance tests). Otherwise bind the highest retained,
+   published version in range with its highest published revision.
+ - Closure: merge the frozen transitive bindings of every selected output; exactly one
+   output identity per package. A mismatch caused by a pending refresh → waiting;
+   otherwise → blocked "closure conflict".
+ - Bound output = (package, version, revision, identity, source commit, ci_commit,
+   its frozen bindings, inventory).
+ - Inventory = per split binary package: name, native version, architecture, sha256,
+   runtime dependencies (read from the package metadata by the publisher).
+
+X5 Identity, revisions, retry.
+ - build identity = hash(source commit, ci tree hash, target environment digest
+   (catalog entry incl. image/SDK digest and pinned feed revisions), workflow contract
+   version, identities of the bound outputs).
+ - The desired identity is kept separately from the frozen identity of an attempt; it
+   is recomputed after committed input changes; duplicates are coalesced.
+ - Retry = next attempt of the same revision with the IDENTICAL frozen request (same
+   bindings, same feed_commit). Retry is offered only while the desired identity
+   equals the frozen one.
+ - Differing desired identity → the next revision is enrolled, whether the previous
+   attempt failed or was published. A running attempt is never overwritten.
+ - Refresh: the newest published version of each consumer per target is re-enrolled
+   only when its resolved binding vector changes.
+ - Revision high-water mark per package×version×target is persisted independently of
+   retention. At cutover it is set above every revision ever allocated.
+
+X6 Namespace, snapshots, retention.
+ - APT: apt/<distribution>/dists/<codename>/… with its own pool per distribution.
+   RPM: rpm/<distribution>/<release>/<arch>/. OpenWrt: openwrt/<release>/<arch>/.
+ - The same native identity (name, version, architecture) with different bytes in one
+   namespace → immutable-conflict, rejected.
+ - Snapshots: every publication commit additionally gets the ref
+   refs/snapshots/<feed_branch>/<publication_id>. core-ci keeps a snapshot while an
+   unfinished attempt references it. Released snapshots are deleted by the next
+   publication (listed in its plan) in the same atomic push.
+   refs/snapshots/<feed_branch>/pre-x is protected: never deleted by publications.
+ - Retention on the branch head keeps: the two highest version-revisions per
+   package×target; the transitive runtime closure of everything kept (over the
+   inventory's runtime dependencies); everything published within the last 7 days.
+ - Retirements are decided in one committed scheduler transition and carried in the
+   publication plan. A pick never binds an output that is being retired.
+ - by-hash: the previous 2 generations of index files stay, with their payloads.
+
+X7 build.yml — workflow_dispatch on main with return_run_details: true;
+   run-name "build <request>/<attempt>"; core-ci persists run_id.
+   Inputs: request_id, attempt, request_url, callback_url, feed_branch.
+ - Request JSON (GET request_url, public, immutable per attempt):
+   {"request","attempt","package","repo","commit","ci_commit","version","revision",
+    "target":<catalog entry>,"feed_commit",
+    "closure":[bound outputs in topological order, transitive ones included, each with
+               commit, ci_commit, bindings and inventory],
+    "contract":version}
+ - One job: claim → catalog setup → resolved declaration list (dnf --allowerasing) →
+   install the exact inventory of the direct bindings from snapshot feed_commit, then
+   verify what was installed (dpkg-query / rpm -q / opkg / apk) → check out the source
+   with submodules and ci/ at ci_commit → hook (env SOURCE_DIR, CI_DIR, OUTPUT_DIR,
+   SDK_DIR, TARGET_JSON, PACKAGE_VERSION, PACKAGE_RELEASE, DEPENDENCIES_JSON; no
+   callback secret, publication credentials or write tokens in the hook environment)
+   → upload artifact coreci-<request>-<attempt> (retention-days 90) with sha256
+   manifest and inventory → report finished (artifact id, digest, inventory).
+ - On cancellation or failure the job reports finished with status failed.
+ - OpenWrt (normative path): SDK digest and feed revisions from the catalog; register
+   the closure's recipes (one per package, at their commit/ci_commit) before feed
+   resolution; build in topological order with the repositories' Build/InstallDev
+   staging; validate runtime dependencies of the split packages; upload only the
+   requested item.
+ - build.yml holds no signing keys and never writes a feed.
+
+X8 publish.yml — ONE job; environment publish; the only holder of signing keys and
+   the only writer of feed branches and snapshot refs; run-name
+   "publish <publication>/<attempt>".
+ - core-ci persists the immutable publication plan (items, artifact ids, digests,
+   retirements, snapshot refs to delete, acknowledged receipts, attempt, expected
+   branch head, deadline) and dispatches with return_run_details.
+ - Publisher: claim (X9) → re-fetch plan → download artifacts directly from their
+   runs, verify identity, allowed contents, checksums → quarantine items with
+   immutable-conflict or malformed artifacts, publish the valid rest → read runtime
+   dependencies of each split package into the inventory → sign → rebuild touched
+   indices (by-hash per X6) → apply retirements → write receipts into the ledger
+   (publication, attempt, request, revision, identity, artifact digest, inventory) →
+   stream the old tree → ONE orphan-root commit → ONE atomic push: feed branch as a
+   leased non-fast-forward update against the expected head + new snapshot ref +
+   deletion of released snapshots → callbacks per item → finished.
+ - Receipts stay in the ledger until a later plan lists them as acknowledged; core-ci
+   acknowledges a receipt once it has committed the outcome.
+ - Recovery: missing callbacks are taken from the receipts at the feed head. Ambiguous
+   run (dispatch committed, run_id unknown) → look up the run by run-name via the
+   GitHub API; none found and no claim past the queue deadline → next attempt (the
+   old one gets 409). Deadline exceeded → establish the known run's terminal state,
+   compare receipts, only then a new attempt.
+ - Transient failures (feed-push, signing, other): retry with backoff, at most 3 →
+   item failed, with Retry. Confirmed artifact expiry → item re-enrolled for a build.
+ - Staging fault input "fault" (none | after_push), honoured only when feed_branch is
+   feed-staging: after_push ends the job with failure directly after a successful
+   push, before any callback. Qualification only; rejected for any other branch.
+
+X8b restore.yml — environment publish; manual dispatch only, on the owner's explicit
+   instruction (staging: as part of qualification). Inputs feed_branch, snapshot_ref,
+   expected_head. Sets the feed branch to the commit of snapshot_ref as a leased
+   non-fast-forward update against expected_head. No signing, no other change.
+
+X9 Callbacks (existing HMAC wire format), identical for builds and publications:
+ - Claim POST /api/v1/{requests|publications}/{id}/claim (run_id, run_attempt,
+   attempt): the same (id, attempt, run_id, run_attempt) gets 200 idempotently after
+   commit. Another owner, a stale attempt or run_attempt > 1 (manual rerun) gets 409;
+   the job then ends successfully without work.
+ - Report POST /api/v1/{requests|publications}/{id}/report: started | per item
+   (publications only) | finished. finished may arrive before started; duplicates are
+   idempotent; terminal states are monotonic; storage unavailable → 503 and the
+   workflow retries with backoff.
+
+X10 Recovery.
+ - Persisted: releases (admission order, eligibility, disposition); pass counter;
+   items (state, condition, desired identity, attempts with frozen request,
+   run_id/run_attempt, deadlines, outcome, artifact id/digest/inventory/expiry);
+   revision high-water marks; snapshots in use; retirements; publications (plan,
+   attempt, owner, expected head, deadline, receipts, acknowledgements); pause.
+ - On restart: resume committed but unsent dispatches; reconcile ambiguous dispatches
+   via run-name and claim.
+ - Separate deadlines: queue (default 2 h), execution (claim + 6 h; upload and report
+   must fit inside GitHub's 6 h job limit), callback (default 15 min after run end).
+ - Before replacing a known run: check its state; cancel it or wait for its
+   termination. Dispatch retries with bounded backoff.
+ - Pause stops new builds and publications; reconciliation of existing work goes on.
+
+X11 Concurrency. Reservations <= github_slots; publication reservation per X4; at most
+   one publication per feed branch; publish.yml uses concurrency group
+   "publish-<feed_branch>" as a safeguard only.
+
+X12 Versions and feed. deb <version>-<revision>~<codename>;
+   rpm <version>-<revision>.<disttag>; ipk/apk <version>-r<revision>. Release fields:
+   Origin SNodeC/Packages, Label SNode.C, Suite = Codename = <codename>, Components
+   main, Acquire-By-Hash yes, SHA256 only, InRelease + Release.gpg. Ledger
+   publications.json with inventory and receipts. Immutability: same package, target,
+   version and revision already in the ledger → nothing placed, reported published
+   with reason "already published".
+
+---
 
 ## 8. Acceptance
 
