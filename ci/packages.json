@@ -1,10 +1,16 @@
 {
-  "schema": 1,
+  "schema": 2,
   "package": "core-ci",
   "title": "core-ci",
   "depends_on": [
-    "snodec",
-    "snodec-idp"
+    {
+      "package": "snodec",
+      "version": ">=0.0.0"
+    },
+    {
+      "package": "snodec-idp",
+      "version": ">=2.0,<2.1"
+    }
   ],
   "build": {
     "deb": "ci/package/native.sh",
@@ -37,7 +43,10 @@
       "ncurses-devel",
       "python3"
     ],
-    "openwrt": []
+    "openwrt": [],
+    "rpm@rocky-9": [
+      "gcc-toolset-14-gcc-c++"
+    ]
   },
   "targets": [
     "debian-trixie-amd64",

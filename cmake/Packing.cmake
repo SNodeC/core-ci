@@ -12,23 +12,14 @@ set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "libmariadb3, systemd")
 set(CPACK_RPM_PACKAGE_REQUIRES "mariadb-connector-c, openssl-libs, systemd")
-set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
-    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/postrm"
-)
 set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)
-set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE
-    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/postinst"
-)
-set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE
-    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/postrm"
-)
 set(CPACK_RPM_PACKAGE_RELEASE 1)
 set(CPACK_RPM_PACKAGE_RELEASE_DIST OFF)
 set(CPACK_RPM_PACKAGE_RELOCATABLE OFF)
 set(CPACK_SOURCE_IGNORE_FILES
     "/build[^/]*/;/checkouts/;/.git/;/.qtcreator/;/.local-credentials/;/secrets/;~$"
 )
-set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/PackageConfig.cmake")
+set(CPACK_PROJECT_CONFIG_FILE "${PROJECT_SOURCE_DIR}/ci/package/config.cmake")
 if(CORECI_WITH_SNODEC)
     configure_file(packaging/core-ci.service.in coreci.service @ONLY)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/coreci.service"
