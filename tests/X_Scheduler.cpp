@@ -82,6 +82,17 @@ namespace {
         CHECK_EQ(state.at("attempts").size(), 3U);
         CHECK_EQ(state.at("items").at("producer/1.5.0/native").at("state"), "processing");
         CHECK_EQ(scheduler.admit(state, idp, "v2.0.0", std::string(40, 'b')).code, 409);
+
+        config.slots = 2;
+        const Scheduler fair(config);
+        auto queues = ready(fair, {{idp, package("producer")}, {consumer, package("consumer")}}, Json::array());
+        fair.admit(queues, idp, "v1.0.0", head);
+        fair.admit(queues, consumer, "v1.0.0", head);
+        fair.admit(queues, idp, "v1.1.0", head);
+        turn(fair, queues, 12);
+        CHECK_EQ(queues.at("items").at("producer/1.0.0/native").at("state"), "processing");
+        CHECK_EQ(queues.at("items").at("consumer/1.0.0/native").at("state"), "processing");
+        CHECK_EQ(queues.at("items").at("producer/1.1.0/native").at("state"), "enrolled");
     }
 
     Json output(const std::string& name, const std::string& release, unsigned rev, Time date, Json dependencies = Json::array()) {
@@ -158,6 +169,23 @@ namespace {
         scheduler.turn(state, 24);
         const auto retry = attemptKey(request, 3);
         CHECK_EQ(Json::parse(state.at("attempts").at(retry).at("document").get<std::string>()).at("inputs").dump(), frozen);
+
+        config.batch = 0;
+        const Scheduler publishing(config);
+        auto idle = ready(publishing, Json::object(), Json::array());
+        idle["retirement_at"] = 10;
+        turn(publishing, idle, 10);
+        const auto publication = idle.at("attempts").begin()->at("id").get<std::string>();
+        const auto old = attemptKey(publication, 1);
+        publishing.observed(idle, old, {{"not_found", true}}, 14);
+        CHECK_EQ(idle.at("attempts").size(), 1U);
+        publishing.observed(idle, old, {{"not_found", true}}, 15);
+        CHECK_EQ(idle.at("attempts").at(old).at("run_state"), "superseded");
+        CHECK_EQ(view(idle, config).at("reservations").at("publication"), 1);
+        publishing.observed(idle, old, {{"id", 10}, {"status", "queued"}}, 16);
+        CHECK_EQ(publishing.claim(idle, true, publication, owner(1, 10), 16).code, 409);
+        CHECK_EQ(view(idle, config).at("reservations").at("publication"), 1);
+        CHECK_EQ(publishing.claim(idle, true, publication, owner(2, 11), 16).code, 200);
     }
 
     void publications() {
@@ -183,6 +211,10 @@ namespace {
         }
         CHECK_EQ(found->at("dispatch"), "batching");
         const auto id = found->at("id").get<std::string>();
+        state = Json::parse(state.dump());
+        turn(scheduler, state, 29);
+        CHECK_EQ(state.at("attempts").at(attemptKey(id, 1)).at("dispatch"), "batching");
+        CHECK_EQ(state.at("attempts").at(attemptKey(id, 1)).at("batch_at"), 30);
         turn(scheduler, state, 30);
         const auto key = attemptKey(id, 1);
         const auto document = Json::parse(state.at("attempts").at(key).at("document").get<std::string>());
@@ -195,6 +227,7 @@ namespace {
         scheduler.observed(state, key, {{"id", 29}, {"status", "completed"}, {"conclusion", "failure"}}, 33);
         turn(scheduler, state, 33);
         CHECK_EQ(state.at("attempts").size(), 3U);
+        state = Json::parse(state.dump());
         const std::string ref = "refs/snapshots/feed-staging/" + id;
         Json receipt{{"publication", id}, {"attempt", 1}, {"request", first}, {"outcome", "published"}};
         scheduler.feed(state,
@@ -207,6 +240,13 @@ namespace {
         CHECK_EQ(state.at("rollback").at(0), ref);
         CHECK_EQ(state.at("acks").size(), 1U);
         CHECK_EQ(state.at("faults").size(), 1U);
+        state = Json::parse(state.dump());
+        turn(scheduler, state, 43);
+        auto next = std::ranges::find_if(state.at("attempts"), [&](const Json& attempt) {
+            return attempt.at("publication") == true && attempt.at("id") != id;
+        });
+        CHECK(next != state.at("attempts").end());
+        CHECK_EQ(Json::parse(next->at("document").get<std::string>()).at("fault"), "none");
 
         auto idle = ready(scheduler, Json::object(), Json::array());
         idle["retirement_at"] = 90;
@@ -217,6 +257,32 @@ namespace {
         const auto retirement = Json::parse(idle.at("attempts").begin()->at("document").get<std::string>());
         CHECK_EQ(retirement.at("retire_legacy_apt"), true);
         CHECK(retirement.at("items").empty());
+    }
+
+    void handoff() {
+        Options options;
+        options.slots = 2;
+        options.batch = 10;
+        const Scheduler scheduler(options);
+        auto state = ready(scheduler,
+                           {{idp, package("producer")}, {consumer, package("consumer")}},
+                           Json::array({release(idp, "v1.0.0"), release(consumer, "v1.0.0")}));
+        turn(scheduler, state, 1);
+        scheduler.admit(state, idp, "v1.1.0", head);
+        turn(scheduler, state, 2);
+        CHECK_EQ(state.at("items").at("producer/1.1.0/native").at("state"), "enrolled");
+        const auto id = state.at("items").at("producer/1.0.0/native").at("request").get<std::string>();
+        complete(scheduler, state, id, 1, 47, 3, true);
+        turn(scheduler, state, 3);
+        CHECK_EQ(view(state, options).at("reservations").at("publication"), 1);
+        CHECK_EQ(state.at("items").at("producer/1.1.0/native").at("state"), "enrolled");
+        turn(scheduler, state, 12);
+        const auto reserved = std::ranges::find_if(state.at("attempts"), [](const auto& attempt) {
+            return attempt.at("publication") == true;
+        });
+        CHECK_EQ(reserved->at("dispatch"), "batching");
+        CHECK_EQ(reserved->at("batch_at"), 13);
+        CHECK_EQ(state.at("items").at("producer/1.1.0/native").at("state"), "enrolled");
     }
 
     void retention() {
@@ -268,7 +334,7 @@ namespace {
                            {{"entries", Json::array()}, {"receipts", Json::array({receipt})}},
                            15);
             turn(scheduler, state, 15);
-            const auto& item = state["items"].begin().value();
+            const auto item = state["items"].begin().value();
             CHECK_EQ(item.at("revision"), change ? 2 : 1);
             CHECK_EQ(item.at("attempt"), change ? 1 : 2);
             const auto key = attemptKey(item.at("request").get<std::string>(), item.at("attempt").get<unsigned>());
@@ -277,6 +343,233 @@ namespace {
                 CHECK_EQ(scheduler.claim(state, false, first, owner(1, 51), 16).code, 409);
             }
         }
+    }
+
+    void closure() {
+        const Scheduler scheduler({});
+        const std::string item = "consumer/1.0.0/native";
+        const auto dependencies =
+            Json::array({Json{{"package", "left"}, {"version", ">=1"}}, Json{{"package", "right"}, {"version", ">=1"}}});
+        auto state = ready(scheduler,
+                           {{consumer, package("consumer", dependencies)}, {idp, package("shared")}},
+                           Json::array({release(consumer, "v1.0.0")}));
+        auto left = output("left", "1.0.0", 1, 1);
+        auto right = output("right", "1.0.0", 1, 1);
+        auto original = output("shared", "1.0.0", 1, 1), newer = output("shared", "1.0.0", 2, 1);
+        for (auto* record : {&original, &newer}) {
+            (*record)["target"] = "native";
+            (*record)["repository"] = idp;
+            record->erase("closure");
+        }
+        left["closure"] = Json::array({original});
+        right["closure"] = Json::array({newer});
+        state["entries"] = Json::array({left, right});
+        turn(scheduler, state, 2);
+        CHECK_EQ(state.at("items").at(item).at("condition"), "blocked");
+        CHECK_EQ(state.at("items").at(item).at("reason"), "closure conflict");
+        scheduler.admit(state, idp, "v1.0.0", head);
+        turn(scheduler, state, 3);
+        CHECK_EQ(state.at("items").at(item).at("condition"), "waiting");
+        CHECK_EQ(state.at("items").at(item).at("reason"), "checking dependency refresh");
+        left["closure"] = Json::array({newer});
+        state["entries"] = Json::array({left, right});
+        turn(scheduler, state, 4);
+        CHECK_EQ(state.at("items").at(item).at("state"), "processing");
+    }
+
+    void identity() {
+        const Scheduler scheduler({});
+        const std::string item = "consumer/1.0.0/native";
+        const auto tags = Json::array({release(consumer, "v1.0.0")});
+        auto decl = package("consumer", Json::array({Json{{"package", "shared"}, {"version", ">=1"}}}));
+        auto environment = target;
+        auto state = ready(scheduler, {{consumer, decl}}, tags);
+        auto bound = output("shared", "1.0.0", 1, 1);
+        state["entries"] = Json::array({bound});
+        turn(scheduler, state, 2);
+        const auto original = state.at("items").at(item).at("identity");
+        CHECK_EQ(original, sha256(Json::array({head, head, target, "Xv2", Json::array({bound.at("identity")})}).dump()));
+        state["items"][item]["state"] = "published";
+        decl["ci_commit"] = std::string(40, 'b');
+        scheduler.declarations(state, {{"native", target}}, {{consumer, decl}}, tags);
+        turn(scheduler, state, 3);
+        CHECK_EQ(state.at("items").at(item).at("state"), "published");
+        CHECK_EQ(state.at("items").at(item).at("identity"), original);
+
+        const auto unchanged = state;
+        bound["published_at"] = 20;
+        state["entries"] = Json::array({bound});
+        turn(scheduler, state, 4);
+        CHECK_EQ(state.at("items").at(item).at("state"), "published");
+        bound["identity"] = sha256("new binding");
+        state["entries"] = Json::array({bound});
+        turn(scheduler, state, 5);
+        CHECK_EQ(state.at("items").at(item).at("revision"), 2);
+        CHECK(state.at("items").at(item).at("identity") != original);
+
+        for (const bool tree : {false, true}) {
+            state = unchanged;
+            state["items"][item]["state"] = "failed";
+            auto next = decl;
+            environment = target;
+            if (tree) {
+                next["tree"] = std::string(40, 'c');
+            } else {
+                environment["image"] = "different environment digest";
+            }
+            scheduler.declarations(state, {{"native", environment}}, {{consumer, next}}, tags);
+            turn(scheduler, state, 6);
+            CHECK_EQ(state.at("items").at(item).at("revision"), 2);
+            CHECK(state.at("items").at(item).at("identity") != original);
+            CHECK_EQ(scheduler.action(state, "retry", {{"item", item}}).code, 409);
+        }
+    }
+
+    void observation() {
+        Options options;
+        options.slots = 1;
+        options.queue = 5;
+        options.execution = 7;
+        options.grace = 2;
+        const Scheduler scheduler(options);
+        const auto base = ready(scheduler, {{idp, package("producer")}}, Json::array({release(idp, "v1.0.0")}));
+        const std::string item = "producer/1.0.0/native";
+        for (const std::string conclusion :
+             {"success", "failure", "cancelled", "timed_out", "startup_failure", "action_required", "stale", "skipped", "neutral"}) {
+            auto state = base;
+            turn(scheduler, state, 10);
+            state = Json::parse(state.dump());
+            const auto id = state.at("items").at(item).at("request").get<std::string>();
+            const auto key = attemptKey(id, 1);
+            scheduler.observed(state, key, {{"id", 8}, {"status", "queued"}}, 14);
+            CHECK(!state.at("attempts").at(key).value("cancel_requested", false));
+            scheduler.observed(state, key, {{"not_found", true}}, 15);
+            CHECK_EQ(state.at("attempts").at(key).at("run_state"), "dispatched");
+            CHECK_EQ(view(state, options).at("reservations").at("queued"), 1);
+            scheduler.observed(state, key, {{"id", 8}, {"status", "queued"}}, 15);
+            CHECK(state.at("attempts").at(key).at("cancel_requested") == true);
+            CHECK_EQ(state.at("attempts").size(), 1U);
+            CHECK_EQ(scheduler.claim(state, false, id, owner(1, 8), 16).code, 200);
+            state = Json::parse(state.dump());
+            scheduler.observed(state, key, {{"id", 8}, {"status", "completed"}, {"conclusion", conclusion}}, 19);
+            CHECK_EQ(view(state, options).at("reservations").at("running"), 0);
+            CHECK_EQ(state.at("attempts").at(key).at("grace_at"), 21);
+            CHECK_EQ(state.at("items").at(item).at("state"), "processing");
+            state = Json::parse(state.dump());
+            scheduler.action(state, "dispatch-paused", {{"paused", true}});
+            turn(scheduler, state, 20);
+            CHECK_EQ(state.at("items").at(item).at("state"), "processing");
+            turn(scheduler, state, 21);
+            CHECK_EQ(state.at("items").at(item).at("reason"), "conclusion " + conclusion + ", no report");
+            CHECK(view(state, options).at("items").at(0).at("retryable") == true);
+            CHECK(view(state, options).at("paused") == true);
+        }
+        auto execution = base;
+        turn(scheduler, execution, 10);
+        const auto id = execution.at("items").at(item).at("request").get<std::string>();
+        const auto key = attemptKey(id, 1);
+        CHECK_EQ(scheduler.claim(execution, false, id, owner(1, 9), 11).code, 200);
+        scheduler.observed(execution, key, {{"id", 9}, {"status", "in_progress"}}, 17);
+        CHECK(!execution.at("attempts").at(key).value("cancel_requested", false));
+        scheduler.observed(execution, key, {{"id", 9}, {"status", "in_progress"}}, 18);
+        CHECK(execution.at("attempts").at(key).at("cancel_requested") == true);
+        CHECK_EQ(view(execution, options).at("reservations").at("running"), 1);
+    }
+
+    void snapshots() {
+        Options options;
+        options.batch = 0;
+        options.slots = 2;
+        const Scheduler scheduler(options);
+        const std::string base = "refs/snapshots/feed/";
+        auto state = ready(scheduler, {{idp, package("producer")}}, Json::array({release(idp, "v1.0.0")}));
+        state["snapshots"] = {{base + "pre-x", std::string(40, '0')}, {base + "older-head", head}, {base + "stale", std::string(40, '1')}};
+        for (const char recent : {'2', '3', '4'}) {
+            const auto ref = base + recent;
+            state["snapshots"][ref] = std::string(40, recent);
+            state["rollback"].push_back(ref);
+        }
+        auto findPlan = [&](const Json& facts) {
+            const auto pending = std::ranges::find_if(facts.at("attempts"), [](const auto& record) {
+                return record.at("publication") == true && record.at("reconciled") == false;
+            });
+            return Json::parse(pending->at("document").template get<std::string>());
+        };
+        state["retirement_at"] = 1;
+        turn(scheduler, state, 2);
+        const auto first = findPlan(state);
+        CHECK_EQ(first.at("delete_snapshots"), Json::array({base + "stale"}));
+        const std::string item = "producer/1.0.0/native";
+        const auto request = state.at("items").at(item).at("request").get<std::string>();
+        CHECK_EQ(state.at("attempts").at(attemptKey(request, 1)).at("pin"), head);
+        auto refs = state.at("snapshots");
+        refs[base + "published"] = std::string(40, '5');
+        auto rotated = state;
+        refs[base + first.at("publication").get<std::string>()] = std::string(40, '5');
+        scheduler.feed(rotated, std::string(40, '5'), refs, Json::array(), 3);
+        CHECK_EQ(rotated.at("rollback"), Json::array({base + "3", base + "4", base + first.at("publication").get<std::string>()}));
+        CHECK_EQ(rotated.at("attempts").at(attemptKey(request, 1)).at("pin"), head);
+        for (const std::string stage : {"processing", "built", "retry", "released"}) {
+            auto copy = state;
+            copy["attempts"].erase(attemptKey(first.at("publication").get<std::string>(), 1));
+            copy["items"][item]["state"] = stage == "retry" || stage == "released" ? "failed" : stage;
+            if (stage != "processing") {
+                auto& record = copy["attempts"][attemptKey(request, 1)];
+                record["run_state"] = "completed";
+                record["reconciled"] = true;
+                record["report"] = {{"status", "finished"}, {"outcome", "built"}, {"artifact_id", 1}, {"inventory", Json::array()}};
+            }
+            if (stage == "released") {
+                copy["declarations"][idp]["releases"] = ">=2";
+            }
+            scheduler.feed(copy, std::string(40, '5'), refs, Json::array(), 3);
+            turn(scheduler, copy, 4);
+            const auto next = findPlan(copy);
+            const auto& deletion = next.at("delete_snapshots");
+            CHECK_EQ(std::ranges::find(deletion, Json(base + "older-head")) != deletion.end(), stage == "released");
+            for (const auto* protectedName : {"pre-x", "published", "2", "3", "4"}) {
+                CHECK(std::ranges::find(deletion, Json(base + protectedName)) == deletion.end());
+            }
+        }
+    }
+
+    void backoff() {
+        Options options;
+        options.batch = 0;
+        options.grace = 1;
+        const Scheduler scheduler(options);
+        auto state = ready(scheduler, {{idp, package("producer")}}, Json::array({release(idp, "v1.0.0")}));
+        turn(scheduler, state, 1);
+        const auto request = state.at("items").at("producer/1.0.0/native").at("request").get<std::string>();
+        complete(scheduler, state, request, 1, 8, 2, true);
+        turn(scheduler, state, 2);
+        const auto first = std::ranges::find_if(state.at("attempts"), [](const auto& record) {
+            return record.at("publication") == true;
+        });
+        const auto id = first->at("id").get<std::string>();
+        for (unsigned attempt = 1; attempt <= 4; ++attempt) {
+            const auto key = attemptKey(id, attempt);
+            const auto run = attempt + 20;
+            const auto at = 200 * static_cast<Time>(attempt);
+            const auto token = owner(attempt, run);
+            CHECK_EQ(scheduler.claim(state, true, id, token, at).code, 200);
+            auto failed = token;
+            failed.update(Json{{"status", "finished"}, {"outcome", "failed"}, {"reason", "feed push failed"}});
+            scheduler.report(state, true, id, failed, at);
+            scheduler.observed(state, key, {{"id", run}, {"status", "completed"}, {"conclusion", "failure"}}, at);
+            const auto refs = state.at("snapshots");
+            scheduler.feed(state, head, refs, Json::array(), at);
+            state = Json::parse(state.dump());
+            if (attempt < 4) {
+                const auto next = state.at("attempts").at(attemptKey(id, attempt + 1));
+                CHECK_EQ(next.at("retry_at"), at + 60 * (1 << (attempt - 1)));
+                CHECK_EQ(scheduler.claim(state, true, id, token, at).code, 409);
+            }
+        }
+        const auto item = state.at("items").at("producer/1.0.0/native");
+        CHECK_EQ(item.at("state"), "failed");
+        CHECK_EQ(item.at("reason"), "feed push failed");
+        CHECK(!state.at("attempts").contains(attemptKey(id, 5)));
     }
 
     struct Store : persistence::StateStore {
@@ -357,10 +650,22 @@ int main(int argc, char** argv) {
         attempts();
     } else if (mode == "publications") {
         publications();
+    } else if (mode == "handoff") {
+        handoff();
     } else if (mode == "retention") {
         retention();
     } else if (mode == "expiry") {
         expiry();
+    } else if (mode == "closure") {
+        closure();
+    } else if (mode == "identity") {
+        identity();
+    } else if (mode == "observation") {
+        observation();
+    } else if (mode == "snapshots") {
+        snapshots();
+    } else if (mode == "backoff") {
+        backoff();
     } else if (mode == "persistence") {
         persistenceTest();
     } else {

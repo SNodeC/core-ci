@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent / "dashboard"))
@@ -14,6 +15,12 @@ from database import eventually
 def check(build):
     with fixture(build, small=True) as fx:
         fx.ready()
+        invalid = fx.work / "invalid.conf"
+        invalid.write_text(fx.config_path.read_text().replace(
+            "[coreci]\n", '[coreci]\nqualification_fault="after_push:test"\n', 1))
+        rejected = subprocess.run(fx.command[:2] + [str(invalid)] + fx.command[3:], env=fx.env,
+                                  capture_output=True, text=True, timeout=10)
+        assert rejected.returncode and "qualification_fault" in rejected.stdout + rejected.stderr
         assert fx.request("/api/v1/waves/w1/plan.json", browser=False).status == 404
         assert fx.request("/api/v1/requests/unknown/claim", b"", browser=False).status == 401
         assert fx.request("/api/v1/requests/unknown/attempts/1", browser=False).status == 404
@@ -47,15 +54,20 @@ def check(build):
             assert any(item["request"] == request and item["state"] == "processing" for item in model["items"])
         assert fx.callback(values, "report", **facts, status="finished", outcome="built", artifact_id=5,
                            artifact_digest="a" * 64, inventory='[{"name":"a"}]').status == 200
+        assert fx.callback(values, "report", **facts, status="finished", outcome="failed").status == 200
+        assert fx.callback(values, "report", **facts, status="started").status == 200
         assert any(item["request"] == request and item["state"] == "processing" for item in fx.status()["items"])
         fx.restart()
         assert eventually(lambda: fx.request("/api/v1/status.json", browser=False).status == 200)
         assert fx.plan_bytes(values) == frozen
         assert fx.callback(values, "claim", **facts).status == 200
         assert fx.request("/").status == 200
+        fx.ambiguous_publication = True
         fx.runs[run].update(status="completed", conclusion="success")
         publication_run, publication = fx.dispatches.get(timeout=12)
         assert "publication_id" in publication
+        assert eventually(lambda: any(path.endswith("/actions/workflows/publish.yml/runs")
+                                      for path in fx.api_requests))
         plan = fx.plan(publication)
         assert plan["expected_head"] == "f" * 40 and plan["items"][0]["request"] == request
         claim = dict(attempt=int(publication["attempt"]), run_id=publication_run, run_attempt=1)

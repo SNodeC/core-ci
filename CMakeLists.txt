@@ -37,9 +37,15 @@ foreach(
     turns
     binding
     attempts
+    closure
+    identity
+    observation
+    handoff
     publications
     retention
     expiry
+    snapshots
+    backoff
     persistence
 )
     add_test(NAME X_${mode} COMMAND X_Scheduler ${mode})

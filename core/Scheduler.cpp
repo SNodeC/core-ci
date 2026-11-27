@@ -779,7 +779,7 @@ namespace coreci {
                         auto next = replacement(record, now, config);
                         next["failures"] = failures;
                         next["retry_at"] = now + 60 * (1 << (failures - 1));
-                        replacements[attemptKey(next.at("id").get<Text>(), next.at("attempt").get<unsigned>())] = std::move(next);
+                        replacements.emplace(attemptKey(next.at("id").get<Text>(), next.at("attempt").get<unsigned>()), std::move(next));
                     } else {
                         for (auto& item : state["items"]) {
                             if (item.contains("publication") && item.at("publication") == record.at("id")) {

@@ -168,7 +168,10 @@ class Provider(BaseHTTPRequestHandler):
             state.runs[rid] = dict(id=rid, status='queued', conclusion=None, display_title=title, run_attempt=1)
             state.dispatches.put((rid, values))
             assert state.dispatch_response.wait(20), 'dispatch response fixture not released'
-            self.respond(200, dict(workflow_run_id=rid))
+            if publication and state.ambiguous_publication:
+                self.respond(204)
+            else:
+                self.respond(200, dict(workflow_run_id=rid))
         elif '/actions/runs/' in self.path and self.path.endswith('/cancel'):
             rid = int(self.path.split('/')[-2])
             state.runs[rid].update(status='completed', conclusion='cancelled')
@@ -191,6 +194,7 @@ class Fixture:
         self.snapshots = {'refs/snapshots/feed/pre-x': self.head}
         self.ledger = []
         self.runs = {}
+        self.ambiguous_publication = False
         self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
         self.subject, self.revoked = 'owner', set()
         self.unavailable = False
