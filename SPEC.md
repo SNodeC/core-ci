@@ -431,10 +431,14 @@ X4 Items, reservations, selection.
    prerequisite failed, closure conflict, cycle); unsupported.
  - Required option "github_slots" in the coreci configuration section (default 20).
    Reservations = items in processing + the publication reservation <= github_slots.
- - Publication reservation: when an item becomes built and no publication reservation
-   exists, the reservation its build just released passes directly to the
-   publication. The batching delay (default 2 min) runs inside that reservation; no
-   build can take it. It is released when the publication run has finished.
+ - A build's reservation is released only when GitHub reports its run completed (API
+   check after the finished callback, retried until the callback deadline).
+ - Publication reservation: whenever built items not assigned to a publication exist
+   and no publication reservation exists, the publication claims the next released
+   reservation before any build (on a build's release, on publication completion and
+   at startup). The batching deadline (default 2 min after the claim) is persisted and
+   runs inside that reservation; no build can take it. It is released when GitHub
+   reports the publication run completed; at that moment the rule is evaluated again.
  - A pick is synchronous in memory. Pick, frozen request, attempt and pending
    dispatch are then committed in ONE transaction; only then is the request
    dispatched. If the outcome of a commit is uncertain: reload from the database
@@ -448,8 +452,8 @@ X4 Items, reservations, selection.
  - Closure: merge the frozen transitive bindings of every selected output; exactly one
    output identity per package. A mismatch caused by a pending refresh → waiting;
    otherwise → blocked "closure conflict".
- - Bound output = (package, version, revision, identity, source commit, ci_commit,
-   its frozen bindings, inventory).
+ - Bound output = (package, repository, version, revision, identity, source commit,
+   ci_commit, its frozen bindings, inventory).
  - Inventory = per split binary package: name, native version, architecture, sha256,
    runtime dependencies (read from the package metadata by the publisher).
 
@@ -459,9 +463,10 @@ X5 Identity, revisions, retry.
    version, identities of the bound outputs).
  - The desired identity is kept separately from the frozen identity of an attempt; it
    is recomputed after committed input changes; duplicates are coalesced.
- - Retry = next attempt of the same revision with the IDENTICAL frozen request (same
-   bindings, same feed_commit). Retry is offered only while the desired identity
-   equals the frozen one.
+ - Retry = next attempt of the same revision with byte-identical frozen inputs (X7
+   "inputs", including bindings and feed_commit); only the attempt envelope changes.
+   An item is retry-eligible while it is failed and its desired identity equals the
+   frozen one. Retry is offered only to retry-eligible items.
  - Differing desired identity → the next revision is enrolled, whether the previous
    attempt failed or was published. A running attempt is never overwritten.
  - Refresh: the newest published version of each consumer per target is re-enrolled
@@ -472,12 +477,17 @@ X5 Identity, revisions, retry.
 X6 Namespace, snapshots, retention.
  - APT: apt/<distribution>/dists/<codename>/… with its own pool per distribution.
    RPM: rpm/<distribution>/<release>/<arch>/. OpenWrt: openwrt/<release>/<arch>/.
- - The same native identity (name, version, architecture) with different bytes in one
-   namespace → immutable-conflict, rejected.
+ - Immutability is decided on the original artifact bytes (sha256 of each split
+   package as produced by the build, before signing). The ledger records this original
+   digest and, separately, the sha256 of the served file (after RPM signing).
+   Same native identity (name, version, architecture) in one namespace with the same
+   original digest → "already published"; with a different original digest →
+   immutable-conflict, rejected.
  - Snapshots: every publication commit additionally gets the ref
    refs/snapshots/<feed_branch>/<publication_id>. core-ci keeps a snapshot while an
-   unfinished attempt references it. Released snapshots are deleted by the next
-   publication (listed in its plan) in the same atomic push.
+   attempt referencing it is active or its item is retry-eligible (X5). Released
+   snapshots are deleted by the next publication (listed in its plan) in the same
+   atomic push.
    refs/snapshots/<feed_branch>/pre-x is protected: never deleted by publications.
  - Retention on the branch head keeps: the two highest version-revisions per
    package×target; the transitive runtime closure of everything kept (over the
@@ -490,20 +500,25 @@ X7 build.yml — workflow_dispatch on main with return_run_details: true;
    run-name "build <request>/<attempt>"; core-ci persists run_id.
    Inputs: request_id, attempt, request_url, callback_url, feed_branch.
  - Request JSON (GET request_url, public, immutable per attempt):
-   {"request","attempt","package","repo","commit","ci_commit","version","revision",
-    "target":<catalog entry>,"feed_commit",
-    "closure":[bound outputs in topological order, transitive ones included, each with
-               commit, ci_commit, bindings and inventory],
-    "contract":version}
+   {"request","attempt",
+    "inputs":{"package","repo","commit","ci_commit","version","revision",
+              "target":<catalog entry>,"feed_commit",
+              "closure":[bound outputs in topological order, transitive ones included,
+                         each with repository, commit, ci_commit, bindings, inventory],
+              "contract":version}}
+   "inputs" is frozen at pick and byte-identical for every attempt of a revision.
  - One job: claim → catalog setup → resolved declaration list (dnf --allowerasing) →
-   install the exact inventory of the direct bindings from snapshot feed_commit, then
-   verify what was installed (dpkg-query / rpm -q / opkg / apk) → check out the source
+   install the exact inventory of the complete closure from snapshot feed_commit,
+   then verify every closure entry as installed at its exact version
+   (dpkg-query / rpm -q / opkg / apk) → check out the source
    with submodules and ci/ at ci_commit → hook (env SOURCE_DIR, CI_DIR, OUTPUT_DIR,
    SDK_DIR, TARGET_JSON, PACKAGE_VERSION, PACKAGE_RELEASE, DEPENDENCIES_JSON; no
    callback secret, publication credentials or write tokens in the hook environment)
    → upload artifact coreci-<request>-<attempt> (retention-days 90) with sha256
    manifest and inventory → report finished (artifact id, digest, inventory).
- - On cancellation or failure the job reports finished with status failed.
+ - On failure the job reports finished with status failed. If a run ends without a
+   finished report (e.g. cancelled), core-ci takes the conclusion from the GitHub API
+   after the callback deadline: cancelled/failure → failed with that reason.
  - OpenWrt (normative path): SDK digest and feed revisions from the catalog; register
    the closure's recipes (one per package, at their commit/ci_commit) before feed
    resolution; build in topological order with the repositories' Build/InstallDev
@@ -537,7 +552,9 @@ X8 publish.yml — ONE job; environment publish; the only holder of signing keys
    item failed, with Retry. Confirmed artifact expiry → item re-enrolled for a build.
  - Staging fault input "fault" (none | after_push), honoured only when feed_branch is
    feed-staging: after_push ends the job with failure directly after a successful
-   push, before any callback. Qualification only; rejected for any other branch.
+   push, before any callback. core-ci sets it only from its one-shot configuration
+   option "qualification_fault" (consumed by the next publication; refused at startup
+   unless feed_branch is feed-staging). Qualification only.
 
 X8b restore.yml — environment publish; manual dispatch only, on the owner's explicit
    instruction (staging: as part of qualification). Inputs feed_branch, snapshot_ref,
@@ -576,9 +593,9 @@ X12 Versions and feed. deb <version>-<revision>~<codename>;
    rpm <version>-<revision>.<disttag>; ipk/apk <version>-r<revision>. Release fields:
    Origin SNodeC/Packages, Label SNode.C, Suite = Codename = <codename>, Components
    main, Acquire-By-Hash yes, SHA256 only, InRelease + Release.gpg. Ledger
-   publications.json with inventory and receipts. Immutability: same package, target,
-   version and revision already in the ledger → nothing placed, reported published
-   with reason "already published".
+   publications.json with inventory (original and served digests) and receipts.
+   Immutability per X6: byte-equivalent → nothing placed, reported published with
+   reason "already published"; otherwise immutable-conflict.
 
 ---
 

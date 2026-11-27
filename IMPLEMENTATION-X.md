@@ -12,21 +12,11 @@ and rolled out. Gates are marked GATE; everything else runs without stopping.
   `git log`). Prepare its changes as a patch under `/tmp/codex/artifacts/snode.c-x/`
   without touching the checkout. Before the merges in step 5 → GATE A ("snode.c
   free"); then apply the patch on updated master, PR, merge.
-- vchrist (via the SSH/sudo route of the earlier ops threads; if it fails → GATE):
-  installed core-ci version, database schema, configuration, service arguments,
-  heads of `feed` and `feed-staging`, highest allocated revision per
-  package×version×target in the old database.
-- Rollback set, recorded before anything changes (all under
-  `/var/backups/coreci/pre-x-<timestamp>/` plus refs on GitHub):
-  - the installed core-ci .deb (0.2.1) and its configuration;
-  - a database dump;
-  - feed head → ref `refs/snapshots/feed/pre-x` (protected);
-  - Packages `main` head before the X merge → tag-free ref `refs/rollback/packages-pre-x`;
-  - per registry repository: the default-branch head before the X merge →
-    `refs/rollback/<repo>-pre-x`, and the last commit whose `ci/packages.json` is
-    schema 1 (the old daemon only accepts schema 1) → `refs/rollback/<repo>-schema1`.
-  - Verify the set: the dump restores into a scratch database; the .deb installs in a
-    trixie container and starts with `--help`; every ref resolves.
+- vchrist, read-only inventory only (via the SSH/sudo route of the earlier ops
+  threads; if it fails → GATE): installed core-ci version, database schema,
+  configuration, service arguments, heads of `feed` and `feed-staging`, highest
+  allocated revision per package×version×target in the old database. No backup, no
+  refs and no other writes in this step; the final backup happens in §5a.
 
 ## 1. SPEC
 
@@ -51,8 +41,9 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
 ## 3. core-ci (one PR)
 
 - FIRST in the report: deletion/replacement budget against 5,000 lines (existing
-  counting rule in `tests/slim_source.py` PLUS the daemon DDL). Not achievable → GATE
-  with the numbers.
+  counting rule in `tests/slim_source.py` PLUS the daemon DDL; baseline today 5,850 +
+  219 = 6,069, so a net cut of at least 1,069 lines is required). Not achievable →
+  GATE with the numbers.
 - Implement X2–X11. Reuse unchanged: GitHub App auth, HMAC, IDP OAuth/MFA login,
   MariaDB client, SNode.C configuration, webhooks. New schema from scratch; delete the
   one-shot migration.
@@ -69,6 +60,10 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
   - closure conflict vs waiting during a refresh; cycle;
   - all slots occupied by long builds: the first to finish hands its slot to the
     publication, no build takes it, the batching delay runs inside it;
+  - the last build finishes while a publication with a frozen plan runs: on that
+    publication's completion a new publication reservation is claimed for it; same
+    at startup; batching deadline survives a restart;
+  - a reservation is released only when GitHub reports the run completed;
   - Retry uses the identical frozen request; changed inputs after a failure → new
     revision, no Retry;
   - identity changes (ci/, target environment, contract, dependency); no rebuild on an
@@ -77,7 +72,13 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
     rerun → 409; finished before started; duplicates;
   - publication: ambiguous run found via run-name; crash after push → receipts;
     quarantine; backoff limit; artifact expiry; acknowledgement;
-  - snapshots kept while referenced, deleted afterwards, `pre-x` never;
+  - snapshots kept while an attempt is active or the item is retry-eligible, deleted
+    afterwards, `pre-x` never;
+  - Retry: `inputs` byte-identical, attempt +1; a run ending without a report is
+    concluded from the GitHub API after the callback deadline;
+  - immutability: same original digest → already published; different → conflict;
+    RPM served digest differs from the original and is recorded separately;
+  - `qualification_fault` refused unless feed_branch is feed-staging, consumed once;
   - all three deadlines; restart in every state; pause.
 
 ## 4. Registry repositories (one PR each, no tags)
@@ -93,13 +94,20 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
 
 ### a) Quiesce the old system (0.2.1 has no Pause)
 
-1. Check idle: the old status endpoint shows no active wave or publication, and
-   `gh run list -R SNodeC/Packages --status in_progress` and `--status queued` are
-   empty for wave/publish workflows.
-2. If not idle: wait until it is (do not cancel); recheck.
-3. Stop and disable the service; recheck step 1 once more (a dispatch may have raced
-   the stop; if so, let it finish).
-4. Only now merge anything that removes `wave.yml`.
+1. While the old daemon runs: its status endpoint shows no active wave or
+   publication. If not: wait (do not cancel) and check again.
+2. Stop and disable the service.
+3. After the stop: `gh run list -R SNodeC/Packages --status in_progress` and
+   `--status queued` are empty for the wave and publish workflows. If not: wait until
+   they are (a dispatch may have raced the stop); do not cancel.
+4. Final backup, now that no old writer is active, under
+   `/var/backups/coreci/pre-x-<timestamp>/`: database dump (verified by restoring it
+   into a scratch database), the installed .deb and its configuration.
+5. Record the final heads and pin them by ref creation (authorized operation: create
+   a new ref pointing at an existing commit; nothing else):
+   `refs/snapshots/feed/pre-x` → current `feed` head (protected per X6),
+   `refs/rollback/packages-pre-x` → current Packages `main` head.
+6. Only now merge anything that removes `wave.yml`.
 
 ### b) Install (staging)
 
@@ -112,7 +120,15 @@ Merge the PRs (after GATE A if it applies), tag core-ci v1.0.0, build the bootst
 ### c) Staging qualification
 
 Reset feed-staging (new layout, keys only; record its head as
-`refs/snapshots/feed-staging/pre-x`), unpause, full cold run, then the fault tests.
+`refs/snapshots/feed-staging/pre-x`), then two runs:
+
+1. **Cold run** (timing baseline, no interference): unpause and let the full matrix
+   reach a terminal disposition. Its timings and runner-hours are the baseline for
+   GATE C criterion 5.
+2. **Fault run**: start it with T6 (a ci/-only commit in core-ci's own `ci/`), which
+   re-enrolls core-ci on all its targets. Set `qualification_fault = after_push` for
+   T4 beforehand. T1, T2 and T5 are executed while that run's builds are in
+   processing; T3 on a finished run; T7 after the run.
 
 Authorized staging test operations (feed-staging only), each with its evidence:
 
@@ -121,18 +137,20 @@ Authorized staging test operations (feed-staging only), each with its evidence:
 | T1 restart | `systemctl restart` while ≥ 5 items are processing and a publication reservation exists | same attempts continue; no duplicate attempt; run ids unchanged; dashboard consistent |
 | T2 duplicate dispatch | dispatch `build.yml` manually with a running request's id and attempt | second run ends with 409 log line, no work, no artifact |
 | T3 manual rerun | `gh run rerun` of a finished build run | run_attempt 2 gets 409, no work |
-| T4 interruption after push | one publication dispatched with `fault=after_push` | push present at feed-staging head; job failed before callbacks; core-ci recovers all items from receipts; no duplicate publication |
-| T5 isolated retry | `gh run cancel` of one running build | item failed with reason; Retry → next attempt, same revision, identical request JSON (diff); other items unaffected |
+| T4 interruption after push | `qualification_fault = after_push` → the next publication gets `fault=after_push` | push present at feed-staging head; job failed before callbacks; core-ci recovers all items from receipts; no duplicate publication; the option is consumed |
+| T5 isolated retry | `gh run cancel` of one running build | item failed with reason "cancelled" (from the final report or, if missing, from the GitHub conclusion after the callback deadline); Retry → attempt +1, same revision, `inputs` byte-identical (diff), snapshot still present; other items unaffected |
 | T6 ci-only revision | a test-only commit in core-ci's own `ci/` (comment line in its hook) on its default branch | core-ci items get revision +1 with the same source commit; no tag; no other repository rebuilt except declared consumers |
 | T7 restore | `restore.yml` on feed-staging to `refs/snapshots/feed-staging/pre-x`, then back to the latest publication snapshot | branch head equals each snapshot; lease respected |
 
 **GATE C criteria** (all must hold; report each with evidence):
 
-1. Every item has a terminal disposition: published, or unsupported (declared). No
-   item is enrolled, waiting, processing or built.
-2. Items failed or blocked are allowed only as named exceptions: per item the
-   reason, the responsible repository and the resulting coverage gap. The owner must
-   accept each exception explicitly in the GATE C answer.
+1. Every item has a terminal disposition. Accepted: published; enrolled with
+   condition unsupported (declared by the repository's `releases` range); and, only
+   as named exceptions, failed or enrolled with condition blocked. Rejected: enrolled
+   without condition (runnable), waiting, processing, built.
+2. Every exception is listed per item with reason, responsible repository and the
+   resulting coverage gap. The owner must accept each one explicitly in the GATE C
+   answer.
 3. Fresh install from feed-staging of every published package×target: apt (per
    distribution), dnf, opkg, apk.
 4. Every riscv64 job finished within 6 h including upload.
@@ -157,14 +175,18 @@ Wait for "cut over" (with any accepted exceptions).
 
 ### Rollback (only on the owner's explicit instruction)
 
-1. Stop core-ci 1.0.0.
-2. `restore.yml` on `feed` to `refs/snapshots/feed/pre-x`.
-3. Packages: revert the X merge (normal revert commit, no force) so that `main` equals
-   `refs/rollback/packages-pre-x` in content.
-4. Registry repositories: revert `ci/` to `refs/rollback/<repo>-schema1` content
-   (normal commit).
-5. Install the 0.2.1 .deb and configuration from the backup; restore the database
-   dump; start; owner MFA.
+The old daemon 0.2.1 cannot be a rollback target: it reads `ci/packages.json` from
+each repository's newest tag, and every newest tag already carries schema 2, which
+0.2.1 rejects. Rollback therefore protects users, not the old scheduler; recovery
+of the CI itself is fix-forward.
+
+1. Pause and stop core-ci 1.0.0.
+2. `restore.yml` on `feed` to `refs/snapshots/feed/pre-x` (users see exactly the
+   pre-cutover feed again).
+3. Fix forward on staging; cut over again only through GATE C.
+
+The old database dump, .deb and configuration from §5a are kept for forensics only.
+Before GATE C, T7 proves that `restore.yml` restores a pinned snapshot exactly.
 
 ## 6. Issue #76
 
