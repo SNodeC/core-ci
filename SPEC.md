@@ -431,8 +431,8 @@ X4 Items, reservations, selection.
    prerequisite failed, closure conflict, cycle); unsupported.
  - Required option "github_slots" in the coreci configuration section (default 20).
    Reservations = items in processing + the publication reservation <= github_slots.
- - A build's reservation is released only when GitHub reports its run completed (API
-   check after the finished callback, retried until the callback deadline).
+ - A build's reservation is released only when GitHub reports its run completed.
+   core-ci observes every known run independently of callbacks (X10).
  - Publication reservation: whenever built items not assigned to a publication exist
    and no publication reservation exists, the publication claims the next released
    reservation before any build (on a build's release, on publication completion and
@@ -484,11 +484,24 @@ X6 Namespace, snapshots, retention.
    original digest → "already published"; with a different original digest →
    immutable-conflict, rejected.
  - Snapshots: every publication commit additionally gets the ref
-   refs/snapshots/<feed_branch>/<publication_id>. core-ci keeps a snapshot while an
-   attempt referencing it is active or its item is retry-eligible (X5). Released
-   snapshots are deleted by the next publication (listed in its plan) in the same
-   atomic push.
-   refs/snapshots/<feed_branch>/pre-x is protected: never deleted by publications.
+   refs/snapshots/<feed_branch>/<publication_id>. A pick always pins the snapshot of
+   the current feed head as feed_commit. core-ci keeps a snapshot while an attempt
+   referencing it is active or its item is retry-eligible (X5).
+ - A publication's deletion list never contains the snapshot of its own expected
+   head. A snapshot is listed for deletion only if, in the committed transition that
+   freezes the plan, it is not the current head and no attempt pins it. The deletion
+   happens in that publication's atomic push.
+ - refs/snapshots/<feed_branch>/pre-x is protected: never deleted by publications.
+ - Legacy content (on the first X publication into a feed that has pre-X content):
+   - The legacy APT tree apt/dists/ and apt/pool/ is carried over byte-identical and
+     is never indexed, bound or changed by X. 30 days after the cutover, core-ci puts
+     "retire legacy APT" into a publication plan, which removes both directories.
+   - Legacy RPM and OpenWrt packages stay in their namespaces. The first publication
+     that touches such a namespace imports them into the ledger as legacy entries:
+     served sha256 from the file, runtime dependencies read from the package
+     metadata, original digest "unknown". Indices are rebuilt over X entries and
+     legacy entries together. Legacy entries are never bound and are subject to the
+     normal retention (they disappear once newer X revisions are kept).
  - Retention on the branch head keeps: the two highest version-revisions per
    package×target; the transitive runtime closure of everything kept (over the
    inventory's runtime dependencies); everything published within the last 7 days.
@@ -516,9 +529,12 @@ X7 build.yml — workflow_dispatch on main with return_run_details: true;
    callback secret, publication credentials or write tokens in the hook environment)
    → upload artifact coreci-<request>-<attempt> (retention-days 90) with sha256
    manifest and inventory → report finished (artifact id, digest, inventory).
- - On failure the job reports finished with status failed. If a run ends without a
-   finished report (e.g. cancelled), core-ci takes the conclusion from the GitHub API
-   after the callback deadline: cancelled/failure → failed with that reason.
+ - On failure the job reports finished with status failed.
+ - Outcome of a completed run (X10 observation), after the callback grace period:
+   with a finished report → that report decides. Without a finished report → failed,
+   retry-eligible, reason "conclusion <conclusion>, no report", for every conclusion
+   (success, failure, cancelled, timed_out, startup_failure, action_required, stale,
+   skipped, neutral). An artifact of a run without report is never used.
  - OpenWrt (normative path): SDK digest and feed revisions from the catalog; register
    the closure's recipes (one per package, at their commit/ci_commit) before feed
    resolution; build in topological order with the repositories' Build/InstallDev
@@ -552,9 +568,11 @@ X8 publish.yml — ONE job; environment publish; the only holder of signing keys
    item failed, with Retry. Confirmed artifact expiry → item re-enrolled for a build.
  - Staging fault input "fault" (none | after_push), honoured only when feed_branch is
    feed-staging: after_push ends the job with failure directly after a successful
-   push, before any callback. core-ci sets it only from its one-shot configuration
-   option "qualification_fault" (consumed by the next publication; refused at startup
-   unless feed_branch is feed-staging). Qualification only.
+   push, before any post-push report (the claim has already happened). core-ci sets it
+   only from the configuration option "qualification_fault" = "after_push:<token>"
+   (refused at startup unless feed_branch is feed-staging). Each token is used at most
+   once: its consumption is committed together with the publication plan that carries
+   it, so a restart never arms it again. Qualification only.
 
 X8b restore.yml — environment publish; manual dispatch only, on the owner's explicit
    instruction (staging: as part of qualification). Inputs feed_branch, snapshot_ref,
@@ -579,8 +597,12 @@ X10 Recovery.
    attempt, owner, expected head, deadline, receipts, acknowledgements); pause.
  - On restart: resume committed but unsent dispatches; reconcile ambiguous dispatches
    via run-name and claim.
- - Separate deadlines: queue (default 2 h), execution (claim + 6 h; upload and report
-   must fit inside GitHub's 6 h job limit), callback (default 15 min after run end).
+ - Run observation: core-ci polls the GitHub API for every known run that is not yet
+   observed as completed (default every 5 min, and at every deadline), independently
+   of callbacks. Runs with unknown run_id are looked up by run-name.
+ - Separate deadlines: queue (default 2 h from dispatch to claim), execution (claim +
+   6 h; upload and report must fit inside GitHub's 6 h job limit), callback grace
+   (default 15 min from the observed completion of the run).
  - Before replacing a known run: check its state; cancel it or wait for its
    termination. Dispatch retries with bounded backoff.
  - Pause stops new builds and publications; reconciliation of existing work goes on.
