@@ -2,6 +2,7 @@
   "schema": 2,
   "package": "core-ci",
   "title": "core-ci",
+  "releases": ">=1.0.0",
   "depends_on": [
     {
       "package": "snodec",
