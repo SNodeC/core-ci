@@ -525,8 +525,11 @@ X6 Namespace, snapshots, retention.
 
 X7 build.yml — workflow_dispatch on main with return_run_details: true;
    run-name "build <request>/<attempt>"; core-ci persists run_id.
-   Inputs: request_id, attempt, request_url, callback_url, feed_branch.
- - Request JSON (GET request_url, public, immutable per attempt):
+   Inputs: request_id, attempt, feed_branch. No URL is ever taken from an input:
+   every core-ci URL is derived from the repository Actions variable CORECI_ORIGIN
+   (trusted configuration, e.g. https://core.vchrist.at:8443); unset → fail closed.
+ - Request JSON (GET <CORECI_ORIGIN>/api/v1/requests/{id}/attempts/{attempt},
+   public, immutable per attempt):
    {"request","attempt",
     "inputs":{"package","repo","commit","ci_commit","version","revision",
               "target":<catalog entry>,"feed_commit",
@@ -563,7 +566,10 @@ X8 publish.yml — ONE job; environment publish; the only holder of signing keys
    "publish <publication>/<attempt>".
  - core-ci persists the immutable publication plan (items, artifact ids, digests,
    retirements, snapshot refs to delete, acknowledged receipts, attempt, expected
-   branch head, deadline) and dispatches with return_run_details.
+   branch head, deadline) and dispatches with return_run_details. Inputs:
+   publication_id, attempt, feed_branch, fault (X8 staging input). The plan is read
+   from <CORECI_ORIGIN>/api/v1/publications/{id}/attempts/{attempt}; no URL from an
+   input (as X7).
  - Publisher: claim (X9) → re-fetch plan → download artifacts directly from their
    runs, verify identity, allowed contents, checksums → quarantine items with
    immutable-conflict or malformed artifacts, publish the valid rest → read runtime
@@ -599,11 +605,23 @@ X8b restore.yml — environment publish; manual dispatch only, on the owner's ex
    expected_head. Sets the feed branch to the commit of snapshot_ref as a leased
    non-fast-forward update against expected_head. No signing, no other change.
 
-X9 Callbacks (existing HMAC wire format), identical for builds and publications:
+X9 Callbacks (existing HMAC wire format, secret CORECI_CALLBACK_SECRET), identical for
+   builds and publications; all URLs derived from CORECI_ORIGIN (X7):
  - Claim POST /api/v1/{requests|publications}/{id}/claim (run_id, run_attempt,
    attempt): the same (id, attempt, run_id, run_attempt) gets 200 idempotently after
    commit. Another owner, a stale attempt or run_attempt > 1 (manual rerun) gets 409;
    the job then ends successfully without work.
+ - Claim response authentication: core-ci signs the 200 response with the same HMAC
+   scheme (X-CoreCI-Timestamp, X-CoreCI-Signature-256 over "<timestamp>.<body>").
+   Body: {"id","attempt","run_id","run_attempt","granted":true,"document_sha256"},
+   where document_sha256 is the sha256 of the exact request JSON (builds) or plan
+   JSON (publications) bytes served for that attempt.
+ - The workflow does work only if: the signature verifies, the timestamp is within
+   5 min, id/attempt/run_id/run_attempt equal its own, and the sha256 of the document
+   it fetched equals document_sha256. Any other outcome (unsigned 200, mismatch,
+   non-200 other than 409, transport error after retries) → fail closed without work.
+   The publisher re-fetches the plan before pushing and checks it against
+   document_sha256 again.
  - Report POST /api/v1/{requests|publications}/{id}/report: started | per item
    (publications only) | finished. finished may arrive before started; duplicates are
    idempotent; terminal states are monotonic; storage unavailable → 503 and the

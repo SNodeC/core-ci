@@ -31,6 +31,9 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
 - Catalog with image/SDK digests and pinned OpenWrt feed revisions.
 - Tests: selectors; request validation; installation from `feed_commit` with
   verification; claim 409 / rerun / idempotent 200 for builds and publications;
+  URLs only from `vars.CORECI_ORIGIN` (unset → fail closed; no URL inputs exist);
+  claim response: valid signature → work; unsigned/forged/expired/mismatching
+  `document_sha256` or ids → no work, job fails closed;
   OpenWrt closure in one SDK; quarantine with partial publication; receipts and
   acknowledgement; atomic push with snapshot refs; `pre-x` protection; the deletion
   list never contains the expected head's snapshot; legacy APT tree carried
@@ -133,7 +136,9 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
 
 ### b) Install (staging)
 
-Merge the PRs (after GATE A if it applies), tag core-ci v1.0.0, build the bootstrap
+Set the repository Actions variable `CORECI_ORIGIN` in SNodeC/Packages to the
+core-ci origin (`gh variable set`; authorized). Merge the PRs (after GATE A if it
+applies), tag core-ci v1.0.0, build the bootstrap
 .deb (trixie container, its own hook), install it, new database,
 `feed_branch = feed-staging`, `github_slots = 20`, start with Pause ON.
 
