@@ -46,7 +46,6 @@ namespace coreci::github {
             std::vector<Repo> sources;
             std::map<std::string, Tag> releases;
             std::map<std::string, CatalogTarget> catalog;
-            std::map<std::string, PackageDetails> details;
             std::map<std::string, std::string> commits;
             std::size_t remaining = 0;
             Pipeline::Builder builder;
@@ -172,7 +171,7 @@ namespace coreci::github {
             void finish() {
                 const auto pipeline = builder.build();
                 auto callback = std::move(done);
-                callback(LoadedDeclarations{pipeline, releases, catalog, details});
+                callback(LoadedDeclarations{pipeline, releases, catalog});
             }
             void packages() {
                 remaining = sources.size();
@@ -248,7 +247,7 @@ namespace coreci::github {
                                           const auto av = *Version::parse(a.tag), bv = *Version::parse(b.tag);
                                           return av == bv ? a.tag < b.tag : av > bv;
                                       });
-                                      self->package(source, std::move(collected), 0);
+                                      self->package(source, std::move(collected));
                                   }
                               } catch (const std::exception& error) {
                                   self->fail(source.owner + "/" + source.repo, "<tags>", error.what());
@@ -256,33 +255,35 @@ namespace coreci::github {
                           }
                       });
             }
-            void package(const Repo& source, std::vector<Tag> candidates, std::size_t index) {
+            void package(const Repo& source, std::vector<Tag> candidates) {
                 const auto self = shared_from_this();
-                const bool bootstrap = index >= candidates.size();
-                const auto read = [self, source, candidates = std::move(candidates), index] {
-                    if (index < candidates.size()) {
-                        self->commits[key(source)] = candidates[index].sha;
-                    }
-                    self->get(source, "ci/packages.json", [self, source, candidates, index](Json value) {
-                        if (!value.at("schema").is_number_integer() || value.at("schema") != 1) {
-                            throw std::invalid_argument("package schema must be 1");
+                head(source, [self, source, candidates] {
+                    self->get(source, "", [self, source, candidates](Json root) {
+                        const auto ci = std::find_if(root.begin(), root.end(), [](const auto& entry) {
+                            return entry.at("name") == "ci" && entry.at("type") == "dir";
+                        });
+                        if (ci == root.end() || !std::regex_match(ci->at("sha").template get<std::string>(), std::regex("[a-f0-9]{40}"))) {
+                            throw std::invalid_argument("missing ci tree");
                         }
-                        {
-                            for (const auto& field : {"deb", "rpm"}) {
-                                const auto path = value.at("build").at(field).get<std::string>();
-                                if (std::holds_alternative<Error>(registryFile(source.owner + "/" + source.repo + ":" + path))) {
-                                    throw std::invalid_argument("invalid build path");
+                        const auto tree = ci->at("sha").get<std::string>();
+                        self->get(source, "ci/packages.json", [self, source, candidates, tree](Json value) {
+                            if (!value.at("schema").is_number_integer() || value.at("schema") != 2) {
+                                throw std::invalid_argument("package schema must be 2");
+                            }
+                            for (const auto& [family, hook] : value.at("build").items()) {
+                                const auto path = hook.get<std::string>();
+                                if ((family != "deb" && family != "rpm" && family != "openwrt") || !path.starts_with("ci/") ||
+                                    std::holds_alternative<Error>(registryFile(source.owner + "/" + source.repo + ":" + path))) {
+                                    throw std::invalid_argument("invalid build hook");
                                 }
                             }
-                            if (value.at("build").contains("openwrt") &&
-                                std::holds_alternative<Error>(registryFile(source.owner + "/" + source.repo + ":" +
-                                                                           value.at("build").at("openwrt").get<std::string>()))) {
-                                throw std::invalid_argument("invalid openwrt build path");
+                            for (const auto& family : {"deb", "rpm", "openwrt"}) {
+                                value.at("build_dependencies").at(family);
                             }
-                            for (const auto& field : {"deb", "rpm", "openwrt"}) {
-                                const auto& dependencies = value.at("build_dependencies").at(field);
-                                if (!dependencies.is_array()) {
-                                    throw std::invalid_argument("build dependencies must be arrays");
+                            for (const auto& [selector, dependencies] : value.at("build_dependencies").items()) {
+                                if (!std::regex_match(selector, std::regex("(deb|rpm|openwrt)(@[A-Za-z0-9._-]+-[A-Za-z0-9._-]+)?")) ||
+                                    !dependencies.is_array()) {
+                                    throw std::invalid_argument("invalid build dependency selector or list");
                                 }
                                 for (const auto& dependency : dependencies) {
                                     if (dependency.get<std::string>().empty()) {
@@ -293,46 +294,45 @@ namespace coreci::github {
                             Package pkg;
                             pkg.name = value.at("package").get<std::string>();
                             pkg.sourceRepo = self->repositories.at(key(source));
-                            self->details[pkg.name] = {value.at("title").get<std::string>(), self->commits.at(key(source))};
-                            const auto& prerequisites = value.at("depends_on");
-                            if (!prerequisites.is_array()) {
+                            pkg.ciCommit = self->commits.at(key(source));
+                            pkg.ciTree = tree;
+                            pkg.title = value.at("title").get<std::string>();
+                            if (!value.at("depends_on").is_array()) {
                                 throw std::invalid_argument("depends_on must be an array");
                             }
-                            for (const auto& q : prerequisites) {
-                                pkg.prerequisites.push_back(q.get<std::string>());
+                            for (const auto& q : value.at("depends_on")) {
+                                const auto name = q.at("package").get<std::string>(), range = q.at("version").get<std::string>();
+                                if (!Version::validRange(range) || !pkg.prerequisites.emplace(name, range).second) {
+                                    throw std::invalid_argument("invalid or duplicate dependency range");
+                                }
                             }
-                            self->details.at(pkg.name).prerequisites = pkg.prerequisites;
                             const auto base = value.value("revision_base", Json(0));
                             if (!base.is_number_integer() || base < 0 || base > 1000000) {
                                 throw std::invalid_argument("revision_base must be an integer in 0–1000000");
                             }
                             pkg.revisionBase = base.get<unsigned>();
-                            const auto& targets = value.at("targets");
-                            if (!targets.is_array()) {
+                            if (!value.at("targets").is_array()) {
                                 throw std::invalid_argument("targets must be an array");
                             }
-                            for (const auto& target : targets) {
+                            for (const auto& target : value.at("targets")) {
                                 const auto id = target.get<std::string>();
                                 if (!self->catalog.contains(id) || !pkg.targets.insert(id).second) {
                                     throw std::invalid_argument("unknown or duplicate target id: " + id);
                                 }
+                                const auto family = self->catalog.at(id).family;
+                                value.at("build").at(family == "ipk" || family == "apk" ? "openwrt" : family).get<std::string>();
                                 self->builder.target({id});
                             }
                             self->builder.package(pkg);
-                            if (index < candidates.size()) {
-                                self->releases.emplace(pkg.name, candidates[index]);
+                            if (!candidates.empty()) {
+                                self->releases.emplace(pkg.name, candidates.front());
                             }
                             if (--self->remaining == 0) {
                                 self->finish();
                             }
-                        }
+                        });
                     });
-                };
-                if (bootstrap) {
-                    head(source, read);
-                } else {
-                    read();
-                }
+                });
             }
         };
     } // namespace

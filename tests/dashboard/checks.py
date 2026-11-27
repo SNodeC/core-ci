@@ -134,6 +134,7 @@ def button_checks(fx):
     fx.started(rid, values)
     fx.unit(values, entry, status='failed')
     fx.finished(rid, values, 'failure')
+    fx.ci_commit, fx.ci_tree = 'e' * 40, 'f' * 40
     code, value = fx.post('/api/retry', dict(package=entry['package'], target=target['id']))
     assert code == 200 and value['result'] == 'accepted'
     retry_id, retry_values = fx.dispatches.get(timeout=10)
@@ -141,6 +142,8 @@ def button_checks(fx):
     retry_entry = next(unit for item in retried['targets'] if item['id'] == target['id']
                        for unit in item['units'] if unit['package'] == entry['package'])
     assert retry_id != rid and int(retry_entry['revision']) == int(entry['revision']) + 1
+    assert retry_entry['commit'] == entry['commit'] and retry_entry['ci_commit'] == 'e' * 40
+    assert fx.plan(values)['targets'][0]['units'][0] == entry
     assert fx.post('/api/retry', {'package': 'unknown', 'target': 'unknown'})[0] == 200
     assert fx.post('/api/reconcile', {})[0] == 200
     fx.release.clear()

@@ -343,8 +343,8 @@ void graph() {
     addition.apply(Tick{105});
     addition.complete();
     Pipeline::Builder more;
-    for (const auto& [id, target] : addition.engine.pipeline().targets()) {
-        more.target(target);
+    for (const auto& id : addition.engine.pipeline().targets()) {
+        more.target(id);
     }
     for (const auto& [name, package] : addition.engine.pipeline().packages()) {
         more.package(package);

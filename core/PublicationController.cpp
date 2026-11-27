@@ -170,9 +170,11 @@ namespace coreci {
                 run.id = "p" + std::to_string(s.sequence) + (feed == std::string("feed") ? "" : "-staging");
                 run.feedBranch = feed;
                 run.workflow = options.workflow;
-                run.dispatchedAt = *s.engineTime;
-                run.deadline = *s.engineTime + options.publicationDeadline;
-                run.startDeadline = *s.engineTime + options.waveStartTimeout;
+                if (!s.dispatchPaused) {
+                    run.dispatchedAt = *s.engineTime;
+                    run.deadline = *s.engineTime + options.publicationDeadline;
+                    run.startDeadline = *s.engineTime + options.waveStartTimeout;
+                }
                 for (auto& [key, target] : s.waveTargets) {
                     const auto& wave = s.waveStates.at(key.first);
                     if (wave.feedBranch == run.feedBranch && wave.runId && target.finished && target.artifactAvailable &&
@@ -207,11 +209,16 @@ namespace coreci {
         for (auto& [id, publication] : s.publicationStates) {
             auto& run = publication.run;
             if (run.phase != WavePhase::Finished) {
-                if (*s.engineTime >= run.deadline) {
+                if (!s.dispatchPaused && run.deadline == 0) {
+                    run.dispatchedAt = *s.engineTime;
+                    run.deadline = *s.engineTime + options.publicationDeadline;
+                    run.startDeadline = *s.engineTime + options.waveStartTimeout;
+                }
+                if (run.deadline != 0 && *s.engineTime >= run.deadline) {
                     run.expired = true;
                     run.conclusion = "timeout";
                     finish(s, publication, options, "publication timeout");
-                } else if (run.phase == WavePhase::Dispatching &&
+                } else if (!s.dispatchPaused && run.phase == WavePhase::Dispatching &&
                            ((run.retryAt && *s.engineTime >= *run.retryAt) || (!run.retryAt && *s.engineTime >= run.startDeadline))) {
                     ++run.attempt;
                     run.dispatchAccepted = false;

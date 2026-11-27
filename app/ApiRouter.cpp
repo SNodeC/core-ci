@@ -79,7 +79,7 @@ namespace coreci::app {
             if (const auto* engine = state.engine()) {
                 res->set("Content-Type", "application/json")
                     .set("Cache-Control", "no-store")
-                    .send(statusJson(statusSnapshot(*engine), engine->stored().sequence));
+                    .send(statusSnapshot(*engine, engine->stored().sequence).dump());
             } else {
                 answer(res, 503, "unavailable");
             }

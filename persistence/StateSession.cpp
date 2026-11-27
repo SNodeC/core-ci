@@ -28,7 +28,15 @@ namespace coreci::persistence {
                             [this, value](StoredState state) {
                                 if (live(value)) {
                                     current = std::make_unique<WaveController>(options, std::move(state));
-                                    ready();
+                                    if (options.dispatchPaused && current->stored().dispatchPaused != *options.dispatchPaused) {
+                                        enqueue(DispatchPaused{current->time().value_or(0), *options.dispatchPaused}, [this](const auto&) {
+                                            if (engine()) {
+                                                ready();
+                                            }
+                                        });
+                                    } else {
+                                        ready();
+                                    }
                                 }
                             },
                             [this, value](const StoreError& failure) {

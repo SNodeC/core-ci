@@ -68,15 +68,19 @@ class Provider(BaseHTTPRequestHandler):
                 data = state.registry
             elif path.endswith('targets.json'):
                 data = state.catalog
+            elif path.endswith('/contents/'):
+                data = [dict(name='ci', type='dir', sha=state.ci_tree)]
             else:
                 repo = path.split('/repos/', 1)[1].split('/contents/', 1)[0]
                 ref = urllib.parse.parse_qs(query.query)['ref'][0]
-                assert ref == 'a' * 40 or ref in state.tags.get(repo, {}).values(), 'declaration not read at a tag commit'
+                assert ref == state.ci_commit, 'declaration not read at default-branch tip'
                 state.contents.append((repo, ref))
-                data = state.sources[repo]
+                data = dict(state.sources[repo], schema=2)
+                data['depends_on'] = [dict(package=item, version='>=0.0.0') if isinstance(item, str) else item
+                                      for item in data['depends_on']]
             self.respond(200, data)
         elif '/commits/' in path:
-            self.respond(200, dict(sha='a' * 40))
+            self.respond(200, dict(sha=state.ci_commit))
         elif path.endswith('/tags'):
             repo = path.removeprefix('/repos/').removesuffix('/tags')
             self.respond(200, [dict(name=tag, commit=dict(sha=sha)) for tag, sha in state.tags.get(repo, {}).items()])
@@ -156,6 +160,8 @@ class Provider(BaseHTTPRequestHandler):
 
 
 class Fixture:
+    ci_commit = 'a' * 40
+    ci_tree = 'd' * 40
     def __init__(self, build, work, small=False, wrong_host=False, parser=(), virtual_clock=False, wave_deadline=120):
         self.build, self.work = Path(build), Path(work)
         self.codes, self.tokens = {}, {}

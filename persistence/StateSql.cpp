@@ -166,10 +166,26 @@ namespace coreci::persistence {
         static const std::vector<Table> tables{
             {"coreci_targets", 1, {{"target", false}}},
             {"coreci_target_builds", 3, {{"wave_id", false}, {"target", false}, {"build_id", false}, {"succeeded", true}}},
-            {"coreci_state", 1, {{"singleton", true}, {"sequence", true}, {"clock", true}, {"quiet_until", true}, {"latest", false}}},
-            {"coreci_packages", 1, {{"package", false}, {"owner", false}, {"repo", false}, {"branch", false}, {"revision_base", true}}},
+            {"coreci_state",
+             1,
+             {{"singleton", true},
+              {"sequence", true},
+              {"clock", true},
+              {"quiet_until", true},
+              {"latest", false},
+              {"dispatch_paused", true}}},
+            {"coreci_packages",
+             1,
+             {{"package", false},
+              {"owner", false},
+              {"repo", false},
+              {"branch", false},
+              {"revision_base", true},
+              {"ci_commit", false},
+              {"ci_tree", false},
+              {"title", false}}},
             {"coreci_memberships", 2, {{"package", false}, {"target", false}}},
-            {"coreci_prerequisites", 2, {{"package", false}, {"prerequisite", false}}},
+            {"coreci_prerequisites", 2, {{"package", false}, {"prerequisite", false}, {"version_range", false}}},
             {"coreci_tags",
              1,
              {{"package", false},
@@ -240,7 +256,9 @@ namespace coreci::persistence {
               {"sha", false},
               {"revision", true},
               {"build_id", false},
-              {"build", true}}},
+              {"build", true},
+              {"ci_commit", false},
+              {"ci_tree", false}}},
             {"coreci_wave_targets",
              2,
              {{"wave_id", false},
@@ -270,17 +288,25 @@ namespace coreci::persistence {
                 add("inputs", context, owner, unit.package, unit.target, name, input.version, input.revision);
             }
         };
-        add("state", 1, s.sequence, s.engineTime, s.quietUntil, s.latest);
-        for (const auto& [id, target] : s.graph.targets()) {
+        add("state", 1, s.sequence, s.engineTime, s.quietUntil, s.latest, s.dispatchPaused);
+        for (const auto& id : s.graph.targets()) {
             add("targets", id);
         }
         for (const auto& [name, package] : s.graph.packages()) {
-            add("packages", name, package.sourceRepo.owner, package.sourceRepo.repo, package.sourceRepo.branch, package.revisionBase);
+            add("packages",
+                name,
+                package.sourceRepo.owner,
+                package.sourceRepo.repo,
+                package.sourceRepo.branch,
+                package.revisionBase,
+                package.ciCommit,
+                package.ciTree,
+                package.title);
             for (const auto& target : package.targets) {
                 add("memberships", name, target);
             }
-            for (const auto& prerequisite : package.prerequisites) {
-                add("prerequisites", name, prerequisite);
+            for (const auto& [prerequisite, range] : package.prerequisites) {
+                add("prerequisites", name, prerequisite, range);
             }
         }
         for (const auto& [name, source] : s.sources) {
@@ -354,7 +380,9 @@ namespace coreci::persistence {
                         entry.release.sourceSha,
                         entry.revision,
                         entry.buildId,
-                        entry.build);
+                        entry.build,
+                        entry.ciCommit,
+                        entry.ciTree);
                     inputs("plan", id, entry.unit, entry.inputs);
                 }
             }
@@ -413,10 +441,19 @@ namespace coreci::persistence {
         s.engineTime = optional<std::int64_t>(m.at(2));
         s.quietUntil = optional<std::int64_t>(m.at(3));
         s.latest = text(m.at(4));
+        s.dispatchPaused = number<unsigned>(m.at(5)) != 0;
         std::map<std::string, Package> packages;
         for (const auto& r : rows.at("coreci_packages")) {
             const auto name = text(r.at(0));
-            packages.emplace(name, Package{name, {text(r.at(1)), text(r.at(2)), text(r.at(3))}, {}, {}, number<unsigned>(r.at(4))});
+            packages.emplace(name,
+                             Package{name,
+                                     {text(r.at(1)), text(r.at(2)), text(r.at(3))},
+                                     {},
+                                     {},
+                                     number<unsigned>(r.at(4)),
+                                     text(r.at(5)),
+                                     text(r.at(6)),
+                                     text(r.at(7))});
         }
         Pipeline::Builder builder;
         for (const auto& r : rows.at("coreci_targets")) {
@@ -426,7 +463,7 @@ namespace coreci::persistence {
             packages.at(text(r.at(0))).targets.insert(text(r.at(1)));
         }
         for (const auto& r : rows.at("coreci_prerequisites")) {
-            packages.at(text(r.at(0))).prerequisites.push_back(text(r.at(1)));
+            packages.at(text(r.at(0))).prerequisites.emplace(text(r.at(1)), text(r.at(2)));
         }
         for (const auto& [name, package] : packages) {
             builder.package(package);
@@ -486,7 +523,9 @@ namespace coreci::persistence {
                                number(r.at(10)),
                                {},
                                text(r.at(11)),
-                               number<unsigned>(r.at(12)) != 0});
+                               number<unsigned>(r.at(12)) != 0,
+                               text(r.at(13)),
+                               text(r.at(14))});
         }
         for (const auto& r : rows.at("coreci_inputs")) {
             const auto context = text(r.at(0)), owner = text(r.at(1));

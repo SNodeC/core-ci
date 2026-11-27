@@ -9,6 +9,13 @@ namespace coreci::app {
         Json nullable(const std::optional<T>& value) {
             return value ? Json(*value) : Json();
         }
+        Json dependencies(const Inputs& inputs) {
+            Json result = Json::array();
+            for (const auto& [name, input] : inputs) {
+                result.push_back({{"package", name}, {"version", input.version.text()}, {"revision", input.revision}});
+            }
+            return result;
+        }
         Json publicationPlan(const Publication& publication, const std::map<std::string, Wave>& waves) {
             Json items = Json::array();
             for (const auto& item : publication.items) {
@@ -34,8 +41,11 @@ namespace coreci::app {
                     {"items", items}};
         }
     } // namespace
-    nlohmann::json statusSnapshot(const WaveController& engine) {
+    nlohmann::json statusSnapshot(const WaveController& engine, std::uint64_t generation) {
         Json value{{"schema", 2},
+                   {"generation", generation},
+                   {"dispatch_paused", engine.stored().dispatchPaused},
+                   {"totals", Json::object()},
                    {"packages", Json::array()},
                    {"units", Json::array()},
                    {"wave", nullptr},
@@ -46,6 +56,8 @@ namespace coreci::app {
             const auto& release = engine.releases().at(name);
             value["packages"].push_back(
                 {{"name", name},
+                 {"title", package.title},
+                 {"commit", package.ciCommit},
                  {"sourceRepo", {{"owner", repo.owner}, {"repo", repo.repo}, {"branch", repo.branch}}},
                  {"released",
                   release ? Json{{"tag", release->tag}, {"version", release->version.text()}, {"commit", release->sourceSha}} : Json()}});
@@ -63,14 +75,27 @@ namespace coreci::app {
                                  {"runId", nullable(p.runId)}};
                     selection = {{"version", p.version.text()}, {"revision", p.revision}};
                 }
+                if (state.state == State::Blocked && release && state.failure) {
+                    selection = {{"version", release->version.text()},
+                                 {"revision", 0},
+                                 {"commit", release->sourceSha},
+                                 {"ci_commit", package.ciCommit},
+                                 {"dependencies", dependencies(state.failure->inputs)}};
+                }
                 if (state.failure) {
                     const auto& f = *state.failure;
                     failure = {{"version", f.version.text()}, {"revision", f.revision}, {"at", f.at}, {"reason", f.reason}};
                 }
                 if (const auto* entry = engine.selection(key)) {
-                    selection = {{"version", entry->release.version.text()}, {"revision", entry->revision}};
+                    selection = {{"version", entry->release.version.text()},
+                                 {"revision", entry->revision},
+                                 {"commit", entry->release.sourceSha},
+                                 {"ci_commit", entry->ciCommit},
+                                 {"dependencies", dependencies(entry->inputs)}};
                     build = entry->buildId;
                 }
+                const auto status = stateName(state.state);
+                value["totals"][status] = value["totals"].value(status, 0U) + 1;
                 value["units"].push_back({{"package", name},
                                           {"target", target},
                                           {"status", stateName(state.state)},
@@ -115,10 +140,6 @@ namespace coreci::app {
         }
         return value;
     }
-    std::string statusJson(nlohmann::json snapshot, std::uint64_t generation) {
-        snapshot["generation"] = generation;
-        return snapshot.dump();
-    }
     std::string planJson(const Wave& wave) {
         Json targets = Json::array();
         for (const auto& [target, entries] : wave.plan) {
@@ -128,6 +149,8 @@ namespace coreci::app {
                                  {"repo", entry.repo.owner + "/" + entry.repo.repo},
                                  {"tag", entry.release.tag},
                                  {"commit", entry.release.sourceSha},
+                                 {"ci_commit", entry.ciCommit},
+                                 {"dependencies", dependencies(entry.inputs)},
                                  {"version", entry.release.version.text()},
                                  {"revision", entry.revision},
                                  {"build_id", entry.buildId},

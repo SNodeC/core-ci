@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS coreci_state (
   clock BIGINT NULL,
   quiet_until BIGINT NULL,
   latest VARCHAR(64) NULL,
+  dispatch_paused INT NOT NULL,
   PRIMARY KEY (singleton)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
@@ -15,6 +16,9 @@ CREATE TABLE IF NOT EXISTS coreci_packages (
   repo VARCHAR(100) NULL,
   branch VARCHAR(255) NULL,
   revision_base INT UNSIGNED NULL,
+  ci_commit CHAR(40) NOT NULL,
+  ci_tree CHAR(40) NOT NULL,
+  title TEXT NOT NULL,
   PRIMARY KEY (package)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
@@ -39,6 +43,7 @@ CREATE TABLE IF NOT EXISTS coreci_memberships (
 CREATE TABLE IF NOT EXISTS coreci_prerequisites (
   package VARCHAR(64) NOT NULL,
   prerequisite VARCHAR(64) NOT NULL,
+  version_range VARCHAR(255) NOT NULL,
   PRIMARY KEY (package, prerequisite)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
@@ -151,6 +156,8 @@ CREATE TABLE IF NOT EXISTS coreci_plan (
   revision BIGINT UNSIGNED NULL,
   build_id VARCHAR(255) NULL,
   build INT NULL,
+  ci_commit CHAR(40) NOT NULL,
+  ci_tree CHAR(40) NOT NULL,
   PRIMARY KEY (wave_id, target, position)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 

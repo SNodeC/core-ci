@@ -1,34 +1,16 @@
 #include "Badge.h"
 
-#include "Status.h"
-
 #include <algorithm>
+#include <string_view>
 
 namespace coreci {
     namespace {
         std::string xml(const std::string& text) {
             std::string result;
+            static const std::string_view entities[] = {"&amp;", "&lt;", "&gt;", "&quot;", "&apos;"};
             for (const char c : text) {
-                switch (c) {
-                    case '&':
-                        result += "&amp;";
-                        break;
-                    case '<':
-                        result += "&lt;";
-                        break;
-                    case '>':
-                        result += "&gt;";
-                        break;
-                    case '"':
-                        result += "&quot;";
-                        break;
-                    case '\'':
-                        result += "&apos;";
-                        break;
-                    default:
-                        result += c;
-                        break;
-                }
+                const auto at = std::string_view("&<>\"'").find(c);
+                result += at == std::string_view::npos ? std::string(1, c) : std::string(entities[at]);
             }
             return result;
         }
@@ -52,21 +34,20 @@ namespace coreci {
                "\" y=\"14\">" + xml(message) + "</text></g></svg>";
     }
     std::string unitBadge(const WaveController& engine, const Unit& unit) {
-        const auto states = statuses(engine);
         std::string message = "unknown", colour = "#6e7781";
-        if (states.contains(unit)) {
-            const auto& status = states.at(unit);
+        if (engine.pipeline().packages().contains(unit.package) &&
+            engine.pipeline().packages().at(unit.package).targets.contains(unit.target)) {
             const auto& state = engine.units().at(unit);
             if (!engine.releases().at(unit.package)) {
                 message = "no release";
-            } else if (status == "Published") {
+            } else if (state.state == State::Published) {
                 message = state.published->version.text() + "-" + std::to_string(state.published->revision);
                 colour = "#2ea44f";
-            } else if (status.starts_with("Blocked")) {
+            } else if (state.state == State::Blocked) {
                 message = "blocked";
                 colour = "#bf8700";
             } else {
-                const bool failed = status.starts_with("Failed");
+                const bool failed = state.state == State::Failed;
                 message = std::string(failed ? "failed " : "building ") + engine.releases().at(unit.package)->version.text();
                 colour = failed ? "#cf222e" : "#0969da";
             }

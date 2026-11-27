@@ -165,7 +165,7 @@ def run(build):
         assert len(builds) == 1 and builds[0]['package'] == 'e' and builds[0]['revision'] == 2
         assert all(unit['action'] == 'reuse' for unit in rebuilt_plan['targets'][0]['units'] if unit['package'] != 'e')
         fx.complete(rebuilt_id, rebuilt)
-        # A source default-branch change has no effect on the loaded tag-bound graph.
+        # Source default-branch pushes alone do not trigger reconciliation.
         before = len(fx.contents)
         assert push('owner/e') == 202
         time.sleep(.2)
@@ -181,11 +181,11 @@ def run(build):
         added_id, added = fx.dispatches.get(timeout=12)
         assert state('f', 't1')['selection']['revision'] == 1
         assert all(u['package'] != 'e' for u in json.loads(fx.request('/api/v1/status.json', browser=False).read())['units'])
-        assert any(ref == 'b' * 40 for _, ref in fx.contents)
+        assert fx.contents and all(ref == fx.ci_commit for _, ref in fx.contents)
         assert all('/actions/runs' not in path for path in fx.api_requests)
         fx.complete(added_id, added)
         before = fx.request('/api/v1/status.json', browser=False).read()
-        # Missing/older tags must never pair bootstrap/older declarations with retained releases.
+        # Missing/older tags must not replace retained releases during declaration reload.
         saved = fx.tags['owner/f']
         for tags in ({}, {'v0.9.0': 'b' * 40}, {'1.0.0': 'b' * 40}, {'v1.0.0': 'c' * 40}):
             fx.tags['owner/f'] = tags

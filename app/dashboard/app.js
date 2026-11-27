@@ -1,7 +1,7 @@
 'use strict';
 const element = id => document.getElementById(id);
 let graph = {repositories: {}, executions: {}, ready: false};
-let selected = null, events = null, busy = false, renderPending = false;
+let events = null, busy = false, renderPending = false;
 const expanded = new Set();
 
 function node(tag, text = '', className = '') {
@@ -26,12 +26,6 @@ function feedback(value, failed = false) {
 }
 async function api(operation, body) {
     let result;
-    if (operation === 'retry' || operation === 'rebuild') {
-        const work = graph.executions[body.execution];
-        body = {package: work.source.package, target: work.target.id};
-    } else if (operation === 'reload' || operation === 'reconcile') {
-        body = {};
-    }
     try {
         const response = await fetch(`/api/${operation}`, {
             method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -110,6 +104,11 @@ function renderExecution(work, panel) {
     const columns = node('div', '', 'detail-grid'), facts = node('div'), values = node('dl'), timings = node('table', '', 'timings');
     values.append(node('dt', 'Activity'), node('dd', ['published', 'failed'].includes(active.state) ? active.state : activity));
     values.append(node('dt', 'Attempt'), node('dd', active.id));
+    for (const [label, value] of [['Source commit', work.source.commit], ['CI commit', work.source.ciCommit]]) {
+        values.append(node('dt', label), node('dd', value || 'Not recorded'));
+    }
+    values.append(node('dt', 'Dependency versions'), node('dd', work.dependencies.map(item =>
+        `${item.package} ${item.version}-${item.revision}`).join(', ') || 'None'));
     if (work.feedCommit) {
         values.append(node('dt', 'Feed commit'), node('dd', work.feedCommit));
     }
@@ -165,7 +164,7 @@ function renderExecution(work, panel) {
     ]) {
         if (enabled) {
             const control = button(label, () => operation(async () => {
-                const body = {execution: work.id};
+                const body = {package: work.source.package, target: work.target.id};
                 feedback(await api(name, body));
             }));
             control.dataset.operation = name;
@@ -179,17 +178,14 @@ function renderExecution(work, panel) {
 
 }
 function renderWork() {
-    const query = element('search').value.toLowerCase(), filter = element('state-filter').value, levels = new Map();
+    const query = element('search').value.toLowerCase(), filter = element('state-filter').value;
     const items = Object.values(graph.executions).sort((a, b) => a.index - b.index);
-    for (const work of items) {
-        levels.set(work.id, 1 + Math.max(-1, ...work.prerequisites.map(id => levels.get(id))));
-    }
     const visible = items.filter(work => {
         const active = work.active, target = work.target;
         const matches = filter === 'all' || (filter === 'active' && active.state !== 'published') || active.state === filter;
         return matches && [work.source.repository, work.source.tag, target.distribution, target.suite, target.arch, target.build.format]
             .join(' ').toLowerCase().includes(query);
-    }).reverse().sort((a, b) => levels.get(b.id) - levels.get(a.id) || b.order - a.order);
+    }).reverse().sort((a, b) => b.level - a.level || b.order - a.order);
     element('graph').replaceChildren();
     for (const work of visible) {
         const {active, target} = work;
@@ -240,8 +236,9 @@ function renderWork() {
     const panel = element('wave-panel'), wave = graph.wave;
     panel.replaceChildren();
     if (wave) {
-        panel.append(node('h2', 'Wave ' + wave.id + ' · ' + wave.phase), link('GitHub wave run', wave.html_url),
-            node('p', Object.entries(wave.counts).map(([state, count]) => count + ' ' + state).join(' · ')));
+        panel.append(node('h2', 'Wave ' + wave.id + ' · ' + wave.phase + (graph.dispatchPaused ? ' · Dispatch paused' : '')), link('GitHub wave run', wave.html_url),
+            node('p', 'Overall totals: ' + Object.entries(graph.totals).map(([state, count]) => count + ' ' + state).join(' · ')),
+            node('p', 'Latest wave/retry: ' + Object.entries(wave.counts).map(([state, count]) => count + ' ' + state).join(' · ')));
         const timing = node('p');
         timing.append(node('span', 'Started: '), timestamp(wave.started == null ? null : new Date(wave.started * 1000).toISOString()),
             node('span', ' · Finished: '), timestamp(wave.finished == null ? null : new Date(wave.finished * 1000).toISOString()));
@@ -259,33 +256,21 @@ function renderWork() {
         }
         publicationPanel.append(items);
     }
+    element('dispatch-paused').textContent = graph.dispatchPaused ? 'Resume dispatch' : 'Pause dispatch';
+    element('dispatch-paused').setAttribute('aria-pressed', String(graph.dispatchPaused));
     element('visible-count').textContent = `${visible.length} of ${items.length} executions`;
     element('counts').textContent = ['planned', 'building', 'built', 'publishing', 'blocked', 'failed', 'published'].map(value =>
         `${items.filter(work => work.active.state === value).length} ${value === 'building' ? 'build phase' : value}`).join(' · ');
 }
-function selectRepository(name = null, entry = graph.repositories[name]) {
-    selected = name;
-    element('repository').value = name || '';
-    element('branch').value = entry?.ref || '';
-    element('tag').value = '';
-    renderRepositories();
-}
 function renderRepositories() {
-    const entry = graph.repositories[selected];
-    element('definition').value = entry ? JSON.stringify(entry.definition, null, 2) : '';
-    element('revision').textContent = entry ? `Committed configuration: ${entry.ref} · ${entry.commit.slice(0, 12)}`
-        : selected ? 'Awaiting committed definition' : 'No committed revision selected';
     const names = Object.keys(graph.repositories), owners = new Set(names.map(name => name.split('/')[0]));
     element('owner').textContent = owners.size === 1 ? [...owners][0] : 'Local administration';
     element('repositories').replaceChildren();
     for (const name of names) {
-        const control = button(graph.repositories[name].title, () => selectRepository(name));
-        control.append(node('span', name, 'secondary'));
-        control.setAttribute('aria-pressed', String(name === selected));
-        control.disabled = busy;
-        element('repositories').append(control);
+        const entry = graph.repositories[name], item = node('p', entry.title);
+        item.append(node('span', `${name} · ${entry.ref} · ${entry.commit}`, 'secondary'));
+        element('repositories').append(item);
     }
-    element('request-build').disabled = busy || !graph.repositories[selected];
 }
 function mapModel(model) {
     const packages = new Map(model.packages.map(item => [item.name, item]));
@@ -303,25 +288,25 @@ function mapModel(model) {
         const source = item.sourceRepo, repository = source.owner + '/' + source.repo;
         repositories[repository] = {title: item.title, ref: source.branch, commit: item.commit};
     }
-    const states = {Idle: 'idle', Planned: 'planned', Building: 'building', Built: 'built',
-        Publishing: 'publishing', Published: 'published', Failed: 'failed', Blocked: 'blocked'};
     const time = value => value == null ? undefined : new Date(value * 1000).toISOString();
     const run = value => value ? {...value, start: time(value.start), end: time(value.end)} : undefined;
     for (const [index, unit] of units.entries()) {
         const item = packages.get(unit.package), chosen = current(unit), id = identity(unit);
         const tag = unit.tag || (item.released?.version === chosen.version ? item.released.tag : chosen.version);
         const buildId = unit.buildId;
-        executions[id] = {id, index, order: unit.order, feedCommit: unit.published?.feedCommit,
-            source: {package: unit.package, repository: item.sourceRepo.owner + '/' + item.sourceRepo.repo, tag},
+        executions[id] = {id, index, level: depth(unit), order: unit.order, feedCommit: unit.published?.feedCommit,
+            dependencies: chosen.dependencies || [],
+            source: {commit: chosen.commit, ciCommit: chosen.ci_commit, package: unit.package, repository: item.sourceRepo.owner + '/' + item.sourceRepo.repo, tag},
             target: {id: unit.target, distribution: unit.distribution, suite: unit.suite, arch: unit.arch, build: {format: unit.format}},
-            active: {id: buildId, revision: chosen.revision, state: states[unit.status],
+            active: {id: buildId, revision: chosen.revision, state: unit.status.toLowerCase(),
                 assigned: unit.assigned,
-                ...(unit.status === 'Failed' ? {failure: unit.failure?.reason} : {})},
+                ...(['Failed', 'Blocked'].includes(unit.status) ? {failure: unit.failure?.reason} : {})},
             recorded: {end: time(unit.publishedAt), state: unit.published ? 'succeeded' : 'pending'},
             prerequisites: unit.prerequisites.map(name => byUnit.get(name + '~' + unit.target)).filter(Boolean).map(identity),
             build: run(unit.build), publish: run(unit.publish)};
     }
-    return {ready: model.ready, repositories, executions, wave: model.wave, publication: model.publication};
+    return {ready: model.ready, repositories, executions, wave: model.wave, publication: model.publication,
+        dispatchPaused: model.dispatch_paused, totals: model.totals};
 }
 function connect() {
     if (events) {
@@ -364,17 +349,7 @@ element('state-filter').addEventListener('change', renderWork);
 element('reload').addEventListener('click', () => operation(async () => {
     feedback(await api('reload', {}));
 }));
-element('enroll').addEventListener('click', () => selectRepository());
-element('editor').addEventListener('submit', event => {
-    event.preventDefault();
-    operation(async () => {
-        const name = element('repository').value.trim(), ref = element('branch').value.trim();
-        feedback(await api(graph.repositories[name] ? 'reload' : 'enroll', {repository: name, ref}));
-        selected = name;
-    });
-});
-element('request-build').addEventListener('click', () => operation(async () => {
-    feedback(await api('request', {repository: element('repository').value.trim(), tag: element('tag').value.trim()}));
+element('dispatch-paused').addEventListener('click', () => operation(async () => {
+    feedback(await api('dispatch-paused', {paused: !graph.dispatchPaused}));
 }));
-selectRepository();
 connect();

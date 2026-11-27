@@ -15,7 +15,7 @@ from fixture import Fixture
 
 
 def run(build, mode):
-    with database(build) as (proxy, cli, environment, server_work), patch.dict(os.environ, environment):
+    with database() as (proxy, cli, environment, server_work), patch.dict(os.environ, environment):
         work = server_work / 'controller'
         work.mkdir()
         fx = Fixture(build, work, small=True, virtual_clock=mode == 'restart-dispatch', wave_deadline=2000)
@@ -28,6 +28,8 @@ def run(build, mode):
             return json.loads(response.read()) if response.status == 200 else False
         try:
             fx.ready()
+            assert sql("SELECT singleton,dispatch_paused FROM coreci_state") == "1\t0", \
+                "fresh stores must contain one unpaused controller state"
             if mode == 'restart-dispatch':
                 assert fx.webhook('owner/a') == 200
                 original, values = fx.dispatches.get(timeout=10)

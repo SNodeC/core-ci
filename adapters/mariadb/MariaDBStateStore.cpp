@@ -91,11 +91,12 @@ namespace coreci::mariadb {
                         "SELECT COUNT(*),MIN(version) FROM coreci_schema",
                         [this, valid, done](const MYSQL_ROW version) {
                             if (version) {
-                                *valid = version[0] && version[1] && std::string(version[0]) == "1" && std::string(version[1]) == "7";
+                                *valid = version[0] && version[1] && std::string(version[0]) == "1" && std::string(version[1]) == "8";
                             } else if (*valid) {
                                 done();
                             } else {
-                                fail({StoreError::Kind::Corrupt, "state schema 7 required; run coreci-migrate on an event-store database"});
+                                fail({StoreError::Kind::Corrupt,
+                                      "state schema 8 required; offline migration: coreci-migrate (5/6) or state-7-to-8.sql"});
                             }
                         },
                         [this](const auto& message, auto) {
@@ -103,8 +104,9 @@ namespace coreci::mariadb {
                         });
                 } else {
                     createSchema(0, [this, done] {
-                        execute("INSERT INTO coreci_schema (version) VALUES (7)", [this, done] {
-                            execute("INSERT INTO coreci_state (singleton,sequence,clock,quiet_until,latest) VALUES (1,0,NULL,NULL," +
+                        execute("INSERT INTO coreci_schema (version) VALUES (8)", [this, done] {
+                            execute("INSERT INTO coreci_state (singleton,sequence,clock,quiet_until,dispatch_paused,latest) VALUES "
+                                    "(1,0,NULL,NULL,0," +
                                         persistence::sqlText("") + ")",
                                     done);
                         });

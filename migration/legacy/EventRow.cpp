@@ -107,7 +107,7 @@ namespace coreci::legacy::persistence {
                             for (const auto& target : pkg.targets) {
                                 row.graph->targets.push_back({name, target});
                             }
-                            for (const auto& q : pkg.prerequisites) {
+                            for (const auto& [q, range] : pkg.prerequisites) {
                                 row.graph->prerequisites.push_back({name, q});
                             }
                         }
@@ -339,10 +339,10 @@ namespace coreci::legacy::persistence {
                         throw std::invalid_argument("unknown graph package");
                     }
                     auto& prerequisites = packages.at(q.package).prerequisites;
-                    if (std::find(prerequisites.begin(), prerequisites.end(), q.prerequisite) != prerequisites.end()) {
+                    if (prerequisites.contains(q.prerequisite)) {
                         throw std::invalid_argument("duplicate graph prerequisite");
                     }
-                    prerequisites.push_back(q.prerequisite);
+                    prerequisites.emplace(q.prerequisite, ">=0.0.0");
                 }
                 for (const auto& [name, pkg] : packages) {
                     builder.package(pkg);

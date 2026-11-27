@@ -1,7 +1,6 @@
 #include "Graph.h"
 
 #include <algorithm>
-#include <functional>
 #include <stdexcept>
 
 namespace coreci {
@@ -66,23 +65,19 @@ namespace coreci {
             throw std::invalid_argument("invalid repository: " + repo);
         }
     }
-    Pipeline::Builder& Pipeline::Builder::target(Target value) {
-        targetList.push_back(std::move(value));
+    Pipeline::Builder& Pipeline::Builder::target(std::string value) {
+        targetList.insert(std::move(value));
         return *this;
     }
     Pipeline::Builder& Pipeline::Builder::package(Package value) {
-        std::sort(value.prerequisites.begin(), value.prerequisites.end());
-        if (std::adjacent_find(value.prerequisites.begin(), value.prerequisites.end()) != value.prerequisites.end()) {
-            throw std::invalid_argument("duplicate prerequisite: " + value.name);
-        }
         packageList.push_back(std::move(value));
         return *this;
     }
     Pipeline Pipeline::Builder::build() const {
         Pipeline p;
         for (const auto& t : targetList) {
-            validateIdentifier(t.id, "target");
-            p.targetMap.emplace(t.id, t);
+            validateIdentifier(t, "target");
+            p.targetMap.insert(t);
         }
         for (const auto& pkg : packageList) {
             validateIdentifier(pkg.name, "package");
@@ -94,13 +89,14 @@ namespace coreci {
                 throw std::invalid_argument("duplicate package: " + pkg.name);
             }
         }
+        std::map<std::string, std::string> owners;
         for (const auto& [name, pkg] : p.packageMap) {
             for (const auto& target : pkg.targets) {
                 if (!p.targetMap.contains(target)) {
                     throw std::invalid_argument("unknown target: " + target + " for package " + name);
                 }
             }
-            for (const auto& q : pkg.prerequisites) {
+            for (const auto& [q, range] : pkg.prerequisites) {
                 if (!p.packageMap.contains(q)) {
                     throw std::invalid_argument("unknown package: " + q + " required by " + name);
                 }
@@ -110,64 +106,49 @@ namespace coreci {
                     }
                 }
             }
-            for (const auto& [other, q] : p.packageMap) {
-                if (name < other && repoKey(pkg.sourceRepo.owner) == repoKey(q.sourceRepo.owner) &&
-                    repoKey(pkg.sourceRepo.repo) == repoKey(q.sourceRepo.repo)) {
-                    throw std::invalid_argument("duplicate sourceRepo: " + name + " and " + other);
-                }
+            const auto [owner, unique] = owners.emplace(repoKey(pkg.sourceRepo.owner + "/" + pkg.sourceRepo.repo), name);
+            if (!unique) {
+                throw std::invalid_argument("duplicate sourceRepo: " + owner->second + " and " + name);
             }
         }
-        std::map<std::string, int> marks;
-        std::vector<std::string> path;
-        std::function<void(const std::string&)> visit = [&](const std::string& name) {
-            if (marks[name] == 1) {
+        std::set<std::string> remaining;
+        for (const auto& [name, pkg] : p.packageMap) {
+            remaining.insert(name);
+        }
+        while (!remaining.empty()) {
+            const auto next = std::find_if(remaining.begin(), remaining.end(), [&](const auto& name) {
+                const auto& prerequisites = p.prerequisites(name);
+                return std::none_of(prerequisites.begin(), prerequisites.end(), [&](const auto& q) {
+                    return remaining.contains(q.first);
+                });
+            });
+            if (next == remaining.end()) {
+                std::vector<std::string> path;
+                auto name = *remaining.begin();
+                while (std::find(path.begin(), path.end(), name) == path.end()) {
+                    path.push_back(name);
+                    const auto& prerequisites = p.prerequisites(name);
+                    name = std::find_if(prerequisites.begin(), prerequisites.end(), [&](const auto& q) {
+                               return remaining.contains(q.first);
+                           })->first;
+                }
                 std::string cycle = "cycle: ";
                 for (auto it = std::find(path.begin(), path.end(), name); it != path.end(); ++it) {
                     cycle += *it + " -> ";
                 }
                 throw std::invalid_argument(cycle + name);
-            } else if (marks[name] == 0) {
-                marks[name] = 1;
-                path.push_back(name);
-                auto prerequisites = p.prerequisites(name);
-                std::sort(prerequisites.begin(), prerequisites.end());
-                for (const auto& q : prerequisites) {
-                    visit(q);
-                }
-                path.pop_back();
-                marks[name] = 2;
             }
-        };
-        for (const auto& [name, pkg] : p.packageMap) {
-            visit(name);
+            for (const auto& target : p.packageMap.at(*next).targets) {
+                p.orders[target].push_back(*next);
+            }
+            remaining.erase(next);
         }
         std::erase_if(p.targetMap, [&](const auto& entry) {
-            return std::none_of(p.packageMap.begin(), p.packageMap.end(), [&](const auto& pkg) {
-                return pkg.second.targets.contains(entry.first);
-            });
+            return !p.orders.contains(entry);
         });
-        for (const auto& [target, definition] : p.targetMap) {
-            std::set<std::string> remaining;
-            for (const auto& [name, pkg] : p.packageMap) {
-                if (pkg.targets.contains(target)) {
-                    remaining.insert(name);
-                }
-            }
-            auto& order = p.orders[target];
-            while (!remaining.empty()) {
-                auto next = std::find_if(remaining.begin(), remaining.end(), [&](const auto& name) {
-                    const auto& prerequisites = p.prerequisites(name);
-                    return std::none_of(prerequisites.begin(), prerequisites.end(), [&](const auto& q) {
-                        return remaining.contains(q);
-                    });
-                });
-                order.push_back(*next);
-                remaining.erase(next);
-            }
-        }
         return p;
     }
-    const std::map<std::string, Target>& Pipeline::targets() const {
+    const std::set<std::string>& Pipeline::targets() const {
         return targetMap;
     }
     const std::map<std::string, Package>& Pipeline::packages() const {
@@ -176,16 +157,12 @@ namespace coreci {
     const std::vector<std::string>& Pipeline::topologicalOrder(const std::string& target) const {
         return orders.at(target);
     }
-    const std::vector<std::string>& Pipeline::prerequisites(const std::string& package) const {
+    const std::map<std::string, std::string>& Pipeline::prerequisites(const std::string& package) const {
         return packageMap.at(package).prerequisites;
     }
-    std::vector<std::string> Pipeline::packagesForRepo(const std::string& owner, const std::string& repo) const {
-        std::vector<std::string> result;
-        for (const auto& [name, pkg] : packageMap) {
-            if (repoKey(pkg.sourceRepo.owner) == repoKey(owner) && repoKey(pkg.sourceRepo.repo) == repoKey(repo)) {
-                result.push_back(name);
-            }
-        }
-        return result;
+    bool Pipeline::containsRepository(const std::string& owner, const std::string& repo) const {
+        return std::any_of(packageMap.begin(), packageMap.end(), [&](const auto& entry) {
+            return repoKey(entry.second.sourceRepo.owner) == repoKey(owner) && repoKey(entry.second.sourceRepo.repo) == repoKey(repo);
+        });
     }
 } // namespace coreci

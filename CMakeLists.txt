@@ -14,7 +14,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(nlohmann_json REQUIRED)
 add_library(
     coreci_core core/Version.cpp core/Graph.cpp core/WaveController.cpp
-                core/PublicationController.cpp core/Status.cpp core/Badge.cpp
+                core/PublicationController.cpp core/Badge.cpp
 )
 target_include_directories(coreci_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(coreci_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
@@ -50,6 +50,9 @@ foreach(scenario S06_Tags S09_Validation S12_WriteAhead)
 endforeach()
 set_tests_properties(S06_Tags S09_Validation PROPERTIES LABELS core)
 set_tests_properties(S12_WriteAhead PROPERTIES LABELS persistence)
+add_executable(W_Agnostic tests/W_Agnostic.cpp)
+target_link_libraries(W_Agnostic PRIVATE coreci_test)
+add_test(NAME W_Agnostic COMMAND W_Agnostic)
 add_executable(W_State tests/W_State.cpp)
 target_link_libraries(W_State PRIVATE coreci_test)
 foreach(scenario early failures outcomes deadlines dispatch randomized)
@@ -183,7 +186,7 @@ if(CORECI_WITH_SNODEC)
                   app/dashboard/app.js
             DESTINATION ${CMAKE_INSTALL_DATADIR}/core-ci/dashboard
     )
-    install(FILES adapters/mariadb/Schema.sql
+    install(FILES adapters/mariadb/Schema.sql migration/state-7-to-8.sql
             DESTINATION ${CMAKE_INSTALL_DATADIR}/core-ci
     )
     add_executable(coreci-interrupt-store tests/InterruptStore.cpp)
@@ -318,6 +321,26 @@ if(CORECI_WITH_SNODEC)
                    ENVIRONMENT
                    "PYTHONDONTWRITEBYTECODE=1"
     )
+    foreach(mode agnostic state_migration)
+        add_test(
+            NAME I_${mode}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/${mode}.py
+                ${CMAKE_BINARY_DIR}
+        )
+        set_tests_properties(
+            I_${mode}
+            PROPERTIES LABELS
+                       "integration;mariadb"
+                       RUN_SERIAL
+                       TRUE
+                       TIMEOUT
+                       60
+                       ENVIRONMENT
+                       "PYTHONDONTWRITEBYTECODE=1"
+        )
+    endforeach()
     foreach(scenario A_MariaDBRows M_MariaDBIntegration)
         add_executable(${scenario} tests/${scenario}.cpp)
         target_link_libraries(${scenario} PRIVATE coreci_mariadb coreci_test)

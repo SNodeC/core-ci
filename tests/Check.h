@@ -1,5 +1,15 @@
 #pragma once
 #include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+inline std::map<std::string, std::string> requirements(const std::vector<std::string>& names) {
+    std::map<std::string, std::string> result;
+    for (const auto& name : names) {
+        result.emplace(name, ">=0.0.0");
+    }
+    return result;
+}
 inline int checkFailures = 0;
 inline bool check(bool condition, const char* expression, const char* file, int line) {
     if (!condition) {

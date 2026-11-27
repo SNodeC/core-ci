@@ -157,7 +157,7 @@ namespace coreci::legacy {
     }
     Plan Engine::plan() const {
         Plan result;
-        for (const auto& [target, definition] : graph.targets()) {
+        for (const auto& target : graph.targets()) {
             std::map<std::string, PlanUnit> selected;
             std::vector<PlanUnit> entries;
             bool builds = false;
@@ -168,7 +168,7 @@ namespace coreci::legacy {
                 const auto& state = unitStates.at(unit);
                 bool available = release.has_value(), cascade = false;
                 Inputs inputs;
-                for (const auto& prerequisite : pkg.prerequisites) {
+                for (const auto& [prerequisite, range] : pkg.prerequisites) {
                     const auto q = selected.find(prerequisite);
                     available = available && q != selected.end();
                     if (q != selected.end()) {
@@ -205,7 +205,7 @@ namespace coreci::legacy {
                 auto& state = unitStates.at({name, unit.target});
                 const auto& prerequisites = graph.prerequisites(name);
                 if (state.state == State::Blocked && std::any_of(prerequisites.begin(), prerequisites.end(), [&](const auto& q) {
-                        return requested.contains(q);
+                        return requested.contains(q.first);
                     })) {
                     state.requested = true;
                     requested.insert(name);

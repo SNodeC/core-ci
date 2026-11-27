@@ -20,7 +20,26 @@ Prepare a migration-only SNode.C file containing [coreci] database options (incl
 
 Run coreci-migrate --config-file /path/to/migration.conf coreci once. It acquires the same database writer lock, converts schema 5 or 6 using the former replay semantics, installs typed state transactionally, preserves display history and atomically renames the six source tables to legacy_*. Success prints “migration complete” and returns zero. Already migrated databases are refused. Keep the backup and legacy tables until the owner has verified the converted state.
 
-If interrupted, inspect coreci_schema before retrying: version 5/6 means the source tables still own the database and the tool can safely replace incomplete staged state; version 7 means the atomic rename completed and migration must not be repeated. No source history is discarded. The daemon refuses an unmigrated database and never loads legacy tables or display history. A fresh empty database initializes directly as schema 7.
+If interrupted, inspect coreci_schema before retrying: version 5/6 means the source tables still own the database and the tool can safely replace incomplete staged state; version 8 means the atomic rename completed and migration must not be repeated. No source history is discarded. The daemon refuses an unmigrated database and never loads legacy tables or display history. A fresh empty database initializes directly as schema 8.
+
+For a schema-7 state database, run the installed `state-7-to-8.sql` through the
+MariaDB client once, after backup and stopping the daemon. It acquires the same
+writer lock and atomically replaces the five affected tables, retaining their
+originals as `schema7_coreci_*`. All revisions, dependency inputs and source commits
+remain intact. Imported CI commits equal the historical source commit; their unknown
+CI tree hashes are empty and reconcile will select the current repository CI tree.
+Dispatch defaults to paused in this conversion. Keep the backup and retained tables
+until the state has been verified. The script refuses repeat conversion. On an
+interruption, inspect `coreci_schema` and the staged/retained tables: schema 8 means
+the rename completed and must not be repeated; schema 7 means staged `coreci_v8_*`
+tables may need inspection and removal before another attempt. Never use client
+`--force`, which could continue after a failed migration guard.
+
+Set `[coreci] dispatch-paused=true` before restarting for the coordinated rollout.
+Reconcile displays a pending frozen plan without dispatching any wave or publication.
+The authenticated dashboard Pause/Resume control persists this setting. Once the
+startup override is omitted, restart preserves the last dashboard value; an explicit
+configuration value overrides it before dispatch. Running plans remain frozen.
 
 The binary embeds authoritative assets and DDL at configure time. No installation or working-directory-dependent asset lookup is introduced.
 

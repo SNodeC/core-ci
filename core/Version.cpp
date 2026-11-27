@@ -48,6 +48,32 @@ namespace coreci {
         }
         return result;
     }
+    bool Version::validRange(const std::string& range) {
+        static const std::regex pattern(
+            R"((>=|>|<=|<|==)(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){0,2}(,(>=|>|<=|<|==)(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){0,2})*)");
+        return range.size() <= 255 && std::regex_match(range, pattern);
+    }
+    bool Version::satisfies(const std::string& range) const {
+        bool result = validRange(range);
+        std::size_t start = 0;
+        while (result && start < range.size()) {
+            const auto end = range.find(',', start);
+            const auto clause = range.substr(start, end == std::string::npos ? end : end - start);
+            const auto at = clause.find_first_of("0123456789");
+            auto bound = clause.substr(at);
+            while (std::count(bound.begin(), bound.end(), '.') < 2) {
+                bound += ".0";
+            }
+            Version version;
+            version.numbers = split(bound);
+            const auto order = *this <=> version;
+            const auto op = clause.substr(0, at);
+            result = (op == ">=" && order >= 0) || (op == ">" && order > 0) || (op == "<=" && order <= 0) || (op == "<" && order < 0) ||
+                     (op == "==" && order == 0);
+            start = end == std::string::npos ? range.size() : end + 1;
+        }
+        return result;
+    }
     const std::string& Version::text() const {
         return value;
     }

@@ -46,8 +46,12 @@ namespace coreci {
                     state.retryAfter.reset();
                 }
             }
-            if (!graph.packages().contains(name) || graph.packages().at(name).prerequisites != pkg.prerequisites) {
+            if (!graph.packages().contains(name) || graph.packages().at(name).prerequisites != pkg.prerequisites ||
+                graph.packages().at(name).ciTree != pkg.ciTree) {
                 changed = true;
+                for (const auto& target : pkg.targets) {
+                    unitStates.at({name, target}).autoRetried.reset();
+                }
             }
         }
         graph = event.pipeline;
@@ -68,11 +72,12 @@ namespace coreci {
     const Wave* WaveController::latestWave() const {
         return latest.empty() ? nullptr : &waveStates.at(latest);
     }
-    const PlanUnit* WaveController::selection(const Unit& unit) const {
+    const PlanUnit* WaveController::selection(const Unit& unit, const std::string& waveId) const {
         const PlanUnit* result = nullptr;
         const auto state = unitStates.find(unit);
-        if (state != unitStates.end() && waveStates.contains(state->second.waveId)) {
-            const auto& plan = waveStates.at(state->second.waveId).plan;
+        const auto id = waveId.empty() && state != unitStates.end() ? state->second.waveId : waveId;
+        if (waveStates.contains(id)) {
+            const auto& plan = waveStates.at(id).plan;
             if (plan.contains(unit.target)) {
                 for (const auto& entry : plan.at(unit.target)) {
                     if (entry.unit == unit && entry.build) {
@@ -97,6 +102,8 @@ namespace coreci {
                     for (const auto& tag : e.tags) {
                         accept = accept || newerTag(tag, e.pipeline);
                     }
+                } else if constexpr (std::is_same_v<E, DispatchPaused>) {
+                    accept = dispatchPaused != e.paused;
                 } else if constexpr (std::is_same_v<E, Tick>) {
                     const auto next = nextDeadline();
                     accept = next && std::max(engineTime.value_or(e.at), e.at) >= *next;
@@ -149,11 +156,12 @@ namespace coreci {
                                        graph.packages().at(unit.package).revisionBase) +
                1;
     }
-    Plan WaveController::plan() const {
+    Plan WaveController::plan() {
         Plan result;
-        for (const auto& [target, definition] : graph.targets()) {
+        for (const auto& target : graph.targets()) {
             std::map<std::string, PlanUnit> selected;
             std::vector<PlanUnit> entries;
+            std::set<std::string> blockedPackages;
             bool builds = false;
             for (const auto& name : graph.topologicalOrder(target)) {
                 const auto& pkg = graph.packages().at(name);
@@ -162,25 +170,52 @@ namespace coreci {
                 const auto& state = unitStates.at(unit);
                 bool available = release.has_value(), cascade = false;
                 Inputs inputs;
-                for (const auto& prerequisite : pkg.prerequisites) {
+                std::string blocked;
+                for (const auto& [prerequisite, range] : pkg.prerequisites) {
                     const auto q = selected.find(prerequisite);
                     available = available && q != selected.end();
                     if (q != selected.end()) {
                         inputs.emplace(prerequisite, Input{q->second.release.version, q->second.revision});
                         cascade = cascade || q->second.build;
+                        if (!q->second.release.version.satisfies(range)) {
+                            blocked = "dependency " + prerequisite + " " + q->second.release.version.text() + " outside " + range;
+                        } else if (blockedPackages.contains(prerequisite) && blocked.empty()) {
+                            blocked = "dependency " + prerequisite + " blocked";
+                        }
                     }
                 }
                 if (available) {
-                    const bool build = state.requested || cascade || !state.published ||
+                    const auto* published = state.published ? selection(unit, state.published->waveId) : nullptr;
+                    const auto* previous = selection(unit);
+                    const bool build = state.requested || cascade || !state.published || !published || published->ciTree != pkg.ciTree ||
                                        !sameIdentity(state.published->source, pkg.sourceRepo) ||
                                        state.published->version != release->version || state.published->inputs != inputs;
-                    const bool failed = state.failure && state.failure->version == release->version && state.failure->inputs == inputs;
-                    if (!build || !failed || state.requested || cascade) {
-                        PlanUnit entry{
-                            unit, pkg.sourceRepo, *release, build ? nextRevision(unit) : state.published->revision, inputs, {}, build};
+                    const bool failed = state.failure && previous && previous->ciTree == pkg.ciTree &&
+                                        state.failure->version == release->version && state.failure->inputs == inputs;
+                    if (!blocked.empty()) {
+                        auto& blockedState = unitStates.at(unit);
+                        blockedState.state = State::Blocked;
+                        blockedState.waveId.clear();
+                        blockedState.failure = Failure{release->version, inputs, blocked, 0, *engineTime};
+                        blockedState.retryAfter.reset();
+                        blockedState.requested = false;
+                        blockedPackages.insert(name);
+                    }
+                    if (!blocked.empty() || !build || !failed || state.requested || cascade) {
+                        PlanUnit entry{unit,
+                                       pkg.sourceRepo,
+                                       *release,
+                                       blocked.empty() ? (build ? nextRevision(unit) : state.published->revision) : 0,
+                                       inputs,
+                                       {},
+                                       build && blocked.empty(),
+                                       pkg.ciCommit,
+                                       pkg.ciTree};
                         selected.emplace(name, entry);
-                        entries.push_back(std::move(entry));
-                        builds = builds || build;
+                        if (blocked.empty()) {
+                            entries.push_back(std::move(entry));
+                            builds = builds || build;
+                        }
                     }
                 }
             }
@@ -199,7 +234,7 @@ namespace coreci {
                 auto& state = unitStates.at({name, unit.target});
                 const auto& prerequisites = graph.prerequisites(name);
                 if (state.state == State::Blocked && std::any_of(prerequisites.begin(), prerequisites.end(), [&](const auto& q) {
-                        return requested.contains(q);
+                        return requested.contains(q.first);
                     })) {
                     state.requested = true;
                     requested.insert(name);
@@ -281,11 +316,16 @@ namespace coreci {
     void WaveController::advance() {
         if (const auto* active = activeWave()) {
             auto& wave = waveStates.at(active->id);
-            if (!wave.expired && *engineTime >= wave.deadline) {
+            if (!dispatchPaused && wave.deadline == 0) {
+                wave.dispatchedAt = *engineTime;
+                wave.deadline = *engineTime + options.waveDeadline;
+                wave.startDeadline = *engineTime + options.waveStartTimeout;
+            }
+            if (wave.deadline != 0 && !wave.expired && *engineTime >= wave.deadline) {
                 wave.expired = true;
                 wave.conclusion = "timeout";
                 finishTargets(wave);
-            } else if (!wave.expired && wave.phase == WavePhase::Dispatching &&
+            } else if (!dispatchPaused && !wave.expired && wave.phase == WavePhase::Dispatching &&
                        ((wave.retryAt && *engineTime >= *wave.retryAt) || (!wave.retryAt && *engineTime >= wave.startDeadline))) {
                 ++wave.attempt;
                 wave.dispatchAccepted = false;
@@ -318,9 +358,11 @@ namespace coreci {
                 wave.plan = std::move(planned);
                 wave.feedBranch = options.feedBranch;
                 wave.workflow = options.workflow;
-                wave.dispatchedAt = *engineTime;
-                wave.deadline = *engineTime + options.waveDeadline;
-                wave.startDeadline = *engineTime + options.waveStartTimeout;
+                if (!dispatchPaused) {
+                    wave.dispatchedAt = *engineTime;
+                    wave.deadline = *engineTime + options.waveDeadline;
+                    wave.startDeadline = *engineTime + options.waveStartTimeout;
+                }
                 for (auto& [target, entries] : wave.plan) {
                     waveTargets.emplace(std::pair{wave.id, target}, WaveTarget{});
                     for (auto& entry : entries) {
@@ -355,6 +397,8 @@ namespace coreci {
                     engineTime = std::max(engineTime.value_or(e.at), e.at);
                     if constexpr (requires { e.publicationId; }) {
                         PublicationController::apply(*this, options, event);
+                    } else if constexpr (std::is_same_v<E, DispatchPaused>) {
+                        dispatchPaused = e.paused;
                     } else if constexpr (std::is_same_v<E, GraphChanged>) {
                         changeGraph(e);
                     } else if constexpr (std::is_same_v<E, TagObserved>) {
@@ -465,12 +509,13 @@ namespace coreci {
     std::vector<Command> WaveController::commands() const {
         std::vector<Command> result;
         const auto* wave = activeWave();
-        if (wave && !wave->expired && wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted && !wave->retryAt) {
+        if (!dispatchPaused && wave && !wave->expired && wave->phase == WavePhase::Dispatching && !wave->dispatchAccepted &&
+            !wave->retryAt) {
             result.push_back({wave->id, false, wave->attempt, wave->workflow, wave->feedBranch});
         }
         for (const auto& [id, publication] : publicationStates) {
             const auto& run = publication.run;
-            if (run.phase == WavePhase::Dispatching && !run.dispatchAccepted && !run.retryAt && !run.expired) {
+            if (!dispatchPaused && run.phase == WavePhase::Dispatching && !run.dispatchAccepted && !run.retryAt && !run.expired) {
                 result.push_back({id, true, run.attempt, run.workflow, run.feedBranch});
             }
         }
@@ -484,10 +529,10 @@ namespace coreci {
             }
         };
         const auto runDeadline = [&](const Wave& run) {
-            if (!run.expired && run.phase != WavePhase::Finished) {
+            if (run.deadline != 0 && !run.expired && run.phase != WavePhase::Finished) {
                 add(run.deadline);
-                add(run.retryAt);
-                if (run.phase == WavePhase::Dispatching && !run.retryAt) {
+                add(dispatchPaused ? std::nullopt : run.retryAt);
+                if (!dispatchPaused && run.phase == WavePhase::Dispatching && !run.retryAt) {
                     add(run.startDeadline);
                 }
             }

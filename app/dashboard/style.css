@@ -29,7 +29,6 @@ tr[aria-selected="true"] { background: var(--soft); } .secondary { display: bloc
 .state { font-size: 12px; } .state::before { content: '●'; font-size: 9px; padding-right: 6px; }
 .state.planned, .state.building, .state.built, .state.publishing { color: var(--accent); } .state.blocked { color: light-dark(#875719,#e6bf80); }
 .state.published { color: light-dark(#236445,#90d6b0); } .state.failed, .error { color: light-dark(#a43135,#ffacaf); }
-.editor-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin-top: 16px; }
 .chevron { font-size: 18px; min-width: 24px; } .execution-details { padding: 0; max-width: none; overflow-wrap: normal; }
 .detail-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 24px; }
 dl { display: grid; grid-template-columns: 90px 1fr; gap: 5px 12px; }
@@ -38,15 +37,11 @@ dt { color: var(--sub); } dd { margin: 0; overflow-wrap: anywhere; } .dependenci
 .execution-content dl dd:nth-of-type(2) { min-height: 2lh; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; } a { color: var(--accent); }
 details { margin-top: 16px; } summary { cursor: pointer; color: var(--sub); padding: 5px 0; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.repository-layout { display: grid; grid-template-columns: 230px minmax(0,1fr); gap: 20px; } .editor-panel { margin-top: 0; }
 #repositories { display: flex; flex-direction: column; gap: 5px; } #repositories button { text-align: left; }
-#repositories button[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); }
-.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; } .wide { grid-column: 1/-1; }
-#editor > button, #request-build { margin-top: 12px; } #feedback-details { margin-top: 18px; } [hidden] { display: none !important; }
-@media(max-width:760px) { .repository-layout { grid-template-columns: minmax(0,1fr); } }
+#feedback-details { margin-top: 18px; } [hidden] { display: none !important; }
 @media(max-width:560px) { main { padding: 14px 12px; } header, nav { padding-inline: 12px; }
     .heading, .filters { flex-wrap: wrap; } .filters label, .filters input { width: 100%; }
-    .fields { grid-template-columns: minmax(0,1fr); } }
+}
 @media(pointer:coarse) { button, input, select { min-height: 44px; } }
 
 

@@ -42,7 +42,7 @@ namespace coreci::app {
                                                   repoKey(push.repo) == repoKey(registry.owner + "/" + registry.repo);
                         const bool sourceTag =
                             push.branch.empty() && engine && slash != std::string::npos &&
-                            !engine->pipeline().packagesForRepo(push.repo.substr(0, slash), push.repo.substr(slash + 1)).empty();
+                            engine->pipeline().containsRepository(push.repo.substr(0, slash), push.repo.substr(slash + 1));
                         if (!registryPush && push.branch.empty() && !engine) {
                             answer(res, 503, "unavailable");
                         } else if (registryPush) {

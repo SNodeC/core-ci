@@ -22,6 +22,7 @@ namespace coreci {
         Inputs inputs;
         std::string buildId;
         bool build;
+        std::string ciCommit = {}, ciTree = {};
         bool operator==(const PlanUnit&) const = default;
     };
     using Plan = std::map<std::string, std::vector<PlanUnit>>;
@@ -83,6 +84,7 @@ namespace coreci {
         std::string feedBranch = "feed";
         Repo workflow{"SNodeC", "Packages", "main"};
         std::int64_t waveStartTimeout = 900, publicationDeadline = 23400;
+        std::optional<bool> dispatchPaused = {};
     };
     struct Accept {
         bool operator==(const Accept&) const = default;
@@ -121,6 +123,7 @@ namespace coreci {
         std::string latest;
         std::uint64_t sequence = 0;
         std::optional<std::int64_t> engineTime, quietUntil;
+        bool dispatchPaused = false;
         bool operator==(const StoredState&) const = default;
     };
     class WaveController : private StoredState {
@@ -140,14 +143,14 @@ namespace coreci {
         const std::map<std::string, Wave>& waves() const;
         const Wave* activeWave() const;
         const Wave* latestWave() const;
-        const PlanUnit* selection(const Unit& unit) const;
+        const PlanUnit* selection(const Unit& unit, const std::string& waveId = {}) const;
         std::optional<std::int64_t> time() const;
 
     private:
         friend class PublicationController;
         bool newerTag(const TagObserved& tag, const Pipeline& candidate) const;
         void changeGraph(const GraphChanged& event);
-        Plan plan() const;
+        Plan plan();
         void dirty();
         void request(const Unit& unit);
         void fail(const PlanUnit& unit, const std::string& reason, bool buildFailed = false, bool automatic = true);

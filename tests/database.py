@@ -105,9 +105,9 @@ class Proxy:
 
 
 @contextmanager
-def database(build):
-    root = Path(build) / 'tmp'
-    root.mkdir(exist_ok=True)
+def database():
+    root = Path('/tmp/codex/build/core-ci/tests')
+    root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='mdb-', dir=root) as directory:
         work = Path(directory)
         endpoint = work / 's'
@@ -145,7 +145,7 @@ def database(build):
 
 def main():
     build = Path(sys.argv[1]).resolve()
-    with database(build) as (_, _, environment, _):
+    with database() as (_, _, environment, _):
         result = subprocess.run(['ctest', '--test-dir', str(build), '--output-on-failure', *sys.argv[2:]],
                                 env=environment).returncode
     return result

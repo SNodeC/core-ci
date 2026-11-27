@@ -4,7 +4,7 @@ This is the master contract. Section 7 is fixed owner-supplied CONTRACT W v2.
 
 ## 0. Goal
 
-A single-threaded C++20 daemon loads tag-bound declarations, maintains a typed
+A single-threaded C++20 daemon loads repository-owned declarations, maintains a typed
 package×target dependency graph, plans one wave, and dispatches target chains.
 Finished targets publish early through a separate publication workflow. core-ci
 never compiles, packages, signs, downloads artifacts or writes feeds.
@@ -59,8 +59,8 @@ slash-separated A–Z a–z 0–9 . _ - segments, excluding . and ... Repository
 compares ASCII case-insensitively; preserve canonical spelling; equality includes it.
 
 Registry/schema 1 and catalog follow W1/W3, read at the same resolved registry
-default-branch HEAD commit. Source/schema 1 declarations follow W2 and are read at
-the selected tag's commit SHA. Validate required fields/types, supported families,
+default-branch HEAD commit. Source/schema 2 declarations follow W2 and are read at
+the source default-branch tip (ci_commit); resolve the ci/ tree hash from that tip. Validate required fields/types, supported families,
 paths and ids; reject duplicate JSON keys, files over 1 MiB or HTTP errors.
 Any failed load preserves the complete previous graph/releases.
 
@@ -122,8 +122,9 @@ independent units remain eligible. Omit targets without a build. Reuse has empty
 build_id and no callbacks, and counts as Published.
 
 For each build allocate max(last revision for version, revision_base)+1, including
-retry/rebuild. Freeze source repo, tag, commit, version, revision, inputs and direct
-prerequisites. Reset allocation timings, assign Planned and consume the request.
+retry/rebuild. Freeze source repo, tag, source commit, ci_commit, ci/ tree hash, version, revision
+and resolved dependency versions/revisions. CI tree changes make a unit eligible;
+ordinary default-branch commits with an unchanged ci/ tree do not. Reset allocation timings, assign Planned and consume the request.
 Never decrease any revision, including across migration and restart.
 
 Retry on Failed schedules it and its Blocked dependents. Rebuild on Published
@@ -227,6 +228,15 @@ and be recoverable without discarding source history. Refuse concurrent daemon
 writers and repeat migration of an already migrated database. No legacy tables
 are read by the daemon. An unmigrated database is refused with a migration diagnostic.
 
+Schema 7 state stores upgrade offline using migration/state-7-to-8.sql, under the
+same database-scoped writer lock. Atomically replace only the affected tables,
+retaining their schema-7 copies. Preserve revisions, frozen source commits and
+resolved inputs; imported CI commits equal their historical source commits and
+unknown CI trees remain empty until reconciliation. Default dispatch to paused.
+Refuse repeated or concurrent conversion; an ambiguous result requires inspecting
+the schema version and retained tables before any retry. The daemon accepts only
+schema 8 and never performs a runtime migration.
+
 ## 6. External interfaces
 
 ### 6.1 Complete inbound route list
@@ -241,7 +251,7 @@ are read by the daemon. An unmigrated database is refused with a migration diagn
 | GET /api/v1/status.json | Public | Recorded unit status, 503 during recovery. |
 | GET /api/v1/badge/{package}/{target}.svg | Public | Badge from recorded unit state, always 200, unavailable during recovery. |
 | GET /, /style.css, /app.js, /events | IDP and subject allowlist | Dashboard assets and SSE. |
-| POST /api/{operation} | IDP and subject allowlist | retry, rebuild, reload, reconcile. |
+| POST /api/{operation} | IDP and subject allowlist | retry, rebuild, reload, reconcile, dispatch-paused. |
 | GET /auth/callback | IDP authorization-code validation | Complete login; protected access checks subject. |
 
 No other routes are supported. Removed API paths return 404, including /api/v1/builds/{buildId}/report, text status, DOT, unit retry/rebuild, reload and reconcile under /api/v1. There is no admin bearer token. Optional plain HTTP listener redirects all requests with 308 to the same path on the configured HTTPS origin.
@@ -257,7 +267,8 @@ Complete endpoint shapes:
 - GET /repos/{owner}/{repo}/contents/{path}?ref={ref}, Accept: application/vnd.github.raw
 - GET /repos/{owner}/{repo}/tags (paginated)
 - GET /repos/{owner}/{repo} (canonical spelling and default branch)
-- GET /repos/{owner}/{repo}/commits/{branch} (registry HEAD or source bootstrap only)
+- GET /repos/{owner}/{repo}/commits/{branch} (registry and source default-branch tips)
+- GET /repos/{owner}/{repo}/contents/?ref={ref}, Accept: application/vnd.github+json (ci/ tree hash)
 - POST /repos/{owner}/{repo}/actions/workflows/{file}/dispatches
 
 There are no Actions run or job lookups. No static bearer credential is accepted or configured. Repository calls use installation tokens; token mint uses the signed JWT. All use X-GitHub-Api-Version: 2022-11-28 and User-Agent core-ci.
@@ -282,7 +293,7 @@ github-api-url, github-ca-cert, webhook-secret-file, callback-secret-file,
 idp-base-url, idp-client-id, idp-public-key-path, dashboard-users,
 db-host, db-port, db-socket, db-user, db-name, db-password-file,
 wave-delay, wave-deadline, publication-deadline, start-timeout, retry-delay,
-max-dispatch-attempts, reconcile-interval.
+max-dispatch-attempts, reconcile-interval, dispatch-paused.
 
 Secret values are read from operator-owned files; database password uses FILE,
 including passwordless socket authentication when omitted. Never print secrets.
@@ -298,6 +309,13 @@ reconcile-interval 900 (60–86400). Invalid settings fail before connecting and
 log only the option name. Package examples use actual SNode.C config syntax.
 Deployment notes document the translation from old options and one-shot migration;
 service unit changes only as required by configuration. No service activation.
+
+dispatch-paused accepts true or false. Omission preserves the persisted value
+(default false for a fresh store). An explicit setting is committed before dispatch.
+While paused, allocate and display the pending frozen plan but dispatch neither
+waves nor publications. Pending deadlines start on resume; already running waves
+and their frozen plans remain unchanged. The authenticated dashboard toggle commits
+the same persisted state and is effective across restart.
 
 ### 6.4 Callback admission and recovery
 
@@ -330,11 +348,15 @@ ready is false and units are empty. A one-second SSE timer may coalesce events a
 it never requests GitHub data. Dependencies sort descending by level and allocation order.
 
 Add a wave panel with latest id, phase, run link, started/finished and counts by
-unit state. Add a publication panel with id, run link, items and phase, and
+unit state, with overall unit totals beside the latest wave/retry counts. Show each
+unit's source commit, CI commit and dependency versions, plus blocked reasons and
+the pending plan while dispatch is paused. Add a publication panel with id, run link, items and phase, and
 per-target publication state. Public status includes wave and publication state.
 
 Supported POST /api/{operation}: retry (Failed unit), rebuild (Published unit), reload
-(declarations and tags), reconcile (same reconciliation path). Unit operations take
+(declarations and tags), reconcile (same reconciliation path), dispatch-paused
+({"paused":bool}). Retry/rebuild first reload declarations so corrected CI files are
+used for the unchanged tag. Unit operations take
 {"package":"...","target":"..."} and answer after commit; reload/reconcile answer after loading.
 Every other operation answers "Not supported by core-ci". The Refresh control sends reload.
 
@@ -360,12 +382,21 @@ field or status_url field exists.
 W1 Repositories. SNodeC/Packages, default branch main, holds .github/workflows/wave.yml,
    .github/workflows/publish.yml, ci/registry.json {"schema":1,"repositories":[…]} and the target
    catalog ci/targets.json. Production feed: branch `feed`; staging feed: branch `feed-staging`.
-W2 Source declaration, read at the tag: ci/packages.json {"schema":1, "package", "title",
-   "depends_on":[packages], "build":{"deb":path,"rpm":path,"openwrt":path?},
+W2 The source is the tag's commit. ci/packages.json and every file its hooks use come
+   from the repository's default-branch tip at reconcile time (ci_commit). Schema 2:
+   {"schema":2, "package", "title", "depends_on":[{"package":name,"version":range}],
+   "build":{"deb":path,"rpm":path,"openwrt":path?},
    "build_dependencies":{"deb":[…],"rpm":[…],"openwrt":[…]}, "targets":[catalog ids],
-   "revision_base":N?}.
+   "revision_base":N?}. A range uses the form ">=3.0,<4": comma = AND; operators
+   >=, >, <=, <, ==. build_dependencies keys are "deb" | "rpm" | "openwrt", plus
+   optional "<family>@<distribution>-<release>" (e.g. "rpm@rocky-9"), whose list is
+   added to the family list for matching targets. The build identity of a unit includes
+   the git tree hash of ci/ at ci_commit, not the commit. Ordinary commits without a
+   ci/ change create no new build_ids. A wave's frozen plan keeps its ci_commit;
+   running waves never change.
 W3 Catalog entry: {"id","family":"deb"|"rpm"|"ipk"|"apk","distribution","release","codename",
-   "arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?}. Fields other than id,
+   "arch","image","runner","platform","emulated":bool,"disttag"?,"sdk"?,"host_packages":[…]?}.
+   host_packages declares distribution/SDK host prerequisites. Fields other than id,
    family, distribution, release, codename and arch are opaque to core-ci.
 W4 Dispatch. Wave: workflow_dispatch of wave.yml on main with inputs wave_id, plan_url,
    callback_url, feed_branch. Publication: workflow_dispatch of publish.yml on main with inputs
@@ -373,7 +404,8 @@ W4 Dispatch. Wave: workflow_dispatch of wave.yml on main with inputs wave_id, pl
    runs; empty callback_url = no callbacks.
 W5 Plans (GET plan_url, public, JSON).
    Wave plan: {"wave", "feed_branch", "owner_run_id":id|null, "targets":[{"id","units":[{"package",
-   "repo","tag","commit","version","revision","build_id","action":"build"|"reuse"}]}]}; units per
+   "repo","tag","commit","ci_commit","version","revision","build_id",
+   "dependencies":[{"package","version","revision"}],"action":"build"|"reuse"}]}]}; units per
    target in topological order; "reuse" = install the published version-revision from the feed;
    only targets with ≥1 "build" unit.
    Publication plan: {"publication", "feed_branch", "owner_run_id":id|null, "items":[{"wave",
@@ -400,6 +432,13 @@ W7 wave.yml: job plan → matrix job chain (one job per planned target, fail-fas
    job uploads artifact coreci-<wave>-<target> with the successfully built packages and a sha256
    manifest, then sends scope=target finished) → job report (always): scope=wave finished. wave.yml
    holds no signing keys and never writes a feed.
+   The chain checks out the source at commit (with submodules) and ci/ at ci_commit
+   (/work/ci/<package>). Hooks run with SOURCE_DIR, CI_DIR, OUTPUT_DIR, SDK_DIR,
+   TARGET_JSON, PACKAGE_VERSION, PACKAGE_RELEASE and DEPENDENCIES_JSON. Installed are
+   exactly generic base tooling + the catalog's host_packages + the target's resolved
+   declaration list (dnf with --allowerasing). For OpenWrt, feeds install gets the
+   resolved openwrt list instead of -a.
+   Toolchain activation is the hook's job.
 W8 publish.yml (environment publish, the only holder of signing keys): re-fetch plan_url
    immediately before pushing; publish only if owner_run_id equals GITHUB_RUN_ID, otherwise
    succeed without push and without callbacks (fetch/validation errors fail closed). Download the
@@ -424,6 +463,9 @@ W11 Concurrency. core-ci runs at most one wave at a time and at most one publica
    expired) and every planned target is published, failed or blocked; the next wave starts only
    after that. wave.yml uses concurrency group "wave-<feed_branch>", publish.yml
    "publish-<feed_branch>", both without cancellation.
+   A unit whose depends_on range is not satisfied by the version planned or published
+   in the same wave is set to blocked at planning time with reason
+   "dependency <pkg> <version> outside <range>". It is not dispatched.
 
 ## 8. Acceptance
 
@@ -460,6 +502,7 @@ Report baseline/final physical production lines per directory and dashboard
 assets, migration lines separately, test lines, routes, configuration keys,
 environment variables (zero), tables, SPEC old/new SHA256, PRs/merge SHAs, checks,
 owner option translation and merged CONTRACT W v2. Daemon production code must
-be below the baseline. Record reversible choices as "Decision: … because …".
+not exceed the owner-approved ceiling of 5,850 physical lines. Report net growth
+against the baseline separately from migration and test code. Record reversible choices as "Decision: … because …".
 Merge SPEC first, implementation only after qualification; delete task branches,
 leave canonical main pulled and clean. No tag, installation or deployment.
