@@ -1,0 +1,66 @@
+CTest evidence extracted from scheduler-proof-repair-offline-2.log
+
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+      Start  1: X_turns
+ 1/30 Test  #1: X_turns ..........................   Passed    0.01 sec
+      Start  2: X_registry_arrivals
+ 2/30 Test  #2: X_registry_arrivals ..............   Passed    0.00 sec
+      Start  3: X_active_arrivals
+ 3/30 Test  #3: X_active_arrivals ................   Passed    0.01 sec
+      Start  4: X_admission_stress
+ 4/30 Test  #4: X_admission_stress ...............   Passed    0.07 sec
+      Start  5: X_admissions
+ 5/30 Test  #5: X_admissions .....................   Passed    0.01 sec
+      Start  6: X_binding
+ 6/30 Test  #6: X_binding ........................   Passed    0.01 sec
+      Start  7: X_targets_and_receipts
+ 7/30 Test  #7: X_targets_and_receipts ...........   Passed    0.01 sec
+      Start  8: X_attempts
+ 8/30 Test  #8: X_attempts .......................   Passed    0.00 sec
+      Start  9: X_closure
+ 9/30 Test  #9: X_closure ........................   Passed    0.00 sec
+      Start 10: X_identity
+10/30 Test #10: X_identity .......................   Passed    0.01 sec
+      Start 11: X_retry_identity
+11/30 Test #11: X_retry_identity .................   Passed    0.00 sec
+      Start 12: X_revision_floor
+12/30 Test #12: X_revision_floor .................   Passed    0.01 sec
+      Start 13: X_observation
+13/30 Test #13: X_observation ....................   Passed    0.01 sec
+      Start 14: X_handoff
+14/30 Test #14: X_handoff ........................   Passed    0.01 sec
+      Start 15: X_publications
+15/30 Test #15: X_publications ...................   Passed    0.01 sec
+      Start 16: X_publication_retry_capacity
+16/30 Test #16: X_publication_retry_capacity .....   Passed    0.01 sec
+      Start 17: X_retention
+17/30 Test #17: X_retention ......................   Passed    0.00 sec
+      Start 18: X_retiring_binding
+18/30 Test #18: X_retiring_binding ...............   Passed    0.00 sec
+      Start 19: X_expiry
+19/30 Test #19: X_expiry .........................   Passed    0.01 sec
+      Start 20: X_expiry_before_turn
+20/30 Test #20: X_expiry_before_turn .............   Passed    0.01 sec
+      Start 21: X_snapshots
+21/30 Test #21: X_snapshots ......................   Passed    0.01 sec
+      Start 22: X_backoff
+22/30 Test #22: X_backoff ........................   Passed    0.01 sec
+      Start 23: X_persistence
+23/30 Test #23: X_persistence ....................   Passed    0.00 sec
+      Start 24: A_WebhookHmac
+24/30 Test #24: A_WebhookHmac ....................   Passed    0.01 sec
+      Start 25: A_CallbackHmac
+25/30 Test #25: A_CallbackHmac ...................   Passed    0.01 sec
+      Start 26: A_TagPages
+26/30 Test #26: A_TagPages .......................   Passed    0.01 sec
+      Start 27: A_AppToken
+27/30 Test #27: A_AppToken .......................   Passed    0.07 sec
+      Start 28: A_SlimSource
+28/30 Test #28: A_SlimSource .....................   Passed    0.16 sec
+      Start 29: X_Http
+29/30 Test #29: X_Http ...........................   Passed   41.12 sec
+      Start 30: X_Http_Recovery
+30/30 Test #30: X_Http_Recovery ..................   Passed   21.52 sec
+100% tests passed out of 30
+Total Test time (real) =  63.11 sec

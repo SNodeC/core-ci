@@ -1,0 +1,15 @@
+CTest evidence extracted from scheduler-binding-siblings.log
+
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+    Start  6: X_targets_and_receipts
+1/2 Test  #6: X_targets_and_receipts ...........***Failed    0.01 sec
+tests/X_Scheduler.cpp:318: values differ: expected range unsatisfiable got "target missing"
+    Start 17: X_retiring_binding
+2/2 Test #17: X_retiring_binding ...............***Failed    0.00 sec
+tests/X_Scheduler.cpp:556: values differ: expected 1 got 2
+tests/X_Scheduler.cpp:561: values differ: expected enrolled got "processing"
+0% tests passed, 2 tests failed out of 2
+Total Test time (real) =   0.01 sec
+The following tests FAILED:
+	  6 - X_targets_and_receipts (Failed)
+	 17 - X_retiring_binding (Failed)

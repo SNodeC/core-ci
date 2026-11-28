@@ -1,0 +1,63 @@
+CTest evidence extracted from scheduler-six-targets-package-scope.log
+
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+      Start  1: X_turns
+ 1/29 Test  #1: X_turns ..........................   Passed    0.01 sec
+      Start  2: X_registry_arrivals
+ 2/29 Test  #2: X_registry_arrivals ..............   Passed    0.00 sec
+      Start  3: X_active_arrivals
+ 3/29 Test  #3: X_active_arrivals ................   Passed    0.01 sec
+      Start  4: X_admission_stress
+ 4/29 Test  #4: X_admission_stress ...............   Passed    0.06 sec
+      Start  5: X_active_arrival_stress
+ 5/29 Test  #5: X_active_arrival_stress ..........   Passed    9.50 sec
+      Start  6: X_admissions
+ 6/29 Test  #6: X_admissions .....................   Passed    0.00 sec
+      Start  7: X_binding
+ 7/29 Test  #7: X_binding ........................   Passed    0.00 sec
+      Start  8: X_targets_and_receipts
+ 8/29 Test  #8: X_targets_and_receipts ...........   Passed    0.01 sec
+      Start  9: X_attempts
+ 9/29 Test  #9: X_attempts .......................   Passed    0.00 sec
+      Start 10: X_closure
+10/29 Test #10: X_closure ........................   Passed    0.00 sec
+      Start 11: X_identity
+11/29 Test #11: X_identity .......................   Passed    0.00 sec
+      Start 12: X_retry_identity
+12/29 Test #12: X_retry_identity .................   Passed    0.00 sec
+      Start 13: X_revision_floor
+13/29 Test #13: X_revision_floor .................   Passed    0.00 sec
+      Start 14: X_observation
+14/29 Test #14: X_observation ....................   Passed    0.01 sec
+      Start 15: X_handoff
+15/29 Test #15: X_handoff ........................   Passed    0.00 sec
+      Start 16: X_publications
+16/29 Test #16: X_publications ...................   Passed    0.01 sec
+      Start 17: X_publication_retry_capacity
+17/29 Test #17: X_publication_retry_capacity .....   Passed    0.01 sec
+      Start 18: X_retention
+18/29 Test #18: X_retention ......................   Passed    0.00 sec
+      Start 19: X_retiring_binding
+19/29 Test #19: X_retiring_binding ...............   Passed    0.00 sec
+      Start 20: X_expiry
+20/29 Test #20: X_expiry .........................   Passed    0.00 sec
+      Start 21: X_expiry_before_turn
+21/29 Test #21: X_expiry_before_turn .............   Passed    0.01 sec
+      Start 22: X_snapshots
+22/29 Test #22: X_snapshots ......................   Passed    0.00 sec
+      Start 23: X_backoff
+23/29 Test #23: X_backoff ........................   Passed    0.00 sec
+      Start 24: X_persistence
+24/29 Test #24: X_persistence ....................   Passed    0.00 sec
+      Start 25: A_WebhookHmac
+25/29 Test #25: A_WebhookHmac ....................   Passed    0.01 sec
+      Start 26: A_CallbackHmac
+26/29 Test #26: A_CallbackHmac ...................   Passed    0.01 sec
+      Start 27: A_TagPages
+27/29 Test #27: A_TagPages .......................   Passed    0.01 sec
+      Start 28: A_AppToken
+28/29 Test #28: A_AppToken .......................   Passed    0.07 sec
+      Start 29: A_SlimSource
+29/29 Test #29: A_SlimSource .....................   Passed    0.14 sec
+100% tests passed out of 29
+Total Test time (real) =   9.92 sec

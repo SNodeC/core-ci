@@ -1,0 +1,10 @@
+CTest evidence extracted from scheduler-publication-cutoff.log
+
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+    Start 7: X_targets_and_receipts
+1/1 Test #7: X_targets_and_receipts ...........***Failed    0.01 sec
+tests/X_Scheduler.cpp:442: values differ: expected enrolled got "processing"
+0% tests passed, 1 tests failed out of 1
+Total Test time (real) =   0.01 sec
+The following tests FAILED:
+	  7 - X_targets_and_receipts (Failed)

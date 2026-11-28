@@ -1,0 +1,61 @@
+CTest evidence extracted from scheduler-proof-offline.log
+
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+      Start  1: X_turns
+ 1/23 Test  #1: X_turns ..........................   Passed    0.00 sec
+      Start  2: X_registry_arrivals
+ 2/23 Test  #2: X_registry_arrivals ..............***Failed    0.00 sec
+tests/X_Scheduler.cpp:135: values differ: expected 1 got 0
+tests/X_Scheduler.cpp:136: values differ: expected processing got "enrolled"
+      Start  3: X_active_arrivals
+ 3/23 Test  #3: X_active_arrivals ................   Passed    0.00 sec
+      Start  4: X_binding
+ 4/23 Test  #4: X_binding ........................   Passed    0.00 sec
+      Start  5: X_attempts
+ 5/23 Test  #5: X_attempts .......................   Passed    0.00 sec
+      Start  6: X_closure
+ 6/23 Test  #6: X_closure ........................   Passed    0.00 sec
+      Start  7: X_identity
+ 7/23 Test  #7: X_identity .......................   Passed    0.00 sec
+      Start  8: X_observation
+ 8/23 Test  #8: X_observation ....................   Passed    0.01 sec
+      Start  9: X_handoff
+ 9/23 Test  #9: X_handoff ........................   Passed    0.00 sec
+      Start 10: X_publications
+10/23 Test #10: X_publications ...................   Passed    0.00 sec
+      Start 11: X_publication_retry_capacity
+11/23 Test #11: X_publication_retry_capacity .....***Failed    0.00 sec
+tests/X_Scheduler.cpp:716: values differ: expected 1 got 2
+      Start 12: X_retention
+12/23 Test #12: X_retention ......................   Passed    0.00 sec
+      Start 13: X_expiry
+13/23 Test #13: X_expiry .........................   Passed    0.00 sec
+      Start 14: X_expiry_before_turn
+14/23 Test #14: X_expiry_before_turn .............***Failed    0.00 sec
+tests/X_Scheduler.cpp:450: values differ: expected 2 got 1
+tests/X_Scheduler.cpp:451: values differ: expected 1 got 2
+      Start 15: X_snapshots
+15/23 Test #15: X_snapshots ......................   Passed    0.00 sec
+      Start 16: X_backoff
+16/23 Test #16: X_backoff ........................   Passed    0.00 sec
+      Start 17: X_persistence
+17/23 Test #17: X_persistence ....................   Passed    0.00 sec
+      Start 18: A_WebhookHmac
+18/23 Test #18: A_WebhookHmac ....................   Passed    0.01 sec
+      Start 19: A_CallbackHmac
+19/23 Test #19: A_CallbackHmac ...................   Passed    0.01 sec
+      Start 20: A_TagPages
+20/23 Test #20: A_TagPages .......................   Passed    0.01 sec
+      Start 21: A_AppToken
+21/23 Test #21: A_AppToken .......................   Passed    0.08 sec
+      Start 22: A_SlimSource
+22/23 Test #22: A_SlimSource .....................   Passed    0.11 sec
+      Start 23: X_Http
+23/23 Test #23: X_Http ...........................   Passed   23.58 sec
+87% tests passed, 3 tests failed out of 23
+Total Test time (real) =  23.86 sec
+The following tests FAILED:
+	  2 - X_registry_arrivals (Failed)
+	 11 - X_publication_retry_capacity (Failed)
+	 14 - X_expiry_before_turn (Failed)
