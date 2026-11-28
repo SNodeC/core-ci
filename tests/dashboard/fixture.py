@@ -1,6 +1,6 @@
 """Disposable loopback GitHub/OIDC fixtures; never contacts configured feed URLs."""
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import hashlib
 import hmac
 import http.cookiejar
@@ -45,12 +45,15 @@ class Provider(BaseHTTPRequestHandler):
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(raw)
+        with suppress(BrokenPipeError, ConnectionResetError):
+            self.wfile.write(raw)
 
     def do_GET(self):
         query = urllib.parse.urlsplit(self.path)
         path = urllib.parse.unquote(query.path)
         state = self.server.state
+        repo = '/'.join(path.split('/')[2:4])
+        ci_commit, ci_tree = state.revisions.get(repo, (state.ci_commit, state.ci_tree))
         state.api_requests.append(path)
         if path == '/oauth2/authorize':
             values = {k: v[0] for k, v in urllib.parse.parse_qs(query.query).items()}
@@ -62,6 +65,7 @@ class Provider(BaseHTTPRequestHandler):
             state.codes[code] = dict(values, subject=state.subject)
             self.respond(302, headers={'Location': values['redirect_uri'] + '?' + urllib.parse.urlencode(dict(code=code, state=values['state']))})
         elif '/git/ref/heads/' in path:
+            assert state.feed_response.wait(20), 'feed response fixture not released'
             self.respond(200, dict(object=dict(sha=state.head)))
         elif '/git/matching-refs/snapshots/' in path:
             self.respond(200, [dict(ref=ref, object=dict(sha=sha)) for ref, sha in state.snapshots.items()])
@@ -75,18 +79,18 @@ class Provider(BaseHTTPRequestHandler):
             elif path.endswith('targets.json'):
                 data = state.catalog
             elif path.endswith('/contents/'):
-                data = [dict(name='ci', type='dir', sha=state.ci_tree)]
+                data = [dict(name='ci', type='dir', sha=ci_tree)]
             else:
                 repo = path.split('/repos/', 1)[1].split('/contents/', 1)[0]
                 ref = urllib.parse.parse_qs(query.query)['ref'][0]
-                assert ref == state.ci_commit, 'declaration not read at default-branch tip'
+                assert ref == ci_commit, 'declaration not read at default-branch tip'
                 state.contents.append((repo, ref))
                 data = dict(state.sources[repo], schema=2)
                 data['depends_on'] = [dict(package=item, version='>=0.0.0') if isinstance(item, str) else item
                                       for item in data['depends_on']]
             self.respond(200, data)
         elif '/commits/' in path:
-            self.respond(200, dict(sha=state.ci_commit))
+            self.respond(200, dict(sha=ci_commit))
         elif path.endswith('/tags'):
             repo = path.removeprefix('/repos/').removesuffix('/tags')
             self.respond(200, [dict(name=tag, commit=dict(sha=sha)) for tag, sha in state.tags.get(repo, {}).items()])
@@ -162,19 +166,26 @@ class Provider(BaseHTTPRequestHandler):
             assert set(values) == {identity, 'attempt', 'feed_branch'} | ({'fault'} if publication else set())
             assert all(isinstance(value, str) for value in values.values())
             assert values['feed_branch'] in ('feed', 'feed-staging')
-            rid = state.next_run
-            state.next_run += 1
-            title = ('publish ' if publication else 'build ') + values[identity] + '/' + values['attempt']
-            state.runs[rid] = dict(id=rid, status='queued', conclusion=None, display_title=title, run_attempt=1)
-            state.dispatches.put((rid, values))
-            assert state.dispatch_response.wait(20), 'dispatch response fixture not released'
-            if publication and state.ambiguous_publication:
+            if not publication and state.drop_build:
+                state.drop_build = False
+                state.dropped.put(values)
                 self.respond(204)
             else:
-                self.respond(200, dict(workflow_run_id=rid))
+                rid = state.next_run
+                state.next_run += 1
+                title = ('publish ' if publication else 'build ') + values[identity] + '/' + values['attempt']
+                state.runs[rid] = dict(id=rid, status='queued', conclusion=None, display_title=title, run_attempt=1)
+                state.dispatches.put((rid, values))
+                assert state.dispatch_response.wait(20), 'dispatch response fixture not released'
+                if publication and state.ambiguous_publication:
+                    self.respond(204)
+                else:
+                    self.respond(200, dict(workflow_run_id=rid))
         elif '/actions/runs/' in self.path and self.path.endswith('/cancel'):
             rid = int(self.path.split('/')[-2])
-            state.runs[rid].update(status='completed', conclusion='cancelled')
+            state.cancellations.append(rid)
+            if not state.hold_cancellation:
+                state.runs[rid].update(status='completed', conclusion='cancelled')
             self.respond(202)
         else:
             self.respond(404)
@@ -183,7 +194,8 @@ class Provider(BaseHTTPRequestHandler):
 class Fixture:
     ci_commit = 'a' * 40
     ci_tree = 'd' * 40
-    def __init__(self, build, work, small=False, wrong_host=False, parser=(), virtual_clock=False, wave_deadline=120):
+    def __init__(self, build, work, small=False, wrong_host=False, parser=(), virtual_clock=False, wave_deadline=120,
+                 coreci_options=None):
         self.build, self.work = Path(build), Path(work)
         self.codes, self.tokens = {}, {}
         self.refresh_tokens, self.renewals = {}, []
@@ -195,11 +207,18 @@ class Fixture:
         self.ledger = []
         self.runs = {}
         self.ambiguous_publication = False
+        self.revisions = {}
         self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
         self.subject, self.revoked = 'owner', set()
         self.unavailable = False
         self.token_lifetime = 3600
         self.dispatches = queue.Queue()
+        self.dropped = queue.Queue()
+        self.drop_build = False
+        self.cancellations = []
+        self.hold_cancellation = False
+        self.feed_response = threading.Event()
+        self.feed_response.set()
         self.dispatch_response = threading.Event()
         self.dispatch_response.set()
         self.requested, self.release = threading.Event(), threading.Event()
@@ -268,6 +287,7 @@ class Fixture:
                                    'maximum-header-fields': 100, 'maximum-start-line-bytes': 8192},
             'coreci.tls': dict(cert=str(self.cert), **{'cert-key': str(self.key_path)}),
             'coreci-redirect.local': dict(host='127.0.0.1', port=self.redirect_port)}
+        self.settings['coreci'].update(coreci_options or {})
         self.write_config()
         self.command = [str(self.build / 'core-ci'), '--config-file', str(self.config_path), 'coreci', 'local', 'tls', 'socket', 'http', 'parser', 'coreci-redirect', 'local', 'coreci']
         if parser:
@@ -325,9 +345,13 @@ class Fixture:
 
     def webhook(self, repo, tag='v1.0.0'):
         self.tags.setdefault(repo, {})[tag] = 'b' * 40
-        raw = json.dumps(dict(ref='refs/tags/' + tag, created=True, deleted=False, after='a' * 40, repository=dict(full_name=repo))).encode()
+        payload = dict(ref='refs/tags/' + tag, created=True, deleted=False, after='a' * 40, repository=dict(full_name=repo))
+        return self.push(payload, repo + tag)
+
+    def push(self, payload, delivery):
+        raw = json.dumps(payload).encode()
         response = self.request('/api/v1/github/webhook', raw, {'Content-Type': 'application/json', 'X-GitHub-Event': 'push',
-            'X-GitHub-Delivery': repo + tag, 'X-Hub-Signature-256': 'sha256=' + hmac.new(b'fixture-webhook', raw, hashlib.sha256).hexdigest()})
+            'X-GitHub-Delivery': delivery, 'X-Hub-Signature-256': 'sha256=' + hmac.new(b'fixture-webhook', raw, hashlib.sha256).hexdigest()})
         return response.status
 
     def workflow_path(self, values):
@@ -360,6 +384,7 @@ class Fixture:
     def close(self):
         self.release.set()
         self.dispatch_response.set()
+        self.feed_response.set()
         self.process.terminate()
         self.process.wait(timeout=10)
         self.log.close()

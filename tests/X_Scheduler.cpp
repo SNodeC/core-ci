@@ -1,5 +1,6 @@
 #include "Check.h"
 #include "core/Scheduler.h"
+#include "core/Version.h"
 #include "persistence/StateSession.h"
 #include "persistence/StateSql.h"
 
@@ -35,7 +36,10 @@ namespace {
 
     void turn(const Scheduler& scheduler, Json& state, Time at) {
         scheduler.turn(state, at);
-        scheduler.turn(state, at);
+        if (state.at("cutoff_open") == true) {
+            // Opening and committing a new cutoff is separate from filling that pass.
+            scheduler.turn(state, at);
+        }
     }
 
     Json owner(unsigned attempt, unsigned run, unsigned runAttempt = 1) {
@@ -147,6 +151,117 @@ namespace {
         CHECK_EQ(state.at("items").at(historical).at("state"), "enrolled");
     }
 
+    void admissions() {
+        const auto endpoint = Version::parse("3.0.0").value();
+        CHECK(endpoint.satisfies("==3"));
+        CHECK(endpoint.satisfies(">=3,<=3,>2,<4"));
+        CHECK(!endpoint.satisfies(">3"));
+        CHECK(!endpoint.satisfies("<3"));
+        CHECK(!endpoint.satisfies(">=3,<3"));
+        CHECK(!Version::validRange(">=3,,<4"));
+        CHECK(!Version::validRange("=3"));
+        CHECK(!stableTag("v4.0.0-rc.1"));
+        CHECK(Version::parse("1.10.0").value() > Version::parse("1.9.0").value());
+
+        Options options;
+        options.slots = 3;
+        const Scheduler scheduler(options);
+        auto declaration = package("producer");
+        declaration["releases"] = ">=1.10,<2";
+        const Json declarations{{idp, declaration}};
+        auto state = ready(scheduler, declarations, Json::array({release(idp, "v1.9.0")}));
+        CHECK_EQ(scheduler
+                     .declarations(state,
+                                   {{"native", target}},
+                                   declarations,
+                                   Json::array({release(idp, "v1.11.0"), release(idp, "v1.10.0"), release(idp, "v1.12.0")}))
+                     .code,
+                 200);
+        scheduler.turn(state, 10); // Commit the cutoff.
+        scheduler.turn(state, 10); // This single fill must pick all three ready items.
+        CHECK_EQ(state.at("attempts").size(), 3U);
+        const auto& unsupported = state.at("items").at("producer/1.9.0/native");
+        CHECK_EQ(unsupported.at("condition"), "unsupported");
+        CHECK_EQ(unsupported.at("reason"), "release outside declaration range");
+    }
+
+    void admissionStress() {
+        Options options;
+        options.slots = 7;
+        const Scheduler scheduler(options);
+        const std::vector<std::string> names{"amber", "birch", "cedar", "dune", "elm"};
+        auto catalog = Json{{"native", target}, {"second", target}};
+        catalog["second"]["id"] = "second";
+        Json declarations = Json::object();
+        for (std::size_t i = 0; i < 3; ++i) {
+            declarations["fixtures/" + names[i]] = package(names[i]);
+            declarations["fixtures/" + names[i]]["targets"] = Json::array({"native", "second"});
+        }
+        auto state = initialState();
+        CHECK_EQ(scheduler.declarations(state, catalog, declarations, Json::array()).code, 200);
+        scheduler.feed(state, head, {{"refs/snapshots/feed/pre-x", head}}, Json::array(), 1);
+        std::vector<std::string> expected;
+        const auto admit = [&](const std::string& name, unsigned minor) {
+            const auto version = "1." + std::to_string(minor) + ".0";
+            CHECK_EQ(scheduler.admit(state, "fixtures/" + name, "v" + version, head).code, 200);
+            CHECK_EQ(scheduler.admit(state, "fixtures/" + name, "v" + version, head).code, 200);
+            expected.push_back(name + "/" + version + "/native");
+            expected.push_back(name + "/" + version + "/second");
+        };
+        for (std::size_t i = 0; i < 3; ++i) {
+            admit(names[i], 1);
+        }
+        scheduler.turn(state, 10); // Commit the cutoff for three repositories and six items.
+        for (std::size_t i = 3; i < names.size(); ++i) {
+            declarations["fixtures/" + names[i]] = package(names[i]);
+            declarations["fixtures/" + names[i]]["targets"] = Json::array({"native", "second"});
+        }
+        CHECK_EQ(scheduler.declarations(state, catalog, declarations, Json::array()).code, 200);
+        for (std::size_t i = 3; i < names.size(); ++i) {
+            admit(names[i], 1);
+        }
+        for (unsigned minor = 2; minor <= 10; ++minor) {
+            for (const auto& name : names) {
+                admit(name, minor);
+            }
+        }
+        CHECK_EQ(expected.size(), 100U);
+        CHECK_EQ(state.at("releases").size(), 50U);
+        scheduler.turn(state, 11); // Fill exactly the six eligible items, leaving one slot free.
+        CHECK_EQ(view(state, options).at("reservations").at("queued"), 6U);
+        CHECK_EQ(state.at("items").at(expected[6]).at("state"), "enrolled");
+        turn(scheduler, state, 12);
+        std::vector<std::string> documents;
+        for (std::size_t completed = 0; completed < expected.size();) {
+            const auto count = std::min<std::size_t>(options.slots, expected.size() - completed);
+            CHECK_EQ(view(state, options).at("reservations").at("queued"), count);
+            CHECK_EQ(state.at("attempts").size(), completed + count);
+            const auto later = completed + count;
+            for (auto index = completed; index < later; ++index) {
+                const auto& item = state.at("items").at(expected[index]);
+                CHECK_EQ(item.at("state"), "processing");
+                const auto request = item.at("request").get<std::string>();
+                documents.push_back(state.at("attempts").at(attemptKey(request, 1)).at("document").get<std::string>());
+                CHECK_EQ(scheduler.claim(state, false, request, owner(1, index + 1), 13 + completed).code, 200);
+            }
+            state = Json::parse(state.dump());
+            for (auto index = later; index > completed; --index) {
+                const auto& item = state.at("items").at(expected[index - 1]);
+                const auto request = item.at("request").get<std::string>();
+                const auto key = attemptKey(request, 1);
+                CHECK_EQ(state.at("attempts").at(key).at("document"), Json(documents[index - 1]));
+                auto report = owner(1, index);
+                report.update(Json{{"status", "finished"}, {"outcome", "failed"}});
+                CHECK_EQ(scheduler.report(state, false, request, report, 14 + completed).code, 200);
+                scheduler.observed(state, key, {{"id", index}, {"status", "completed"}, {"conclusion", "failure"}}, 14 + completed);
+            }
+            completed = later;
+            turn(scheduler, state, 14 + completed);
+        }
+        CHECK_EQ(view(state, options).at("reservations"), (Json{{"slots", 7}, {"queued", 0}, {"running", 0}, {"publication", 0}}));
+        CHECK_EQ(state.at("attempts").size(), 100U);
+    }
+
     Json output(const std::string& name, const std::string& release, unsigned rev, Time date, Json dependencies = Json::array()) {
         return {{"package", name},
                 {"version", release},
@@ -233,11 +348,9 @@ namespace {
         turn(scheduler, state, 11);
         const Json& selected = state.at("items").at("consumer/1.0.0/native");
         CHECK_EQ(selected.at("state"), "processing");
-        if (selected.contains("request")) {
-            const auto record = state.at("attempts").at(attemptKey(selected.at("request").get<std::string>(), 1));
-            const auto input = Json::parse(record.at("document").get<std::string>()).at("inputs");
-            CHECK_EQ(input.at("closure").at(0).at("revision"), 3);
-        }
+        const auto record = state.at("attempts").at(attemptKey(selected.at("request").get<std::string>(), 1));
+        const auto input = Json::parse(record.at("document").get<std::string>()).at("inputs");
+        CHECK_EQ(input.at("closure").at(0).at("revision"), 3);
         auto cyclic = ready(scheduler,
                             {{idp, package("producer", Json::array({Json{{"package", "consumer"}, {"version", ">=1"}}}))},
                              {consumer, package("consumer", Json::array({Json{{"package", "producer"}, {"version", ">=1"}}}))}},
@@ -245,6 +358,97 @@ namespace {
         turn(scheduler, cyclic, 10);
         CHECK_EQ(cyclic.at("attempts").size(), 0U);
         CHECK_EQ(cyclic.at("items").at("producer/1.0.0/native").at("reason"), "cycle");
+    }
+
+    void targetsAndReceipts() {
+        Options options;
+        options.batch = 0;
+        const Scheduler scheduler(options);
+        auto producer = package("producer"),
+             dependent = package("consumer", Json::array({Json{{"package", "producer"}, {"version", ">=1"}}}));
+        producer["targets"] = Json::array({"native", "alt", "third"});
+        dependent["targets"] = Json::array({"native", "alt", "third", "absent"});
+        auto catalog = Json{{"native", target}};
+        for (const auto* id : {"alt", "third", "absent"}) {
+            catalog[id] = target;
+            catalog[id]["id"] = id;
+        }
+        const auto tags = Json::array({release(idp, "v1.0.0"), release(consumer, "v1.0.0")});
+        const Json refs{{"refs/snapshots/feed/pre-x", head}};
+        auto state = initialState();
+        CHECK_EQ(scheduler.declarations(state, catalog, {{idp, producer}, {consumer, dependent}}, tags).code, 200);
+        scheduler.feed(state, head, refs, Json::array(), 1);
+
+        auto unsupported = state;
+        auto outOfRange = producer;
+        outOfRange["releases"] = ">=2";
+        CHECK_EQ(scheduler.declarations(unsupported, catalog, {{idp, outOfRange}, {consumer, dependent}}, tags).code, 200);
+        turn(scheduler, unsupported, 9);
+        scheduler.turn(unsupported, 9); // Reconsider waiting after the provider's unsupported condition is known.
+        CHECK_EQ(unsupported.at("items").at("consumer/1.0.0/native").at("reason"), "range unsatisfiable");
+
+        auto mismatch = state;
+        auto needsNewer = dependent;
+        needsNewer["depends_on"][0]["version"] = ">=2";
+        CHECK_EQ(scheduler.declarations(mismatch, catalog, {{idp, producer}, {consumer, needsNewer}}, tags).code, 200);
+        turn(scheduler, mismatch, 9);
+        CHECK_EQ(mismatch.at("items").at("consumer/1.0.0/native").at("reason"), "range unsatisfiable");
+
+        turn(scheduler, state, 10);
+        CHECK_EQ(state.at("attempts").size(), 3U);
+        CHECK_EQ(state.at("items").at("consumer/1.0.0/absent").at("reason"), "target missing");
+        const auto requestAt = [&](const std::string& targetId) {
+            return state.at("items").at("producer/1.0.0/" + targetId).at("request").get<std::string>();
+        };
+        const auto native = requestAt("native");
+        CHECK_EQ(scheduler.claim(state, false, native, owner(1, 1), 11).code, 200);
+        auto failure = owner(1, 1);
+        failure.update(Json{{"status", "finished"}, {"outcome", "failed"}, {"reason", "fixture target failure"}});
+        CHECK_EQ(scheduler.report(state, false, native, failure, 11).code, 200);
+        scheduler.observed(state, attemptKey(native, 1), {{"id", 1}, {"status", "completed"}, {"conclusion", "failure"}}, 11);
+        CHECK_EQ(scheduler.action(state, "dispatch-paused", {{"paused", true}}).code, 200);
+        const auto alt = requestAt("alt"), third = requestAt("third");
+        complete(scheduler, state, alt, 1, 2, 12, true);
+        complete(scheduler, state, third, 1, 3, 12, false);
+        turn(scheduler, state, 12);
+        CHECK(view(state, options).at("publications").empty());
+        CHECK_EQ(state.at("items").at("producer/1.0.0/alt").at("state"), "built");
+        CHECK_EQ(state.at("items").at("consumer/1.0.0/native").at("reason"), "prerequisite failed");
+        CHECK_EQ(scheduler.action(state, "dispatch-paused", {{"paused", false}}).code, 200);
+        scheduler.turn(state, 13);
+        const auto publication = view(state, options).at("publications").at(0).at("id").get<std::string>();
+        const auto publicationKey = attemptKey(publication, 1);
+        const auto plan = Json::parse(state.at("attempts").at(publicationKey).at("document").get<std::string>());
+        CHECK_EQ(plan.at("items").size(), 2U);
+        CHECK_EQ(scheduler.claim(state, true, publication, owner(1, 4), 13).code, 200);
+        scheduler.observed(state, publicationKey, {{"id", 4}, {"status", "completed"}, {"conclusion", "success"}}, 14);
+        const Json receipts = Json::array({Json{{"publication", publication}, {"attempt", 1}, {"request", alt}, {"outcome", "published"}},
+                                           Json{{"publication", publication},
+                                                {"attempt", 1},
+                                                {"request", third},
+                                                {"outcome", "failed"},
+                                                {"reason", "immutable-conflict"}}});
+        auto published = output("producer", "1.0.0", 1, 14);
+        published["target"] = catalog.at("alt");
+        const std::string newHead(40, 'b');
+        CHECK_EQ(scheduler.admit(state, consumer, "v1.1.0", head).code, 200);
+        scheduler.turn(state, 14); // Open the pass before the provider's publication outcome arrives.
+        scheduler.feed(state,
+                       newHead,
+                       {{"refs/snapshots/feed/" + publication, newHead}},
+                       {{"entries", Json::array({published})}, {"receipts", receipts}},
+                       14);
+        scheduler.turn(state, 14);
+        CHECK_EQ(state.at("items").at("consumer/1.0.0/alt").at("state"), "enrolled");
+        turn(scheduler, state, 14);
+        CHECK_EQ(state.at("items").at("producer/1.0.0/alt").at("state"), "published");
+        CHECK_EQ(state.at("items").at("producer/1.0.0/third").at("state"), "failed");
+        CHECK_EQ(state.at("items").at("producer/1.0.0/third").at("reason"), "immutable-conflict");
+        CHECK_EQ(state.at("items").at("consumer/1.0.0/native").at("reason"), "prerequisite failed");
+        CHECK_EQ(state.at("items").at("consumer/1.0.0/third").at("reason"), "prerequisite failed");
+        const auto selected = state.at("items").at("consumer/1.0.0/alt").at("request").get<std::string>();
+        const auto document = Json::parse(state.at("attempts").at(attemptKey(selected, 1)).at("document").get<std::string>());
+        CHECK_EQ(document.at("inputs").at("closure").at(0).at("target"), "alt");
     }
 
     void attempts() {
@@ -275,8 +479,8 @@ namespace {
         scheduler.turn(state, 22);
         CHECK_EQ(state.at("items").begin()->at("reason"), "conclusion cancelled, no report");
         CHECK_EQ(scheduler.action(state, "retry", {{"item", "producer/1.0.0/native"}}).code, 200);
-        turn(scheduler, state, 23);
-        scheduler.turn(state, 24);
+        scheduler.turn(state, 23);  // Close the cutoff that preceded Retry.
+        turn(scheduler, state, 24); // Commit and fill the pass containing Retry.
         const auto retry = attemptKey(request, 3);
         CHECK_EQ(Json::parse(state.at("attempts").at(retry).at("document").get<std::string>()).at("inputs").dump(), frozen);
 
@@ -408,6 +612,35 @@ namespace {
         CHECK_EQ(selected, Json::array({Json::array({"needed", "2.0.0", 1, "native"}), Json::array({"other", "1.0.0", 1, "native"})}));
     }
 
+    void retiringBinding() {
+        Options options;
+        options.batch = 0;
+        const Scheduler scheduler(options);
+        const auto declaration = package("consumer", Json::array({Json{{"package", "producer"}, {"version", "==1"}}}));
+        const auto transitive = package("transitive", Json::array({Json{{"package", "bridge"}, {"version", "==1"}}}));
+        auto state = ready(
+            scheduler, {{consumer, declaration}, {idp, transitive}}, Json::array({release(consumer, "v1.0.0"), release(idp, "v1.0.0")}));
+        state["entries"] =
+            Json::array({output("producer", "1.0.0", 1, 1), output("producer", "2.0.0", 1, 2), output("producer", "3.0.0", 1, 3)});
+        auto bound = state.at("entries").at(0);
+        bound["target"] = "native";
+        bound["repository"] = bound.at("repo");
+        bound.erase("repo");
+        bound.erase("closure");
+        auto bridge = output("bridge", "1.0.0", 1, 4);
+        bridge["closure"] = Json::array({bound});
+        state["entries"].push_back(bridge);
+        const auto now = 8 * 86400;
+        state["retirement_at"] = now;
+        turn(scheduler, state, now);
+        CHECK_EQ(state.at("attempts").size(), 1U);
+        const auto publication = view(state, options).at("publications").at(0).at("id").get<std::string>();
+        const auto plan = Json::parse(state.at("attempts").at(attemptKey(publication, 1)).at("document").get<std::string>());
+        CHECK_EQ(plan.at("retirements"), Json::array({Json::array({"producer", "1.0.0", 1, "native"})}));
+        CHECK_EQ(state.at("items").at("consumer/1.0.0/native").at("state"), "enrolled");
+        CHECK_EQ(state.at("items").at("transitive/1.0.0/native").at("state"), "enrolled");
+    }
+
     void expiry(bool beforeTurn) {
         Options options;
         options.batch = 0;
@@ -450,10 +683,8 @@ namespace {
             CHECK_EQ(item.at("revision"), change ? 2 : 1);
             CHECK_EQ(item.at("attempt"), change ? 1 : 2);
             const auto key = attemptKey(item.at("request").get<std::string>(), item.at("attempt").get<unsigned>());
-            if (!change) {
-                CHECK_EQ(Json::parse(state.at("attempts").at(key).at("document").get<std::string>()).at("inputs"), frozen);
-                CHECK_EQ(scheduler.claim(state, false, first, owner(1, 51), 16).code, 409);
-            }
+            CHECK_EQ(Json::parse(state.at("attempts").at(key).at("document").get<std::string>()).at("inputs") == frozen, !change);
+            CHECK_EQ(scheduler.claim(state, false, first, owner(1, 51), 16).code, 409);
         }
     }
 
@@ -479,7 +710,11 @@ namespace {
         turn(scheduler, state, 2);
         CHECK_EQ(state.at("items").at(item).at("condition"), "blocked");
         CHECK_EQ(state.at("items").at(item).at("reason"), "closure conflict");
-        scheduler.admit(state, idp, "v1.0.0", head);
+        CHECK_EQ(scheduler.admit(state, consumer, "v1.1.0", head).code, 200);
+        scheduler.turn(state, 3); // Open the pass for the new consumer version.
+        CHECK_EQ(scheduler.admit(state, idp, "v1.0.0", head).code, 200);
+        scheduler.turn(state, 3); // The late prerequisite must not affect this pass.
+        CHECK_EQ(state.at("items").at(item).at("reason"), "closure conflict");
         turn(scheduler, state, 3);
         CHECK_EQ(state.at("items").at(item).at("condition"), "waiting");
         CHECK_EQ(state.at("items").at(item).at("reason"), "checking dependency refresh");
@@ -535,6 +770,73 @@ namespace {
             CHECK(state.at("items").at(item).at("identity") != original);
             CHECK_EQ(scheduler.action(state, "retry", {{"item", item}}).code, 409);
         }
+    }
+
+    void retryIdentity() {
+        const Scheduler scheduler({});
+        const std::string key = "producer/1.0.0/native";
+        const auto tags = Json::array({release(idp, "v1.0.0")});
+        auto declaration = package("producer");
+        auto base = ready(scheduler, {{idp, declaration}}, tags);
+        turn(scheduler, base, 10);
+        const auto request = base.at("items").at(key).at("request").get<std::string>();
+        const auto oldKey = attemptKey(request, 1);
+        const auto document = base.at("attempts").at(oldKey).at("document");
+        CHECK_EQ(scheduler.claim(base, false, request, owner(1, 1), 11).code, 200);
+        auto report = owner(1, 1);
+        report.update(Json{{"status", "finished"}, {"outcome", "failed"}});
+        CHECK_EQ(scheduler.report(base, false, request, report, 12).code, 200);
+        scheduler.observed(base, oldKey, {{"id", 1}, {"status", "completed"}, {"conclusion", "failure"}}, 13);
+        turn(scheduler, base, 13);
+        declaration["tree"] = std::string(40, 'b');
+        declaration["ci_commit"] = std::string(40, 'c');
+        const Json action{{"item", key}};
+        for (const bool requestedBeforeChange : {true, false}) {
+            auto state = base;
+            if (requestedBeforeChange) {
+                CHECK_EQ(scheduler.action(state, "retry", action).code, 200);
+            }
+            CHECK_EQ(scheduler.declarations(state, {{"native", target}}, {{idp, declaration}}, tags).code, 200);
+            if (!requestedBeforeChange) {
+                CHECK_EQ(scheduler.action(state, "retry", action).code, 409);
+            }
+            turn(scheduler, state, 14);
+            CHECK_EQ(state.at("items").at(key).at("revision"), 2U);
+            CHECK_EQ(state.at("items").at(key).at("attempt"), 1U);
+            CHECK_EQ(state.at("attempts").at(oldKey).at("document"), document);
+        }
+    }
+
+    void revisionFloor() {
+        const Scheduler scheduler({});
+        const std::string older = "consumer/1.0.0/native", newest = "consumer/2.0.0/native";
+        const auto dependency = package("consumer", Json::array({Json{{"package", "producer"}, {"version", ">=1"}}}));
+        const Json declarations{{consumer, dependency}};
+        auto state = ready(scheduler, declarations, Json::array({release(consumer, "v2.0.0")}));
+        CHECK_EQ(scheduler.admit(state, consumer, "v1.0.0", head).code, 200);
+        // Floors seeded at cutover from the larger historical allocation for each key.
+        state["revisions"] = {{older, std::max(8, 3) + 1}, {newest, std::max(4, 11) + 1}};
+        auto binding = output("producer", "1.0.0", 1, 5);
+        state["entries"] = Json::array({binding, output("consumer", "1.0.0", 9, 5), output("consumer", "2.0.0", 12, 5)});
+        turn(scheduler, state, 10);
+        CHECK_EQ(state.at("items").at(older).at("revision"), 9U);
+        CHECK_EQ(state.at("items").at(newest).at("revision"), 12U);
+        state["items"][older]["state"] = "published";
+        state["items"][newest]["state"] = "published";
+        state["items"][newest]["identity"] = sha256(Json::array({head, head, target, "Xv1", Json::array({binding.at("identity")})}).dump());
+        scheduler.turn(state, 11);
+        CHECK_EQ(state.at("items").at(newest).at("revision"), 13U);
+        state["items"][newest]["state"] = "published";
+        binding = output("producer", "1.0.0", 2, 12);
+        state["entries"][0] = binding;
+        scheduler.turn(state, 12);
+        CHECK_EQ(state.at("items").at(older).at("revision"), 9U);
+        CHECK_EQ(state.at("items").at(older).at("state"), "published");
+        CHECK_EQ(state.at("items").at(newest).at("revision"), 14U);
+        const auto attempts = state.at("attempts").size();
+        CHECK_EQ(scheduler.admit(state, consumer, "v2.0.0", head).code, 200);
+        scheduler.turn(state, 13);
+        CHECK_EQ(state.at("attempts").size(), attempts);
     }
 
     void observation() {
@@ -671,6 +973,7 @@ namespace {
             scheduler.observed(state, key, {{"id", run}, {"status", "completed"}, {"conclusion", "failure"}}, at);
             const auto refs = state.at("snapshots");
             scheduler.feed(state, head, refs, Json::array(), at);
+            scheduler.turn(state, at);
             state = Json::parse(state.dump());
             if (attempt < 4) {
                 const auto next = state.at("attempts").at(attemptKey(id, attempt + 1));
@@ -716,6 +1019,7 @@ namespace {
         CHECK_EQ(after.at("queued").get<unsigned>() + after.at("running").get<unsigned>() + after.at("publication").get<unsigned>(),
                  options.slots);
 
+        CHECK_EQ(scheduler.admit(state, idp, "v3.0.0", head).code, 200);
         const auto nextBuild = state.at("items").at("producer/2.0.0/native").at("request").get<std::string>();
         CHECK_EQ(scheduler.claim(state, false, nextBuild, owner(1, 3), 17).code, 200);
         scheduler.observed(state, attemptKey(nextBuild, 1), {{"id", 3}, {"status", "completed"}, {"conclusion", "failure"}}, 18);
@@ -725,6 +1029,7 @@ namespace {
         CHECK_EQ(retried.at("reservations").at("publication"), 1U);
         CHECK_EQ(retried.at("publications").back().at("id"), publication);
         CHECK_EQ(retried.at("publications").back().at("attempt"), 2U);
+        CHECK_EQ(state.at("items").at("producer/3.0.0/native").at("state"), "enrolled");
     }
 
     struct Store : persistence::StateStore {
@@ -803,8 +1108,14 @@ int main(int argc, char** argv) {
         registryArrivals();
     } else if (mode == "active_arrivals") {
         activeArrivals();
+    } else if (mode == "admissions") {
+        admissions();
+    } else if (mode == "admission_stress") {
+        admissionStress();
     } else if (mode == "binding") {
         binding();
+    } else if (mode == "targets_and_receipts") {
+        targetsAndReceipts();
     } else if (mode == "attempts") {
         attempts();
     } else if (mode == "publications") {
@@ -815,6 +1126,8 @@ int main(int argc, char** argv) {
         handoff();
     } else if (mode == "retention") {
         retention();
+    } else if (mode == "retiring_binding") {
+        retiringBinding();
     } else if (mode == "expiry") {
         expiry(false);
     } else if (mode == "expiry_before_turn") {
@@ -823,6 +1136,10 @@ int main(int argc, char** argv) {
         closure();
     } else if (mode == "identity") {
         identity();
+    } else if (mode == "retry_identity") {
+        retryIdentity();
+    } else if (mode == "revision_floor") {
+        revisionFloor();
     } else if (mode == "observation") {
         observation();
     } else if (mode == "snapshots") {

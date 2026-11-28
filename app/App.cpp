@@ -290,17 +290,14 @@ namespace coreci::app {
                 if (const auto* state = queue->state()) {
                     const auto at = now();
                     const auto& records = state->at("attempts");
-                    const auto active = [](const Json& attempt) {
-                        return attempt.at("run_state") != "completed" && attempt.at("run_state") != "superseded";
-                    };
                     const bool changingHead = std::ranges::any_of(records, [&](const Json& record) {
-                        return record.at("publication") == true && active(record) && record.at("dispatch") == "sent";
+                        return record.at("publication") == true && reserved(record) && record.at("dispatch") == "sent";
                     });
                     const bool ready = std::ranges::any_of(state->at("items"), [](const Json& item) {
                         return item.at("state") == "enrolled" && item.value("condition", "") == "";
                     });
-                    const bool pick =
-                        changingHead && ready && state->at("paused") == false && std::ranges::count_if(records, active) < scheduling.slots;
+                    const bool pick = changingHead && ready && state->at("paused") == false &&
+                                      std::ranges::count_if(records, reserved) < scheduling.slots;
                     if (at >= nextFeed || pick) {
                         refreshFeed(pick);
                     }

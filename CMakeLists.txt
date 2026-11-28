@@ -37,15 +37,21 @@ foreach(
     turns
     registry_arrivals
     active_arrivals
+    admission_stress
+    admissions
     binding
+    targets_and_receipts
     attempts
     closure
     identity
+    retry_identity
+    revision_floor
     observation
     handoff
     publications
     publication_retry_capacity
     retention
+    retiring_binding
     expiry
     expiry_before_turn
     snapshots
@@ -129,14 +135,17 @@ if(CORECI_WITH_SNODEC)
             $<TARGET_FILE:core-ci>
     )
     set_tests_properties(A_SlimSource PROPERTIES LABELS adapters)
-    add_test(
-        NAME X_Http
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_x.py ${CMAKE_BINARY_DIR}
-    )
+    foreach(mode Http Http_Recovery)
+        add_test(
+            NAME X_${mode}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_x.py
+                ${CMAKE_BINARY_DIR} ${mode}
+        )
+    endforeach()
     set_tests_properties(
-        X_Http
+        X_Http X_Http_Recovery
         PROPERTIES LABELS
                    "integration;mariadb"
                    RUN_SERIAL

@@ -25,6 +25,7 @@ namespace coreci {
     std::string sha256(const std::string& bytes);
     std::string attemptKey(const std::string& id, unsigned attempt);
     bool stableTag(const std::string& tag);
+    bool reserved(const Json& attempt);
     Json view(const Json& state, const Options& options);
     Json retirements(const Json& entries, Time now, const Json& planned = Json::array());
 

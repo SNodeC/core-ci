@@ -13,16 +13,24 @@ namespace coreci {
         using Text = std::string;
 
         Text keyFor(const Json& item) {
-            return item.at("package").get<Text>() + "/" + item.at("version").get<Text>() + "/" + item.at("target").get<Text>();
-        }
-
-        Text outputKey(const Json& item) {
+            const auto& target = item.at("target");
             return item.at("package").get<Text>() + "/" + item.at("version").get<Text>() + "/" +
-                   std::to_string(item.at("revision").get<unsigned>()) + "/" + item.at("target").at("id").get<Text>();
+                   (target.is_string() ? target : target.at("id")).get<Text>();
         }
 
         unsigned eligibility(const Json& state) {
             return state.at("pass").get<unsigned>() + 1;
+        }
+
+        bool eligible(const Json& state, const Json& item) {
+            return item.at("eligible") <= state.at("pass");
+        }
+
+        bool eligibleOutput(const Json& state, const Json& output) {
+            const auto& items = state.at("items");
+            const auto current = items.find(keyFor(output));
+            return current == items.end() || current->at("revision") != output.at("revision") ||
+                   current->value("output_eligible", 0U) <= state.at("pass").get<unsigned>();
         }
 
         Version version(const Json& item) {
@@ -34,15 +42,12 @@ namespace coreci {
                    (version(candidate) == version(incumbent) && candidate.at("revision") > incumbent.at("revision"));
         }
 
-        bool reserved(const Json& attempt) {
-            return attempt.at("run_state") != "completed" && attempt.at("run_state") != "superseded";
-        }
-
         bool currentPublication(const Json& attempt) {
             return attempt.at("publication") == true && (reserved(attempt) || !attempt.value("reconciled", false));
         }
 
         void finalizeBuild(Json& state, Json& record, Time now, const Options& options);
+        void replaceAttempt(Json& state, Json& old, Time now, const Options& options);
 
         Json attempt(const Text& id, unsigned number, bool publication, const Text& document, Time now, const Options& options) {
             return {{"id", id},
@@ -66,10 +71,7 @@ namespace coreci {
                 item["revision"] = 0;
                 item["state"] = "enrolled";
                 item["eligible"] = eligibility(state);
-                const auto id = keyFor(item);
-                if (!state.at("items").contains(id)) {
-                    state["items"][id] = std::move(item);
-                }
+                state["items"].emplace(keyFor(item), std::move(item));
             }
         }
 
@@ -79,13 +81,19 @@ namespace coreci {
         };
 
         bool retired(const Json& state, const Json& output) {
-            const auto key = outputKey(output);
-            bool retiring = false;
-            for (const auto& publication : state.at("attempts")) {
-                retiring = retiring || (currentPublication(publication) && publication.contains("retiring") &&
-                                        publication.at("retiring").contains(key));
-            }
-            return retiring;
+            const auto& target = output.at("target");
+            const auto key = output.at("package").get<Text>() + "/" + output.at("version").get<Text>() + "/" +
+                             std::to_string(output.at("revision").get<unsigned>()) + "/" +
+                             (target.is_string() ? target : target.at("id")).get<Text>();
+            return std::ranges::any_of(state.at("attempts"), [&](const auto& publication) {
+                return currentPublication(publication) && publication.contains("retiring") && publication.at("retiring").contains(key);
+            });
+        }
+
+        bool inProgress(const Json& item) {
+            return item.at("state") == "processing" || item.at("state") == "built" ||
+                   (item.at("state") == "enrolled" && item.value("condition", "") != "blocked" &&
+                    item.value("condition", "") != "unsupported");
         }
 
         void mergeBinding(Selection& selection, const Json& output, const Json& state) {
@@ -96,10 +104,8 @@ namespace coreci {
                 selection.closure.push_back(output);
             } else if (found->at("identity") != output.at("identity")) {
                 const bool pending = std::ranges::any_of(state.at("items"), [&](const auto& item) {
-                    return item.at("package") == output.at("package") && item.at("target") == output.at("target") &&
-                           (item.at("state") == "processing" || item.at("state") == "built" ||
-                            (item.at("state") == "enrolled" && item.value("condition", "") != "blocked" &&
-                             item.value("condition", "") != "unsupported"));
+                    return eligible(state, item) && item.at("package") == output.at("package") &&
+                           item.at("target") == output.at("target") && inProgress(item);
                 });
                 selection.condition = pending ? "waiting" : "blocked";
                 selection.reason = pending ? "checking dependency refresh" : "closure conflict";
@@ -127,26 +133,26 @@ namespace coreci {
                         const auto& package = dependency.at("package");
                         const auto range = dependency.at("version").get<Text>();
                         const Json* best = nullptr;
+                        bool pending = false, failed = false, hasTarget = false;
                         for (const auto& output : state.at("entries")) {
                             if (!output.value("legacy", false) && output.at("package") == package &&
-                                output.at("target").at("id") == target && version(output).satisfies(range) && !retired(state, output) &&
-                                (!best || newer(output, *best))) {
-                                best = &output;
+                                output.at("target").at("id") == target) {
+                                hasTarget = true;
+                                if (eligibleOutput(state, output) && version(output).satisfies(range) && (!best || newer(output, *best)) &&
+                                    !retired(state, output) && std::ranges::none_of(output.at("closure"), [&](const auto& bound) {
+                                        return retired(state, bound);
+                                    })) {
+                                    best = &output;
+                                }
                             }
                         }
-                        bool pending = false, failed = false, hasTarget = false;
                         for (const auto& candidate : state.at("items")) {
-                            if (candidate.at("package") == package && candidate.at("target") == target &&
-                                version(candidate).satisfies(range)) {
+                            if (eligible(state, candidate) && candidate.at("package") == package && candidate.at("target") == target) {
                                 hasTarget = true;
-                                const auto disposition = candidate.at("state").get<Text>();
-                                const auto condition = candidate.value("condition", "");
-                                const bool eligible = candidate.at("eligible").get<unsigned>() <= state.at("pass").get<unsigned>();
-                                pending =
-                                    pending || (eligible && (!best || version(candidate) > version(*best)) &&
-                                                (disposition == "processing" || disposition == "built" ||
-                                                 (disposition == "enrolled" && condition != "blocked" && condition != "unsupported")));
-                                failed = failed || disposition == "failed" || condition == "blocked";
+                                if (version(candidate).satisfies(range)) {
+                                    pending = pending || ((!best || version(candidate) > version(*best)) && inProgress(candidate));
+                                    failed = failed || candidate.at("state") == "failed" || candidate.value("condition", "") == "blocked";
+                                }
                             }
                         }
                         if (pending || !best) {
@@ -178,13 +184,13 @@ namespace coreci {
             if (visited.insert(id).second && state.at("declarations").contains(item.at("repo").get<Text>())) {
                 const auto& declaration = state.at("declarations").at(item.at("repo").get<Text>());
                 for (const auto& dependency : declaration.at("depends_on")) {
-                    for (const auto& related : state.at("items")) {
-                        if (!found && related.at("package") == dependency.at("package") && related.at("target") == item.at("target") &&
-                            version(related).satisfies(dependency.at("version").get<Text>()) && related.at("state") == "enrolled" &&
-                            related.value("condition", "") != "unsupported") {
-                            found = keyFor(related) == keyFor(root) || reaches(state, related, root, visited);
-                        }
-                    }
+                    found = found || std::ranges::any_of(state.at("items"), [&](const auto& related) {
+                                return eligible(state, related) && related.at("package") == dependency.at("package") &&
+                                       related.at("target") == item.at("target") &&
+                                       version(related).satisfies(dependency.at("version").get<Text>()) &&
+                                       related.at("state") == "enrolled" && related.value("condition", "") != "unsupported" &&
+                                       (keyFor(related) == keyFor(root) || reaches(state, related, root, visited));
+                            });
                 }
             }
             return found;
@@ -217,7 +223,7 @@ namespace coreci {
 
         void updateDesired(Json& state) {
             for (auto& item : state["items"]) {
-                if (item.at("eligible") <= state.at("pass")) {
+                if (eligible(state, item)) {
                     const auto selection = resolve(state, item);
                     if (item.at("state") == "enrolled") {
                         item["condition"] = selection.condition;
@@ -229,13 +235,13 @@ namespace coreci {
                         if ((item.at("state") == "published" || item.at("state") == "failed") && item.value("identity", "") != identity) {
                             const auto declaration = state.at("declarations").at(item.at("repo").get<Text>());
                             const bool declarationChanged = declaration.at("tree") != item.value("tree", "");
-                            const bool newest = !std::ranges::any_of(state.at("items"), [&](const auto& newerItem) {
-                                return newerItem.at("package") == item.at("package") && newerItem.at("target") == item.at("target") &&
-                                       newerItem.at("state") == "published" && version(newerItem) > version(item);
+                            const bool newest = !std::ranges::any_of(state.at("entries"), [&](const auto& output) {
+                                return !output.value("legacy", false) && output.at("package") == item.at("package") &&
+                                       eligibleOutput(state, output) && output.at("target").at("id") == item.at("target") &&
+                                       version(output) > version(item);
                             });
                             if (declarationChanged || newest || item.at("state") == "failed") {
                                 item["state"] = "enrolled";
-                                item.erase("retry");
                             }
                         }
                     } else {
@@ -244,7 +250,7 @@ namespace coreci {
                 }
             }
             for (auto& item : state["items"]) {
-                if (item.at("state") == "enrolled" && item.value("condition", "") == "waiting") {
+                if (eligible(state, item) && item.at("state") == "enrolled" && item.value("condition", "") == "waiting") {
                     std::set<Text> visited;
                     if (reaches(state, item, item, visited)) {
                         item["condition"] = "blocked";
@@ -259,7 +265,7 @@ namespace coreci {
             unsigned number = 1;
             Text request;
             Json inputs, bindings = selection.direct;
-            if (item.value("retry", false)) {
+            if (item.value("retry", false) && item.at("desired") == item.at("identity")) {
                 request = item.at("request").get<Text>();
                 number = item.at("attempt").get<unsigned>() + 1;
                 auto& previous = state["attempts"][attemptKey(request, number - 1)];
@@ -294,7 +300,7 @@ namespace coreci {
             const bool retirement = state.value("retirement_at", Time{0}) > 0 && state.value("retirement_at", Time{0}) <= now &&
                                     !state.value("legacy_retired", false);
             return retirement || std::ranges::any_of(state.at("items"), [&](const auto& item) {
-                       return item.at("state") == "built" && item.at("eligible") <= state.at("pass") && !item.contains("publication");
+                       return item.at("state") == "built" && eligible(state, item) && !item.contains("publication");
                    });
         }
 
@@ -313,7 +319,7 @@ namespace coreci {
             const auto number = record.at("attempt").get<unsigned>();
             const auto id = record.at("id").get<Text>();
             for (auto& item : state["items"]) {
-                if (item.at("state") == "built" && item.at("eligible") <= state.at("pass") && !item.contains("publication")) {
+                if (item.at("state") == "built" && eligible(state, item) && !item.contains("publication")) {
                     const auto& source =
                         state.at("attempts").at(attemptKey(item.at("request").get<Text>(), item.at("attempt").get<unsigned>()));
                     const auto frozen = Json::parse(source.at("document").get<Text>()).at("inputs");
@@ -355,10 +361,7 @@ namespace coreci {
                     deletion.push_back(ref);
                 }
             }
-            bool fault = !options.fault.empty() && !state.at("faults").contains(options.fault);
-            if (fault) {
-                state["faults"][options.fault] = true;
-            }
+            const bool fault = !options.fault.empty() && state["faults"].emplace(options.fault, true).second;
             const bool legacy = state.value("retirement_at", Time{0}) > 0 && state.value("retirement_at", Time{0}) <= now &&
                                 !state.value("legacy_retired", false);
             const Json plan{{"publication", id},
@@ -420,6 +423,10 @@ namespace coreci {
         return parsed && tag.starts_with('v') && tag.find_first_of("-+") == std::string::npos;
     }
 
+    bool reserved(const Json& attempt) {
+        return attempt.at("run_state") != "completed" && attempt.at("run_state") != "superseded";
+    }
+
     Scheduler::Scheduler(Options options)
         : config(std::move(options)) {
     }
@@ -462,15 +469,20 @@ namespace coreci {
             }
         }
         if (state.at("catalog") != catalog || state.at("declarations") != effective) {
+            for (auto& item : state["items"]) {
+                const auto repo = item.at("repo").get<Text>();
+                const auto target = item.at("target").get<Text>();
+                if (state.at("declarations").value(repo, Json{}) != effective.value(repo, Json{}) ||
+                    state.at("catalog").value(target, Json{}) != catalog.value(target, Json{})) {
+                    item["eligible"] = eligibility(state);
+                }
+            }
             state["catalog"] = catalog;
             state["declarations"] = effective;
             for (const auto& release : state.at("releases")) {
                 if (declarations.contains(release.at("repo").get<Text>())) {
                     enroll(state, release);
                 }
-            }
-            for (auto& item : state["items"]) {
-                item["eligible"] = eligibility(state);
             }
         }
         Result result;
@@ -511,7 +523,9 @@ namespace coreci {
         } else if (name == "retry" && body.contains("item") && body.at("item").is_string() &&
                    state.at("items").contains(body.at("item").get<Text>())) {
             auto& item = state["items"][body.at("item").get<Text>()];
-            if (item.at("state") == "failed" && item.contains("desired") && item.at("desired") == item.at("identity")) {
+            const auto selection = resolve(state, item);
+            if (item.at("state") == "failed" && selection.condition.empty() &&
+                buildIdentity(state, item, selection) == item.at("identity").get<Text>()) {
                 item["state"] = "enrolled";
                 item["retry"] = true;
                 item["eligible"] = eligibility(state);
@@ -530,45 +544,47 @@ namespace coreci {
                 finalizeBuild(state, record, now, config);
             }
         }
-        const auto pass = state.at("pass").get<unsigned>();
-        if (!state.value("cutoff_open", false) && std::ranges::any_of(state.at("items"), [pass](const auto& item) {
-                return item.at("eligible").template get<unsigned>() > pass;
+        if (!state.value("cutoff_open", false) && std::ranges::any_of(state.at("items"), [&](const auto& item) {
+                return !eligible(state, item);
             })) {
-            state["pass"] = pass + 1;
+            state["pass"] = eligibility(state);
             state["cutoff_open"] = true;
         } else {
             updateDesired(state);
-            const bool pinnedHead = std::ranges::any_of(state.at("snapshots"), [&](const Json& commit) {
-                return commit == state.at("head");
-            });
-            if (state.at("paused") == false && pinnedHead) {
-                unsigned used = static_cast<unsigned>(std::ranges::count_if(state.at("attempts"), reserved));
-                const bool active = std::ranges::any_of(state.at("attempts"), currentPublication);
-                if (!active && publicationWork(state, now) && used < config.slots) {
+            if (state.at("paused") == false && std::ranges::any_of(state.at("snapshots"), [&](const Json& commit) {
+                    return commit == state.at("head");
+                })) {
+                auto& attempts = state["attempts"];
+                auto used = static_cast<unsigned>(std::ranges::count_if(attempts, reserved));
+                const auto publication = std::ranges::find_if(attempts, currentPublication);
+                if (used < config.slots && publication == attempts.end() && publicationWork(state, now)) {
                     reservePublication(state, now, config);
+                    ++used;
+                } else if (used < config.slots && publication != attempts.end() && !reserved(*publication) &&
+                           publication->contains("retry_at")) {
+                    replaceAttempt(state, *publication, now, config);
                     ++used;
                 }
                 for (auto& record : state["attempts"]) {
                     if (record.at("dispatch") == "batching" && record.at("batch_at").get<Time>() <= now) {
                         freezePublication(state, record, now, config);
+                        if (!record.at("retiring").empty()) {
+                            updateDesired(state);
+                        }
                     }
                 }
-                std::vector<Text> ready;
-                for (const auto& [key, item] : state.at("items").items()) {
-                    if (item.at("eligible") <= state.at("pass") && item.at("state") == "enrolled" && item.value("condition", "").empty() &&
+                std::vector<Json*> ready;
+                for (auto& item : state["items"]) {
+                    if (eligible(state, item) && item.at("state") == "enrolled" && item.value("condition", "").empty() &&
                         item.contains("desired")) {
-                        ready.push_back(key);
+                        ready.push_back(&item);
                     }
                 }
                 std::stable_sort(ready.begin(), ready.end(), [&](const auto& a, const auto& b) {
-                    return state.at("items").at(a).at("order") < state.at("items").at(b).at("order");
+                    return a->at("order") < b->at("order");
                 });
-                for (const auto& id : ready) {
-                    if (used < config.slots) {
-                        auto& item = state["items"][id];
-                        makeBuild(state, item, resolve(state, item), now, config);
-                        ++used;
-                    }
+                for (std::size_t i = 0; i < ready.size() && used < config.slots; ++i, ++used) {
+                    makeBuild(state, *ready[i], resolve(state, *ready[i]), now, config);
                 }
             }
             state["cutoff_open"] = false;
@@ -585,38 +601,41 @@ namespace coreci {
                 if (record.contains("report") || record.at("grace_at").get<Time>() <= now) {
                     auto& item = state["items"][record.at("item").get<Text>()];
                     item["eligible"] = eligibility(state);
-                    if (record.contains("report")) {
-                        const auto& report = record.at("report");
-                        item["state"] = report.at("outcome");
-                        item["reason"] = report.value("reason", "");
-                    } else {
-                        item["state"] = "failed";
-                        item["reason"] = "conclusion " + record.at("conclusion").get<Text>() + ", no report";
-                    }
+                    const auto report = record.value("report", Json::object());
+                    item["state"] = report.value("outcome", "failed");
+                    item["reason"] =
+                        report.empty() ? "conclusion " + record.at("conclusion").get<Text>() + ", no report" : report.value("reason", "");
                     record["reconciled"] = true;
                 }
             }
         }
 
-        Json replacement(Json& old, Time now, const Options& options) {
+        void replaceAttempt(Json& state, Json& old, Time now, const Options& options) {
             auto document = Json::parse(old.at("document").get<Text>());
             const auto id = old.at("id").get<Text>();
             const auto number = old.at("attempt").get<unsigned>() + 1;
             const bool publication = old.at("publication").get<bool>();
+            const auto queueStart = std::max(now, old.value("retry_at", now));
             document["attempt"] = number;
             if (publication) {
                 document["fault"] = "none";
-                document["deadline"] = now + options.queue + options.execution;
+                document["deadline"] = queueStart + options.queue + options.execution;
             }
-            auto result = attempt(id, number, publication, document.dump(), now, options);
+            auto next = attempt(id, number, publication, document.dump(), queueStart, options);
             for (const auto* field : {"item", "pin", "bindings", "retiring", "failures"}) {
                 if (old.contains(field)) {
-                    result[field] = old.at(field);
+                    next[field] = old.at(field);
                 }
+            }
+            if (!publication) {
+                state["items"][old.at("item").get<Text>()]["attempt"] = number;
+            } else if (old.at("run_state") == "completed") {
+                next["failures"] = old.value("failures", 0U) + 1;
+                next["retry_at"] = old.at("retry_at");
             }
             old["reconciled"] = true;
             old["fenced"] = true;
-            return result;
+            state["attempts"][attemptKey(id, number)] = std::move(next);
         }
 
         bool sameOwner(const Json& attempt, const Json& owner) {
@@ -697,6 +716,7 @@ namespace coreci {
                     record["superseded_completed"] = run.at("status") == "completed";
                 } else if (record.at("run_state") != "completed" && run.at("status") == "completed") {
                     record["run_state"] = "completed";
+                    record.erase("retry_at");
                     record["completed_at"] = now;
                     record["conclusion"] = run.at("conclusion");
                     if (!publication) {
@@ -708,12 +728,7 @@ namespace coreci {
             } else if (run.value("not_found", false) && reserved(record) && record.at("run") == 0 && !record.contains("claimed_at") &&
                        record.at("queue_at").get<Time>() <= now) {
                 record["run_state"] = "superseded";
-                record["fenced"] = true;
-                const auto next = replacement(record, now, config);
-                if (!publication) {
-                    state["items"][record.at("item").get<Text>()]["attempt"] = next.at("attempt");
-                }
-                state["attempts"][attemptKey(next.at("id").get<Text>(), next.at("attempt").get<unsigned>())] = next;
+                replaceAttempt(state, record, now, config);
             }
         }
         return {};
@@ -722,8 +737,7 @@ namespace coreci {
     Result Scheduler::feed(Json& state, const std::string& head, const Json& snapshots, const Json& ledger, Time now) const {
         state["head"] = head;
         state["snapshots"] = snapshots;
-        const auto entries = ledger.is_object() ? ledger.at("entries") : Json::array();
-        state["entries"] = entries;
+        state["entries"] = ledger.is_object() ? ledger.at("entries") : Json::array();
         const auto receipts = ledger.is_object() ? ledger.at("receipts") : Json::array();
         state["acks"] = Json::array();
         for (const auto& receipt : receipts) {
@@ -732,15 +746,14 @@ namespace coreci {
                 state["acks"].push_back(Json::array({receipt.at("publication"), receipt.at("attempt"), receipt.at("request")}));
             }
         }
-        Json replacements = Json::object();
         for (auto& record : state["attempts"]) {
             if (record.at("publication") == true && !record.value("reconciled", false) && record.at("document") != "") {
                 const auto plan = Json::parse(record.at("document").get<Text>());
                 const Text ref = "refs/snapshots/" + config.branch + "/" + record.at("id").get<Text>();
                 if (snapshots.contains(ref)) {
                     for (const auto& itemPlan : plan.at("items")) {
-                        auto& item = state["items"][itemPlan.at("package").get<Text>() + "/" + itemPlan.at("version").get<Text>() + "/" +
-                                                    itemPlan.at("target").at("id").get<Text>()];
+                        auto& item = state["items"][keyFor(itemPlan)];
+                        item["eligible"] = eligibility(state);
                         const auto receipt = std::ranges::find_if(receipts, [&](const auto& value) {
                             return value.at("publication") == record.at("id") && value.at("attempt") == record.at("attempt") &&
                                    value.at("request") == itemPlan.at("request");
@@ -750,7 +763,9 @@ namespace coreci {
                             item["reason"] = receipt->value("reason", "");
                             if (receipt->value("failure", "") == "artifact-expired") {
                                 item["state"] = "enrolled";
-                                item["retry"] = item.value("desired", "") == item.value("identity", "");
+                                item["retry"] = true;
+                            } else if (item.at("state") == "published") {
+                                item["output_eligible"] = item.at("eligible");
                             }
                             state["acks"].push_back(
                                 Json::array({receipt->at("publication"), receipt->at("attempt"), receipt->at("request")}));
@@ -762,7 +777,6 @@ namespace coreci {
                         if (record.contains("started_at") && record.contains("completed_at")) {
                             item["publication_seconds"] = record.at("completed_at").get<Time>() - record.at("started_at").get<Time>();
                         }
-                        item["eligible"] = eligibility(state);
                     }
                     if (plan.at("retire_legacy_apt") == true) {
                         state["legacy_retired"] = true;
@@ -776,10 +790,9 @@ namespace coreci {
                            (record.contains("report") || record.at("completed_at").get<Time>() + config.grace <= now)) {
                     const auto failures = record.value("failures", 0U) + 1;
                     if (failures <= 3) {
-                        auto next = replacement(record, now, config);
-                        next["failures"] = failures;
-                        next["retry_at"] = now + 60 * (1 << (failures - 1));
-                        replacements.emplace(attemptKey(next.at("id").get<Text>(), next.at("attempt").get<unsigned>()), std::move(next));
+                        if (!record.contains("retry_at")) {
+                            record["retry_at"] = now + 60 * (1 << (failures - 1));
+                        }
                     } else {
                         for (auto& item : state["items"]) {
                             if (item.contains("publication") && item.at("publication") == record.at("id")) {
@@ -794,7 +807,6 @@ namespace coreci {
                 }
             }
         }
-        state["attempts"].update(replacements);
         return {};
     }
 
