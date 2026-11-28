@@ -35,6 +35,8 @@ target_link_libraries(X_Scheduler PRIVATE coreci_persistence)
 foreach(
     mode
     turns
+    registry_arrivals
+    active_arrivals
     binding
     attempts
     closure
@@ -42,8 +44,10 @@ foreach(
     observation
     handoff
     publications
+    publication_retry_capacity
     retention
     expiry
+    expiry_before_turn
     snapshots
     backoff
     persistence

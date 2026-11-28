@@ -92,7 +92,52 @@ def check(build):
         assert fx.post("/api/dispatch-paused", {"paused": True})[0] == 200
         assert fx.status()["paused"]
         assert fx.request("/api/v1/badge/a/t1.svg", browser=False).status == 200
+        check_arrivals(fx, again, retried)
     return None
+
+
+def check_arrivals(fx, active_run, active):
+    frozen = fx.plan_bytes(active)
+    facts = dict(attempt=int(active["attempt"]), run_id=active_run, run_attempt=1)
+    assert fx.callback(active, "claim", **facts).status == 200
+    for name in ("f", "g"):
+        repo = f"owner/{name}"
+        fx.sources[repo] = dict(fx.sources["owner/e"], package=name, title=name,
+                                depends_on=[dict(package="a", version=">=2")])
+        fx.tags[repo] = {"v1.9.0": "c" * 40, "v1.10.0": "d" * 40}
+        fx.registry["repositories"].append(repo)
+    fx.tags["owner/a"].update({"v2.0.0": "2" * 40, "v3.0.0": "3" * 40})
+    assert fx.post("/api/reconcile", {})[0] == 200
+    assert fx.post("/api/admit-tag", {"repo": "owner/f", "tag": "v1.9.0"})[0] == 200
+    assert fx.post("/api/reconcile", {})[0] == 200
+
+    def arrivals():
+        items = fx.status()["items"]
+        return {item["id"]: item for item in items if item["version"] != "1.0.0"}
+
+    expected = {"a/2.0.0/t1", "a/2.0.0/t2", "a/3.0.0/t1", "a/3.0.0/t2",
+                "f/1.9.0/t1", "f/1.10.0/t1", "g/1.10.0/t1"}
+    assert set(arrivals()) == expected
+    assert eventually(lambda: all(item.get("condition") == "waiting"
+                                 for name, item in arrivals().items() if not name.startswith("a/")))
+    assert fx.status()["reservations"] == dict(slots=2, queued=0, running=1, publication=0)
+    assert fx.dispatches.empty()
+
+    fx.restart()
+    assert eventually(lambda: fx.status()["ready"])
+    assert fx.status()["paused"]
+    assert set(arrivals()) == expected
+    assert fx.plan_bytes(active) == frozen
+    assert fx.callback(active, "claim", **facts).status == 200
+    assert fx.request("/").status == 200
+    assert fx.post("/api/dispatch-paused", {"paused": False})[0] == 200
+    run, values = fx.dispatches.get(timeout=12)
+    inputs = fx.plan(values)["inputs"]
+    assert (inputs["package"], inputs["version"], inputs["target"]["id"]) == ("a", "2.0.0", "t1")
+    assert fx.status()["reservations"] == dict(slots=2, queued=1, running=1, publication=0)
+    assert fx.callback(values, "claim", attempt=1, run_id=run, run_attempt=1).status == 200
+    assert fx.plan_bytes(active) == frozen
+    assert fx.dispatches.empty()
 
 
 if __name__ == "__main__":
