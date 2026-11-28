@@ -520,6 +520,33 @@ def check_restore(build):
             assert len(fx.dispatch_posts) == 3
 
 
+def check_repository_policy(build):
+    with database() as (_, _, environment, _), patch.dict(os.environ, environment):
+        with fixture(build, small=True) as fx:
+            repo = "owner/unknown-deb-project"
+            native = fx.catalog["targets"][0]
+            fx.catalog["targets"] = [dict(native, id=family, family=family) for family in ("deb", "rpm", "ipk", "apk")]
+            fx.registry["repositories"] = [repo]
+            fx.sources[repo] = dict(package="unlisted", title="Unlisted", releases=">=1", depends_on=[],
+                                    build=dict(deb="ci/hooks/build-deb.sh"),
+                                    build_dependencies={"deb@test-stable-test": ["example-dependency"]},
+                                    targets=["deb", "rpm", "ipk", "apk"])
+            fx.tags[repo] = {"v1.2.3": "a" * 40}
+            fx.ready()
+            _, request = fx.dispatches.get(timeout=12)
+            assert request["request_id"].startswith("fixture.")
+            inputs = fx.plan(request)["inputs"]
+            assert inputs["repo"] == repo and inputs["version"] == "1.2.3" and inputs["target"]["family"] == "deb"
+            assert inputs["target"]["runner"] == "fixture-native" and "runner_prefix" not in inputs["target"]
+            statuses = {item["target"]: item for item in fx.status()["items"]}
+            for family in ("rpm", "ipk", "apk"):
+                item = statuses[family]
+                assert item["state"] == "enrolled" and item["condition"] == "unsupported"
+                assert item["reason"] == f"no {family} hook declared" and not item.get("attempt")
+            assert fx.status()["reservations"]["queued"] == 1
+    return None
+
+
 if __name__ == "__main__":
     build = Path(sys.argv[1]).resolve()
     mode = sys.argv[2] if len(sys.argv) > 2 else "Http"
@@ -538,6 +565,8 @@ if __name__ == "__main__":
         check_rerun(build)
     elif mode == "Http_Publish_Pending":
         check_pending_publication(build)
+    elif mode == "Http_Repository_Policy":
+        check_repository_policy(build)
     elif mode == "Http_Restore":
         check_restore(build)
     else:

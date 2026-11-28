@@ -13,13 +13,14 @@ using namespace coreci;
 namespace {
     const std::string head(40, 'a');
     const std::string idp = "example/Provider", consumer = "example/Consumer";
-    const Json target{{"id", "native"}, {"family", "deb"}, {"runner", "ubuntu-24.04"}, {"arch", "amd64"}};
+    const Json target{{"id", "native"}, {"family", "deb"}, {"runner", "fixture-native"}, {"runner_prefix", "b"}, {"arch", "amd64"}};
 
     Json package(const std::string& name, Json dependencies = Json::array()) {
         return {{"package", name},
                 {"releases", ">=1,<5"},
                 {"targets", Json::array({"native"})},
                 {"depends_on", dependencies},
+                {"build", {{"deb", "ci/deb.sh"}, {"rpm", "ci/rpm.sh"}, {"openwrt", "ci/build.sh"}, {"openwrt_register", "ci/register.sh"}}},
                 {"tree", head},
                 {"ci_commit", head}};
     }
@@ -280,7 +281,8 @@ namespace {
             environment["family"] = id.substr(0, delimiter);
             environment["arch"] = id.substr(delimiter + 1);
             if (id == "apk-aarch64" || id == "deb-arm64") {
-                environment["runner"] = "ubuntu-24.04-arm";
+                environment["runner"] = "fixture-alternate";
+                environment["runner_prefix"] = "other";
             }
             catalog[id] = std::move(environment);
         }
@@ -337,7 +339,7 @@ namespace {
                     const auto request = item.at("request").get<std::string>();
                     const auto key = attemptKey(request, 1);
                     const bool arm = item.at("target") == "apk-aarch64" || item.at("target") == "deb-arm64";
-                    CHECK(request.starts_with(arm ? "arm." : "b."));
+                    CHECK(request.starts_with(arm ? "other." : "b."));
                     const auto run = static_cast<unsigned>(dispatched + 1);
                     CHECK_EQ(scheduler.claim(state, false, request, owner(1, run), now).code, 200);
                     active.push_back({key, state.at("attempts").at(key).at("document").get<std::string>(), run});
@@ -669,6 +671,90 @@ namespace {
         turn(scheduler, cyclic, 10);
         CHECK_EQ(cyclic.at("attempts").size(), 0U);
         CHECK_EQ(cyclic.at("items").at("producer/1.0.0/native").at("reason"), "cycle");
+    }
+
+    void openwrtRegistrationBinding() {
+        Options options;
+        options.batch = 0;
+        const Scheduler scheduler(options);
+        auto producer = package("producer");
+        auto dependent = package("consumer", Json::array({Json{{"package", "producer"}, {"version", "==1"}}}));
+        producer["targets"] = {"ipk", "apk"};
+        dependent["targets"] = {"deb", "rpm", "ipk", "apk"};
+        auto state = initialState();
+        Json catalog = Json::object(), retained = Json::array();
+        const std::string oldCi(40, 'c');
+        for (const auto* family : {"deb", "rpm", "ipk", "apk"}) {
+            auto environment = target;
+            environment.update({{"id", family}, {"family", family}});
+            catalog[family] = environment;
+            auto entry = output("producer", "1.0.0", 1, 1);
+            entry.update({{"target", environment}, {"ci_commit", oldCi}});
+            retained.push_back(entry);
+            state["revisions"][std::string("producer/1.0.0/") + family] = 2;
+        }
+        CHECK_EQ(scheduler
+                     .declarations(state,
+                                   catalog,
+                                   {{idp, producer}, {consumer, dependent}},
+                                   Json::array({release(idp, "v1.0.0"), release(consumer, "v1.0.0")}))
+                     .code,
+                 200);
+        state["next"] = 1;
+        auto snapshots = Json{{"refs/snapshots/feed/p.1", head}};
+        CHECK_EQ(
+            scheduler.feed(state, head, snapshots, {{"publication", "p.1"}, {"entries", retained}, {"receipts", Json::array()}}, 1).code,
+            200);
+        turn(scheduler, state, 10);
+        const auto item = [&](const std::string& name, const std::string& family) -> const Json& {
+            return state.at("items").at(name + "/1.0.0/" + family);
+        };
+        const auto request = [&](const std::string& name, const std::string& family) {
+            return item(name, family).at("request").get<std::string>();
+        };
+        const auto bindingOf = [&](const std::string& family) {
+            const auto key = attemptKey(request("consumer", family), 1);
+            return Json::parse(state.at("attempts").at(key).at("document").get<std::string>()).at("inputs").at("closure").at(0);
+        };
+        for (const auto* family : {"deb", "rpm"}) {
+            CHECK_EQ(item("consumer", family).at("state"), "processing");
+            CHECK_EQ(bindingOf(family).at("revision"), 1);
+            CHECK_EQ(bindingOf(family).at("ci_commit"), oldCi);
+        }
+        for (const auto* family : {"ipk", "apk"}) {
+            CHECK_EQ(item("consumer", family).value("condition", ""), "waiting");
+            CHECK_EQ(item("producer", family).at("revision"), 2);
+        }
+        complete(scheduler, state, request("producer", "ipk"), 1, 1, 11, true);
+        const auto failedRequest = request("producer", "apk");
+        const auto failedOwner = owner(1, 2);
+        CHECK_EQ(scheduler.claim(state, false, failedRequest, failedOwner, 11).code, 200);
+        auto failure = failedOwner;
+        failure.update({{"status", "finished"}, {"outcome", "failed"}});
+        CHECK_EQ(scheduler.report(state, false, failedRequest, failure, 11).code, 200);
+        scheduler.observed(state, attemptKey(failedRequest, 1), {{"id", 2}, {"status", "completed"}, {"conclusion", "failure"}}, 11);
+        turn(scheduler, state, 12);
+        CHECK_EQ(item("consumer", "apk").value("condition", ""), "blocked");
+        CHECK_EQ(item("consumer", "apk").at("reason"), "dependency producer lacks openwrt_register at " + oldCi);
+        CHECK_EQ(item("consumer", "ipk").value("condition", ""), "waiting");
+        const auto publish = view(state, options).at("publications").at(0).at("id").get<std::string>();
+        const auto plan = Json::parse(state.at("attempts").at(attemptKey(publish, 1)).at("document").get<std::string>());
+        auto refreshed = plan.at("items").at(0);
+        CHECK_EQ(refreshed.value("openwrt_register", ""), "ci/register.sh");
+        refreshed["published_at"] = 12;
+        retained.push_back(refreshed);
+        const std::string nextHead(40, 'd');
+        snapshots["refs/snapshots/feed/" + publish] = nextHead;
+        const Json receipt{{"publication", publish}, {"attempt", 1}, {"request", refreshed.at("request")}, {"outcome", "published"}};
+        CHECK_EQ(
+            scheduler
+                .feed(
+                    state, nextHead, snapshots, {{"publication", publish}, {"entries", retained}, {"receipts", Json::array({receipt})}}, 13)
+                .code,
+            200);
+        turn(scheduler, state, 13);
+        CHECK_EQ(item("consumer", "ipk").at("state"), "processing");
+        CHECK_EQ(bindingOf("ipk").at("revision"), 2);
     }
 
     void targetsAndReceipts() {
@@ -1113,10 +1199,13 @@ namespace {
         state["entries"] = Json::array({bound});
         turn(scheduler, state, 2);
         const auto original = state.at("items").at(item).at("identity");
-        CHECK_EQ(original, sha256(Json::array({head, head, target, "Xv2", Json::array({bound.at("identity")})}).dump()));
+        auto frozenTarget = target;
+        frozenTarget.erase("runner_prefix");
+        CHECK_EQ(original, sha256(Json::array({head, head, frozenTarget, "Xv2", Json::array({bound.at("identity")})}).dump()));
         state["items"][item]["state"] = "published";
         decl["ci_commit"] = std::string(40, 'b');
-        scheduler.declarations(state, {{"native", target}}, {{consumer, decl}}, tags);
+        environment["runner_prefix"] = "different-route";
+        scheduler.declarations(state, {{"native", environment}}, {{consumer, decl}}, tags);
         turn(scheduler, state, 3);
         CHECK_EQ(state.at("items").at(item).at("state"), "published");
         CHECK_EQ(state.at("items").at(item).at("identity"), original);
@@ -1496,6 +1585,8 @@ int main(int argc, char** argv) {
         dependencyStress();
     } else if (mode == "binding") {
         binding();
+    } else if (mode == "openwrt_registration_binding") {
+        openwrtRegistrationBinding();
     } else if (mode == "targets_and_receipts") {
         targetsAndReceipts();
     } else if (mode == "attempts") {

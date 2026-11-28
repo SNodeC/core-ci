@@ -71,10 +71,8 @@ namespace coreci::github {
                 require(id(name) && dependencies.insert(name).second && Version::validRange(dependency.at("version").get<Text>()),
                         "invalid dependency");
             }
-            for (const auto* family : {"deb", "rpm", "openwrt"}) {
-                require(data.at("build_dependencies").at(family).is_array(), "invalid dependency list");
-            }
-            const std::regex selector(R"((deb|rpm|openwrt)(@[A-Za-z0-9._-]+-[A-Za-z0-9._-]+)?)");
+            require(data.at("build_dependencies").is_object() && data.at("build").is_object(), "invalid build declaration");
+            const std::regex selector(R"((deb|rpm|openwrt)(@[A-Za-z0-9._]+(-[A-Za-z0-9._]+)+)?)");
             for (const auto& [key, entries] : data.at("build_dependencies").items()) {
                 require(std::regex_match(key, selector) && entries.is_array(), "invalid dependency selector");
                 for (const auto& entry : entries) {
@@ -84,7 +82,8 @@ namespace coreci::github {
             }
             for (const auto& [family, hook] : data.at("build").items()) {
                 const auto value = hook.get<Text>();
-                require((family == "deb" || family == "rpm" || family == "openwrt") && value.starts_with("ci/") && path(value),
+                require((family == "deb" || family == "rpm" || family == "openwrt" || family == "openwrt_register") &&
+                            value.starts_with("ci/") && path(value),
                         "invalid build hook");
             }
         }
@@ -150,10 +149,14 @@ namespace coreci::github {
                             for (const auto& target : catalog.at("targets")) {
                                 const auto idValue = target.at("id").get<Text>();
                                 const auto family = target.at("family").get<Text>();
-                                require(id(idValue) && !self->loaded.catalog.contains(idValue) &&
-                                            (family == "deb" || family == "rpm" || family == "ipk" || family == "apk"),
-                                        "invalid catalog target");
+                                const auto& runner = catalog.at("runners").at(target.at("runner").get<Text>());
+                                require(
+                                    id(idValue) && !self->loaded.catalog.contains(idValue) &&
+                                        std::regex_match(runner.at("request_prefix").get<Text>(), std::regex("[a-z0-9][a-z0-9-]{0,23}")) &&
+                                        (family == "deb" || family == "rpm" || family == "ipk" || family == "apk"),
+                                    "invalid catalog target");
                                 self->loaded.catalog[idValue] = target;
+                                self->loaded.catalog[idValue]["runner_prefix"] = runner.at("request_prefix");
                             }
                             self->left = registry.at("repositories").size();
                             if (self->left == 0) {
@@ -183,9 +186,7 @@ namespace coreci::github {
                                       [self, canonical, branch, sha, hash, prefix](Json data, const Text&) {
                                           validatePackage(data);
                                           require(self->packages.insert(data.at("package").get<Text>()).second, "duplicate package");
-                                          data["ci_commit"] = sha;
-                                          data["tree"] = hash;
-                                          data["branch"] = branch;
+                                          data.update({{"ci_commit", sha}, {"tree", hash}, {"branch", branch}});
                                           self->loaded.declarations[canonical] = std::move(data);
                                           self->tagPages(canonical, prefix + "/tags?per_page=100", {});
                                       });
