@@ -1,4 +1,8 @@
 {
+  "runners": {
+    "ubuntu-24.04": {"request_prefix": "b", "runner_arch": "X64"},
+    "ubuntu-24.04-arm": {"request_prefix": "arm", "runner_arch": "ARM64"}
+  },
   "targets": [
     {
       "id": "debian-trixie-amd64",

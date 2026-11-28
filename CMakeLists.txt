@@ -42,6 +42,7 @@ foreach(
     dependency_stress
     admissions
     binding
+    openwrt_registration_binding
     targets_and_receipts
     attempts
     closure
@@ -153,6 +154,7 @@ if(CORECI_WITH_SNODEC)
         Http_Pagination
         Http_Rerun
         Http_Publish_Pending
+        Http_Repository_Policy
         Http_Restore
     )
     foreach(mode IN LISTS http_cases)

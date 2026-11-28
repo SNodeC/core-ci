@@ -14,3 +14,7 @@ Build and test the standalone scheduler with CMake and CTest. Set
 `CORECI_WITH_SNODEC=ON` with the installed SNode.C and snodec-auth development
 packages to build the daemon. Run `python3 tests/database.py BUILD_DIRECTORY`
 to exercise the daemon with a disposable local MariaDB instance.
+
+## Distribution packages
+
+The Rocky Linux 9 package hook activates GCC Toolset 14. The package declaration excludes Raspberry Pi OS Bookworm, whose standard GCC 12 toolchain does not meet the build requirements.

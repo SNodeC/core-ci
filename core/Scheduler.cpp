@@ -71,11 +71,11 @@ namespace coreci {
             const auto& declaration = state.at("declarations").at(release.at("repo").get<Text>());
             for (const auto& target : declaration.at("targets")) {
                 Json item = release;
-                item["package"] = declaration.at("package");
-                item["target"] = target;
-                item["revision"] = 0;
-                item["state"] = "enrolled";
-                item["eligible"] = eligibility(state);
+                item.update({{"package", declaration.at("package")},
+                             {"target", target},
+                             {"revision", 0},
+                             {"state", "enrolled"},
+                             {"eligible", eligibility(state)}});
                 state["items"].emplace(keyFor(item), std::move(item));
             }
         }
@@ -121,50 +121,67 @@ namespace coreci {
             Selection result;
             const auto repository = item.at("repo").get<Text>();
             const auto target = item.at("target").get<Text>();
-            if (!state.at("declarations").contains(repository) || !state.at("catalog").contains(target)) {
-                result.condition = "blocked";
-                result.reason = "target missing";
+            if (!state.at("declarations").contains(repository) || !state.at("catalog").contains(target) ||
+                !state.at("catalog").at(target).contains("runner_prefix")) {
+                result = {"blocked", "target missing"};
             } else {
                 const auto& declaration = state.at("declarations").at(repository);
+                const auto family = state.at("catalog").at(target).at("family").get<Text>();
+                const bool openwrt = family == "ipk" || family == "apk";
+                const auto& hooks = declaration.at("build");
                 if (!version(item).satisfies(declaration.at("releases").get<Text>())) {
-                    result.condition = "unsupported";
-                    result.reason = "release outside declaration range";
+                    result = {"unsupported", "release outside declaration range"};
                 } else if (std::ranges::find(declaration.at("targets"), Json(target)) == declaration.at("targets").end()) {
-                    result.condition = "blocked";
-                    result.reason = "target missing";
+                    result = {"blocked", "target missing"};
+                } else if (!hooks.contains(openwrt ? "openwrt" : family) || (openwrt && !hooks.contains("openwrt_register"))) {
+                    result = {"unsupported", "no " + family + " hook declared"};
                 }
                 for (const auto& dependency : declaration.at("depends_on")) {
                     if (result.condition.empty()) {
                         const auto& package = dependency.at("package");
                         const auto range = dependency.at("version").get<Text>();
                         const Json* best = nullptr;
+                        const Json* unregistered = nullptr;
                         bool pending = false, failed = false, hasTarget = false;
                         for (const auto& output : state.at("entries")) {
                             if (!output.value("legacy", false) && output.at("package") == package &&
                                 output.at("target").at("id") == target) {
                                 hasTarget = true;
-                                if (eligibleOutput(state, output) && version(output).satisfies(range) && (!best || newer(output, *best)) &&
-                                    !retired(state, output) && std::ranges::none_of(output.at("closure"), [&](const auto& bound) {
+                                if (eligibleOutput(state, output) && version(output).satisfies(range) && !retired(state, output) &&
+                                    std::ranges::none_of(output.at("closure"), [&](const auto& bound) {
                                         return retired(state, bound);
                                     })) {
-                                    best = &output;
+                                    auto& selected = openwrt && output.value("openwrt_register", "").empty() ? unregistered : best;
+                                    if (!selected || newer(output, *selected)) {
+                                        selected = &output;
+                                    }
                                 }
                             }
                         }
+                        const auto* baseline = best ? best : unregistered;
                         for (const auto& candidate : state.at("items")) {
                             if (eligible(state, candidate) && candidate.at("package") == package && candidate.at("target") == target) {
                                 hasTarget = true;
                                 if (version(candidate).satisfies(range)) {
-                                    pending = pending || ((!best || version(candidate) > version(*best)) && inProgress(candidate));
+                                    const bool refresh =
+                                        unregistered && (!best || newer(*unregistered, *best)) &&
+                                        version(candidate) == version(*unregistered) &&
+                                        (candidate.at("revision") > unregistered->at("revision") ||
+                                         (candidate.at("state") == "enrolled" &&
+                                          state.at("revisions").value(keyFor(candidate), 1U) > unregistered->at("revision")));
+                                    pending = pending ||
+                                              ((!baseline || version(candidate) > version(*baseline) || refresh) && inProgress(candidate));
                                     failed = failed || candidate.at("state") == "failed" || candidate.value("condition", "") == "blocked";
                                 }
                             }
                         }
                         if (pending || !best) {
                             result.condition = pending ? "waiting" : "blocked";
-                            result.reason = pending
-                                                ? "newer prerequisite in progress"
-                                                : (failed ? "prerequisite failed" : (hasTarget ? "range unsatisfiable" : "target missing"));
+                            const Text blocked =
+                                unregistered ? "dependency " + package.get<Text>() + " lacks openwrt_register at " +
+                                                   unregistered->at("ci_commit").get<Text>()
+                                             : (failed ? "prerequisite failed" : (hasTarget ? "range unsatisfiable" : "target missing"));
+                            result.reason = pending ? "newer prerequisite in progress" : blocked;
                         } else {
                             for (const auto& bound : best->at("closure")) {
                                 mergeBinding(result, bound, state);
@@ -201,6 +218,12 @@ namespace coreci {
             return found;
         }
 
+        Json targetEnvironment(const Json& state, const Json& item) {
+            auto target = state.at("catalog").at(item.at("target").get<Text>());
+            target.erase("runner_prefix");
+            return target;
+        }
+
         Json frozen(const Json& state, const Json& item, const Selection& selection) {
             const auto& declaration = state.at("declarations").at(item.at("repo").get<Text>());
             return {{"package", item.at("package")},
@@ -209,7 +232,7 @@ namespace coreci {
                     {"ci_commit", declaration.at("ci_commit")},
                     {"version", item.at("version")},
                     {"revision", item.at("revision")},
-                    {"target", state.at("catalog").at(item.at("target").get<Text>())},
+                    {"target", targetEnvironment(state, item)},
                     {"feed_commit", state.at("head")},
                     {"closure", selection.closure},
                     {"contract", "Xv2"}};
@@ -221,9 +244,8 @@ namespace coreci {
             for (const auto& binding : selection.closure) {
                 identities.push_back(binding.at("identity"));
             }
-            const auto hash = Json::array(
-                {item.at("commit"), declaration.at("tree"), state.at("catalog").at(item.at("target").get<Text>()), "Xv2", identities});
-            return sha256(hash.dump());
+            return sha256(
+                Json::array({item.at("commit"), declaration.at("tree"), targetEnvironment(state, item), "Xv2", identities}).dump());
         }
 
         void updateDesired(Json& state) {
@@ -268,7 +290,7 @@ namespace coreci {
         void makeBuild(Json& state, Json& item, const Selection& selection, Time now, const Options& options) {
             const auto id = keyFor(item);
             unsigned number = 1;
-            Text request;
+            Text request, registration;
             Json inputs, bindings = selection.direct;
             if (item.value("retry", false) && !wasPublished(item) && item.at("desired") == item.at("identity")) {
                 request = item.at("request").get<Text>();
@@ -276,6 +298,7 @@ namespace coreci {
                 auto& previous = state["attempts"][attemptKey(request, number - 1)];
                 inputs = Json::parse(previous.at("document").get<Text>()).at("inputs");
                 bindings = previous.at("bindings");
+                registration = previous.value("openwrt_register", "");
                 previous["fenced"] = true;
             } else {
                 const auto revision = state.at("revisions").value(id, 1U);
@@ -283,19 +306,17 @@ namespace coreci {
                 item["revision"] = revision;
                 inputs = frozen(state, item, selection);
                 state["next"] = state.at("next").get<unsigned>() + 1;
-                const bool arm = inputs.at("target").at("runner") == "ubuntu-24.04-arm";
-                request = (arm ? "arm." : "b.") + std::to_string(state.at("next").get<unsigned>());
-                item["tree"] = state.at("declarations").at(item.at("repo").get<Text>()).at("tree");
+                const auto& route = state.at("catalog").at(item.at("target").get<Text>()).at("runner_prefix");
+                request = route.get<Text>() + "." + std::to_string(state.at("next").get<unsigned>());
+                const auto& declaration = state.at("declarations").at(item.at("repo").get<Text>());
+                item["tree"] = declaration.at("tree");
+                registration = declaration.at("build").value("openwrt_register", "");
                 item["identity"] = item.at("desired");
             }
             const Json document{{"request", request}, {"attempt", number}, {"inputs", inputs}};
             auto record = attempt(request, number, false, document.dump(), now, options);
-            record["item"] = id;
-            record["pin"] = inputs.at("feed_commit");
-            record["bindings"] = bindings;
-            item["request"] = request;
-            item["attempt"] = number;
-            item["state"] = "processing";
+            record.update({{"item", id}, {"pin", inputs.at("feed_commit")}, {"bindings", bindings}, {"openwrt_register", registration}});
+            item.update({{"request", request}, {"attempt", number}, {"state", "processing"}});
             item.erase("condition");
             item.erase("retry");
             state["attempts"][attemptKey(request, number)] = std::move(record);
@@ -332,11 +353,12 @@ namespace coreci {
                     for (const auto* key : {"package", "version", "revision", "target", "repo", "commit", "ci_commit", "closure"}) {
                         entry[key] = frozen.at(key);
                     }
-                    entry["bindings"] = source.at("bindings");
-                    entry["request"] = item.at("request");
-                    entry["attempt"] = item.at("attempt");
-                    entry["run_id"] = source.at("run");
-                    entry["identity"] = item.at("identity");
+                    entry.update({{"bindings", source.at("bindings")},
+                                  {"request", item.at("request")},
+                                  {"attempt", item.at("attempt")},
+                                  {"run_id", source.at("run")},
+                                  {"identity", item.at("identity")},
+                                  {"openwrt_register", source.value("openwrt_register", "")}});
                     items.push_back(std::move(entry));
                     item["publication"] = id;
                 }
@@ -661,7 +683,7 @@ namespace coreci {
                 document["deadline"] = queueStart + options.queue + options.execution;
             }
             auto next = attempt(id, number, publication, document.dump(), queueStart, options);
-            for (const auto* field : {"item", "pin", "bindings", "retiring", "failures"}) {
+            for (const auto* field : {"item", "pin", "bindings", "retiring", "failures", "openwrt_register"}) {
                 if (old.contains(field)) {
                     next[field] = old.at(field);
                 }

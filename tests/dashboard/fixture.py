@@ -311,8 +311,9 @@ class Fixture:
                         [('SNodeC/snode.c', 'snodec'), ('SNodeC/mqttsuite', 'mqttsuite'), ('SNodeC/snode.c-idp', 'snodec-idp')]}
         if small:
             self.registry = dict(schema=1, repositories=['owner/' + p for p in 'abcde'])
-            self.catalog = dict(targets=[dict(id=t, family='deb', distribution='test', release='stable',
-                                            codename='stable', arch='test', image='fixture:test', runner='ubuntu-latest',
+            self.catalog = dict(runners={'fixture-native': dict(request_prefix='fixture', runner_arch='X64')},
+                                targets=[dict(id=t, family='deb', distribution='test', release='stable',
+                                            codename='stable', arch='test', image='fixture:test', runner='fixture-native',
                                             platform='linux/amd64', emulated=False) for t in ('t1', 't2')])
             self.sources = {'owner/' + p: dict(schema=2, package=p, title=p, releases='>=1,<9', depends_on=q,
                 build=dict(deb='ci/deb.sh', rpm='ci/rpm.sh'),

@@ -254,13 +254,23 @@ X2 Admission and turns.
 X3 Declaration, schema 2, read at the default-branch tip (ci_commit):
    {"schema":2, "package", "title", "releases":range,
     "depends_on":[{"package","version":range}],
-    "build":{"deb","rpm","openwrt"?},
-    "build_dependencies":{"deb":[…],"rpm":[…],"openwrt":[…],
-                          "<family>@<distribution>-<release>":[…]},
+    "build":{"deb"?,"rpm"?,"openwrt"?,"openwrt_register"?},
+    "build_dependencies":{"deb":[…]?,"rpm":[…]?,"openwrt":[…]?,
+                          "<family>@<distribution>-<release>":[…]?,
+                          "<family>@<distribution>-<release>-<arch>":[…]?},
     "targets":[catalog ids]}
  - Range ">=3.0,<4": comma = AND; operators >=, >, <=, <, ==; abbreviated endpoints
    are normalized (3 → 3.0.0).
- - Selector lists are added to the family list of matching targets.
+ - "build" gets the optional key "openwrt_register" (path under ci/). It is required
+   when any declared target has family ipk or apk. build.py uses that path instead
+   of the fixed ci/package/openwrt-register.sh. The current repositories declare
+   their existing path.
+ - A declared target without its family hook is unsupported at planning, with
+   reason "no <family> hook declared". deb requires build.deb, rpm requires
+   build.rpm, and ipk and apk require build.openwrt and build.openwrt_register.
+ - A missing build dependency family list means empty. Selector lists are added to
+   the family list for matching distribution and release, and architecture when
+   the selector supplies one. Present lists and keys are validated.
 
 X4 Items, reservations, selection.
  - Item = release × target. States: enrolled, processing (an attempt exists whose
@@ -308,6 +318,7 @@ X4 Items, reservations, selection.
  - Closure: merge the frozen transitive bindings of every selected output; exactly one
    output identity per package. A mismatch caused by a pending refresh → waiting;
    otherwise → blocked "closure conflict".
+ - For targets of family ipk or apk, an output is bindable only if its frozen declaration (at its ci_commit) declares build.openwrt_register. A non-bindable output is skipped by selection. If the producer has a newer revision or version in progress → waiting. Otherwise → blocked "dependency <pkg> lacks openwrt_register at <ci_commit>".
  - Bound output = (package, repository, version, revision, identity, source commit,
    ci_commit, its frozen bindings, inventory).
  - Inventory = per split binary package: name, native version, architecture, sha256,
