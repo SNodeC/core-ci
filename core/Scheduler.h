@@ -21,10 +21,17 @@ namespace coreci {
         std::string text;
     };
 
+    struct RestoreProof {
+        std::string snapshot;
+        Time completed;
+    };
+
     Json initialState();
     std::string sha256(const std::string& bytes);
     std::string attemptKey(const std::string& id, unsigned attempt);
     bool stableTag(const std::string& tag);
+    bool reserved(const Json& attempt);
+    std::optional<unsigned> feedSequence(const Json& ledger);
     Json view(const Json& state, const Options& options);
     Json retirements(const Json& entries, Time now, const Json& planned = Json::array());
 
@@ -38,8 +45,14 @@ namespace coreci {
         Result turn(Json& state, Time now) const;
         Result claim(Json& state, bool publication, const std::string& id, const Json& owner, Time now) const;
         Result report(Json& state, bool publication, const std::string& id, const Json& record, Time now) const;
+        Result dispatchFailed(Json& state, const std::string& key, int status, Time now) const;
         Result observed(Json& state, const std::string& key, const Json& run, Time now) const;
-        Result feed(Json& state, const std::string& head, const Json& snapshots, const Json& ledger, Time now) const;
+        Result feed(Json& state,
+                    const std::string& head,
+                    const Json& snapshots,
+                    const Json& ledger,
+                    Time now,
+                    const std::optional<RestoreProof>& restore = {}) const;
 
     private:
         Options config;

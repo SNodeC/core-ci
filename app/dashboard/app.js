@@ -35,7 +35,7 @@ function render() {
     const reservations = state.reservations;
     byId("session").textContent = state.email || "";
     byId("pause").textContent = state.paused ? "Resume" : "Pause";
-    byId("reservations").textContent = `Pass ${state.pass} · ${reservations.queued} queued · ${reservations.running} running · ${reservations.publication} publication · ${reservations.slots} slots`;
+    byId("reservations").textContent = `Pass ${state.pass} · ${reservations.queued} queued · ${reservations.running} running · ${reservations.publication} publication · ${reservations.slots} slots` + (state.feed_status ? ` · ${state.feed_status}` : "");
     const publications = state.publications.slice().reverse().map(publication => {
         const item = node("li");
         item.append(runLink(publication.run, state.workflow_repository, `${publication.id} / ${publication.attempt}`));

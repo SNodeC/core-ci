@@ -35,15 +35,28 @@ target_link_libraries(X_Scheduler PRIVATE coreci_persistence)
 foreach(
     mode
     turns
+    registry_arrivals
+    active_arrivals
+    admission_stress
+    active_arrival_stress
+    dependency_stress
+    admissions
     binding
+    targets_and_receipts
     attempts
     closure
     identity
+    retry_identity
+    revision_floor
     observation
     handoff
     publications
+    publication_retry_capacity
     retention
+    retiring_binding
     expiry
+    expiry_before_turn
+    restore_expiry
     snapshots
     backoff
     persistence
@@ -51,6 +64,8 @@ foreach(
     add_test(NAME X_${mode} COMMAND X_Scheduler ${mode})
 endforeach()
 if(CORECI_WITH_SNODEC)
+    add_library(coreci-test-clock SHARED tests/dashboard/Clock.cpp)
+    target_link_libraries(coreci-test-clock PRIVATE ${CMAKE_DL_LIBS})
     find_package(
         snodec REQUIRED COMPONENTS db-mariadb http-client net-in-stream-tls
                                    http-server-express-tls-in
@@ -125,14 +140,33 @@ if(CORECI_WITH_SNODEC)
             $<TARGET_FILE:core-ci>
     )
     set_tests_properties(A_SlimSource PROPERTIES LABELS adapters)
-    add_test(
-        NAME X_Http
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_x.py ${CMAKE_BINARY_DIR}
+    set(http_cases
+        Http
+        Http_Recovery
+        Http_Dispatch_4xx
+        Http_Dispatch_5xx
+        Http_Dispatch_Connection
+        Http_Claimed_Cancel
+        Http_Kill_Pending
+        Http_Kill_Sent
+        Http_Kill_Claimed
+        Http_Pagination
+        Http_Rerun
+        Http_Publish_Pending
+        Http_Restore
     )
+    foreach(mode IN LISTS http_cases)
+        add_test(
+            NAME X_${mode}
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_x.py
+                ${CMAKE_BINARY_DIR} ${mode}
+        )
+    endforeach()
+    list(TRANSFORM http_cases PREPEND X_)
     set_tests_properties(
-        X_Http
+        ${http_cases}
         PROPERTIES LABELS
                    "integration;mariadb"
                    RUN_SERIAL

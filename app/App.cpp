@@ -290,17 +290,14 @@ namespace coreci::app {
                 if (const auto* state = queue->state()) {
                     const auto at = now();
                     const auto& records = state->at("attempts");
-                    const auto active = [](const Json& attempt) {
-                        return attempt.at("run_state") != "completed" && attempt.at("run_state") != "superseded";
-                    };
                     const bool changingHead = std::ranges::any_of(records, [&](const Json& record) {
-                        return record.at("publication") == true && active(record) && record.at("dispatch") == "sent";
+                        return record.at("publication") == true && reserved(record) && record.at("dispatch") == "sent";
                     });
                     const bool ready = std::ranges::any_of(state->at("items"), [](const Json& item) {
                         return item.at("state") == "enrolled" && item.value("condition", "") == "";
                     });
-                    const bool pick =
-                        changingHead && ready && state->at("paused") == false && std::ranges::count_if(records, active) < scheduling.slots;
+                    const bool pick = changingHead && ready && state->at("paused") == false &&
+                                      std::ranges::count_if(records, reserved) < scheduling.slots;
                     if (at >= nextFeed || pick) {
                         refreshFeed(pick);
                     }
@@ -343,8 +340,12 @@ namespace coreci::app {
                 queue->enqueue(
                     "",
                     [key](auto& state) {
-                        state["attempts"][key]["dispatch"] = "sent";
-                        return Result{};
+                        auto& current = state.at("attempts").at(key);
+                        const bool pending = current.at("dispatch") == "pending" && current.at("run") == 0 && state.at("paused") == false;
+                        if (pending) {
+                            current["dispatch"] = "sent";
+                        }
+                        return pending ? Result{} : Result{409, "dispatch no longer pending"};
                     },
                     [this, key, record](const auto& result) {
                         if (result.code != 200) {
@@ -366,6 +367,10 @@ namespace coreci::app {
                                     const auto run = Json::parse(body, nullptr, false);
                                     if (status >= 200 && status < 300 && run.is_object() && run.contains("workflow_run_id")) {
                                         applyObservation(key, Json{{"id", run.at("workflow_run_id")}, {"status", "queued"}});
+                                    } else if (status == 0 || status >= 400) {
+                                        queue->enqueue("", [this, key, status](auto& state) {
+                                            return queue->scheduler().dispatchFailed(state, key, status, now());
+                                        });
                                     }
                                 },
                                 request.dump());
@@ -416,52 +421,138 @@ namespace coreci::app {
                     });
             }
 
-            void observe(const std::string& key, const Json& record) {
-                busy.insert(key);
-                if (record.at("run") != 0) {
-                    github->request(remote + "/actions/runs/" + std::to_string(record.at("run").get<std::uint64_t>()),
-                                    [this, key](int status, std::string body, const auto&) {
-                                        busy.erase(key);
-                                        const auto result = Json::parse(body, nullptr, false);
-                                        if (status == 200 && result.is_object()) {
-                                            applyObservation(key, result);
-                                        }
-                                    });
-                } else {
-                    const auto title = std::string(record.at("publication") == true ? "publish " : "build ") + key;
-                    locate(key, title, workflow(record) + "/runs?branch=main&event=workflow_dispatch&per_page=100", {});
-                }
-            }
-
-            void locate(const std::string& key, const std::string& title, const std::string& page, std::set<std::string> visited) {
+            void findRun(const std::string& page,
+                         std::function<bool(const Json&)> match,
+                         std::function<void(std::optional<Json>)> done,
+                         std::set<std::string> visited = {}) {
                 visited.insert(page);
-                github->request(page, [this, key, title, visited = std::move(visited)](int status, std::string body, std::string link) {
+                github->request(page, [this, match, done, visited = std::move(visited)](int status, std::string body, std::string link) {
                     const auto result = Json::parse(body, nullptr, false);
-                    if (status == 200 && result.is_object() && result.contains("workflow_runs")) {
+                    if (status == 200 && result.is_object() && result.contains("workflow_runs") && result.at("workflow_runs").is_array()) {
                         const auto& runs = result.at("workflow_runs");
-                        const auto found = std::ranges::find_if(runs, [&](const auto& run) {
-                            return run.value("display_title", "") == title && run.value("run_attempt", 0U) >= 1;
-                        });
+                        const auto found = std::ranges::find_if(runs, match);
                         if (found != runs.end()) {
-                            busy.erase(key);
-                            applyObservation(key, *found);
+                            done(std::optional<Json>(std::in_place, *found));
                         } else if (const auto next = gh::nextLink(link, *base); std::holds_alternative<std::optional<std::string>>(next)) {
                             const auto uri = std::get<std::optional<std::string>>(next);
                             if (uri && !visited.contains(gh::httpsUrl(*uri).value().path)) {
-                                locate(key, title, gh::httpsUrl(*uri).value().path, visited);
+                                findRun(gh::httpsUrl(*uri).value().path, match, done, visited);
                             } else {
-                                busy.erase(key);
-                                if (!uri) {
-                                    applyObservation(key, Json{{"not_found", true}});
-                                }
+                                done(uri ? std::nullopt : std::optional{Json::object()});
                             }
                         } else {
-                            busy.erase(key);
+                            done(std::nullopt);
                         }
                     } else {
-                        busy.erase(key);
+                        done(std::nullopt);
                     }
                 });
+            }
+
+            void observeOriginal(const std::string& key, std::uint64_t run) {
+                github->request(remote + "/actions/runs/" + std::to_string(run) + "/attempts/1",
+                                [this, key](int status, std::string body, const auto&) {
+                                    busy.erase(key);
+                                    const auto result = Json::parse(body, nullptr, false);
+                                    if (status == 200 && result.is_object() && result.value("run_attempt", 0U) == 1) {
+                                        applyObservation(key, result);
+                                    }
+                                });
+            }
+
+            void observe(const std::string& key, const Json& record) {
+                busy.insert(key);
+                if (record.at("run") != 0) {
+                    observeOriginal(key, record.at("run").get<std::uint64_t>());
+                } else {
+                    const auto title = std::string(record.at("publication") == true ? "publish " : "build ") + key;
+                    findRun(
+                        workflow(record) + "/runs?branch=main&event=workflow_dispatch&per_page=100",
+                        [title](const Json& run) {
+                            return run.value("display_title", "") == title && run.value("run_attempt", 0U) >= 1;
+                        },
+                        [this, key](const std::optional<Json>& run) {
+                            if (run && !run->empty() && run->value("run_attempt", 0U) > 1) {
+                                observeOriginal(key, run->at("id").get<std::uint64_t>());
+                            } else {
+                                busy.erase(key);
+                                if (run) {
+                                    applyObservation(key, run->empty() ? Json{{"not_found", true}} : *run);
+                                }
+                            }
+                        });
+                }
+            }
+
+            void findRestore(const std::string& head, std::function<void(std::optional<RestoreProof>)> done) {
+                github->request(remote + "/git/matching-refs/snapshots/", [this, head, done](int code, std::string body, const auto&) {
+                    const auto refs = Json::parse(body, nullptr, false);
+                    std::set<std::string> names;
+                    const auto prefix = "restore " + scheduling.branch + " ";
+                    if (code == 200 && refs.is_array()) {
+                        for (const auto& ref : refs) {
+                            if (ref.at("object").at("sha").get_ref<const std::string&>() == head) {
+                                names.insert(prefix + ref.at("ref").get<std::string>());
+                            }
+                        }
+                    }
+                    if (names.empty()) {
+                        done(std::nullopt);
+                    } else {
+                        findRun(
+                            remote + "/actions/workflows/restore.yml/runs?branch=main&event=workflow_dispatch&per_page=100",
+                            [names](const Json& run) {
+                                return run.value("status", "") == "completed" && run.value("conclusion", "") == "success" &&
+                                       names.contains(run.value("display_title", ""));
+                            },
+                            [this, prefix, done](const std::optional<Json>& run) {
+                                if (!run || run->empty()) {
+                                    done(std::nullopt);
+                                } else {
+                                    const auto ref = run->at("display_title").get<std::string>().substr(prefix.size());
+                                    const auto jobs = remote + "/actions/runs/" + run->at("id").dump() + "/attempts/" +
+                                                      run->at("run_attempt").dump() + "/jobs";
+                                    github->request(jobs, [ref, done](int status, std::string body, const auto&) {
+                                        std::optional<RestoreProof> proof;
+                                        try {
+                                            if (status == 200) {
+                                                const auto job = Json::parse(body).at("jobs").at(0);
+                                                if (job.at("name") == "restore" && job.at("conclusion") == "success") {
+                                                    proof = RestoreProof{ref, gh::isoTime(job.at("completed_at").get<std::string>())};
+                                                }
+                                            }
+                                        } catch (const std::exception&) {
+                                        }
+                                        done(proof);
+                                    });
+                                }
+                            });
+                    }
+                });
+            }
+
+            void acceptFeed(const std::string& head, const Json& snapshots, const Json& ledger, bool pick) {
+                const auto commit = [this, head, snapshots, ledger, pick](const std::optional<RestoreProof>& proof) {
+                    queue->enqueue(
+                        "",
+                        [this, head, snapshots, ledger, proof](auto& state) {
+                            return queue->scheduler().feed(state, head, snapshots, ledger, now(), proof);
+                        },
+                        [this, pick](const auto& result) {
+                            readingFeed = false;
+                            if (pick && result.code == 200) {
+                                turn();
+                            }
+                        });
+                };
+                const auto* state = queue->state();
+                const auto sequence = feedSequence(ledger);
+                if (state && sequence && state->at("head") != "" && state->at("head").get_ref<const std::string&>() != head &&
+                    (state->at("paused") == true || *sequence < state->at("observed_sequence").get<unsigned>())) {
+                    findRestore(head, commit);
+                } else {
+                    commit(std::nullopt);
+                }
             }
 
             void refreshFeed(bool pick = false) {
@@ -484,20 +575,11 @@ namespace coreci::app {
                                                         github->request(
                                                             remote + "/contents/publications.json?ref=" + head,
                                                             [this, head, snapshots, pick](int code, std::string body, const auto&) {
-                                                                readingFeed = false;
                                                                 const auto ledger = Json::parse(body, nullptr, false);
                                                                 if (code == 200 && (ledger.is_array() || ledger.is_object())) {
-                                                                    queue->enqueue(
-                                                                        "",
-                                                                        [this, head, snapshots, ledger](auto& state) {
-                                                                            return queue->scheduler().feed(
-                                                                                state, head, snapshots, ledger, now());
-                                                                        },
-                                                                        [this, pick](const auto& result) {
-                                                                            if (pick && result.code == 200) {
-                                                                                turn();
-                                                                            }
-                                                                        });
+                                                                    acceptFeed(head, snapshots, ledger, pick);
+                                                                } else {
+                                                                    readingFeed = false;
                                                                 }
                                                             },
                                                             {},

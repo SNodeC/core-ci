@@ -352,6 +352,7 @@ X6 Namespace, snapshots, retention.
    freezes the plan, it is not the current head and no attempt pins it. The deletion
    happens in that publication's atomic push.
  - refs/snapshots/<feed_branch>/pre-x is protected: never deleted by publications.
+ - A head older than the last accepted head is accepted only per X8b.
  - Legacy content (on the first X publication into a feed that has pre-X content):
    - The legacy APT tree apt/dists/ and apt/pool/ is carried over byte-identical and
      is never indexed, bound or changed by X. 30 days after the cutover a timer makes
@@ -440,7 +441,7 @@ X8 publish.yml — ONE job; environment publish; the only holder of signing keys
    compare receipts, only then a new attempt.
  - Transient failures (feed-push, signing, other): retry with backoff, at most 3 →
    item failed, with Retry.
- - Confirmed artifact expiry of a built item: if its desired identity still equals
+ - Confirmed artifact expiry of a built item that was never published: if its desired identity still equals
    the frozen one → automatically the next attempt of the SAME revision with
    byte-identical inputs (its snapshot is still pinned, see X6), dispatched under the
    normal reservation rules; otherwise the next revision is enrolled per X5.
@@ -456,6 +457,7 @@ X8b restore.yml — environment publish; manual dispatch only, on the owner's ex
    instruction (staging: as part of qualification). Inputs feed_branch, snapshot_ref,
    expected_head. Sets the feed branch to the commit of snapshot_ref as a leased
    non-fast-forward update against expected_head. No signing, no other change.
+   restore.yml has run-name "restore <feed_branch> <snapshot_ref>". core-ci accepts a feed head that is older than its last accepted head (by the ledger's publication sequence) only with this evidence: a restore.yml run, observed via the GitHub API, completed with conclusion success; its run-name names exactly this feed branch and snapshot ref; the commit of that snapshot ref equals the observed head; and the run completed after core-ci's last accepted head change. Without this evidence, core-ci keeps its last accepted head and shows "feed head behind: <sha>". On acceptance, core-ci sets itself paused and records "restored to <snapshot_ref>"; only the owner unpauses. Items whose published output is missing from the restored ledger return to built while their artifact is available (the next publication republishes them); otherwise the next revision is enrolled with current inputs and a fresh snapshot pin. A revision that was ever published is never rebuilt; it is only republished from its original artifact.
 
 X9 Callbacks (existing HMAC wire format, secret CORECI_CALLBACK_SECRET), identical for
    builds and publications; all URLs derived from CORECI_ORIGIN (X7):
