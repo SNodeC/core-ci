@@ -61,6 +61,12 @@ class Provider(BaseHTTPRequestHandler):
             code = str(len(state.codes) + 1)
             state.codes[code] = dict(values, subject=state.subject)
             self.respond(302, headers={'Location': values['redirect_uri'] + '?' + urllib.parse.urlencode(dict(code=code, state=values['state']))})
+        elif '/git/ref/heads/' in path:
+            self.respond(200, dict(object=dict(sha=state.head)))
+        elif '/git/matching-refs/snapshots/' in path:
+            self.respond(200, [dict(ref=ref, object=dict(sha=sha)) for ref, sha in state.snapshots.items()])
+        elif path.endswith('/contents/publications.json'):
+            self.respond(200, state.ledger)
         elif '/contents/' in path:
             if path.endswith('registry.json'):
                 state.requested.set()
@@ -84,8 +90,13 @@ class Provider(BaseHTTPRequestHandler):
         elif path.endswith('/tags'):
             repo = path.removeprefix('/repos/').removesuffix('/tags')
             self.respond(200, [dict(name=tag, commit=dict(sha=sha)) for tag, sha in state.tags.get(repo, {}).items()])
-        elif '/actions/runs' in path:
-            raise AssertionError('controller attempted removed job lookup')
+        elif '/actions/runs/' in path:
+            run = state.runs.get(int(path.rsplit('/', 1)[1]))
+            self.respond(200 if run else 404, run)
+        elif '/actions/workflows/' in path and path.endswith('/runs'):
+            kind = 'publish ' if 'publish.yml' in path else 'build '
+            self.respond(200, dict(workflow_runs=[run for run in state.runs.values()
+                                                 if run['display_title'].startswith(kind)]))
         elif path.startswith('/repos/'):
             repo = path.removeprefix('/repos/')
             self.respond(200, dict(full_name=repo, default_branch='master' if repo in ('SNodeC/snode.c', 'SNodeC/mqttsuite') else 'main'))
@@ -145,16 +156,26 @@ class Provider(BaseHTTPRequestHandler):
         elif self.path.endswith('/dispatches'):
             values = json.loads(raw)['inputs']
             publication = self.path.endswith('/actions/workflows/publish.yml/dispatches')
-            assert publication or self.path.endswith('/actions/workflows/wave.yml/dispatches')
-            assert json.loads(raw)['ref'] == 'main'
-            assert set(values) == {('publication_id' if publication else 'wave_id'), 'plan_url', 'callback_url', 'feed_branch'}
+            assert publication or self.path.endswith('/actions/workflows/build.yml/dispatches')
+            assert json.loads(raw)['ref'] == 'main' and json.loads(raw)['return_run_details'] is True
+            identity = 'publication_id' if publication else 'request_id'
+            assert set(values) == {identity, 'attempt', 'feed_branch'} | ({'fault'} if publication else set())
             assert all(isinstance(value, str) for value in values.values())
             assert values['feed_branch'] in ('feed', 'feed-staging')
             rid = state.next_run
             state.next_run += 1
+            title = ('publish ' if publication else 'build ') + values[identity] + '/' + values['attempt']
+            state.runs[rid] = dict(id=rid, status='queued', conclusion=None, display_title=title, run_attempt=1)
             state.dispatches.put((rid, values))
             assert state.dispatch_response.wait(20), 'dispatch response fixture not released'
-            self.respond(204)
+            if publication and state.ambiguous_publication:
+                self.respond(204)
+            else:
+                self.respond(200, dict(workflow_run_id=rid))
+        elif '/actions/runs/' in self.path and self.path.endswith('/cancel'):
+            rid = int(self.path.split('/')[-2])
+            state.runs[rid].update(status='completed', conclusion='cancelled')
+            self.respond(202)
         else:
             self.respond(404)
 
@@ -169,6 +190,11 @@ class Fixture:
         self.refresh_sequence = 0
         self.offset = 0
         self.next_run = 100
+        self.head = 'f' * 40
+        self.snapshots = {'refs/snapshots/feed/pre-x': self.head}
+        self.ledger = []
+        self.runs = {}
+        self.ambiguous_publication = False
         self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
         self.subject, self.revoked = 'owner', set()
         self.unavailable = False
@@ -197,7 +223,7 @@ class Fixture:
             self.catalog = dict(targets=[dict(id=t, family='deb', distribution='test', release='stable',
                                             codename='stable', arch='test', image='fixture:test', runner='ubuntu-latest',
                                             platform='linux/amd64', emulated=False) for t in ('t1', 't2')])
-            self.sources = {'owner/' + p: dict(schema=1, package=p, title=p, depends_on=q,
+            self.sources = {'owner/' + p: dict(schema=2, package=p, title=p, releases='>=1,<9', depends_on=q,
                 build=dict(deb='ci/deb.sh', rpm='ci/rpm.sh'),
                 build_dependencies=dict(deb=[], rpm=[], openwrt=[]),
                 targets=['t1'] + ([] if p == 'e' else ['t2']))
@@ -215,7 +241,6 @@ class Fixture:
             self.clock_path = self.work / 'clock-offset'
             self.clock_path.write_text('0')
             self.env.update(LD_PRELOAD=str(self.build / 'libcoreci-test-clock.so'), CORECI_TEST_CLOCK_FILE=str(self.clock_path))
-        subprocess.run([self.build / 'coreci-reset-store'], env=self.env, check=True, stdout=subprocess.DEVNULL)
         self.context = ssl.create_default_context(cafile=str(self.cert))
         self.server = ThreadingHTTPServer(('127.0.0.1', self.api_port), Provider)
         self.server.state = self
@@ -234,8 +259,9 @@ class Fixture:
                 'db-user': self.env['CORECI_TEST_DB_USER'], 'db-name': self.env['CORECI_TEST_DB_NAME'],
                 'callback-base-url': self.app, 'github-api-url': self.api.replace('localhost', '127.0.0.1') if wrong_host else self.api,
                 'github-ca-cert': str(self.cert), 'idp-base-url': self.api, 'idp-client-id': 'coreci-test',
-                'idp-public-key-path': str(self.public), 'dashboard-users': 'owner', 'wave-delay': '1',
-                'wave-deadline': str(wave_deadline), 'publication-deadline': str(wave_deadline), 'retry-delay': '0', **self.secret_files}),
+                'idp-public-key-path': str(self.public), 'dashboard-users': 'owner', 'batch-delay': '1',
+                'queue-deadline': str(wave_deadline), 'execution-deadline': str(wave_deadline), 'callback-grace': '2',
+                'github_slots': '2', 'run-poll': '1', **self.secret_files}),
             'coreci.local': dict(host='127.0.0.1', port=self.app_port),
             'coreci.socket': {'reuse-address': True},
             'coreci.http.parser': {'maximum-body-bytes': 26214400, 'maximum-header-bytes': 65536,
@@ -288,13 +314,14 @@ class Fixture:
         self.release.set()
         deadline = time.monotonic() + 10
         ready = False
-        count = sum(len(p['targets']) for p in self.sources.values())
         while not ready and time.monotonic() < deadline:
-            value = json.loads(self.request('/api/v1/status.json').read())
-            ready = len(value['units']) == count
+            ready = self.status()['ready']
             if not ready:
                 time.sleep(.05)
         assert ready
+
+    def status(self):
+        return json.loads(self.request('/api/v1/status.json', browser=False).read())
 
     def webhook(self, repo, tag='v1.0.0'):
         self.tags.setdefault(repo, {})[tag] = 'b' * 40
@@ -305,66 +332,30 @@ class Fixture:
 
     def workflow_path(self, values):
         return ('/api/v1/publications/' + values['publication_id'] if 'publication_id' in values
-                else '/api/v1/waves/' + values['wave_id'])
+                else '/api/v1/requests/' + values['request_id'])
+
+    def plan_bytes(self, values):
+        response = self.request(self.workflow_path(values) + '/attempts/' + values['attempt'], browser=False)
+        assert response.status == 200 and response.headers['Cache-Control'] == 'no-store'
+        return response.read()
 
     def plan(self, values):
-        path = self.workflow_path(values) + '/plan.json'
-        assert values['plan_url'] == self.app + path
-        response = self.request(path, browser=False)
-        assert response.status == 200 and response.headers['Cache-Control'] == 'no-store'
-        return json.loads(response.read())
+        return json.loads(self.plan_bytes(values))
 
-    def report(self, values, **fields):
+    def callback(self, values, route, **fields):
         raw = urllib.parse.urlencode(fields).encode()
         stamp = str(self.now())
         signature = hmac.new(b'fixture-callback', stamp.encode() + b'.' + raw, hashlib.sha256).hexdigest()
-        response = self.request(self.workflow_path(values) + '/report', raw,
+        response = self.request(self.workflow_path(values) + '/' + route, raw,
             {'Content-Type': 'application/x-www-form-urlencoded', 'X-CoreCI-Timestamp': stamp,
              'X-CoreCI-Signature-256': 'sha256=' + signature}, browser=False)
-        assert response.status == 200, (response.status, response.read())
-        return response.read()
+        return response
 
-    def started(self, rid, values):
-        self.report(values, scope='publication' if 'publication_id' in values else 'wave', status='started', run_id=rid, run_attempt=2)
-
-    def finished(self, rid, values, conclusion='success'):
-        self.report(values, scope='publication' if 'publication_id' in values else 'wave', status='finished', run_id=rid, conclusion=conclusion)
-
-    def unit(self, values, entry, phase='build', status='succeeded', **extra):
-        self.report(values, scope='unit', build_id=entry['build_id'], phase=phase, status=status,
-                    feed_commit='b' * 40, reason='fixture failure',
-                    run_id=self.plan(values)['owner_run_id'], **extra)
-
-    def target(self, values, target, artifact=None):
-        self.report(values, scope='target', status='finished', run_id=self.plan(values)['owner_run_id'],
-                    target=target, artifact=('coreci-' + values['wave_id'] + '-' + target) if artifact is None else artifact)
-
-    def publish_one(self):
-        rid, values = self.dispatches.get(timeout=12)
-        assert 'publication_id' in values
-        self.started(rid, values)
-        for item in self.plan(values)['items']:
-            for entry in item['units']:
-                self.unit(values, entry, 'publish')
-        self.finished(rid, values)
-        return rid, values
-
-    def publish_ready(self):
-        status = json.loads(self.request('/api/v1/status.json', browser=False).read())
-        while any(target['status'] in ('Built', 'Publishing') for target in status['targets']):
-            self.publish_one()
-            status = json.loads(self.request('/api/v1/status.json', browser=False).read())
-
-    def complete(self, rid, values):
-        self.started(rid, values)
-        for target in self.plan(values)['targets']:
-            for entry in target['units']:
-                if entry['action'] == 'build':
-                    self.unit(values, entry, status='started')
-                    self.unit(values, entry)
-            self.target(values, target['id'])
-        self.finished(rid, values)
-        self.publish_ready()
+    def restart(self):
+        self.process.terminate()
+        self.process.wait(timeout=10)
+        self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
+        return None
 
     def close(self):
         self.release.set()

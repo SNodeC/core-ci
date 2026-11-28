@@ -2,7 +2,6 @@
 
 #include "DashboardAssets.h"
 #include "Http.h"
-#include "adapters/dashboard/Model.h"
 #include "auth/OAuth2CallbackHandler.h"
 #include "web/http/server/SocketContext.h"
 
@@ -12,19 +11,19 @@ namespace coreci::app {
             res->status(status)
                 .set("Content-Type", "application/json")
                 .set("Cache-Control", "no-store")
-                .send(dashboard::result(message, status >= 400));
+                .send(Json{{"message", message}, {"error", status >= 400}}.dump());
         }
     } // namespace
     Dashboard::Dashboard(std::shared_ptr<snodec::auth::OAuthClient> client,
                          std::set<std::string> users,
                          persistence::StateSession& queue,
                          std::function<void(std::function<void(bool)>)> reload,
-                         std::function<std::uint64_t()> generation)
+                         std::function<void(const Json&, persistence::StateSession::Reply)> admit)
         : client(std::move(client))
         , users(std::move(users))
         , queue(queue)
         , reload(std::move(reload))
-        , generation(std::move(generation)) {
+        , admit(std::move(admit)) {
         timer = std::make_unique<core::timer::Timer>(core::timer::Timer::intervalTimer(
             [this] {
                 tick();
@@ -40,12 +39,6 @@ namespace coreci::app {
     }
     void Dashboard::changed() {
         dirty = true;
-    }
-    void Dashboard::loaded(const github::LoadedDeclarations& value) {
-        declarations = value;
-        loadError.clear();
-        ready = true;
-        changed();
     }
     void Dashboard::routes(const express::Router& router) {
         const snodec::auth::middleware::JwtAuthMiddleware auth(client);
@@ -101,35 +94,29 @@ namespace coreci::app {
             const auto operation = req->param("operation");
             if (!contentType(req, "application/json")) {
                 result(res, 400, "invalid content type");
-            } else if (operation == "retry" || operation == "rebuild" || operation == "dispatch-paused") {
-                const auto parsed = dashboard::operation(operation, std::string(req->body.begin(), req->body.end()), now());
-                if (std::holds_alternative<github::Error>(parsed)) {
-                    result(res, 400, std::get<github::Error>(parsed).reason);
-                } else {
-                    const auto apply = [this, res, event = std::get<Event>(parsed)] {
-                        queue.enqueue(event, [res](const auto& value) {
-                            const auto [code, text] = response(value);
-                            result(res, code, text);
-                        });
-                    };
-                    if (operation == "dispatch-paused" || !queue.engine()) {
-                        apply();
-                    } else {
-                        reload([apply, res](bool loaded) {
-                            if (loaded) {
-                                apply();
-                            } else {
-                                result(res, 503, "Declaration load failed");
-                            }
-                        });
-                    }
-                }
-            } else if (operation == "reload" || operation == "reconcile") {
+            } else if (operation == "reconcile") {
                 reload([res](bool loaded) {
-                    result(res, loaded ? 200 : 503, loaded ? "Declarations loaded" : "Declaration load failed");
+                    result(res, loaded ? 200 : 503, loaded ? "Reconciled" : "Reconciliation failed");
                 });
             } else {
-                result(res, 400, "Not supported by core-ci: " + operation + " has no dashboard operation");
+                try {
+                    const auto body = Json::parse(std::string(req->body.begin(), req->body.end()));
+                    auto reply = [res](const auto& value) {
+                        result(res, value.code, value.text);
+                    };
+                    if (operation == "admit-tag") {
+                        admit(body, std::move(reply));
+                    } else {
+                        queue.enqueue(
+                            operation,
+                            [this, operation, body](auto& state) {
+                                return queue.scheduler().action(state, operation, body);
+                            },
+                            std::move(reply));
+                    }
+                } catch (const std::exception&) {
+                    result(res, 400, "invalid dashboard request");
+                }
             }
         });
         router.all("/api/:operation", auth, gate, [](const auto&, const Res& res) {
@@ -164,8 +151,8 @@ namespace coreci::app {
                 client->authenticate(stream->token, stream->bearer, done);
             }
         }
-        const auto* engine = queue.engine();
-        if (engine) {
+        const auto* state = queue.state();
+        if (state) {
             const bool update = dirty;
             dirty = false;
             for (const auto& stream : streams) {
@@ -174,9 +161,11 @@ namespace coreci::app {
                         stream->snapshot = true;
                     }
                     if (stream->authorized && !stream->pending && (stream->snapshot || update)) {
-                        stream->res->sendFragment(
-                            std::string("event: ") + (stream->snapshot ? "snapshot" : "update") +
-                            "\ndata: " + dashboard::model(*engine, declarations, generation(), ready, stream->email, loadError) + "\n\n");
+                        auto model = view(*state, queue.scheduler().options());
+                        model["email"] = stream->email;
+                        model["load_error"] = loadError;
+                        stream->res->sendFragment(std::string("event: ") + (stream->snapshot ? "snapshot" : "update") +
+                                                  "\ndata: " + model.dump() + "\n\n");
                         stream->snapshot = false;
                     }
                     if (at - stream->keepAlive >= std::chrono::seconds(30)) {

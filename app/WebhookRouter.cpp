@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <strings.h>
 
 namespace coreci::app {
     express::Router webhookRouter(persistence::StateSession& state,
@@ -36,14 +37,20 @@ namespace coreci::app {
                         answer(res, 202, "ignored");
                     } else {
                         const auto push = std::get<github::Push>(parsed);
-                        const auto slash = push.repo.find('/');
-                        const auto* engine = state.engine();
+
+                        const auto* facts = state.state();
+                        const auto registryName = registry.owner + "/" + registry.repo;
                         const bool registryPush = !push.branch.empty() && push.branch == push.defaultBranch &&
-                                                  repoKey(push.repo) == repoKey(registry.owner + "/" + registry.repo);
-                        const bool sourceTag =
-                            push.branch.empty() && engine && slash != std::string::npos &&
-                            engine->pipeline().containsRepository(push.repo.substr(0, slash), push.repo.substr(slash + 1));
-                        if (!registryPush && push.branch.empty() && !engine) {
+                                                  strcasecmp(push.repo.c_str(), registryName.c_str()) == 0;
+                        bool sourcePush = false;
+                        if (facts) {
+                            for (const auto& [name, declaration] : facts->at("declarations").items()) {
+                                sourcePush =
+                                    sourcePush || (strcasecmp(name.c_str(), push.repo.c_str()) == 0 &&
+                                                   (push.branch.empty() || push.branch == declaration.at("branch").get<std::string>()));
+                            }
+                        }
+                        if (!registryPush && !facts) {
                             answer(res, 503, "unavailable");
                         } else if (registryPush) {
                             reload([deliveries, delivery](bool success) {
@@ -55,7 +62,7 @@ namespace coreci::app {
                                 }
                             });
                             answer(res, 202, "scheduled");
-                        } else if (sourceTag) {
+                        } else if (sourcePush) {
                             reload([deliveries, delivery, res](bool success) {
                                 if (success) {
                                     deliveries->push_back(delivery);

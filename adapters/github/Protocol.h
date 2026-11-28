@@ -1,7 +1,5 @@
 #pragma once
-#include "core/Commands.h"
-#include "core/Events.h"
-
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -19,14 +17,13 @@ namespace coreci::github {
     std::optional<std::string> decodePath(const std::string& value);
     std::variant<std::optional<std::string>, Error> nextLink(const std::string& value, const Url& origin);
     std::string escape(const std::string& value);
+    std::int64_t isoTime(const std::string& value);
     std::string hmac(const std::string& secret, const std::string& body);
     bool verify(const std::string& secret, const std::string& body, const std::string& signature);
     bool verifyCallback(
         const std::string& secret, const std::string& body, const std::string& timestamp, const std::string& signature, std::int64_t now);
     using Form = std::map<std::string, std::string>;
     std::variant<Form, Error> form(const std::string& body);
-    std::variant<Event, Error, std::monostate>
-    report(const std::string& id, const Form& values, std::int64_t at, std::optional<std::uint64_t> owner = {}, bool publication = false);
     struct Push {
         std::string repo, tag, sha;
         std::string branch = {}, defaultBranch = {};
@@ -36,6 +33,4 @@ namespace coreci::github {
         std::string tag, sha;
     };
     std::variant<std::vector<Tag>, Error> tags(const std::string& body);
-    std::string dispatchBody(const Command& command, const std::string& callbackBase);
-    std::string dispatchPath(const Command& command);
 } // namespace coreci::github

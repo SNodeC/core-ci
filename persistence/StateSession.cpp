@@ -3,56 +3,60 @@
 #include <utility>
 
 namespace coreci::persistence {
-    StateSession::StateSession(StateStore& store,
-                               Options options,
-                               std::function<void(std::uint64_t)> changed,
-                               std::function<bool()> operational)
+    StateSession::StateSession(StateStore& store, Options options, std::function<void()> changed, std::function<bool()> operational)
         : store(store)
-        , options(std::move(options))
+        , driver(std::move(options))
         , changed(std::move(changed))
         , operational(std::move(operational)) {
     }
+
     bool StateSession::live(std::uint64_t value) const {
-        return value == epoch && (!operational || operational());
+        return value == epoch && operational();
     }
+
     void StateSession::start(std::function<void()> onReady, std::function<void(const StoreError&)> onError) {
         if (live(epoch)) {
             ready = std::move(onReady);
             error = std::move(onError);
             current.reset();
             const auto value = ++epoch;
+            const auto problem = [this, value](const auto& reason) {
+                if (live(value)) {
+                    failed(reason);
+                }
+            };
             store.open(
-                [this, value] {
+                [this, value, problem] {
                     if (live(value)) {
                         store.load(
-                            [this, value](StoredState state) {
+                            [this, value](auto loaded) {
                                 if (live(value)) {
-                                    current = std::make_unique<WaveController>(options, std::move(state));
-                                    if (options.dispatchPaused && current->stored().dispatchPaused != *options.dispatchPaused) {
-                                        enqueue(DispatchPaused{current->time().value_or(0), *options.dispatchPaused}, [this](const auto&) {
-                                            if (engine()) {
-                                                ready();
-                                            }
-                                        });
+                                    current = std::make_unique<Json>(std::move(loaded));
+                                    if (current->at("initialized") == false) {
+                                        enqueue(
+                                            "startup pause",
+                                            [this](auto& state) {
+                                                state["initialized"] = true;
+                                                return driver.action(
+                                                    state, "dispatch-paused", {{"paused", driver.options().paused.value_or(false)}});
+                                            },
+                                            [this](auto result) {
+                                                if (result.code == 200) {
+                                                    ready();
+                                                }
+                                            });
                                     } else {
                                         ready();
                                     }
                                 }
                             },
-                            [this, value](const StoreError& failure) {
-                                if (live(value)) {
-                                    failed(failure);
-                                }
-                            });
+                            problem);
                     }
                 },
-                [this, value](const StoreError& failure) {
-                    if (live(value)) {
-                        failed(failure);
-                    }
-                });
+                problem);
         }
     }
+
     void StateSession::failed(const StoreError& failure) {
         ++epoch;
         current.reset();
@@ -60,69 +64,82 @@ namespace coreci::persistence {
         auto reply = std::exchange(active, {});
         auto rejected = std::exchange(pending, {});
         if (reply) {
-            reply(Unavailable{failure.message});
+            reply({503, "unavailable"});
         }
         for (auto& item : rejected) {
-            item.reply(Unavailable{failure.message});
+            if (item.reply) {
+                item.reply({503, "unavailable"});
+            }
         }
         error(failure);
     }
+
     void StateSession::recover(const std::string& reason) {
         if (live(epoch)) {
             failed({StoreError::Kind::Unavailable, reason});
         }
     }
-    const WaveController* StateSession::engine() const {
+
+    const Json* StateSession::state() const {
         return live(epoch) ? current.get() : nullptr;
     }
-    void StateSession::enqueue(Event input, Reply reply) {
-        if (!engine()) {
-            reply(Unavailable{"state unavailable during startup/recovery"});
-        } else {
-            pending.push_back({std::move(input), std::move(reply)});
+
+    const Scheduler& StateSession::scheduler() const {
+        return driver;
+    }
+
+    void StateSession::enqueue(std::string description, Transition apply, Reply reply) {
+        if (state()) {
+            pending.push_back({std::move(description), std::move(apply), std::move(reply)});
             pump();
+        } else if (reply) {
+            reply({503, "unavailable"});
         }
     }
+
     void StateSession::pump() {
         if (!draining) {
             draining = true;
-            while (engine() && !writing && !pending.empty()) {
+            while (state() && !writing && !pending.empty()) {
                 auto item = std::move(pending.front());
                 pending.pop_front();
-                const auto normalized = normalize(std::move(item.input));
-                if (std::holds_alternative<Invalid>(normalized)) {
-                    item.reply(std::get<Invalid>(normalized));
-                } else {
-                    const auto input = std::get<Event>(normalized);
-                    const auto admission = current->classify(input);
-                    if (std::holds_alternative<Ignore>(admission)) {
-                        item.reply(Ignored{std::get<Ignore>(admission).reason});
-                    } else {
-                        auto candidate = std::make_shared<WaveController>(*current);
-                        candidate->handle(input);
-                        writing = true;
-                        active = std::move(item.reply);
-                        const auto value = epoch;
-                        store.commit(
-                            current->stored(),
-                            candidate->stored(),
-                            describe(input),
-                            [this, candidate, value] {
-                                if (live(value)) {
-                                    current = std::make_unique<WaveController>(std::move(*candidate));
-                                    auto reply = std::exchange(active, {});
-                                    writing = false;
-                                    changed(current->stored().sequence);
-                                    reply(Accepted{});
-                                    pump();
-                                }
-                            },
-                            [this, value](const StoreError& failure) {
-                                if (live(value)) {
-                                    failed(failure);
-                                }
-                            });
+                auto candidate = std::make_shared<Json>(*current);
+                Result result;
+                try {
+                    result = item.apply(*candidate);
+                } catch (const std::exception&) {
+                    result = {400, "invalid transition details"};
+                    *candidate = *current;
+                }
+                if (*candidate == *current) {
+                    if (item.reply) {
+                        item.reply(result);
                     }
+                } else {
+                    writing = true;
+                    active = std::move(item.reply);
+                    const auto value = epoch;
+                    store.commit(
+                        *current,
+                        *candidate,
+                        item.description,
+                        [this, candidate, value, result] {
+                            if (live(value)) {
+                                current = std::make_unique<Json>(std::move(*candidate));
+                                auto reply = std::exchange(active, {});
+                                writing = false;
+                                changed();
+                                if (reply) {
+                                    reply(result);
+                                }
+                                pump();
+                            }
+                        },
+                        [this, value](const auto& failure) {
+                            if (live(value)) {
+                                failed(failure);
+                            }
+                        });
                 }
             }
             draining = false;

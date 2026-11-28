@@ -61,15 +61,6 @@ namespace coreci::github {
             value += "." + base64(signature);
             return value;
         }
-        std::int64_t expiry(const std::string& value) {
-            std::tm date{};
-            std::istringstream input(value);
-            input >> std::get_time(&date, "%Y-%m-%dT%H:%M:%SZ");
-            if (input.fail() || input.peek() != std::char_traits<char>::eof()) {
-                throw std::invalid_argument("invalid token expiry");
-            }
-            return timegm(&date);
-        }
     } // namespace
     AppToken::AppToken(std::string appId,
                        std::string installationId,
@@ -102,7 +93,7 @@ namespace coreci::github {
                     try {
                         if (status == 201) {
                             const auto value = nlohmann::json::parse(body);
-                            const auto until = expiry(value.at("expires_at").get<std::string>());
+                            const auto until = isoTime(value.at("expires_at").get<std::string>());
                             const auto credential = value.at("token").get<std::string>();
                             if (until > clock() + 300 && !credential.empty()) {
                                 cached = credential;

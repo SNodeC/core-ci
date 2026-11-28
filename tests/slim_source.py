@@ -27,5 +27,6 @@ assert 'EnvironmentFile' not in unit and 'CORECI_' not in unit
 assert all(name in unit for name in ('XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR'))
 source_suffixes = {'.cpp', '.h', '.js', '.html', '.css', '.py'}
 lines = sum(len(path.read_text().splitlines()) for path in production if path.suffix in source_suffixes)
-assert lines <= 5850, ('owner-approved daemon source ceiling exceeded', lines)
+ddl = len((root / 'adapters/mariadb/Schema.sql').read_text().splitlines())
+assert lines + ddl <= 5000, ('owner-approved daemon source and DDL ceiling exceeded', lines, ddl)
 print('Daemon source and linked binary contain no replay, legacy persistence or configuration environment lookup')

@@ -1,369 +1,241 @@
 #include "Declarations.h"
 
+#include "core/Version.h"
+
 #include <algorithm>
-#include <nlohmann/json.hpp>
 #include <regex>
+#include <set>
 #include <stdexcept>
+
 namespace coreci::github {
     namespace {
-        using Json = nlohmann::json;
-        Json parse(const std::string& body) {
-            if (body.size() > 1024U * 1024U) {
-                throw std::invalid_argument("file exceeds 1 MiB");
+        using Text = std::string;
+
+        bool id(const Text& value) {
+            static const std::regex pattern("[A-Za-z0-9_][A-Za-z0-9._-]{0,63}");
+            return std::regex_match(value, pattern);
+        }
+
+        bool repository(const Text& value) {
+            static const std::regex pattern("[A-Za-z0-9-]{1,39}/[A-Za-z0-9_][A-Za-z0-9._-]{0,99}");
+            return std::regex_match(value, pattern);
+        }
+
+        bool path(const Text& value) {
+            static const std::regex pattern(R"([A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)");
+            return value.size() <= 255 && std::regex_match(value, pattern) && value != "." && value != ".." && !value.starts_with("../") &&
+                   !value.starts_with("./") && value.find("/../") == Text::npos && value.find("/./") == Text::npos &&
+                   !value.ends_with("/..") && !value.ends_with("/.");
+        }
+
+        Text folded(Text value) {
+            std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+                return std::tolower(ch);
+            });
+            return value;
+        }
+
+        void require(bool condition, const Text& reason) {
+            if (!condition) {
+                throw std::invalid_argument(reason);
             }
-            std::vector<std::set<std::string>> keys;
-            const auto callback = [&](int, Json::parse_event_t event, Json& value) {
+        }
+
+        Json declaration(const Text& body) {
+            require(body.size() <= 1024U * 1024U, "file exceeds 1 MiB");
+            std::vector<std::set<Text>> keys;
+            const auto check = [&](int, Json::parse_event_t event, Json& value) {
                 if (event == Json::parse_event_t::object_start) {
                     keys.emplace_back();
                 } else if (event == Json::parse_event_t::object_end) {
                     keys.pop_back();
-                } else if (event == Json::parse_event_t::key && !keys.back().insert(value.get<std::string>()).second) {
-                    throw std::invalid_argument("duplicate object key");
+                } else if (event == Json::parse_event_t::key) {
+                    require(keys.back().insert(value.get<Text>()).second, "duplicate JSON key");
                 }
                 return true;
             };
-            return Json::parse(body, callback);
+            return Json::parse(body, check);
         }
-        Repo repo(const std::string& value) {
-            const auto slash = value.find('/');
-            if (slash == std::string::npos || value.find('/', slash + 1) != std::string::npos) {
-                throw std::invalid_argument("invalid repository reference");
+
+        void validatePackage(const Json& data) {
+            require(data.at("schema") == 2 && id(data.at("package").get<Text>()) && !data.at("title").get<Text>().empty() &&
+                        Version::validRange(data.at("releases").get<Text>()),
+                    "invalid declaration identity or releases range");
+            std::set<Text> targets, dependencies;
+            require(data.at("targets").is_array() && data.at("depends_on").is_array(), "invalid declaration arrays");
+            for (const auto& target : data.at("targets")) {
+                require(id(target.get<Text>()) && targets.insert(target.get<Text>()).second, "invalid target or duplicate");
             }
-            const Repo result{value.substr(0, slash), value.substr(slash + 1), {}};
-            validateRepository(result.owner, result.repo);
-            return result;
+            for (const auto& dependency : data.at("depends_on")) {
+                const auto name = dependency.at("package").get<Text>();
+                require(id(name) && dependencies.insert(name).second && Version::validRange(dependency.at("version").get<Text>()),
+                        "invalid dependency");
+            }
+            for (const auto* family : {"deb", "rpm", "openwrt"}) {
+                require(data.at("build_dependencies").at(family).is_array(), "invalid dependency list");
+            }
+            const std::regex selector(R"((deb|rpm|openwrt)(@[A-Za-z0-9._-]+-[A-Za-z0-9._-]+)?)");
+            for (const auto& [key, entries] : data.at("build_dependencies").items()) {
+                require(std::regex_match(key, selector) && entries.is_array(), "invalid dependency selector");
+                for (const auto& entry : entries) {
+                    require(entry.is_string() && !entry.get<Text>().empty() && !entry.get<Text>().starts_with('-'),
+                            "invalid build package");
+                }
+            }
+            for (const auto& [family, hook] : data.at("build").items()) {
+                const auto value = hook.get<Text>();
+                require((family == "deb" || family == "rpm" || family == "openwrt") && value.starts_with("ci/") && path(value),
+                        "invalid build hook");
+            }
         }
-        std::string key(const Repo& value) {
-            return repoKey(value.owner + "/" + value.repo);
-        }
+
         struct Load : std::enable_shared_from_this<Load> {
             DeclarationFile file;
+            Text catalogPath;
             Url base;
-            std::string catalogPath;
-            Fetch fetch;
-            std::function<void(std::variant<LoadedDeclarations, Error>)> done;
-            std::map<std::string, Repo> repositories;
-            std::vector<Repo> sources;
-            std::map<std::string, Tag> releases;
-            std::map<std::string, CatalogTarget> catalog;
-            std::map<std::string, std::string> commits;
-            std::size_t remaining = 0;
-            Pipeline::Builder builder;
-            void fail(const std::string& repository, const std::string& path, const std::string& reason) {
-                auto callback = std::move(done);
-                std::string line = repository + ":" + path + ": " + reason;
-                for (auto& c : line) {
-                    if (c == '\r' || c == '\n') {
-                        c = ' ';
-                    }
-                }
-                callback(Error{line});
-            }
-            void get(const Repo& source, const std::string& path, std::function<void(Json)> callback, bool info = false) {
+            Fetch request;
+            std::function<void(std::variant<LoadedDeclarations, Error>)> reply;
+            LoadedDeclarations loaded;
+            std::set<Text> packages;
+            std::size_t left = 0;
+
+            void get(Text path, bool raw, std::function<void(Json, Text)> done) {
                 const auto self = shared_from_this();
-                const auto& target = info ? source : repositories.at(key(source));
-                std::string url = base.path + "/repos/" + escape(target.owner) + "/" + escape(target.repo);
-                if (!info) {
-                    url += "/contents/" + escape(path) + "?ref=" + escape(commits.at(key(source)));
-                }
-                fetch(std::move(url), !info, [self, target, path, callback, info](int status, std::string body, std::string) {
-                    if (!self->done) {
-                        // Another request has already failed this whole load.
-                    } else if (status != 200) {
-                        self->fail(target.owner + "/" + target.repo, path, "HTTP " + std::to_string(status));
-                    } else {
+                request(base.path + path, raw, [self, path, raw, done](int status, Text body, Text link) {
+                    if (self->reply) {
                         try {
-                            callback(info ? Json::parse(body) : parse(body));
+                            require(status == 200, "HTTP " + std::to_string(status));
+                            done(raw ? declaration(body) : Json::parse(body), std::move(link));
                         } catch (const std::exception& error) {
-                            self->fail(target.owner + "/" + target.repo, path, error.what());
+                            auto callback = std::move(self->reply);
+                            if (callback) {
+                                callback(Error{path + ": " + error.what()});
+                            }
                         }
                     }
                 });
             }
-            void branch(const Repo& source, std::function<void()> next) {
-                if (repositories.contains(key(source))) {
-                    next();
-                } else {
-                    const auto self = shared_from_this();
-                    get(
-                        source,
-                        "<repository>",
-                        [self, source, next](Json value) {
-                            auto canonical = repo(value.at("full_name").get<std::string>());
-                            canonical.branch = value.at("default_branch").get<std::string>();
-                            if (!validBranch(canonical.branch)) {
-                                throw std::invalid_argument("invalid default branch");
-                            }
-                            self->repositories[key(source)] = std::move(canonical);
-                            next();
-                        },
-                        true);
-                }
+
+            void repo(const Text& name, std::function<void(Text, Text, Text)> done) {
+                const auto self = shared_from_this();
+                get("/repos/" + name, false, [self, name, done](const Json& data, const Text&) {
+                    const auto canonical = data.at("full_name").get<Text>();
+                    const auto branch = data.at("default_branch").get<Text>();
+                    require(repository(canonical) && folded(canonical) == folded(name) && !branch.empty() && branch.size() <= 255 &&
+                                branch.find_first_of("\r\n\0") == Text::npos,
+                            "invalid repository response");
+                    self->get("/repos/" + canonical + "/commits/" + escape(branch),
+                              false,
+                              [done, canonical, branch](const Json& commit, const Text&) {
+                                  const auto sha = commit.at("sha").get<Text>();
+                                  require(std::regex_match(sha, std::regex("[0-9a-f]{40}")), "invalid HEAD commit");
+                                  done(canonical, branch, sha);
+                              });
+                });
             }
+
             void start() {
                 const auto self = shared_from_this();
-                const Repo registry{file.owner, file.repo, {}};
-                branch(registry, [self, registry] {
-                    self->head(registry, [self, registry] {
-                        self->get(registry, self->file.path, [self, registry](Json value) {
-                            if (!value.at("schema").is_number_integer() || value.at("schema") != 1) {
-                                throw std::invalid_argument("registry schema must be 1");
-                            }
-                            const auto& sources = value.at("repositories");
-                            if (!sources.is_array()) {
-                                throw std::invalid_argument("repositories must be an array");
-                            }
-                            for (const auto& source : sources) {
-                                self->sources.push_back(repo(source.get<std::string>()));
-                            }
-                            const auto path = self->catalogPath;
-                            const auto checked = registryFile(registry.owner + "/" + registry.repo + ":" + path);
-                            if (std::holds_alternative<Error>(checked)) {
-                                throw std::invalid_argument("invalid catalog path");
-                            }
-                            self->get(registry, path, [self](Json data) {
-                                const auto& targets = data.at("targets");
-                                if (!targets.is_array()) {
-                                    throw std::invalid_argument("catalog targets must be an array");
-                                }
-                                for (const auto& entry : targets) {
-                                    const auto id = entry.at("id").get<std::string>();
-                                    validateIdentifier(id, "catalog target");
-                                    CatalogTarget coordinates{entry.at("distribution").get<std::string>(),
-                                                              entry.at("release").get<std::string>(),
-                                                              entry.at("codename").get<std::string>(),
-                                                              entry.at("arch").get<std::string>(),
-                                                              entry.at("family").get<std::string>()};
-                                    if (coordinates.family != "deb" && coordinates.family != "rpm" && coordinates.family != "ipk" &&
-                                        coordinates.family != "apk") {
-                                        throw std::invalid_argument("unknown target family");
-                                    }
-                                    for (const auto& field : {"distribution", "release", "codename", "arch"}) {
-                                        if (entry.at(field).get<std::string>().empty()) {
-                                            throw std::invalid_argument("empty catalog field");
-                                        }
-                                    }
-                                    if (!self->catalog.emplace(id, std::move(coordinates)).second) {
-                                        throw std::invalid_argument("duplicate catalog id: " + id);
-                                    }
-                                }
-                                self->resolve();
-                            });
-                        });
-                    });
-                });
-            }
-            void resolve() {
-                std::map<std::string, Repo> repositories;
-                for (const auto& source : sources) {
-                    repositories.emplace(key(source), source);
-                }
-                remaining = repositories.size();
-                const auto self = shared_from_this();
-                for (const auto& [name, source] : repositories) {
-                    branch(source, [self] {
-                        if (--self->remaining == 0) {
-                            self->packages();
+                repo(file.owner + "/" + file.repo, [self](const Text& name, const Text&, const Text& sha) {
+                    const auto prefix = "/repos/" + name + "/contents/";
+                    self->get(prefix + self->file.path + "?ref=" + sha, true, [self, prefix, sha](const Json& registry, const Text&) {
+                        require(registry.at("schema") == 1 && registry.at("repositories").is_array(), "invalid registry");
+                        std::set<Text> seen;
+                        for (const auto& name : registry.at("repositories")) {
+                            const auto value = name.get<Text>();
+                            require(repository(value) && seen.insert(folded(value)).second, "invalid or duplicate repository");
                         }
-                    });
-                }
-            }
-            void finish() {
-                const auto pipeline = builder.build();
-                auto callback = std::move(done);
-                callback(LoadedDeclarations{pipeline, releases, catalog});
-            }
-            void packages() {
-                remaining = sources.size();
-                if (sources.empty()) {
-                    finish();
-                } else {
-                    const auto self = shared_from_this();
-                    for (const auto& source : sources) {
-                        const auto target = repositories.at(key(source));
-                        tags(source,
-                             base.path + "/repos/" + escape(target.owner) + "/" + escape(target.repo) + "/tags?per_page=100",
-                             {},
-                             {});
-                    }
-                }
-            }
-            void head(const Repo& source, std::function<void()> next) {
-                const auto self = shared_from_this();
-                const auto target = repositories.at(key(source));
-                fetch(base.path + "/repos/" + escape(target.owner) + "/" + escape(target.repo) + "/commits/" + escape(target.branch),
-                      false,
-                      [self, source, next](int status, std::string body, std::string) {
-                          if (self->done) {
-                              try {
-                                  const auto sha = Json::parse(body).at("sha").get<std::string>();
-                                  if (status != 200 || !std::regex_match(sha, std::regex("[a-f0-9]{40}"))) {
-                                      throw std::invalid_argument("invalid HEAD commit");
-                                  }
-                                  self->commits[key(source)] = sha;
-                                  next();
-                              } catch (const std::exception& error) {
-                                  self->fail(source.owner + "/" + source.repo, "<commit>", error.what());
-                              }
-                          }
-                      });
-            }
-            void tags(const Repo& source, const std::string& path, std::vector<Tag> collected, std::set<std::string> visited) {
-                const auto self = shared_from_this();
-                visited.insert(path);
-                fetch(path,
-                      false,
-                      [self, source, collected = std::move(collected), visited = std::move(visited)](
-                          int status, std::string body, std::string link) mutable {
-                          if (self->done) {
-                              try {
-                                  const auto parsed = github::tags(body);
-                                  if (status != 200 || std::holds_alternative<Error>(parsed)) {
-                                      throw std::invalid_argument("invalid tag page");
-                                  }
-                                  for (const auto& tag : std::get<std::vector<Tag>>(parsed)) {
-                                      if (!std::regex_match(tag.sha, std::regex("[a-f0-9]{40}"))) {
-                                          throw std::invalid_argument("invalid tag commit");
-                                      }
-                                      if (Version::parse(tag.tag) && !Version::parse(tag.tag)->prerelease()) {
-                                          collected.push_back(tag);
-                                      }
-                                  }
-                                  const auto next = link.empty()
-                                                        ? std::variant<std::optional<std::string>, Error>{std::optional<std::string>{}}
-                                                        : nextLink(link, self->base);
-                                  if (std::holds_alternative<Error>(next)) {
-                                      throw std::invalid_argument("invalid pagination link");
-                                  }
-                                  const auto url = std::get<std::optional<std::string>>(next);
-                                  if (url) {
-                                      const auto parsedUrl = httpsUrl(*url);
-                                      if (!parsedUrl || visited.contains(parsedUrl->path)) {
-                                          throw std::invalid_argument("pagination loop");
-                                      }
-                                      self->tags(source, parsedUrl->path, std::move(collected), std::move(visited));
-                                  } else {
-                                      std::sort(collected.begin(), collected.end(), [](const auto& a, const auto& b) {
-                                          const auto av = *Version::parse(a.tag), bv = *Version::parse(b.tag);
-                                          return av == bv ? a.tag < b.tag : av > bv;
-                                      });
-                                      self->package(source, std::move(collected));
-                                  }
-                              } catch (const std::exception& error) {
-                                  self->fail(source.owner + "/" + source.repo, "<tags>", error.what());
-                              }
-                          }
-                      });
-            }
-            void package(const Repo& source, std::vector<Tag> candidates) {
-                const auto self = shared_from_this();
-                head(source, [self, source, candidates] {
-                    self->get(source, "", [self, source, candidates](Json root) {
-                        const auto ci = std::find_if(root.begin(), root.end(), [](const auto& entry) {
-                            return entry.at("name") == "ci" && entry.at("type") == "dir";
-                        });
-                        if (ci == root.end() || !std::regex_match(ci->at("sha").template get<std::string>(), std::regex("[a-f0-9]{40}"))) {
-                            throw std::invalid_argument("missing ci tree");
-                        }
-                        const auto tree = ci->at("sha").get<std::string>();
-                        self->get(source, "ci/packages.json", [self, source, candidates, tree](Json value) {
-                            if (!value.at("schema").is_number_integer() || value.at("schema") != 2) {
-                                throw std::invalid_argument("package schema must be 2");
+                        self->get(prefix + self->catalogPath + "?ref=" + sha, true, [self, registry](const Json& catalog, const Text&) {
+                            require(catalog.at("targets").is_array(), "invalid catalog");
+                            for (const auto& target : catalog.at("targets")) {
+                                const auto idValue = target.at("id").get<Text>();
+                                const auto family = target.at("family").get<Text>();
+                                require(id(idValue) && !self->loaded.catalog.contains(idValue) &&
+                                            (family == "deb" || family == "rpm" || family == "ipk" || family == "apk"),
+                                        "invalid catalog target");
+                                self->loaded.catalog[idValue] = target;
                             }
-                            for (const auto& [family, hook] : value.at("build").items()) {
-                                const auto path = hook.get<std::string>();
-                                if ((family != "deb" && family != "rpm" && family != "openwrt") || !path.starts_with("ci/") ||
-                                    std::holds_alternative<Error>(registryFile(source.owner + "/" + source.repo + ":" + path))) {
-                                    throw std::invalid_argument("invalid build hook");
-                                }
-                            }
-                            for (const auto& family : {"deb", "rpm", "openwrt"}) {
-                                value.at("build_dependencies").at(family);
-                            }
-                            for (const auto& [selector, dependencies] : value.at("build_dependencies").items()) {
-                                if (!std::regex_match(selector, std::regex("(deb|rpm|openwrt)(@[A-Za-z0-9._-]+-[A-Za-z0-9._-]+)?")) ||
-                                    !dependencies.is_array()) {
-                                    throw std::invalid_argument("invalid build dependency selector or list");
-                                }
-                                for (const auto& dependency : dependencies) {
-                                    if (dependency.get<std::string>().empty()) {
-                                        throw std::invalid_argument("empty build dependency");
-                                    }
-                                }
-                            }
-                            Package pkg;
-                            pkg.name = value.at("package").get<std::string>();
-                            pkg.sourceRepo = self->repositories.at(key(source));
-                            pkg.ciCommit = self->commits.at(key(source));
-                            pkg.ciTree = tree;
-                            pkg.title = value.at("title").get<std::string>();
-                            if (!value.at("depends_on").is_array()) {
-                                throw std::invalid_argument("depends_on must be an array");
-                            }
-                            for (const auto& q : value.at("depends_on")) {
-                                const auto name = q.at("package").get<std::string>(), range = q.at("version").get<std::string>();
-                                if (!Version::validRange(range) || !pkg.prerequisites.emplace(name, range).second) {
-                                    throw std::invalid_argument("invalid or duplicate dependency range");
-                                }
-                            }
-                            const auto base = value.value("revision_base", Json(0));
-                            if (!base.is_number_integer() || base < 0 || base > 1000000) {
-                                throw std::invalid_argument("revision_base must be an integer in 0–1000000");
-                            }
-                            pkg.revisionBase = base.get<unsigned>();
-                            if (!value.at("targets").is_array()) {
-                                throw std::invalid_argument("targets must be an array");
-                            }
-                            for (const auto& target : value.at("targets")) {
-                                const auto id = target.get<std::string>();
-                                if (!self->catalog.contains(id) || !pkg.targets.insert(id).second) {
-                                    throw std::invalid_argument("unknown or duplicate target id: " + id);
-                                }
-                                const auto family = self->catalog.at(id).family;
-                                value.at("build").at(family == "ipk" || family == "apk" ? "openwrt" : family).get<std::string>();
-                                self->builder.target({id});
-                            }
-                            self->builder.package(pkg);
-                            if (!candidates.empty()) {
-                                self->releases.emplace(pkg.name, candidates.front());
-                            }
-                            if (--self->remaining == 0) {
+                            self->left = registry.at("repositories").size();
+                            if (self->left == 0) {
                                 self->finish();
                             }
+                            for (const auto& name : registry.at("repositories")) {
+                                self->source(name.get<Text>());
+                            }
                         });
                     });
                 });
+            }
+
+            void source(const Text& name) {
+                const auto self = shared_from_this();
+                repo(name, [self](const Text& canonical, const Text& branch, const Text& sha) {
+                    const auto prefix = "/repos/" + canonical;
+                    self->get(
+                        prefix + "/contents/?ref=" + sha, false, [self, canonical, branch, sha, prefix](const Json& tree, const Text&) {
+                            const auto found = std::find_if(tree.begin(), tree.end(), [](const Json& entry) {
+                                return entry.at("name") == "ci";
+                            });
+                            require(found != tree.end() && found->at("type") == "dir", "repository has no ci tree");
+                            const auto hash = found->at("sha").get<Text>();
+                            self->get(prefix + "/contents/ci/packages.json?ref=" + sha,
+                                      true,
+                                      [self, canonical, branch, sha, hash, prefix](Json data, const Text&) {
+                                          validatePackage(data);
+                                          require(self->packages.insert(data.at("package").get<Text>()).second, "duplicate package");
+                                          data["ci_commit"] = sha;
+                                          data["tree"] = hash;
+                                          data["branch"] = branch;
+                                          self->loaded.declarations[canonical] = std::move(data);
+                                          self->tagPages(canonical, prefix + "/tags?per_page=100", {});
+                                      });
+                        });
+                });
+            }
+
+            void tagPages(const Text& name, const Text& page, std::set<Text> visited) {
+                const auto self = shared_from_this();
+                require(visited.insert(page).second, "tag pagination loop");
+                get(page, false, [self, name, visited = std::move(visited)](const Json& tags, const Text& link) {
+                    require(tags.is_array(), "invalid tag page");
+                    for (const auto& tag : tags) {
+                        const auto value = tag.at("name").get<Text>();
+                        if (stableTag(value)) {
+                            const auto commit = tag.at("commit").at("sha").get<Text>();
+                            require(std::regex_match(commit, std::regex("[0-9a-f]{40}")), "invalid tagged commit");
+                            self->loaded.releases.push_back({{"repo", name}, {"tag", value}, {"commit", commit}});
+                        }
+                    }
+                    const auto next = nextLink(link, self->base);
+                    require(!std::holds_alternative<Error>(next), "invalid tag pagination");
+                    if (const auto& url = std::get<std::optional<Text>>(next); url) {
+                        auto location = httpsUrl(*url).value().path;
+                        require(location.starts_with(self->base.path), "invalid API path");
+                        self->tagPages(name, location.substr(self->base.path.size()), visited);
+                    } else if (--self->left == 0) {
+                        self->finish();
+                    }
+                });
+            }
+
+            void finish() {
+                auto callback = std::move(reply);
+                callback(std::move(loaded));
             }
         };
     } // namespace
+
     std::variant<DeclarationFile, Error> registryFile(const std::string& value) {
-        std::variant<DeclarationFile, Error> result;
-        try {
-            const auto colon = value.find(':');
-            if (colon == std::string::npos) {
-                throw std::invalid_argument("invalid registry reference");
-            }
-            const auto source = repo(value.substr(0, colon));
-            const auto path = value.substr(colon + 1);
-            if (path.size() > 255 || !std::regex_match(path, std::regex("[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*"))) {
-                throw std::invalid_argument("invalid registry path");
-            }
-            std::size_t start = 0;
-            for (std::size_t i = 0; i <= path.size(); ++i) {
-                if (i == path.size() || path[i] == '/') {
-                    const auto segment = path.substr(start, i - start);
-                    if (segment == "." || segment == "..") {
-                        throw std::invalid_argument("invalid registry path segment");
-                    }
-                    start = i + 1;
-                }
-            }
-            result = DeclarationFile{source.owner, source.repo, path};
-        } catch (const std::exception& error) {
-            result = Error{error.what()};
+        const auto slash = value.find('/');
+        const auto colon = value.find(':');
+        std::variant<DeclarationFile, Error> result = Error{"invalid registry location"};
+        if (slash != std::string::npos && colon != std::string::npos && slash < colon && repository(value.substr(0, colon)) &&
+            path(value.substr(colon + 1))) {
+            result = DeclarationFile{value.substr(0, slash), value.substr(slash + 1, colon - slash - 1), value.substr(colon + 1)};
         }
         return result;
     }
+
     void loadDeclarations(const DeclarationFile& registry,
                           const std::string& catalogPath,
                           const Url& base,
@@ -371,10 +243,10 @@ namespace coreci::github {
                           std::function<void(std::variant<LoadedDeclarations, Error>)> done) {
         auto load = std::make_shared<Load>();
         load->file = registry;
-        load->base = base;
         load->catalogPath = catalogPath;
-        load->fetch = std::move(fetch);
-        load->done = std::move(done);
+        load->base = base;
+        load->request = std::move(fetch);
+        load->reply = std::move(done);
         load->start();
     }
 } // namespace coreci::github

@@ -91,12 +91,11 @@ namespace coreci::mariadb {
                         "SELECT COUNT(*),MIN(version) FROM coreci_schema",
                         [this, valid, done](const MYSQL_ROW version) {
                             if (version) {
-                                *valid = version[0] && version[1] && std::string(version[0]) == "1" && std::string(version[1]) == "8";
+                                *valid = version[0] && version[1] && std::string(version[0]) == "1" && std::string(version[1]) == "9";
                             } else if (*valid) {
                                 done();
                             } else {
-                                fail({StoreError::Kind::Corrupt,
-                                      "state schema 8 required; offline migration: coreci-migrate (5/6) or state-7-to-8.sql"});
+                                fail({StoreError::Kind::Corrupt, "Contract X requires a fresh schema 9 database"});
                             }
                         },
                         [this](const auto& message, auto) {
@@ -104,12 +103,7 @@ namespace coreci::mariadb {
                         });
                 } else {
                     createSchema(0, [this, done] {
-                        execute("INSERT INTO coreci_schema (version) VALUES (8)", [this, done] {
-                            execute("INSERT INTO coreci_state (singleton,sequence,clock,quiet_until,dispatch_paused,latest) VALUES "
-                                    "(1,0,NULL,NULL,0," +
-                                        persistence::sqlText("") + ")",
-                                    done);
-                        });
+                        execute("INSERT INTO coreci_schema (version) VALUES (9)", done);
                     });
                 }
             },
@@ -117,50 +111,32 @@ namespace coreci::mariadb {
                 fail({StoreError::Kind::Unavailable, message});
             });
     }
-    void MariaDBStateStore::read(std::shared_ptr<persistence::StateRows> rows, std::size_t index, std::function<void()> done) {
-        const auto& tables = persistence::stateTables();
-        if (index == tables.size()) {
-            done();
+    void MariaDBStateStore::load(std::function<void(Json)> done, std::function<void(const StoreError&)> error) {
+        if (!ready) {
+            error({StoreError::Kind::Unavailable, "open required before state load"});
         } else {
-            const auto table = tables[index];
-            (*rows)[table.name] = {};
+            onFailure = std::move(error);
+            const auto state = std::make_shared<Json>(initialState());
             client.query(
-                persistence::selectState(table),
-                [this, rows, index, table, done](const MYSQL_ROW fields) {
-                    if (!fields) {
-                        read(rows, index + 1, done);
-                    } else {
-                        std::vector<persistence::Field> values;
-                        for (std::size_t field = 0; field < table.columns.size(); ++field) {
-                            values.push_back(fields[field] ? persistence::Field{fields[field]} : std::nullopt);
-                        }
+                "SELECT HEX(section), HEX(record_key), HEX(payload) FROM coreci_records",
+                [this, state, done](const MYSQL_ROW row) {
+                    if (row) {
                         try {
-                            rows->at(table.name).push_back(persistence::decodeFields(table, values));
-                        } catch (const std::exception& error) {
-                            fail({StoreError::Kind::Corrupt, error.what()});
+                            if (!(row[0] && row[1] && row[2])) {
+                                throw std::runtime_error("null value in state record");
+                            }
+                            persistence::readRecord(*state, row[0], row[1], row[2]);
+                        } catch (const std::exception& failure) {
+                            fail({StoreError::Kind::Corrupt, failure.what()});
                         }
+                    } else {
+                        onFailure = {};
+                        done(std::move(*state));
                     }
                 },
                 [this](const auto& message, auto) {
                     fail({StoreError::Kind::Unavailable, message});
                 });
-        }
-    }
-    void MariaDBStateStore::load(std::function<void(StoredState)> done, std::function<void(const StoreError&)> error) {
-        if (!ready) {
-            error({StoreError::Kind::Unavailable, "open required before state load"});
-        } else {
-            onFailure = std::move(error);
-            auto rows = std::make_shared<persistence::StateRows>();
-            read(rows, 0, [this, rows, done] {
-                try {
-                    auto state = persistence::decodeState(*rows);
-                    onFailure = {};
-                    done(std::move(state));
-                } catch (const std::exception& error) {
-                    fail({StoreError::Kind::Corrupt, error.what()});
-                }
-            });
         }
     }
     void MariaDBStateStore::write(std::shared_ptr<std::vector<std::string>> statements, std::size_t index, std::function<void()> done) {
@@ -172,8 +148,8 @@ namespace coreci::mariadb {
             });
         }
     }
-    void MariaDBStateStore::commit(const StoredState& before,
-                                   const StoredState& after,
+    void MariaDBStateStore::commit(const Json& before,
+                                   const Json& after,
                                    const std::string& description,
                                    std::function<void()> done,
                                    std::function<void(const StoreError&)> error) {

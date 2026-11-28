@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <core/timer/Timer.h>
+#include <set>
 namespace coreci::app {
     class Dashboard {
     public:
@@ -14,10 +15,9 @@ namespace coreci::app {
                   std::set<std::string> users,
                   persistence::StateSession& queue,
                   std::function<void(std::function<void(bool)>)> reload,
-                  std::function<std::uint64_t()> generation);
+                  std::function<void(const Json&, persistence::StateSession::Reply)> admit);
         ~Dashboard();
         void routes(const express::Router& router);
-        void loaded(const github::LoadedDeclarations& value);
         void changed();
         void failed(const std::string& message);
 
@@ -33,11 +33,10 @@ namespace coreci::app {
         std::set<std::string> users;
         persistence::StateSession& queue;
         std::function<void(std::function<void(bool)>)> reload;
-        std::function<std::uint64_t()> generation;
+        std::function<void(const Json&, persistence::StateSession::Reply)> admit;
         std::vector<std::shared_ptr<Stream>> streams;
-        github::LoadedDeclarations declarations;
         std::unique_ptr<core::timer::Timer> timer;
         std::string loadError;
-        bool ready = false, dirty = true;
+        bool dirty = true;
     };
 } // namespace coreci::app
