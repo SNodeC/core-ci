@@ -3,6 +3,7 @@
 #include "Version.h"
 
 #include <algorithm>
+#include <charconv>
 #include <openssl/sha.h>
 #include <ranges>
 #include <set>
@@ -24,6 +25,10 @@ namespace coreci {
 
         bool eligible(const Json& state, const Json& item) {
             return item.at("eligible") <= state.at("pass");
+        }
+
+        bool wasPublished(const Json& item) {
+            return item.value("published_revision", 0U) == item.at("revision") && item.at("revision") != 0;
         }
 
         bool eligibleOutput(const Json& state, const Json& output) {
@@ -265,7 +270,7 @@ namespace coreci {
             unsigned number = 1;
             Text request;
             Json inputs, bindings = selection.direct;
-            if (item.value("retry", false) && item.at("desired") == item.at("identity")) {
+            if (item.value("retry", false) && !wasPublished(item) && item.at("desired") == item.at("identity")) {
                 request = item.at("request").get<Text>();
                 number = item.at("attempt").get<unsigned>() + 1;
                 auto& previous = state["attempts"][attemptKey(request, number - 1)];
@@ -389,6 +394,9 @@ namespace coreci {
                       {"initialized", false},
                       {"discovery_ready", false},
                       {"head", ""},
+                      {"head_changed_at", 0},
+                      {"observed_sequence", 0},
+                      {"feed_status", ""},
                       {"legacy_retired", false},
                       {"retirement_at", 0},
                       {"cutoff_open", false}};
@@ -425,6 +433,21 @@ namespace coreci {
 
     bool reserved(const Json& attempt) {
         return attempt.at("run_state") != "completed" && attempt.at("run_state") != "superseded";
+    }
+
+    std::optional<unsigned> feedSequence(const Json& ledger) {
+        std::optional<unsigned> sequence = ledger.is_array() ? std::optional{0U} : std::nullopt;
+        if (ledger.contains("publication") && ledger.at("publication").is_string()) {
+            const auto id = ledger.at("publication").get<Text>();
+            unsigned number = 0;
+            if (id.starts_with("p.")) {
+                const auto parsed = std::from_chars(id.data() + 2, id.data() + id.size(), number);
+                if (parsed.ec == std::errc{} && parsed.ptr == id.data() + id.size() && number > 0) {
+                    sequence = number;
+                }
+            }
+        }
+        return sequence;
     }
 
     Scheduler::Scheduler(Options options)
@@ -520,14 +543,17 @@ namespace coreci {
         Result result;
         if (name == "dispatch-paused" && body.contains("paused") && body.at("paused").is_boolean()) {
             state["paused"] = body.at("paused");
+            if (state.at("paused") == false && state.at("feed_status").get<Text>().starts_with("restored to ")) {
+                state["feed_status"] = "";
+            }
         } else if (name == "retry" && body.contains("item") && body.at("item").is_string() &&
                    state.at("items").contains(body.at("item").get<Text>())) {
             auto& item = state["items"][body.at("item").get<Text>()];
             const auto selection = resolve(state, item);
             if (item.at("state") == "failed" && selection.condition.empty() &&
                 buildIdentity(state, item, selection) == item.at("identity").get<Text>()) {
-                item["state"] = "enrolled";
-                item["retry"] = true;
+                item["state"] = wasPublished(item) ? "built" : "enrolled";
+                item["retry"] = !wasPublished(item);
                 item["eligible"] = eligibility(state);
             } else {
                 result = {409, "item is not eligible for retry"};
@@ -551,7 +577,8 @@ namespace coreci {
             state["cutoff_open"] = true;
         } else {
             updateDesired(state);
-            if (state.at("paused") == false && std::ranges::any_of(state.at("snapshots"), [&](const Json& commit) {
+            if (state.at("paused") == false && state.at("feed_status") == "" &&
+                std::ranges::any_of(state.at("snapshots"), [&](const Json& commit) {
                     return commit == state.at("head");
                 })) {
                 auto& attempts = state["attempts"];
@@ -593,6 +620,18 @@ namespace coreci {
     }
 
     namespace {
+        void failPublication(Json& state, Json& record, const Text& reason) {
+            for (auto& item : state["items"]) {
+                if (item.contains("publication") && item.at("publication") == record.at("id")) {
+                    item["state"] = "failed";
+                    item["reason"] = reason;
+                    item["eligible"] = eligibility(state);
+                    item.erase("publication");
+                }
+            }
+            record["reconciled"] = true;
+        }
+
         void finalizeBuild(Json& state, Json& record, Time now, const Options& options) {
             if (!record.value("reconciled", false) && record.at("run_state") == "completed") {
                 if (!record.contains("report") && !record.contains("grace_at")) {
@@ -701,6 +740,33 @@ namespace coreci {
         return result;
     }
 
+    Result Scheduler::dispatchFailed(Json& state, const std::string& key, int status, Time now) const {
+        auto& record = state.at("attempts").at(key);
+        if (record.at("run_state") == "dispatched" && record.at("dispatch") == "sent" && record.at("run") == 0) {
+            const auto failures = record.value("dispatch_failures", 0U) + 1;
+            const bool rejected = status >= 400 && status < 500;
+            const bool uncertain = !rejected || record.value("dispatch_uncertain", false);
+            record["dispatch_failures"] = failures;
+            record["dispatch_uncertain"] = uncertain;
+            if (failures <= 3) {
+                record["dispatch"] = "pending";
+                record["retry_at"] = now + (1 << (failures - 1));
+            } else if (!uncertain) {
+                const auto reason = "dispatch rejected " + std::to_string(status);
+                record["run_state"] = "completed";
+                record["completed_at"] = now;
+                record["fenced"] = true;
+                record["report"] = {{"outcome", "failed"}, {"reason", reason}};
+                if (record.at("publication") == true) {
+                    failPublication(state, record, reason);
+                } else {
+                    finalizeBuild(state, record, now, config);
+                }
+            }
+        }
+        return {};
+    }
+
     Result Scheduler::observed(Json& state, const std::string& key, const Json& run, Time now) const {
         if (state.at("attempts").contains(key)) {
             auto& record = state["attempts"][key];
@@ -734,80 +800,133 @@ namespace coreci {
         return {};
     }
 
-    Result Scheduler::feed(Json& state, const std::string& head, const Json& snapshots, const Json& ledger, Time now) const {
-        state["head"] = head;
-        state["snapshots"] = snapshots;
-        state["entries"] = ledger.is_object() ? ledger.at("entries") : Json::array();
-        const auto receipts = ledger.is_object() ? ledger.at("receipts") : Json::array();
-        state["acks"] = Json::array();
-        for (const auto& receipt : receipts) {
-            const auto key = attemptKey(receipt.at("publication").get<Text>(), receipt.at("attempt").get<unsigned>());
-            if (state.at("attempts").contains(key) && state.at("attempts").at(key).value("reconciled", false)) {
-                state["acks"].push_back(Json::array({receipt.at("publication"), receipt.at("attempt"), receipt.at("request")}));
-            }
-        }
-        for (auto& record : state["attempts"]) {
-            if (record.at("publication") == true && !record.value("reconciled", false) && record.at("document") != "") {
-                const auto plan = Json::parse(record.at("document").get<Text>());
-                const Text ref = "refs/snapshots/" + config.branch + "/" + record.at("id").get<Text>();
-                if (snapshots.contains(ref)) {
-                    for (const auto& itemPlan : plan.at("items")) {
-                        auto& item = state["items"][keyFor(itemPlan)];
+    namespace {
+        void restoreOutputs(Json& state, const Json& entries) {
+            for (auto& item : state["items"]) {
+                if (wasPublished(item)) {
+                    const auto present = [&](const Json& output) {
+                        return keyFor(output) == keyFor(item) && output.at("revision") == item.at("revision") &&
+                               output.value("identity", "") == item.at("identity").get<Text>();
+                    };
+                    const bool available = std::ranges::any_of(entries, present);
+                    if (item.at("state") == "published" && !available && std::ranges::any_of(state.at("entries"), present)) {
+                        item["state"] = "built";
                         item["eligible"] = eligibility(state);
-                        const auto receipt = std::ranges::find_if(receipts, [&](const auto& value) {
-                            return value.at("publication") == record.at("id") && value.at("attempt") == record.at("attempt") &&
-                                   value.at("request") == itemPlan.at("request");
-                        });
-                        if (receipt != receipts.end()) {
-                            item["state"] = receipt->at("outcome");
-                            item["reason"] = receipt->value("reason", "");
-                            if (receipt->value("failure", "") == "artifact-expired") {
-                                item["state"] = "enrolled";
-                                item["retry"] = true;
-                            } else if (item.at("state") == "published") {
-                                item["output_eligible"] = item.at("eligible");
-                            }
-                            state["acks"].push_back(
-                                Json::array({receipt->at("publication"), receipt->at("attempt"), receipt->at("request")}));
-                        } else {
-                            item["state"] = "failed";
-                            item["reason"] = "publication receipt is missing";
-                        }
-                        item.erase("publication");
-                        if (record.contains("started_at") && record.contains("completed_at")) {
-                            item["publication_seconds"] = record.at("completed_at").get<Time>() - record.at("started_at").get<Time>();
-                        }
-                    }
-                    if (plan.at("retire_legacy_apt") == true) {
-                        state["legacy_retired"] = true;
-                    }
-                    state["rollback"].push_back(ref);
-                    if (state["rollback"].size() > 3) {
-                        state["rollback"].erase(state["rollback"].begin());
-                    }
-                    record["reconciled"] = true;
-                } else if (record.at("run_state") == "completed" &&
-                           (record.contains("report") || record.at("completed_at").get<Time>() + config.grace <= now)) {
-                    const auto failures = record.value("failures", 0U) + 1;
-                    if (failures <= 3) {
-                        if (!record.contains("retry_at")) {
-                            record["retry_at"] = now + 60 * (1 << (failures - 1));
-                        }
-                    } else {
-                        for (auto& item : state["items"]) {
-                            if (item.contains("publication") && item.at("publication") == record.at("id")) {
-                                item["state"] = "failed";
-                                item["reason"] = record.value("report", Json::object()).value("reason", "publication failed");
-                                item["eligible"] = eligibility(state);
-                                item.erase("publication");
-                            }
-                        }
-                        record["reconciled"] = true;
+                    } else if (item.at("state") == "built" && available && !item.contains("publication")) {
+                        item["state"] = "published";
+                        item["reason"] = "already published";
+                        item["eligible"] = item["output_eligible"] = eligibility(state);
                     }
                 }
             }
         }
-        return {};
+
+        void reconcileFeed(Json& state, const Json& snapshots, const Json& ledger, Time now, const Options& config) {
+            const auto receipts = ledger.is_object() ? ledger.at("receipts") : Json::array();
+            state["acks"] = Json::array();
+            for (const auto& receipt : receipts) {
+                const auto key = attemptKey(receipt.at("publication").get<Text>(), receipt.at("attempt").get<unsigned>());
+                if (state.at("attempts").contains(key) && state.at("attempts").at(key).value("reconciled", false)) {
+                    state["acks"].push_back(Json::array({receipt.at("publication"), receipt.at("attempt"), receipt.at("request")}));
+                }
+            }
+            for (auto& record : state["attempts"]) {
+                if (record.at("publication") == true && !record.value("reconciled", false) && record.at("document") != "") {
+                    const auto plan = Json::parse(record.at("document").get<Text>());
+                    const Text ref = "refs/snapshots/" + config.branch + "/" + record.at("id").get<Text>();
+                    if (snapshots.contains(ref)) {
+                        for (const auto& itemPlan : plan.at("items")) {
+                            auto& item = state["items"][keyFor(itemPlan)];
+                            item["eligible"] = eligibility(state);
+                            const auto receipt = std::ranges::find_if(receipts, [&](const auto& value) {
+                                return value.at("publication") == record.at("id") && value.at("attempt") == record.at("attempt") &&
+                                       value.at("request") == itemPlan.at("request");
+                            });
+                            if (receipt != receipts.end()) {
+                                item["state"] = receipt->at("outcome");
+                                item["reason"] = receipt->value("reason", "");
+                                if (receipt->value("failure", "") == "artifact-expired") {
+                                    item["state"] = "enrolled";
+                                    item["retry"] = !wasPublished(item);
+                                } else if (item.at("state") == "published") {
+                                    item["output_eligible"] = item.at("eligible");
+                                    item["published_revision"] = item.at("revision");
+                                }
+                                state["acks"].push_back(
+                                    Json::array({receipt->at("publication"), receipt->at("attempt"), receipt->at("request")}));
+                            } else {
+                                item["state"] = "failed";
+                                item["reason"] = "publication receipt is missing";
+                            }
+                            item.erase("publication");
+                            if (record.contains("started_at") && record.contains("completed_at")) {
+                                item["publication_seconds"] = record.at("completed_at").get<Time>() - record.at("started_at").get<Time>();
+                            }
+                        }
+                        if (plan.at("retire_legacy_apt") == true) {
+                            state["legacy_retired"] = true;
+                        }
+                        state["rollback"].push_back(ref);
+                        if (state["rollback"].size() > 3) {
+                            state["rollback"].erase(state["rollback"].begin());
+                        }
+                        record["reconciled"] = true;
+                    } else if (record.at("run_state") == "completed" &&
+                               (record.contains("report") || record.at("completed_at").get<Time>() + config.grace <= now)) {
+                        const auto failures = record.value("failures", 0U) + 1;
+                        if (failures <= 3) {
+                            if (!record.contains("retry_at")) {
+                                record["retry_at"] = now + 60 * (1 << (failures - 1));
+                            }
+                        } else {
+                            failPublication(state, record, record.value("report", Json::object()).value("reason", "publication failed"));
+                        }
+                    }
+                }
+            }
+        }
+    } // namespace
+
+    Result Scheduler::feed(Json& state,
+                           const std::string& head,
+                           const Json& snapshots,
+                           const Json& ledger,
+                           Time now,
+                           const std::optional<RestoreProof>& restore) const {
+        Result result;
+        const auto sequence = feedSequence(ledger);
+        const bool changed = head != state.at("head").get_ref<const Text&>();
+        const bool restored = restore && changed && restore->completed > state.at("head_changed_at").get<Time>();
+        const auto observed = state.at("observed_sequence").get<unsigned>();
+        const bool behind = sequence && *sequence < observed;
+        const bool pinned = std::ranges::any_of(snapshots, [&](const Json& commit) {
+            return commit.get_ref<const Text&>() == head;
+        });
+        if (!sequence || (!restored && (behind || !pinned))) {
+            const auto reason =
+                sequence ? (behind ? "feed head behind: " : "feed snapshots pending: ") + head : "invalid feed publication sequence";
+            state["observed_sequence"] = std::max(observed, sequence.value_or(0U));
+            state["feed_status"] = reason;
+            result = {sequence ? 409 : 400, reason};
+        } else {
+            const auto entries = ledger.is_object() ? ledger.at("entries") : Json::array();
+            if (restored) {
+                restoreOutputs(state, entries);
+                state["paused"] = true;
+                state["feed_status"] = "restored to " + restore->snapshot;
+            } else if (!state.at("feed_status").get<Text>().starts_with("restored to ")) {
+                state["feed_status"] = "";
+            }
+            if (changed) {
+                state["head_changed_at"] = now;
+                state["head"] = head;
+            }
+            state["observed_sequence"] = *sequence;
+            state["snapshots"] = snapshots;
+            state["entries"] = entries;
+            reconcileFeed(state, snapshots, ledger, now, config);
+        }
+        return result;
     }
 
     Json view(const Json& state, const Options& options) {
@@ -857,6 +976,7 @@ namespace coreci {
                 {"ready", state.at("head") != "" && state.at("discovery_ready") == true},
                 {"workflow_repository", options.workflowRepository},
                 {"feed_commit", state.at("head")},
+                {"feed_status", state.at("feed_status")},
                 {"items", items},
                 {"publications", publications},
                 {"reservations", reservations}};
