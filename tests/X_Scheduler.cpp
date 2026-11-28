@@ -271,8 +271,19 @@ namespace {
         };
         const std::vector<std::string> names{
             "aster", "beech", "coral", "delta", "ember", "fern", "grove", "hazel", "iris", "juniper", "kelp", "larch"};
-        auto catalog = Json{{"native", target}, {"second", target}};
-        catalog["second"]["id"] = "second";
+        const std::vector<std::string> targets{"apk-aarch64", "deb-amd64", "deb-arm64", "deb-riscv64", "ipk-mips64", "rpm-amd64"};
+        auto catalog = Json::object();
+        for (const auto& id : targets) {
+            auto environment = target;
+            const auto delimiter = id.find('-');
+            environment["id"] = id;
+            environment["family"] = id.substr(0, delimiter);
+            environment["arch"] = id.substr(delimiter + 1);
+            if (id == "apk-aarch64" || id == "deb-arm64") {
+                environment["runner"] = "ubuntu-24.04-arm";
+            }
+            catalog[id] = std::move(environment);
+        }
         for (const unsigned slots : {1U, 7U, 20U}) {
             Options options;
             options.slots = slots;
@@ -280,7 +291,7 @@ namespace {
             Json declarations = Json::object();
             const auto declare = [&](const std::string& name) {
                 auto declaration = package(name);
-                declaration["targets"] = Json::array({"native", "second"});
+                declaration["targets"] = targets;
                 declarations["stress/" + name] = std::move(declaration);
             };
             for (std::size_t index = 0; index < 5; ++index) {
@@ -295,8 +306,9 @@ namespace {
                 const auto version = "1." + std::to_string(minor) + ".0";
                 CHECK_EQ(scheduler.admit(state, "stress/" + name, "v" + version, head).code, 200);
                 if (admitted.emplace(name, minor).second) {
-                    expected.push_back(name + "/" + version + "/native");
-                    expected.push_back(name + "/" + version + "/second");
+                    for (const auto& targetId : targets) {
+                        expected.push_back(name + "/" + version + "/" + targetId);
+                    }
                 }
             };
             for (unsigned minor = 1; minor <= 4; ++minor) {
@@ -309,10 +321,14 @@ namespace {
             Time now = 10;
             const auto claim = [&](std::size_t cutoff) {
                 const auto count = std::min<std::size_t>(slots - active.size(), cutoff - dispatched);
-                const auto reservations = view(state, options).at("reservations");
-                CHECK_EQ(reservations.at("running"), active.size());
-                CHECK_EQ(reservations.at("queued"), count);
-                CHECK_EQ(reservations.at("publication"), 0U);
+                std::size_t running = 0, queued = 0;
+                for (const auto& record : state.at("attempts")) {
+                    running += record.at("run_state") == "claimed";
+                    queued += record.at("run_state") == "dispatched";
+                    CHECK_EQ(record.at("publication"), false);
+                }
+                CHECK_EQ(running, active.size());
+                CHECK_EQ(queued, count);
                 CHECK_EQ(state.at("attempts").size(), dispatched + count);
                 const auto end = dispatched + count;
                 for (; dispatched < end; ++dispatched) {
@@ -320,6 +336,8 @@ namespace {
                     CHECK_EQ(item.at("state"), "processing");
                     const auto request = item.at("request").get<std::string>();
                     const auto key = attemptKey(request, 1);
+                    const bool arm = item.at("target") == "apk-aarch64" || item.at("target") == "deb-arm64";
+                    CHECK(request.starts_with(arm ? "arm." : "b."));
                     const auto run = static_cast<unsigned>(dispatched + 1);
                     CHECK_EQ(scheduler.claim(state, false, request, owner(1, run), now).code, 200);
                     active.push_back({key, state.at("attempts").at(key).at("document").get<std::string>(), run});
@@ -360,17 +378,19 @@ namespace {
                 scheduler.turn(state, now++); // Fill one released slot without admitting the late arrivals.
                 CHECK_EQ(state.at("items").at(expected.at(cutoff)).at("state"), "enrolled");
                 claim(cutoff);
+                CHECK_EQ(view(state, options).at("reservations").at("running"), slots);
+                state = Json::parse(state.dump());
             }
             for (unsigned minor = 5; minor <= 12; ++minor) {
                 for (std::size_t index = 0; index < 5; ++index) {
                     admit(names[index], minor);
                 }
             }
-            CHECK_EQ(expected.size(), 288U);
+            CHECK_EQ(expected.size(), 864U);
             CHECK_EQ(state.at("releases").size(), 144U);
             for (std::size_t batch = 0; !active.empty(); ++batch) {
                 const auto take = std::min(active.size(), batch % 5 + 1);
-                if (batch % 2 == 0) {
+                if (batch % 13 == 0) {
                     state = Json::parse(state.dump());
                 }
                 for (std::size_t offset = 0; offset < take; ++offset) {
@@ -379,8 +399,8 @@ namespace {
                 turn(scheduler, state, now++);
                 claim(expected.size());
             }
-            CHECK_EQ(dispatched, 288U);
-            CHECK_EQ(state.at("attempts").size(), 288U);
+            CHECK_EQ(dispatched, 864U);
+            CHECK_EQ(state.at("attempts").size(), 864U);
             CHECK_EQ(view(state, options).at("reservations"), (Json{{"slots", slots}, {"queued", 0}, {"running", 0}, {"publication", 0}}));
         }
     }
