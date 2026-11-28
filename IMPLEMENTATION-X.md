@@ -118,7 +118,12 @@ configuration, service arguments, acceptance). Remove wave, chain and migration 
 - snode.c: `Build/InstallDev` (headers, linker files, CMake package).
 - mqttsuite: recipe consumes `EXTRA_DEPENDS`; PCRE2 runtime dependency.
 - Every OpenWrt recipe builds from `$SOURCE_DIR`.
-- Qualify clean consumer builds and fresh installs on IPK and APK locally.
+- Scope: only the `ci/` declarations and hooks are added, committed on the current
+  default-branch head (only `ci/` files are staged; unrelated local files in a
+  checkout are left untouched). Qualifying the products themselves (whether a tag
+  builds and installs) is NOT part of this task; it belongs to the repository
+  threads. Product build failures surface in the staging runs (§5c) as failed items
+  with reason and responsible repository and are handled at GATE C as exceptions.
 
 ## 5. Rollout
 
