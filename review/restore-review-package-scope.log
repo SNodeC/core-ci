@@ -1,0 +1,67 @@
+Local test evidence extracted from restore-review-package-scope.log
+
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+      Start  1: X_turns
+ 1/31 Test  #1: X_turns ..........................   Passed    0.00 sec
+      Start  2: X_registry_arrivals
+ 2/31 Test  #2: X_registry_arrivals ..............   Passed    0.00 sec
+      Start  3: X_active_arrivals
+ 3/31 Test  #3: X_active_arrivals ................   Passed    0.00 sec
+      Start  4: X_admission_stress
+ 4/31 Test  #4: X_admission_stress ...............   Passed    0.06 sec
+      Start  5: X_active_arrival_stress
+ 5/31 Test  #5: X_active_arrival_stress ..........   Passed    7.32 sec
+      Start  6: X_dependency_stress
+ 6/31 Test  #6: X_dependency_stress ..............   Passed    1.02 sec
+      Start  7: X_admissions
+ 7/31 Test  #7: X_admissions .....................   Passed    0.00 sec
+      Start  8: X_binding
+ 8/31 Test  #8: X_binding ........................   Passed    0.00 sec
+      Start  9: X_targets_and_receipts
+ 9/31 Test  #9: X_targets_and_receipts ...........   Passed    0.01 sec
+      Start 10: X_attempts
+10/31 Test #10: X_attempts .......................   Passed    0.00 sec
+      Start 11: X_closure
+11/31 Test #11: X_closure ........................   Passed    0.00 sec
+      Start 12: X_identity
+12/31 Test #12: X_identity .......................   Passed    0.00 sec
+      Start 13: X_retry_identity
+13/31 Test #13: X_retry_identity .................   Passed    0.00 sec
+      Start 14: X_revision_floor
+14/31 Test #14: X_revision_floor .................   Passed    0.00 sec
+      Start 15: X_observation
+15/31 Test #15: X_observation ....................   Passed    0.01 sec
+      Start 16: X_handoff
+16/31 Test #16: X_handoff ........................   Passed    0.00 sec
+      Start 17: X_publications
+17/31 Test #17: X_publications ...................   Passed    0.00 sec
+      Start 18: X_publication_retry_capacity
+18/31 Test #18: X_publication_retry_capacity .....   Passed    0.00 sec
+      Start 19: X_retention
+19/31 Test #19: X_retention ......................   Passed    0.00 sec
+      Start 20: X_retiring_binding
+20/31 Test #20: X_retiring_binding ...............   Passed    0.00 sec
+      Start 21: X_expiry
+21/31 Test #21: X_expiry .........................   Passed    0.00 sec
+      Start 22: X_expiry_before_turn
+22/31 Test #22: X_expiry_before_turn .............   Passed    0.00 sec
+      Start 23: X_restore_expiry
+23/31 Test #23: X_restore_expiry .................   Passed    0.00 sec
+      Start 24: X_snapshots
+24/31 Test #24: X_snapshots ......................   Passed    0.00 sec
+      Start 25: X_backoff
+25/31 Test #25: X_backoff ........................   Passed    0.00 sec
+      Start 26: X_persistence
+26/31 Test #26: X_persistence ....................   Passed    0.00 sec
+      Start 27: A_WebhookHmac
+27/31 Test #27: A_WebhookHmac ....................   Passed    0.01 sec
+      Start 28: A_CallbackHmac
+28/31 Test #28: A_CallbackHmac ...................   Passed    0.01 sec
+      Start 29: A_TagPages
+29/31 Test #29: A_TagPages .......................   Passed    0.01 sec
+      Start 30: A_AppToken
+30/31 Test #30: A_AppToken .......................   Passed    0.12 sec
+      Start 31: A_SlimSource
+31/31 Test #31: A_SlimSource .....................   Passed    0.14 sec
+100% tests passed out of 31
+Total Test time (real) =   8.78 sec

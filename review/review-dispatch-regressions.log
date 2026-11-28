@@ -1,0 +1,17 @@
+Local test evidence extracted from review-dispatch-regressions.log
+
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+    Start 32: X_Http_Dispatch_4xx
+1/4 Test #32: X_Http_Dispatch_4xx ..............***Failed   20.90 sec
+    Start 33: X_Http_Dispatch_5xx
+2/4 Test #33: X_Http_Dispatch_5xx ..............***Failed   16.88 sec
+    Start 34: X_Http_Dispatch_Connection
+3/4 Test #34: X_Http_Dispatch_Connection .......***Failed   17.11 sec
+    Start 35: X_Http_Claimed_Cancel
+4/4 Test #35: X_Http_Claimed_Cancel ............   Passed   10.34 sec
+25% tests passed, 3 tests failed out of 4
+Total Test time (real) =  65.23 sec
+The following tests FAILED:
+	 32 - X_Http_Dispatch_4xx (Failed)                      integration mariadb
+	 33 - X_Http_Dispatch_5xx (Failed)                      integration mariadb
+	 34 - X_Http_Dispatch_Connection (Failed)               integration mariadb

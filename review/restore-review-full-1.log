@@ -1,0 +1,94 @@
+Local test evidence extracted from restore-review-full-1.log
+
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+Test project /home/voc/projects/snodec/build/codex/core-ci/contract-x-v2/adapters
+      Start  1: X_turns
+ 1/44 Test  #1: X_turns ..........................   Passed    0.01 sec
+      Start  2: X_registry_arrivals
+ 2/44 Test  #2: X_registry_arrivals ..............   Passed    0.00 sec
+      Start  3: X_active_arrivals
+ 3/44 Test  #3: X_active_arrivals ................   Passed    0.01 sec
+      Start  4: X_admission_stress
+ 4/44 Test  #4: X_admission_stress ...............   Passed    0.05 sec
+      Start  5: X_active_arrival_stress
+ 5/44 Test  #5: X_active_arrival_stress ..........   Passed    7.95 sec
+      Start  6: X_dependency_stress
+ 6/44 Test  #6: X_dependency_stress ..............   Passed    1.06 sec
+      Start  7: X_admissions
+ 7/44 Test  #7: X_admissions .....................   Passed    0.00 sec
+      Start  8: X_binding
+ 8/44 Test  #8: X_binding ........................   Passed    0.00 sec
+      Start  9: X_targets_and_receipts
+ 9/44 Test  #9: X_targets_and_receipts ...........   Passed    0.01 sec
+      Start 10: X_attempts
+10/44 Test #10: X_attempts .......................   Passed    0.00 sec
+      Start 11: X_closure
+11/44 Test #11: X_closure ........................   Passed    0.00 sec
+      Start 12: X_identity
+12/44 Test #12: X_identity .......................   Passed    0.00 sec
+      Start 13: X_retry_identity
+13/44 Test #13: X_retry_identity .................   Passed    0.00 sec
+      Start 14: X_revision_floor
+14/44 Test #14: X_revision_floor .................   Passed    0.00 sec
+      Start 15: X_observation
+15/44 Test #15: X_observation ....................   Passed    0.01 sec
+      Start 16: X_handoff
+16/44 Test #16: X_handoff ........................   Passed    0.00 sec
+      Start 17: X_publications
+17/44 Test #17: X_publications ...................   Passed    0.00 sec
+      Start 18: X_publication_retry_capacity
+18/44 Test #18: X_publication_retry_capacity .....   Passed    0.01 sec
+      Start 19: X_retention
+19/44 Test #19: X_retention ......................   Passed    0.00 sec
+      Start 20: X_retiring_binding
+20/44 Test #20: X_retiring_binding ...............   Passed    0.01 sec
+      Start 21: X_expiry
+21/44 Test #21: X_expiry .........................   Passed    0.01 sec
+      Start 22: X_expiry_before_turn
+22/44 Test #22: X_expiry_before_turn .............   Passed    0.00 sec
+      Start 23: X_restore_expiry
+23/44 Test #23: X_restore_expiry .................   Passed    0.01 sec
+      Start 24: X_snapshots
+24/44 Test #24: X_snapshots ......................   Passed    0.00 sec
+      Start 25: X_backoff
+25/44 Test #25: X_backoff ........................   Passed    0.01 sec
+      Start 26: X_persistence
+26/44 Test #26: X_persistence ....................   Passed    0.00 sec
+      Start 27: A_WebhookHmac
+27/44 Test #27: A_WebhookHmac ....................   Passed    0.01 sec
+      Start 28: A_CallbackHmac
+28/44 Test #28: A_CallbackHmac ...................   Passed    0.01 sec
+      Start 29: A_TagPages
+29/44 Test #29: A_TagPages .......................   Passed    0.01 sec
+      Start 30: A_AppToken
+30/44 Test #30: A_AppToken .......................   Passed    0.33 sec
+      Start 31: A_SlimSource
+31/44 Test #31: A_SlimSource .....................   Passed    0.17 sec
+      Start 32: X_Http
+32/44 Test #32: X_Http ...........................   Passed   41.16 sec
+      Start 33: X_Http_Recovery
+33/44 Test #33: X_Http_Recovery ..................   Passed   22.56 sec
+      Start 34: X_Http_Dispatch_4xx
+34/44 Test #34: X_Http_Dispatch_4xx ..............   Passed   12.26 sec
+      Start 35: X_Http_Dispatch_5xx
+35/44 Test #35: X_Http_Dispatch_5xx ..............   Passed    6.42 sec
+      Start 36: X_Http_Dispatch_Connection
+36/44 Test #36: X_Http_Dispatch_Connection .......   Passed    6.75 sec
+      Start 37: X_Http_Claimed_Cancel
+37/44 Test #37: X_Http_Claimed_Cancel ............   Passed   12.35 sec
+      Start 38: X_Http_Kill_Pending
+38/44 Test #38: X_Http_Kill_Pending ..............   Passed    4.71 sec
+      Start 39: X_Http_Kill_Sent
+39/44 Test #39: X_Http_Kill_Sent .................   Passed   12.49 sec
+      Start 40: X_Http_Kill_Claimed
+40/44 Test #40: X_Http_Kill_Claimed ..............   Passed    6.01 sec
+      Start 41: X_Http_Pagination
+41/44 Test #41: X_Http_Pagination ................   Passed    8.10 sec
+      Start 42: X_Http_Rerun
+42/44 Test #42: X_Http_Rerun .....................   Passed    9.31 sec
+      Start 43: X_Http_Publish_Pending
+43/44 Test #43: X_Http_Publish_Pending ...........   Passed   13.15 sec
+      Start 44: X_Http_Restore
+44/44 Test #44: X_Http_Restore ...................   Passed   21.01 sec
+100% tests passed out of 44
+Total Test time (real) = 185.98 sec

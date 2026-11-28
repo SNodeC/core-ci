@@ -1,5 +1,6 @@
 """Disposable loopback GitHub/OIDC fixtures; never contacts configured feed URLs."""
 import base64
+from collections import deque
 from contextlib import contextmanager, suppress
 import hashlib
 import hmac
@@ -48,6 +49,23 @@ class Provider(BaseHTTPRequestHandler):
         with suppress(BrokenPipeError, ConnectionResetError):
             self.wfile.write(raw)
 
+    def page(self, path, parameters, records, result_key=None):
+        state = self.server.state
+        size = int(parameters.get("per_page", ["30"])[0])
+        page = int(parameters.get("page", ["1"])[0])
+        assert 1 <= size <= 100 and page >= 1
+        state.page_requests.append((path, page))
+        end = page * size
+        items = records[end - size:end]
+        headers = {}
+        if end < len(records):
+            origin = state.api.replace("localhost", "127.0.0.1") if path in state.foreign_links else state.api
+            next_parameters = dict(parameters, page=[str(page + 1)])
+            url = origin + path + "?" + urllib.parse.urlencode(next_parameters, doseq=True)
+            headers = {"Link": f'<{url}>; rel="next"'}
+        body = items if result_key is None else {"total_count": len(records), result_key: items}
+        self.respond(200, body, headers)
+
     def do_GET(self):
         query = urllib.parse.urlsplit(self.path)
         path = urllib.parse.unquote(query.path)
@@ -65,12 +83,25 @@ class Provider(BaseHTTPRequestHandler):
             state.codes[code] = dict(values, subject=state.subject)
             self.respond(302, headers={'Location': values['redirect_uri'] + '?' + urllib.parse.urlencode(dict(code=code, state=values['state']))})
         elif '/git/ref/heads/' in path:
+            assert path.endswith('/git/ref/heads/' + state.feed_branch)
             assert state.feed_response.wait(20), 'feed response fixture not released'
             self.respond(200, dict(object=dict(sha=state.head)))
         elif '/git/matching-refs/snapshots/' in path:
-            self.respond(200, [dict(ref=ref, object=dict(sha=sha)) for ref, sha in state.snapshots.items()])
+            prefix = 'refs/snapshots/'
+            if not path.endswith('/git/matching-refs/snapshots/'):
+                assert path.endswith('/git/matching-refs/snapshots/' + state.feed_branch + '/')
+                prefix += state.feed_branch + '/'
+            self.respond(200, [dict(ref=ref, object=dict(sha=sha)) for ref, sha in state.snapshots.items() if ref.startswith(prefix)])
+        elif '/git/ref/snapshots/' in path:
+            ref = 'refs/' + path.split('/git/ref/', 1)[1]
+            commit = state.snapshots.get(ref)
+            self.respond(200 if commit else 404, dict(ref=ref, object=dict(sha=commit)) if commit else None)
         elif path.endswith('/contents/publications.json'):
-            self.respond(200, state.ledger)
+            ref, = urllib.parse.parse_qs(query.query)['ref']
+            assert len(ref) == 40
+            assert ref in state.ledgers, f'unexpected publication ledger ref {ref}'
+            state.ledger_reads.append(ref)
+            self.respond(200, state.ledgers[ref])
         elif '/contents/' in path:
             if path.endswith('registry.json'):
                 state.requested.set()
@@ -93,14 +124,29 @@ class Provider(BaseHTTPRequestHandler):
             self.respond(200, dict(sha=ci_commit))
         elif path.endswith('/tags'):
             repo = path.removeprefix('/repos/').removesuffix('/tags')
-            self.respond(200, [dict(name=tag, commit=dict(sha=sha)) for tag, sha in state.tags.get(repo, {}).items()])
+            records = [dict(name=tag, commit=dict(sha=sha)) for tag, sha in state.tags.get(repo, {}).items()]
+            self.page(path, urllib.parse.parse_qs(query.query), records)
         elif '/actions/runs/' in path:
-            run = state.runs.get(int(path.rsplit('/', 1)[1]))
-            self.respond(200 if run else 404, run)
+            parts = path.split('/actions/runs/', 1)[1].split('/')
+            identity = int(parts[0])
+            with state.run_lock:
+                current = state.runs.get(identity)
+                if len(parts) == 1:
+                    result = current
+                elif len(parts) == 4 and parts[3] == "jobs":
+                    result = {"jobs": state.run_jobs.get((identity, int(parts[2])), [])}
+                elif parts[1] == "attempts":
+                    attempt = int(parts[2])
+                    result = current if current and current["run_attempt"] == attempt else state.run_attempts.get((identity, attempt))
+                else:
+                    result = None
+            self.respond(200 if result else 404, result)
         elif '/actions/workflows/' in path and path.endswith('/runs'):
-            kind = 'publish ' if 'publish.yml' in path else 'build '
-            self.respond(200, dict(workflow_runs=[run for run in state.runs.values()
-                                                 if run['display_title'].startswith(kind)]))
+            kind = path.split('/actions/workflows/', 1)[1].removesuffix('.yml/runs') + ' '
+            assert state.run_list_response.wait(20), 'run list fixture not released'
+            with state.run_lock:
+                records = [dict(run) for run in reversed(list(state.runs.values())) if run['display_title'].startswith(kind)]
+            self.page(path, urllib.parse.parse_qs(query.query), records, "workflow_runs")
         elif path.startswith('/repos/'):
             repo = path.removeprefix('/repos/')
             self.respond(200, dict(full_name=repo, default_branch='master' if repo in ('SNodeC/snode.c', 'SNodeC/mqttsuite') else 'main'))
@@ -165,19 +211,29 @@ class Provider(BaseHTTPRequestHandler):
             identity = 'publication_id' if publication else 'request_id'
             assert set(values) == {identity, 'attempt', 'feed_branch'} | ({'fault'} if publication else set())
             assert all(isinstance(value, str) for value in values.values())
-            assert values['feed_branch'] in ('feed', 'feed-staging')
-            if not publication and state.drop_build:
-                state.drop_build = False
+            assert values['feed_branch'] == state.feed_branch
+            with state.run_lock:
+                state.dispatch_posts.append((values, time.monotonic()))
+                status = state.dispatch_responses.popleft() if state.dispatch_responses else state.dispatch_status
+                drop_build = not publication and state.drop_build
+                if drop_build:
+                    state.drop_build = False
+            if status == 0:
+                self.close_connection = True
+                with suppress(OSError):
+                    self.connection.shutdown(socket.SHUT_RDWR)
+            elif status != 200:
+                self.respond(status)
+            elif drop_build:
+                # Deliberately pessimistic test case. An accepted dispatch never becomes visible.
                 state.dropped.put(values)
                 self.respond(204)
             else:
-                rid = state.next_run
-                state.next_run += 1
                 title = ('publish ' if publication else 'build ') + values[identity] + '/' + values['attempt']
-                state.runs[rid] = dict(id=rid, status='queued', conclusion=None, display_title=title, run_attempt=1)
+                rid = state.create_run(title, group="publish-" + values["feed_branch"] if publication else None)
                 state.dispatches.put((rid, values))
                 assert state.dispatch_response.wait(20), 'dispatch response fixture not released'
-                if publication and state.ambiguous_publication:
+                if (publication and state.ambiguous_publication) or (not publication and state.ambiguous_build):
                     self.respond(204)
                 else:
                     self.respond(200, dict(workflow_run_id=rid))
@@ -202,11 +258,27 @@ class Fixture:
         self.refresh_sequence = 0
         self.offset = 0
         self.next_run = 100
+        self.feed_branch = (coreci_options or {}).get("feed-branch", "feed")
         self.head = 'f' * 40
-        self.snapshots = {'refs/snapshots/feed/pre-x': self.head}
-        self.ledger = []
+        self.snapshots = {f'refs/snapshots/{self.feed_branch}/pre-x': self.head}
+        self.ledgers = {self.head: []}
+        self.ledger_reads = []
         self.runs = {}
+        self.run_attempts = {}
+        self.run_jobs = {}
+        self.pending_groups = {}
+        self.run_lock = threading.Lock()
+        self.allowed_duplicate_titles = set()
+        self.duplicate_titles = []
+        self.dispatch_posts = []
+        self.dispatch_status = 200
+        self.dispatch_responses = deque()
         self.ambiguous_publication = False
+        self.ambiguous_build = False
+        self.page_requests = []
+        self.foreign_links = set()
+        self.run_list_response = threading.Event()
+        self.run_list_response.set()
         self.revisions = {}
         self.tags, self.contents, self.api_requests, self.mints = {}, [], [], 0
         self.subject, self.revoked = 'owner', set()
@@ -306,6 +378,34 @@ class Fixture:
         self.config_path.write_text('\n'.join('[' + section + ']\n' + '\n'.join(
             key + '=' + json.dumps(value) for key, value in values.items()) for section, values in self.settings.items()) + '\n')
 
+    @property
+    def ledger(self):
+        return self.ledgers[self.head]
+
+    @ledger.setter
+    def ledger(self, value):
+        self.ledgers[self.head] = value
+
+    def restore_run(self, branch, ref, conclusion, completed=None):
+        run = self.create_run(f"restore {branch} {ref}", status="completed", conclusion=conclusion)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now() if completed is None else completed))
+        self.run_jobs[run, 1] = [dict(name="restore", status="completed", conclusion=conclusion, completed_at=stamp)]
+        return run
+
+    def create_run(self, title, status='queued', conclusion=None, group=None):
+        with self.run_lock:
+            if title not in self.allowed_duplicate_titles and any(run['display_title'] == title for run in self.runs.values()):
+                self.duplicate_titles.append(title)
+            identity = self.next_run
+            self.next_run += 1
+            self.runs[identity] = dict(id=identity, status=status, conclusion=conclusion, display_title=title, run_attempt=1)
+            if group:
+                previous = self.pending_groups.get(group)
+                if previous and self.runs[previous]["status"] in ("queued", "pending"):
+                    self.runs[previous].update(status="completed", conclusion="cancelled")
+                self.pending_groups[group] = identity
+        return identity
+
     def now(self):
         return int(time.time()) + self.offset
 
@@ -375,8 +475,11 @@ class Fixture:
              'X-CoreCI-Signature-256': 'sha256=' + signature}, browser=False)
         return response
 
-    def restart(self):
-        self.process.terminate()
+    def restart(self, *, hard=False):
+        if hard:
+            self.process.kill()
+        else:
+            self.process.terminate()
         self.process.wait(timeout=10)
         self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
         return None
@@ -385,6 +488,7 @@ class Fixture:
         self.release.set()
         self.dispatch_response.set()
         self.feed_response.set()
+        self.run_list_response.set()
         self.process.terminate()
         self.process.wait(timeout=10)
         self.log.close()
@@ -395,6 +499,7 @@ class Fixture:
         assert not any(token in log for token in self.tokens), 'credential appeared in fixture log'
         assert not any(cookie.value in log for cookie in getattr(self, 'jar', ()) if cookie.value), 'browser credential appeared in fixture log'
         assert not any(secret in log for secret in ('fixture-installation', 'fixture-webhook', 'fixture-callback')), 'credential appeared in fixture log'
+        assert not self.duplicate_titles, self.duplicate_titles
 
 
 @contextmanager

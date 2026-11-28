@@ -35,6 +35,8 @@ class Proxy:
         self.port = self.listener.getsockname()[1]
         self.rule = None
         self.fired = threading.Event()
+        self.release_commit = threading.Event()
+        self.release_commit.set()
         self.stop = threading.Event()
         self.connections = 0
         self.thread = threading.Thread(target=self.accept, daemon=True)
@@ -42,6 +44,8 @@ class Proxy:
 
     def arm(self, needle, boundary):
         self.fired.clear()
+        if boundary == "commit":
+            self.release_commit.clear()
         self.rule = (needle, boundary)
 
     def accept(self):
@@ -58,6 +62,7 @@ class Proxy:
         upstream = socket.socket(socket.AF_UNIX)
         buffers = {client: b'', upstream: b''}
         query = ''
+        hold_commit = False
         try:
             upstream.connect(str(self.endpoint))
             alive = True
@@ -74,6 +79,13 @@ class Proxy:
                                 query = packet[5:].decode(errors='replace')
                             needle, boundary = self.rule or ('', '')
                             matched = bool(needle) and (query == needle[1:] if needle.startswith('=') else needle in query)
+                            if matched and boundary == "commit":
+                                hold_commit = True
+                            if hold_commit and source is upstream and query == "COMMIT" and packet[4:5] == b"\x00":
+                                self.rule = None
+                                hold_commit = False
+                                self.fired.set()
+                                assert self.release_commit.wait(15), "test did not release the commit acknowledgement"
                             cut = matched and ((source is client and boundary == 'before') or
                                 (source is upstream and (boundary == 'read' or
                                  (boundary == 'after' and packet[4:5] == b'\x00'))))
@@ -99,6 +111,7 @@ class Proxy:
             client.close()
 
     def close(self):
+        self.release_commit.set()
         self.stop.set()
         self.thread.join(timeout=2)
         self.listener.close()

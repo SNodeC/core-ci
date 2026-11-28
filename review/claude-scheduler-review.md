@@ -2,6 +2,8 @@
 
 ## Review revision
 
+[Follow-up review of dispatch, restore, and dependency stress](claude-restore-review.md)
+
 The code under review is signed commit `cd9b7ef1b36a9dc5ab7442ee46624a7e34c133e4` on `review/fixture-wip`. It includes the six-target stress case. The branch adds this report and extracts of the local CTest results. The earlier signed revision `6f984bd32714e339242fc9ba1370f44c6f57c7ac` contains the same daemon, contract, and GitHub/OIDC fixture. The base of the fix branch was `main` at `4f4b93ef33bef5055d76fc6a3423413cf747d334`.
 
 The canonical checkout is `/home/voc/projects/snodec/core-ci`. The pinned §7 hash is `314288d853b7eade6091b80a695a5960dce619c83f9cfb57960acb3852633cb8`. The daemon counts 4,141 source lines plus 16 DDL lines, totaling 4,157 of 5,000.
