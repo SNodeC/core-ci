@@ -5,6 +5,7 @@
 #include "persistence/StateSql.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <set>
 
 using namespace coreci;
@@ -260,6 +261,128 @@ namespace {
         }
         CHECK_EQ(view(state, options).at("reservations"), (Json{{"slots", 7}, {"queued", 0}, {"running", 0}, {"publication", 0}}));
         CHECK_EQ(state.at("attempts").size(), 100U);
+    }
+
+    void activeArrivalStress() {
+        struct Build {
+            std::string key;
+            std::string document;
+            unsigned run;
+        };
+        const std::vector<std::string> names{
+            "aster", "beech", "coral", "delta", "ember", "fern", "grove", "hazel", "iris", "juniper", "kelp", "larch"};
+        auto catalog = Json{{"native", target}, {"second", target}};
+        catalog["second"]["id"] = "second";
+        for (const unsigned slots : {1U, 7U, 20U}) {
+            Options options;
+            options.slots = slots;
+            const Scheduler scheduler(options);
+            Json declarations = Json::object();
+            const auto declare = [&](const std::string& name) {
+                auto declaration = package(name);
+                declaration["targets"] = Json::array({"native", "second"});
+                declarations["stress/" + name] = std::move(declaration);
+            };
+            for (std::size_t index = 0; index < 5; ++index) {
+                declare(names[index]);
+            }
+            auto state = initialState();
+            CHECK_EQ(scheduler.declarations(state, catalog, declarations, Json::array()).code, 200);
+            scheduler.feed(state, head, {{"refs/snapshots/feed/pre-x", head}}, Json::array(), 1);
+            std::vector<std::string> expected;
+            std::set<std::pair<std::string, unsigned>> admitted;
+            const auto admit = [&](const std::string& name, unsigned minor) {
+                const auto version = "1." + std::to_string(minor) + ".0";
+                CHECK_EQ(scheduler.admit(state, "stress/" + name, "v" + version, head).code, 200);
+                if (admitted.emplace(name, minor).second) {
+                    expected.push_back(name + "/" + version + "/native");
+                    expected.push_back(name + "/" + version + "/second");
+                }
+            };
+            for (unsigned minor = 1; minor <= 4; ++minor) {
+                for (std::size_t index = 0; index < 5; ++index) {
+                    admit(names[index], minor);
+                }
+            }
+            std::size_t dispatched = 0;
+            std::vector<Build> active;
+            Time now = 10;
+            const auto claim = [&](std::size_t cutoff) {
+                const auto count = std::min<std::size_t>(slots - active.size(), cutoff - dispatched);
+                const auto reservations = view(state, options).at("reservations");
+                CHECK_EQ(reservations.at("running"), active.size());
+                CHECK_EQ(reservations.at("queued"), count);
+                CHECK_EQ(reservations.at("publication"), 0U);
+                CHECK_EQ(state.at("attempts").size(), dispatched + count);
+                const auto end = dispatched + count;
+                for (; dispatched < end; ++dispatched) {
+                    const auto& item = state.at("items").at(expected[dispatched]);
+                    CHECK_EQ(item.at("state"), "processing");
+                    const auto request = item.at("request").get<std::string>();
+                    const auto key = attemptKey(request, 1);
+                    const auto run = static_cast<unsigned>(dispatched + 1);
+                    CHECK_EQ(scheduler.claim(state, false, request, owner(1, run), now).code, 200);
+                    active.push_back({key, state.at("attempts").at(key).at("document").get<std::string>(), run});
+                }
+            };
+            const auto finish = [&](std::size_t index) {
+                const auto build = active.at(index);
+                const auto& record = state.at("attempts").at(build.key);
+                CHECK_EQ(record.at("document"), Json(build.document));
+                const auto request = record.at("id").get<std::string>();
+                const Json ended{{"id", build.run}, {"status", "completed"}, {"conclusion", "failure"}};
+                auto report = owner(1, build.run);
+                report.update(Json{{"status", "finished"}, {"outcome", "failed"}});
+                if (build.run % 2 == 0) {
+                    scheduler.observed(state, build.key, ended, now);
+                    CHECK_EQ(scheduler.report(state, false, request, report, now).code, 200);
+                } else {
+                    CHECK_EQ(scheduler.report(state, false, request, report, now).code, 200);
+                    scheduler.observed(state, build.key, ended, now);
+                }
+                active.erase(active.begin() + static_cast<std::ptrdiff_t>(index));
+            };
+
+            turn(scheduler, state, now++);
+            claim(expected.size());
+            for (std::size_t newcomer = 5; newcomer < names.size(); ++newcomer) {
+                admit(names.front(), static_cast<unsigned>(newcomer));
+                scheduler.turn(state, now); // Establish what is eligible before new registry work.
+                CHECK_EQ(state.at("cutoff_open"), true);
+                const auto cutoff = expected.size();
+                declare(names[newcomer]);
+                CHECK_EQ(scheduler.declarations(state, catalog, declarations, Json::array()).code, 200);
+                for (unsigned minor = 1; minor <= 12; ++minor) {
+                    admit(names[newcomer], minor);
+                    admit(names[newcomer], minor);
+                }
+                finish((newcomer * 3) % active.size());
+                scheduler.turn(state, now++); // Fill one released slot without admitting the late arrivals.
+                CHECK_EQ(state.at("items").at(expected.at(cutoff)).at("state"), "enrolled");
+                claim(cutoff);
+            }
+            for (unsigned minor = 5; minor <= 12; ++minor) {
+                for (std::size_t index = 0; index < 5; ++index) {
+                    admit(names[index], minor);
+                }
+            }
+            CHECK_EQ(expected.size(), 288U);
+            CHECK_EQ(state.at("releases").size(), 144U);
+            for (std::size_t batch = 0; !active.empty(); ++batch) {
+                const auto take = std::min(active.size(), batch % 5 + 1);
+                if (batch % 2 == 0) {
+                    state = Json::parse(state.dump());
+                }
+                for (std::size_t offset = 0; offset < take; ++offset) {
+                    finish((batch + offset) % active.size());
+                }
+                turn(scheduler, state, now++);
+                claim(expected.size());
+            }
+            CHECK_EQ(dispatched, 288U);
+            CHECK_EQ(state.at("attempts").size(), 288U);
+            CHECK_EQ(view(state, options).at("reservations"), (Json{{"slots", slots}, {"queued", 0}, {"running", 0}, {"publication", 0}}));
+        }
     }
 
     Json output(const std::string& name, const std::string& release, unsigned rev, Time date, Json dependencies = Json::array()) {
@@ -1112,6 +1235,8 @@ int main(int argc, char** argv) {
         admissions();
     } else if (mode == "admission_stress") {
         admissionStress();
+    } else if (mode == "active_arrival_stress") {
+        activeArrivalStress();
     } else if (mode == "binding") {
         binding();
     } else if (mode == "targets_and_receipts") {

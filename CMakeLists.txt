@@ -38,6 +38,7 @@ foreach(
     registry_arrivals
     active_arrivals
     admission_stress
+    active_arrival_stress
     admissions
     binding
     targets_and_receipts
